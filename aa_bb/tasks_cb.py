@@ -225,7 +225,7 @@ def CB_run_regular_updates():
 
     except Exception as e:
         logger.error("Task failed", exc_info=True)
-        instance.is_active = False
+        instance.is_active = True
         instance.save()
         send_message(
             f"#{get_pings('Error')} Corp Brother encountered an unexpected error and disabled itself, "
