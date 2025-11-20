@@ -132,10 +132,10 @@ class BigBrotherRedditSettings(SingletonModel):
     )
 
     class Meta:
-        verbose_name = "BigBrother reddit settings"
+        verbose_name = "BigBrother Reddit Settings"
 
     def __str__(self):
-        return "BigBrother reddit settings"
+        return "BigBrother Reddit Settings"
 
 
 class BigBrotherRedditMessage(models.Model):
@@ -155,8 +155,8 @@ class BigBrotherRedditMessage(models.Model):
 
     class Meta:
         ordering = ["-created"]
-        verbose_name = "Reddit recruitment message"
-        verbose_name_plural = "Reddit recruitment messages"
+        verbose_name = "Reddit Recruitment Message"
+        verbose_name_plural = "Reddit Recruitment Messages"
 
     def __str__(self):
         status = "used" if self.used_in_cycle else "pending"
@@ -175,6 +175,9 @@ class PapCompliance(models.Model):
         default=0,
         help_text="Integer flag or score indicating PAP compliance status"
     )
+    class Meta:
+        verbose_name = "PAP Compliance Score"
+        verbose_name_plural = "PAP Compliance Scores"
 
 
 class TicketToolConfig(SingletonModel):
@@ -377,6 +380,10 @@ class TicketToolConfig(SingletonModel):
         help_text="List of users to ignore when checking for compliance"
     )
 
+    class Meta:
+        verbose_name = "Ticket Tool Configuration"
+        verbose_name_plural = "Ticket Tool Configuration"
+
 
 class BBUpdateState(SingletonModel):
     """Singleton to persist BB update check timing/version across restarts."""
@@ -450,6 +457,7 @@ class AwoxKillsCache(models.Model):
             models.Index(fields=["updated"]),
             models.Index(fields=["last_accessed"]),
         ]
+
 class LeaveRequest(models.Model):
     """
     Leave of Absence request stored in Auth so staff can audit time away.
@@ -481,6 +489,11 @@ class LeaveRequest(models.Model):
     reason     = models.TextField()
     status     = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Leave of Absence Request"
+        verbose_name_plural = "Leave of Absence Requests"
+        ordering = ['-created_at']
 
     def __str__(self):
         return f"{self.user.username}: {self.start_date} → {self.end_date} ({self.status})"
@@ -602,6 +615,11 @@ class ComplianceTicket(models.Model):
     last_reminder_sent = models.IntegerField(default=0)
 
     is_resolved = models.BooleanField(default=False)
+
+    class Meta:
+        verbose_name = "Compliance Ticket"
+        verbose_name_plural = "Compliance Tickets"
+        ordering = ['-created_at']
 
     def __str__(self):
         return f"Ticket for {self.user} ({self.reason})"

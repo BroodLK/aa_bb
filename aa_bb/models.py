@@ -192,8 +192,8 @@ class OptMessages1(models.Model):
     def __str__(self):
         return self.text
     class Meta:
-        verbose_name = "Opt Message 1"
-        verbose_name_plural = "Opt Messages 1"
+        verbose_name = "Optional Message 1"
+        verbose_name_plural = "Optional Messages 1"
 
 class OptMessages2(models.Model):
     """Optional message stream #2."""
@@ -202,8 +202,8 @@ class OptMessages2(models.Model):
     def __str__(self):
         return self.text
     class Meta:
-        verbose_name = "Opt Message 2"
-        verbose_name_plural = "Opt Messages 2"
+        verbose_name = "Optional Message 2"
+        verbose_name_plural = "Optional Messages 2"
 
 class OptMessages3(models.Model):
     """Optional message stream #3."""
@@ -212,8 +212,8 @@ class OptMessages3(models.Model):
     def __str__(self):
         return self.text
     class Meta:
-        verbose_name = "Opt Message 3"
-        verbose_name_plural = "Opt Messages 3"
+        verbose_name = "Optional Message 3"
+        verbose_name_plural = "Optional Messages 3"
 
 class OptMessages4(models.Model):
     """Optional message stream #4."""
@@ -222,8 +222,8 @@ class OptMessages4(models.Model):
     def __str__(self):
         return self.text
     class Meta:
-        verbose_name = "Opt Message 4"
-        verbose_name_plural = "Opt Messages 4"
+        verbose_name = "Optional Message 4"
+        verbose_name_plural = "Optional Messages 4"
 
 class OptMessages5(models.Model):
     """Optional message stream #5."""
@@ -232,8 +232,8 @@ class OptMessages5(models.Model):
     def __str__(self):
         return self.text
     class Meta:
-        verbose_name = "Opt Message 5"
-        verbose_name_plural = "Opt Messages 5"
+        verbose_name = "Optional Message 5"
+        verbose_name_plural = "Optional Messages 5"
 
 
 class MessageType(models.Model):
@@ -1056,6 +1056,10 @@ class WarmProgress(models.Model):
     current   = models.PositiveIntegerField()
     total     = models.PositiveIntegerField()
     updated   = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Warm Preload Progress"
+        verbose_name_plural = "Warm Preload Progress"
 
     def __str__(self):
         return f"{self.user_main}: {self.current}/{self.total}"
