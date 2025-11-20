@@ -6,10 +6,8 @@ by combining skill levels, ship ownership and corporation tenure. The
 heavy lifting happens here so templates only need to call render helpers.
 """
 
-from allianceauth.authentication.models import CharacterOwnership
-from corptools.models import CharacterAudit, CharacterAsset
 from .skills import get_user_skill_info, get_char_age
-from ..app_settings import get_user_characters, format_int, get_character_id
+from ..app_settings import get_user_characters, get_character_id
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 from .corp_changes import get_current_stint_days_in_corp
@@ -18,6 +16,11 @@ from aa_bb.models import BigBrotherConfig as bbc
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
+
+try:
+    from corptools.models import CharacterAudit, CharacterAsset
+except ImportError:
+    logger.error("Corptools not installed, corp checks will not work.")
 
 skill_ids = {
     "cyno":     21603,  # Cynosural Field Theory
@@ -160,7 +163,7 @@ def get_user_cyno_info(user_id: int) -> dict:
             "i_hic":     i_hic,
             "i_blops":   i_blops,
             "i_covops":  i_covops,
-            "i_brun":    i_brun,  
+            "i_brun":    i_brun,
             "i_sbomb":   i_sbomb,
             "i_scru":    i_scru,
             "i_expfrig": i_expfrig,

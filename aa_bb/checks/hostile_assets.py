@@ -6,10 +6,7 @@ that can be sent when a user has assets in systems owned by enemies.
 """
 
 from django.contrib.auth.models import User
-from django.core.exceptions import ObjectDoesNotExist
-
 from allianceauth.authentication.models import CharacterOwnership
-from corptools.models import CharacterAudit, CharacterAsset, EveLocation
 from ..app_settings import get_system_owner
 from ..models import BigBrotherConfig
 from django.utils.html import format_html
@@ -17,6 +14,11 @@ from typing import List, Optional, Dict
 import logging
 
 logger = logging.getLogger(__name__)
+
+try:
+    from corptools.models import CharacterAudit, CharacterAsset, EveLocation
+except ImportError:
+    logger.error("Corptools not installed, corp checks will not work.")
 
 def get_asset_locations(user_id: int) -> Dict[int, Optional[str]]:
     """
@@ -50,10 +52,10 @@ def get_asset_locations(user_id: int) -> Dict[int, Optional[str]]:
         for asset in assets:
             loc = asset.location_name
             add_system(getattr(loc, 'system', None))
-    
+
     # sort by system name (None treated as empty string)
     sorted_items = sorted(
-        system_map.items(), 
+        system_map.items(),
         key=lambda kv: (kv[1] or "").lower()
     )
 

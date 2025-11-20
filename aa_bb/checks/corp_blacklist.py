@@ -9,7 +9,6 @@ blacklist when authorized staff request it.
 from allianceauth.authentication.models import CharacterOwnership
 from ..app_settings import aablacklist_active, send_message, get_pings
 from django.contrib.auth.models import User
-from django.core.exceptions import ObjectDoesNotExist
 from django.urls import reverse
 from django.middleware.csrf import get_token
 
@@ -35,12 +34,13 @@ def check_char_corp_bl(cid):
     """
     if not aablacklist_active():  # Optional plugin absent → treat as not blacklisted.
         return False
-    from blacklist.models import EveNote
-    blacklisted_ids = EveNote.objects.filter(
-        blacklisted=True,
-        eve_catagory='character'
-    ).values_list('eve_id', flat=True)
-    return cid in blacklisted_ids
+    else:
+        from blacklist.models import EveNote
+        blacklisted_ids = EveNote.objects.filter(
+            blacklisted=True,
+            eve_catagory='character'
+        ).values_list('eve_id', flat=True)
+        return cid in blacklisted_ids
 
 def get_corp_blacklist_html(
     request,
@@ -59,7 +59,7 @@ def get_corp_blacklist_html(
         )
 
     # Reverse the correct namespaced POST URL:
-    action_url = reverse("BigBrother:add_blacklist")  
+    action_url = reverse("BigBrother:add_blacklist")
     # Generate a real CSRF token:
     token = get_token(request)
 

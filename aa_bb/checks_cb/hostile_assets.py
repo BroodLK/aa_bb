@@ -5,12 +5,7 @@ These helpers inspect corp audits to find the systems where corp assets
 live and highlight systems owned by alliances on the hostile list.
 """
 
-from django.contrib.auth.models import User
-from django.core.exceptions import ObjectDoesNotExist
-
-from allianceauth.authentication.models import CharacterOwnership
 from allianceauth.eveonline.models import EveCorporationInfo
-from corptools.models import CorporationAudit, CorpAsset, EveLocation
 from ..app_settings import get_system_owner
 from ..models import BigBrotherConfig
 from django.utils.html import format_html
@@ -18,6 +13,11 @@ from typing import List, Optional, Dict
 import logging
 
 logger = logging.getLogger(__name__)
+
+try:
+    from corptools.models import CorporationAudit, CorpAsset, EveLocation
+except ImportError:
+    logger.error("Corptools not installed, corp checks will not work.")
 
 def get_asset_locations(corp_id: int) -> Dict[int, Optional[str]]:
     """

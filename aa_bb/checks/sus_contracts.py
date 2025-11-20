@@ -5,34 +5,28 @@ The functions in this module normalize Contract ORM rows, highlight hostile
 counterparties, and persist short notes for reuse in notifications.
 """
 
-import html
 import logging
 
 from typing import Dict, Optional, List
 from datetime import datetime
 
 from ..app_settings import (
-    is_npc_corporation,
-    is_npc_character,
-    get_character_employment,
-    get_alliance_history_for_corp,
-    resolve_alliance_name,
-    resolve_corporation_name,
-    resolve_character_name,
     get_user_characters,
-    get_character_id,
     get_eve_entity_type,
     get_entity_info,
 
 )
 from .corp_blacklist import check_char_corp_bl
-from corptools.models import Contract
 from ..models import BigBrotherConfig, ProcessedContract, SusContractNote
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
+try:
+    from corptools.models import Contract
+except ImportError:
+    logger.error("Corptools not installed, corp checks will not work.")
 
 def _find_employment_at(employment: list, date: datetime) -> Optional[dict]:
     """Utility kept for backwards compatibility; returns corp during date."""
@@ -89,7 +83,7 @@ def get_user_contracts(qs) -> Dict[int, Dict]:
             assignee_id = c.assignee_id
         else:
             assignee_id = c.acceptor_id
-        
+
         assignee_type = get_eve_entity_type(assignee_id)
         ainfo = get_entity_info(assignee_id, timeee)
 
@@ -127,7 +121,7 @@ def get_cell_style_for_contract_row(column: str, row: dict) -> str:
             return 'color: red;'
         else:
             return ''
-        
+
     if column == 'assignee_name':
         cid = row.get("assignee_id")
         if check_char_corp_bl(cid):  # Assignee appears on blacklist.

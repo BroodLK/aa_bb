@@ -6,12 +6,18 @@ required scopes or that still have elevated roles without valid tokens.
 """
 
 from allianceauth.authentication.models import CharacterOwnership
-from corptools.models import CharacterRoles, CharacterAudit
-from allianceauth.eveonline.models import EveCharacter
-from esi.models import Token
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 from aa_bb.models import BigBrotherConfig
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+try:
+    from corptools.models import CharacterRoles, CharacterAudit
+except ImportError:
+    logger.error("Corptools not installed, corp checks will not work.")
 
 def get_user_roles(user_id):
     """
@@ -58,7 +64,7 @@ def get_user_tokens(user_id):
     configured corporation scopes so staff can quickly spot gaps.
     """
     from esi.models import Token, Scope
-    
+
     CHARACTER_SCOPES = BigBrotherConfig.get_solo().character_scopes.split(",")
 
     CORPORATION_SCOPES = BigBrotherConfig.get_solo().corporation_scopes.split(",")
@@ -72,10 +78,10 @@ def get_user_tokens(user_id):
 
         # Get all tokens for this character
         all_tokens = Token.objects.filter(character_id=eve_char.character_id, user_id=user_id)
-        
+
         char_scopes_owned = set()
         corp_scopes_owned = set()
-        
+
         for token in all_tokens:
             token_scopes = set(token.scopes.values_list("name", flat=True))
             # intersect with the sets of character/corp scopes to avoid unrelated scopes

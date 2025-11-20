@@ -8,31 +8,28 @@ highlight hostile counterparties, and cache note text for notifications.
 import html
 import logging
 
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+
 from typing import Dict, Optional, List
 from datetime import datetime
 
+from allianceauth.eveonline.models import EveCorporationInfo
+
 from ..app_settings import (
-    is_npc_corporation,
-    is_npc_character,
-    get_character_employment,
-    get_alliance_history_for_corp,
-    resolve_alliance_name,
-    resolve_corporation_name,
-    resolve_character_name,
-    get_user_characters,
     get_character_id,
     get_eve_entity_type,
     get_entity_info,
 
 )
 from aa_bb.checks.corp_blacklist import check_char_corp_bl
-from corptools.models import CorporateContract, CorporationAudit
-from allianceauth.eveonline.models import EveCorporationInfo
+try:
+    from corptools.models import CorporateContract, CorporationAudit
+except ImportError:
+    logger.error("Corptools not installed, corp checks will not work.")
 from ..models import BigBrotherConfig, ProcessedContract, SusContractNote
 from django.utils import timezone
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 
 def _find_employment_at(employment: list, date: datetime) -> Optional[dict]:
@@ -94,7 +91,7 @@ def get_user_contracts(qs) -> Dict[int, Dict]:
             assignee_id = c.assignee_id
         else:
             assignee_id = c.acceptor_id
-        
+
         assignee_type = get_eve_entity_type(assignee_id)
         ainfo = get_entity_info(assignee_id, timeee)
 
@@ -129,7 +126,7 @@ def get_cell_style_for_contract_row(column: str, row: dict) -> str:
             return 'color: red;'
         else:
             return ''
-        
+
     if column == 'assignee_name':  # Color assignee names when suspect.
         cid = row.get("assignee_id")
         if check_char_corp_bl(cid):  # Assignee is on the blacklist.
@@ -230,7 +227,7 @@ def get_corp_hostile_contracts(corp_id: int) -> Dict[int, str]:
             # Skip entries already handled by another worker.
             if not created:
                 continue
-            
+
             if not is_contract_row_hostile(c):  # Skip non-hostile contracts to limit note noise.
                 continue
 

@@ -6,30 +6,25 @@ flag suspicious counterparties, and keep deduplicated notes for alerts.
 import html
 import logging
 
-from typing import Dict, Optional, List
+from typing import Dict, Optional
 from datetime import datetime
-
-from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 from ..app_settings import (
-    is_npc_corporation,
-    is_npc_character,
-    get_character_employment,
-    get_alliance_history_for_corp,
-    resolve_alliance_name,
-    resolve_corporation_name,
-    resolve_character_name,
     get_user_characters,
-    get_character_id,
     get_eve_entity_type,
     get_entity_info,
 )
 
 from .corp_blacklist import check_char_corp_bl
-from corptools.models import CharacterWalletJournalEntry as WalletJournalEntry
+
+try:
+    from corptools.models import CharacterWalletJournalEntry as WalletJournalEntry
+except ImportError:
+    logger.error("Corptools not installed, corp checks will not work.")
+
 from ..models import BigBrotherConfig, ProcessedTransaction, SusTransactionNote
 
 SUS_TYPES = ("player_trading","corporation_account_withdrawal","player_donation")

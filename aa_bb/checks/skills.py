@@ -5,9 +5,6 @@ These helpers fetch and render frequently referenced skills as well as
 generic routines (get_user_skill_info) that other check modules import.
 """
 
-from django.contrib.auth.models import User
-from allianceauth.authentication.models import CharacterOwnership
-from corptools.models import CharacterAudit, Skill, SkillTotals, CorporationHistory
 from django.utils.html import format_html
 from ..app_settings import get_user_characters, format_int, get_character_id
 import logging
@@ -19,6 +16,12 @@ from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
+
+try:
+    from corptools.models import CharacterAudit, Skill, SkillTotals, CorporationHistory
+except ImportError:
+    logger.error("Corptools not installed, corp checks will not work.")
+
 _SKILLS_JSON_PATH = os.path.join(os.path.dirname(__file__), "skills.json")
 
 skill_ids = [
@@ -174,7 +177,7 @@ def render_user_skills_html(user_id: int) -> str:
     Generates an HTML block containing:
       - <h3>Character Name (total SP)</h3>
       - <table> of skill levels (trained vs. active) for each skill_id in skill_ids
-    
+
     No external links are included.
     """
     skill_name_map = get_skill_map()

@@ -6,10 +6,8 @@ resolve who owns each system, and flag anything that sits in hostile space.
 """
 
 from django.contrib.auth.models import User
-from django.core.exceptions import ObjectDoesNotExist
 
 from allianceauth.authentication.models import CharacterOwnership
-from corptools.models import CharacterAudit, Clone, JumpClone
 
 from django.utils.html import format_html
 from typing import List, Optional, Dict
@@ -19,6 +17,11 @@ from ..models import BigBrotherConfig
 import logging
 
 logger = logging.getLogger(__name__)
+
+try:
+    from corptools.models import CharacterAudit, Clone, JumpClone
+except ImportError:
+    logger.error("Corptools not installed, corp checks will not work.")
 
 def get_clones(user_id: int) -> Dict[int, Optional[str]]:
     """

@@ -6,11 +6,9 @@ entities, and expose utilities for producing notification text.
 """
 
 import html
+import logging
 
-from collections import defaultdict
-
-from django.db import transaction
-from typing import List
+logger = logging.getLogger(__name__)
 
 from ..app_settings import (
     is_npc_corporation,
@@ -23,9 +21,13 @@ from ..app_settings import (
 )
 from django.utils import timezone
 from .corp_blacklist import check_char_corp_bl
-from corptools.models import CharacterContact
 
-from ..models import Corporation_names, BigBrotherConfig
+try:
+    from corptools.models import CharacterContact
+except ImportError:
+    logger.error("Corptools not installed, corp checks will not work.")
+
+from ..models import BigBrotherConfig
 
 
 def get_user_contacts(user_id: int) -> dict[int, dict]:
