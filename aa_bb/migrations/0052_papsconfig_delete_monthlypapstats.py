@@ -17,8 +17,8 @@ class Migration(migrations.Migration):
                 ('required_paps', models.PositiveIntegerField(default=1, editable=False, help_text='How many PAPs per month should a user get?')),
                 ('corp_modifier', models.PositiveIntegerField(default=1, editable=False, help_text='How many PAPs is a corp PAP worth?')),
                 ('max_corp_paps', models.PositiveIntegerField(default=1, editable=False, help_text='How many Corp PAPs will count?')),
-                ('lawn_modifier', models.PositiveIntegerField(default=1, editable=False, help_text='How many PAPs is a lawn PAP worth?')),
-                ('imp_modifier', models.PositiveIntegerField(default=1, editable=False, help_text='How many PAPs is an imp PAP worth?')),
+                ('alliance_modifier', models.PositiveIntegerField(default=1, editable=False, help_text='How many PAPs is an alliance PAP worth?')),
+                ('coalition_modifier', models.PositiveIntegerField(default=1, editable=False, help_text='How many PAPs is a coalition PAP worth?')),
             ],
             options={
                 'abstract': False,

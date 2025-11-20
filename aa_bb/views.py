@@ -33,8 +33,8 @@ from aa_bb.checks.corp_changes import get_frequent_corp_changes
 from aa_bb.checks.cyno import render_user_cyno_info_html
 from aa_bb.checks.hostile_assets import render_assets
 from aa_bb.checks.hostile_clones import render_clones
-from aa_bb.checks.imp_blacklist import generate_blacklist_links
-from aa_bb.checks.lawn_blacklist import get_user_character_names_lawn
+from aa_bb.checks.coalition_blacklist import generate_blacklist_links
+from aa_bb.checks.alliance_blacklist import get_user_character_names_alliance
 from aa_bb.checks.sus_contacts import render_contacts
 from aa_bb.checks.sus_mails import (
     is_mail_row_hostile,
@@ -72,8 +72,8 @@ try:
 except ImportError:
     logger.error("Corptools not not installed")
 
-ALLOWED_LAWN_ALLIANCE_ID = 150097440
-ALLOWED_IMP_ALLIANCE_IDS = {
+ALLOWED_ALLIANCE_ID = 150097440
+ALLOWED_COALITION_ALLIANCE_IDS = {
     99003214,
     99009163,
     99012042,
@@ -90,8 +90,8 @@ ALLOWED_IMP_ALLIANCE_IDS = {
 
 CARD_DEFINITIONS = [
     {"title": 'Compliance', "key": "compliance"},
-    {"title": 'IMP Blacklist', "key": "imp_bl"},
-    {"title": '<span style=\"color: Orange;\"><b>WiP </b></span>LAWN Blacklist', "key": "lawn_bl"},
+    {"title": 'Coalition Blacklist', "key": "coalition_bl"},
+    {"title": '<span style=\"color: Orange;\"><b>WiP </b></span>Alliance Blacklist', "key": "alliance_bl"},
     {"title": 'Corp Blacklist', "key": "corp_bl"},
     {"title": 'Player Corp History', "key": "freq_corp"},
     {"title": 'AWOX Kills', "key": "awox"},
@@ -115,11 +115,11 @@ def get_available_cards():
     except BigBrotherConfig.DoesNotExist:
         return cards
 
-    if cfg.main_alliance_id != ALLOWED_LAWN_ALLIANCE_ID:  # Only LAWN proper sees the LAWN blacklist card.
-        cards = [card for card in cards if card["key"] != "lawn_bl"]
+    if cfg.main_alliance_id != ALLOWED_ALLIANCE_ID:
+        cards = [card for card in cards if card["key"] != "alliance_bl"]
 
-    if cfg.main_alliance_id not in ALLOWED_IMP_ALLIANCE_IDS:  # Restrict IMP blacklist to IMP alliances.
-        cards = [card for card in cards if card["key"] != "imp_bl"]
+    if cfg.main_alliance_id not in ALLOWED_COALITION_ALLIANCE_IDS:  # Restrict IMP blacklist to IMP alliances.
+        cards = [card for card in cards if card["key"] != "coalition_bl"]
     return cards
 
 
@@ -879,13 +879,13 @@ def get_card_data(request, target_user_id: int, key: str):
         content = render_assets(target_user_id)
         status  = not (content and "red" in content)
 
-    elif key == "imp_bl":  # Link to IMP blacklist lookups for all linked chars.
+    elif key == "coalition_bl":
         links   = generate_blacklist_links(target_user_id)
         content = "<br>".join(links)
         status  = False
 
-    elif key == "lawn_bl":  # Provide LAWN blacklist instructions for each character.
-        names   = get_user_character_names_lawn(target_user_id)
+    elif key == "alliance_bl":
+        names   = get_user_character_names_alliance(target_user_id)
         content = (
             "Go <a href='https://auth.lawnalliance.space/blacklist/blacklist/'>"
             "here</a> and check those names:<br>" + names
@@ -897,7 +897,7 @@ def get_card_data(request, target_user_id: int, key: str):
         content   = get_corp_blacklist_html(request, issuer_id, target_user_id)
         status    = not (content and "🚩" in content)
 
-    elif key == "sus_conta":  # Suspicious contacts list card.
+    elif key == "sus_conta":  # Suspicious contact list card.
         content = render_contacts(target_user_id)
         status  = not (content and "red" in content)
 

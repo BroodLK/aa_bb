@@ -109,7 +109,7 @@ class UserStatus(models.Model):
     - has_skills / skills: results from the skill checklist (SP, ratios, etc.).
     - has_hostile_assets / hostile_assets: systems where the user owns assets in hostile space.
     - has_hostile_clones / hostile_clones: hostile clone locations.
-    - has_imp_blacklist / has_lawn_blacklist: booleans for coalition blacklist hits.
+    - has_coalition_blacklist / has_alliance_blacklist: booleans for coalition blacklist hits.
     - has_game_time_notifications / has_skill_injected: notification flags coming from the ESI feed.
     - has_sus_contacts / sus_contacts: contacts that matched corporate/blacklist criteria.
     - has_sus_contracts / sus_contracts: hostile contract summaries.
@@ -130,8 +130,8 @@ class UserStatus(models.Model):
     hostile_assets = JSONField(default=dict, blank=True)
     has_hostile_clones = models.BooleanField(default=False)
     hostile_clones = JSONField(default=dict, blank=True)
-    has_imp_blacklist = models.BooleanField(default=False)
-    has_lawn_blacklist = models.BooleanField(default=False)
+    has_coalition_blacklist = models.BooleanField(default=False)
+    has_alliance_blacklist = models.BooleanField(default=False)
     has_game_time_notifications = models.BooleanField(default=False)
     has_skill_injected = models.BooleanField(default=False)
     has_sus_contacts = models.BooleanField(default=False)

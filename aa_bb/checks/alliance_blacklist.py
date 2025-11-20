@@ -1,11 +1,11 @@
 """
-LAWN blacklist helper utilities. All rendering happens elsewhere, but
+alliance blacklist helper utilities. All rendering happens elsewhere, but
 collecting the character names in one helper makes templating easier.
 """
 
 from allianceauth.authentication.models import CharacterOwnership
 
-def get_user_character_names_lawn(user_id):
+def get_user_character_names_alliance(user_id):
     """
     Given an Alliance Auth User ID, returns a comma-separated string
     of all character names linked to that user.

@@ -38,8 +38,8 @@ class Migration(migrations.Migration):
         ),
         migrations.AddField(
             model_name='tickettoolconfig',
-            name='lawn_check_enabled',
-            field=models.BooleanField(default=False, help_text='Do you want to check for lawn auth compliance?'),
+            name='alliance_check_enabled',
+            field=models.BooleanField(default=False, help_text='Do you want to check for alliance auth compliance?'),
         ),
         migrations.AddField(
             model_name='tickettoolconfig',

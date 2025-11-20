@@ -13,6 +13,6 @@ class Migration(migrations.Migration):
         migrations.AlterField(
             model_name='complianceticket',
             name='reason',
-            field=models.CharField(choices=[('trpr', 'TRPR Compliance'), ('lawn', 'LAWN Compliance'), ('paps', 'PAP Requirements'), ('afk', 'Inactivity'), ('discord_check', 'User is on discord')], max_length=20),
+            field=models.CharField(choices=[('trpr', 'TRPR Compliance'), ('alliance', 'Alliance Compliance'), ('paps', 'PAP Requirements'), ('afk', 'Inactivity'), ('discord_check', 'User is on discord')], max_length=20),
         ),
     ]

@@ -12,31 +12,31 @@ class Migration(migrations.Migration):
     operations = [
         migrations.RemoveField(
             model_name='papsconfig',
-            name='imp_modifier',
+            name='coalition_modifier',
         ),
         migrations.RemoveField(
             model_name='papsconfig',
-            name='lawn_modifier',
+            name='alliance_modifier',
         ),
         migrations.RemoveField(
             model_name='tickettoolconfig',
-            name='lawn_check',
+            name='alliance_check',
         ),
         migrations.RemoveField(
             model_name='tickettoolconfig',
-            name='lawn_check_enabled',
+            name='alliance_check_enabled',
         ),
         migrations.RemoveField(
             model_name='tickettoolconfig',
-            name='lawn_check_frequency',
+            name='alliance_check_frequency',
         ),
         migrations.RemoveField(
             model_name='tickettoolconfig',
-            name='lawn_check_reason',
+            name='alliance_check_reason',
         ),
         migrations.RemoveField(
             model_name='tickettoolconfig',
-            name='lawn_check_reminder',
+            name='alliance_check_reminder',
         ),
         migrations.AddField(
             model_name='papsconfig',

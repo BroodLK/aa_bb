@@ -23,6 +23,6 @@ class Migration(migrations.Migration):
         migrations.AlterField(
             model_name='complianceticket',
             name='reason',
-            field=models.CharField(choices=[('corp_check', 'Corp Compliance'), ('lawn_check', 'LAWN Compliance'), ('paps_check', 'PAP Requirements'), ('afk_check', 'Inactivity'), ('discord_check', 'User is not on discord'), {'char_removed', 'Character removed'}, {'AWOX kill found', 'awox_kill'}], max_length=20),
+            field=models.CharField(choices=[('corp_check', 'Corp Compliance'), ('alliance_check', 'Alliance Compliance'), ('paps_check', 'PAP Requirements'), ('afk_check', 'Inactivity'), ('discord_check', 'User is not on discord'), {'char_removed', 'Character removed'}, {'AWOX kill found', 'awox_kill'}], max_length=20),
         ),
     ]
