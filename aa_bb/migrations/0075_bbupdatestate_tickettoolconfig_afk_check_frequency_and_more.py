@@ -38,7 +38,7 @@ class Migration(migrations.Migration):
         ),
         migrations.AddField(
             model_name='tickettoolconfig',
-            name='alliance_check_frequency',
+            name='lawn_check_frequency',
             field=models.PositiveIntegerField(default=1, help_text='How often should a user be reminded (in days)'),
         ),
         migrations.AddField(

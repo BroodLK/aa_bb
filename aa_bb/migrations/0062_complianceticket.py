@@ -18,7 +18,7 @@ class Migration(migrations.Migration):
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
                 ('discord_user_id', models.BigIntegerField()),
                 ('discord_channel_id', models.BigIntegerField(blank=True, null=True)),
-                ('reason', models.CharField(choices=[('trpr', 'TRPR Compliance'), ('alliance', 'Alliance Compliance'), ('paps', 'PAP Requirements'), ('afk', 'Inactivity')], max_length=20)),
+                ('reason', models.CharField(choices=[('trpr', 'TRPR Compliance'), ('lawn', 'LAWN Compliance'), ('paps', 'PAP Requirements'), ('afk', 'Inactivity')], max_length=20)),
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('last_reminder_sent', models.IntegerField(default=0)),
                 ('is_resolved', models.BooleanField(default=False)),

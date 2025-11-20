@@ -17,18 +17,18 @@ class Migration(migrations.Migration):
         ),
         migrations.AlterField(
             model_name='papsconfig',
-            name='coalition_modifier',
-            field=models.PositiveIntegerField(default=1, help_text='How many PAPs is an coalition PAP worth?'),
+            name='imp_modifier',
+            field=models.PositiveIntegerField(default=1, help_text='How many PAPs is an imp PAP worth?'),
         ),
         migrations.AlterField(
             model_name='papsconfig',
-            name='alliance_modifier',
-            field=models.PositiveIntegerField(default=1, help_text='How many PAPs is an alliance PAP worth?'),
+            name='lawn_modifier',
+            field=models.PositiveIntegerField(default=1, help_text='How many PAPs is a lawn PAP worth?'),
         ),
         migrations.AlterField(
             model_name='papsconfig',
             name='max_corp_paps',
-            field=models.PositiveIntegerField(default=1, help_text='How many corp PAPs will count?'),
+            field=models.PositiveIntegerField(default=1, help_text='How many Corp PAPs will count?'),
         ),
         migrations.AlterField(
             model_name='papsconfig',
