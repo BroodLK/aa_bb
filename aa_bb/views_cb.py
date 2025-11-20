@@ -70,6 +70,7 @@ def index(request: WSGIRequest):
     dropdown_options = []
     task_name = 'BB run regular updates'
     task = PeriodicTask.objects.filter(name=task_name).first()
+    BigBrotherConfig.get_solo().is_active = True
     if not BigBrotherConfig.get_solo().is_active:  # Inactive BB -> show disabled page.
         msg = (
             "Corp Brother is currently inactive; please fill settings and enable the task"
