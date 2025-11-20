@@ -5,17 +5,34 @@ The functions here are called from Celery tasks as well as slash commands to
 create/rebalance compliance ticket channels.
 """
 
-import discord
 import re
-from django.utils import timezone
+import logging
+
+from allianceauth.authentication.models import UserProfile
+
+from django.db import transaction
+
+logger = logging.getLogger(__name__)
+
+try:
+    import discord
+except ImportError:
+    logger.error("discord service not installed; compliance checks will not work.")
+
 from .modelss import TicketToolConfig, ComplianceTicket
 from .app_settings import get_user_model
-from allianceauth.authentication.models import UserProfile
-from django.db import transaction
-from discord.commands import SlashCommandGroup
-from discord.ext import commands
-from aadiscordbot.cogs.utils.decorators import sender_is_admin
-from discord.commands import slash_command
+
+try:
+    from aadiscordbot.cogs.utils.decorators import sender_is_admin
+except ImportError:
+    logger.error("aadiscordbot not installed; compliance checks will not work.")
+
+try:
+    from discord.commands import slash_command
+    from discord.commands import SlashCommandGroup
+    from discord.ext import commands
+except ImportError:
+    logger.error("discord service not installed; compliance checks will not work.")
 
 def get_staff_roles():
     """Parse the comma-separated list of Discord role IDs allowed on tickets."""

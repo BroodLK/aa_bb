@@ -1,14 +1,7 @@
-from celery import shared_task
-from allianceauth.eveonline.models import EveCharacter
-from .models import BigBrotherConfig, UserStatus
-import logging
+from .models import UserStatus
+
 from .app_settings import (
     resolve_character_name,
-    send_message,
-    get_users,
-    get_user_id,
-    get_character_id,
-    get_pings,
 )
 from aa_bb.checks.awox import  get_awox_kill_links
 from aa_bb.checks.cyno import get_user_cyno_info, get_current_stint_days_in_corp
@@ -21,13 +14,11 @@ from aa_bb.checks.sus_mails import get_user_hostile_mails
 from aa_bb.checks.sus_trans import get_user_hostile_transactions
 from aa_bb.checks.clone_state import determine_character_state
 from aa_bb.checks.corp_changes import time_in_corp
-from django.utils import timezone
-import time
-import traceback
+
 from .tasks_cb import *
 from .tasks_ct import *
 from .tasks_tickets import *
-
+import logging
 logger = logging.getLogger(__name__)
 
 @shared_task
@@ -99,7 +90,7 @@ def BB_run_regular_updates():
                 user_id = get_user_id(char_name)
                 if not user_id:  # defensive: skip orphaned mains lacking a user id
                     continue
-                
+
                 pingroleID = instance.pingroleID
 
                 # eager-load all check data so diffing below is cheap
@@ -150,7 +141,7 @@ def BB_run_regular_updates():
                         "sp_days": sp_days,
                         "char_age": char_age,
                     }
-                
+
                 has_cyno = any(
                     char_dic.get("can_light", False)
                     for char_dic in (cyno_result or {}).values()
@@ -175,7 +166,7 @@ def BB_run_regular_updates():
 
                 def as_dict(x):
                     return x if isinstance(x, dict) else {}  # utility to guard against None/non-dict entries
-                
+
                 if set(state_result) != set(status.clone_status or []):  # clone-state map changed?
                     # capture clone-state transitions (alpha→omega etc.)
                     old_states = status.clone_status or {}
@@ -208,7 +199,7 @@ def BB_run_regular_updates():
                         changes.append(f"##{pinggg} Clone state change detected:{''.join(flagggs)}")
                         status.clone_status = state_result
                         status.save()
-                
+
                 if set(sp_age_ratio_result) != set(status.sp_age_ratio_result or []):  # detect changes in SP-to-age ratios
                         flaggs = []
 
@@ -259,7 +250,7 @@ def BB_run_regular_updates():
                                 try:
                                     user = User.objects.get(id=user_id)
                                     discord_id = get_discord_user_id(user)
-                                    
+
                                     ticket_message = f"<@&{tcfg.Role_ID}>,<@{discord_id}> detection indicates your involvement in an AWOX kill, please explain:\n{link_list}"
                                     send_message(f"ticket for {instance.user} created, reason - AWOX Kill")
                                     run_task_function.apply_async(
@@ -335,7 +326,7 @@ def BB_run_regular_updates():
                             "i_hic":     "Has a Hic",
                             "i_blops":   "Has a Blops",
                             "i_covops":  "Has a covops",
-                            "i_brun":    "Has a blockade Runner",  
+                            "i_brun":    "Has a blockade Runner",
                             "i_sbomb":   "Has a bomber",
                             "i_scru":    "Has a strat crus",
                             "i_expfrig": "Has a exp frig",
@@ -353,7 +344,7 @@ def BB_run_regular_updates():
                             "s_cyno", "s_cov_cyno", "s_recon", "s_hic", "s_blops",
                             "s_covops", "s_brun", "s_sbomb", "s_scru", "s_expfrig",
                             "s_carrier", "s_dread", "s_fax", "s_super", "s_titan", "s_jf", "s_rorq",
-                            "i_recon", "i_hic", "i_blops", "i_covops", "i_brun",  
+                            "i_recon", "i_hic", "i_blops", "i_covops", "i_brun",
                             "i_sbomb", "i_scru", "i_expfrig",
                             "i_carrier", "i_dread", "i_fax", "i_super", "i_titan", "i_jf", "i_rorq",
                         ]
@@ -543,14 +534,14 @@ def BB_run_regular_updates():
                     # 4) Finally, write back the new blob so that next time “old” is fresh
                     status.skills = new_skills
                 # …rest of your saving logic, e.g. status.save(), etc.
-                    
+
 
                 if status.has_hostile_assets != has_hostile_assets or set(hostile_assets_result) != set(status.hostile_assets or []):  # asset list changed?
                     # Compare and find new links
                     old_links = set(status.hostile_assets or [])
                     new_links = set(hostile_assets_result) - old_links
                     link_list = "\n".join(
-                        f"- {system} owned by {hostile_assets_result[system]}" 
+                        f"- {system} owned by {hostile_assets_result[system]}"
                         for system in (set(hostile_assets_result) - set(status.hostile_assets or []))
                     )
                     logger.info(f"{char_name} new assets {link_list}")
@@ -571,7 +562,7 @@ def BB_run_regular_updates():
                     old_links = set(status.hostile_clones or [])
                     new_links = set(hostile_clones_result) - old_links
                     link_list = "\n".join(
-                        f"- {system} owned by {hostile_clones_result[system]}" 
+                        f"- {system} owned by {hostile_clones_result[system]}"
                         for system in (set(hostile_clones_result) - set(status.hostile_clones or []))
                     )
                     logger.info(f"{char_name} new clones: {link_list}")
@@ -768,7 +759,7 @@ def BB_run_regular_updates():
             chunk = tb_str[start:end]
             send_message(f"```{chunk}```")
             start = end
-    
+
     from django_celery_beat.models import PeriodicTask
     task_name = 'BB run regular updates'
     task = PeriodicTask.objects.filter(name=task_name).first()

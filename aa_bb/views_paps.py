@@ -1,15 +1,3 @@
-from django.shortcuts import render, redirect, get_object_or_404
-from django.contrib.auth.decorators import login_required, permission_required
-from django.views.decorators.http import require_POST
-from django.conf import settings
-from django.utils.timezone import now
-from django.db.models import Count
-from django.urls import reverse
-from .models import BigBrotherConfig, PapsConfig
-from .modelss import PapCompliance, TicketToolConfig, LeaveRequest
-from .app_settings import get_user_profiles, get_user_characters, afat_active
-from afat.models import Fat
-from datetime import datetime
 import os
 import matplotlib.pyplot as plt
 import calendar
@@ -17,6 +5,22 @@ import logging
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
+
+from django.shortcuts import render, redirect
+from django.contrib.auth.decorators import login_required, permission_required
+from django.views.decorators.http import require_POST
+from django.conf import settings
+from django.utils.timezone import now
+from django.urls import reverse
+
+from .models import BigBrotherConfig, PapsConfig
+from .modelss import PapCompliance, TicketToolConfig, LeaveRequest
+from .app_settings import get_user_profiles, get_user_characters, afat_active
+
+try:
+    from afat.models import Fat
+except ImportError:
+    logger.error("afat not installed; PAP generation will not work.")
 
 @login_required
 @permission_required("aa_bb.can_generate_paps")
@@ -99,7 +103,7 @@ def index(request):
             # if the FK points to a wrapper that has `.group`, use that; else assume it's auth.Group
             target = getattr(g, "group", g)
             return getattr(target, "name", None)
-        
+
         cfg = PapsConfig.get_solo()
 
         if cfg.capital_groups_get_paps:  # Optional extra PAP points for capital pilots.
@@ -162,7 +166,7 @@ def history(request):
     cfg = BigBrotherConfig.get_solo()
     if not cfg.is_paps_active:  # Respect module toggle.
         return render(request, "paps/disabled.html")
-    
+
     today = now()
     month = int(request.GET.get("month", today.month-1))
     year = int(request.GET.get("year", today.year))
@@ -209,7 +213,7 @@ def generate_pap_chart(request):
         if lr_qs:  # Ignore LoA members still on leave.
             continue
         user_id = profile.user.id
-        corp_raw = int(request.POST.get(f"corp_paps_{user_id}", 0)) * conf.corp_modifier 
+        corp_raw = int(request.POST.get(f"corp_paps_{user_id}", 0)) * conf.corp_modifier
         corp_paps = min(corp_raw, conf.max_corp_paps)  # cap at configured maximum
         alliance_paps = int(request.POST.get(f"alliance_paps_{user_id}", 0)) * conf.alliance_modifier
         coalition_paps = int(request.POST.get(f"coalition_paps_{user_id}", 0)) * conf.coalition_modifier
@@ -260,7 +264,7 @@ def generate_pap_chart(request):
     alliance_m = conf.alliance_modifier
     coalition_m = conf.coalition_modifier
 
-    
+
 
 
     # Bottom: Alliance

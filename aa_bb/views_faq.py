@@ -1,6 +1,7 @@
 import secrets
-
 import requests
+from urllib.parse import quote_plus
+
 from django.apps import apps as django_apps
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required, permission_required
@@ -13,7 +14,6 @@ from django.utils import timezone
 from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
 from django_celery_beat.models import PeriodicTask
-from urllib.parse import quote_plus
 
 from .models import BigBrotherConfig, PapsConfig
 from .modelss import (

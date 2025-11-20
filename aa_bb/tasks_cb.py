@@ -8,31 +8,53 @@ This file contains:
   • LoA status checks and DB cleanup routines.
 """
 
+import time
+import traceback
+import random
+from datetime import timedelta
+import logging
+
+logger = logging.getLogger(__name__)
+
+from django.utils import timezone
 from celery import shared_task
+from django_celery_beat.models import PeriodicTask, CrontabSchedule
+
 from allianceauth.eveonline.models import EveCharacter, EveCorporationInfo
 from allianceauth.authentication.models import UserProfile
-from django_celery_beat.models import PeriodicTask, CrontabSchedule
+
 from .models import (
     BigBrotherConfig, CorpStatus, Messages, OptMessages1, OptMessages2, OptMessages3,
     OptMessages4, OptMessages5
 )
-import logging
+from .models import (
+    ProcessedContract, SusContractNote,
+    ProcessedMail, SusMailNote,
+    ProcessedTransaction, SusTransactionNote,
+)
+
 from .app_settings import send_message, get_pings, resolve_corporation_name, get_users, get_user_id, get_character_id, get_user_profiles
 from aa_bb.checks_cb.hostile_assets import get_corp_hostile_asset_locations
 from aa_bb.checks_cb.sus_contracts import get_corp_hostile_contracts
 from aa_bb.checks_cb.sus_trans import get_corp_hostile_transactions
 from aa_bb.checks.roles_and_tokens import get_user_roles_and_tokens
-from corptools.api.helpers import get_alts_queryset
-from datetime import timedelta, date
-from django.utils import timezone
-import time
-import traceback
-import random
-from . import __version__
+
+try:
+    from corptools.api.helpers import get_alts_queryset
+    from corptools.models import (
+        Contract,
+        MailMessage,
+        CorporateContract,
+        CharacterWalletJournalEntry,
+        CorporationWalletJournalEntry,
+    )
+except ImportError:
+    logger.error("corptools not installed, CB tasks will not be available.")
 from .modelss import PapCompliance, LeaveRequest
 
-logger = logging.getLogger(__name__)
 
+
+from django.db import transaction
 @shared_task
 def CB_run_regular_updates():
     """
@@ -89,18 +111,18 @@ def CB_run_regular_updates():
                 def as_dict(x):
                     """Return dicts for JSON fields while tolerating None/strings."""
                     return x if isinstance(x, dict) else {}
-                
+
                 if not corpstatus.corp_name:  # Resolve names on first run to avoid API hits later.
                     corpstatus.corp_name = resolve_corporation_name(corp_id)
 
                 corp_name = corpstatus.corp_name
-                
+
                 if corpstatus.has_hostile_assets != has_hostile_assets or set(hostile_assets_result) != set(corpstatus.hostile_assets or []):  # hostile asset list changed?
                     # Compare and find new links
                     old_links = set(corpstatus.hostile_assets or [])
                     new_links = set(hostile_assets_result) - old_links
                     link_list = "\n".join(
-                        f"- {system} owned by {hostile_assets_result[system]}" 
+                        f"- {system} owned by {hostile_assets_result[system]}"
                         for system in (set(hostile_assets_result) - set(corpstatus.hostile_assets or []))
                     )
                     logger.info(f"{corp_name} new assets {link_list}")
@@ -224,7 +246,7 @@ def CB_run_regular_updates():
             chunk = tb_str[start:end]
             send_message(f"```{chunk}```")
             start = end
-    
+
     from django_celery_beat.models import PeriodicTask
     task_name = 'CB run regular updates'
     task = PeriodicTask.objects.filter(name=task_name).first()
@@ -680,7 +702,7 @@ def BB_run_regular_loa_updates():
     if not qs_profiles.exists():  # No members matching filters, so nothing to process.
         logger.info("No member mains found.")
         return
-    
+
     flags = []
 
     for profile in qs_profiles:
@@ -795,20 +817,6 @@ def BB_daily_DB_cleanup():
     except Exception:
         pass
 
-
-    from .models import (
-    ProcessedContract, SusContractNote,
-    ProcessedMail, SusMailNote,
-    ProcessedTransaction, SusTransactionNote,
-    )
-    from corptools.models import (
-        Contract,
-        MailMessage,
-        CorporateContract,
-        CharacterWalletJournalEntry,
-        CorporationWalletJournalEntry,
-    )
-    from django.db import transaction
     # -- CONTRACTS --
     # Get all contract_ids that exist in Contract
     existing_CorporateContract_ids = set(
@@ -818,51 +826,51 @@ def BB_daily_DB_cleanup():
         Contract.objects.values_list('contract_id', flat=True)
     )
     existing_contract_ids = existing_CorporateContract_ids | existing_playercontract_ids
-    
+
     # Find ProcessedContract entries not in Contract
     orphaned_processed_contracts = ProcessedContract.objects.exclude(contract_id__in=existing_contract_ids)
     orphaned_contract_ids = list(orphaned_processed_contracts.values_list('contract_id', flat=True))
-    
+
     # Delete orphans in SusContractNote (OneToOneField links to ProcessedContract)
     sus_contracts_to_delete = SusContractNote.objects.filter(contract_id__in=orphaned_contract_ids)
-    
+
     with transaction.atomic():
         count_sus = sus_contracts_to_delete.delete()[0]
         count_proc = orphaned_processed_contracts.delete()[0]
-    
+
     flags.append(f"- Deleted {count_proc} old ProcessedContract and {count_sus} SusContractNote records.")
-    
+
     # -- MAILS --
     existing_mail_ids = set(
         MailMessage.objects.values_list('id_key', flat=True)
     )
-    
+
     orphaned_processed_mails = ProcessedMail.objects.exclude(mail_id__in=existing_mail_ids)
     orphaned_mail_ids = list(orphaned_processed_mails.values_list('mail_id', flat=True))
-    
+
     sus_mails_to_delete = SusMailNote.objects.filter(mail_id__in=orphaned_mail_ids)
-    
+
     with transaction.atomic():
         count_sus = sus_mails_to_delete.delete()[0]
         count_proc = orphaned_processed_mails.delete()[0]
-    
+
     flags.append(f"- Deleted {count_proc} old ProcessedMail and {count_sus} SusMailNote records.")
-    
+
     # -- TRANSACTIONS --
     existing_entry_ids = (
         set(CharacterWalletJournalEntry.objects.values_list('entry_id', flat=True))
         | set(CorporationWalletJournalEntry.objects.values_list('entry_id', flat=True))
     )
-    
+
     orphaned_processed_transactions = ProcessedTransaction.objects.exclude(entry_id__in=existing_entry_ids)
     orphaned_entry_ids = list(orphaned_processed_transactions.values_list('entry_id', flat=True))
-    
+
     sus_transactions_to_delete = SusTransactionNote.objects.filter(transaction_id__in=orphaned_entry_ids)
-    
+
     with transaction.atomic():
         count_sus = sus_transactions_to_delete.delete()[0]
         count_proc = orphaned_processed_transactions.delete()[0]
-    
+
     flags.append(f"- Deleted {count_proc} old ProcessedTransaction and {count_sus} SusTransactionNote records.")
 
     # -- PAP COMPLIANCE: drop entries for non-members --

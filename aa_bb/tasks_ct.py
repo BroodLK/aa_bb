@@ -8,42 +8,47 @@ logging, throttling, and message notifications.
 import datetime
 from dataclasses import dataclass
 from typing import Callable, Iterable, List, Optional, Sequence
-
 from celery import shared_task, chain
 from random import random
+
 from django.utils import timezone
+from celery_once.tasks import AlreadyQueued
+
 from allianceauth.services.hooks import get_extension_logger
 from esi.errors import TokenExpiredError, TokenError, TokenInvalidError
 from esi.models import Token
+
 from .app_settings import send_message
-from corptools.models import EveCharacter
-from celery_once.tasks import AlreadyQueued
-
-from corptools import app_settings
-from corptools.models import CharacterAudit, CorptoolsConfiguration
-
-from corptools.tasks.character import (
-    update_char_assets,
-    update_char_contacts,
-    update_char_notifications,
-    update_char_roles,
-    update_char_titles,
-    update_char_mining_ledger,
-    update_char_wallet,
-    update_char_transactions,
-    update_char_orders,
-    update_char_order_history,
-    update_char_contracts,
-    update_char_skill_list,
-    update_char_skill_queue,
-    update_char_clones,
-    update_char_mail,
-    update_char_loyaltypoints,
-    update_char_industry_jobs, 
-    update_char_location,
-)
 
 logger = get_extension_logger(__name__)
+
+try:
+    from corptools.models import EveCharacter
+    from corptools import app_settings
+    from corptools.models import CharacterAudit, CorptoolsConfiguration
+
+    from corptools.tasks.character import (
+        update_char_assets,
+        update_char_contacts,
+        update_char_notifications,
+        update_char_roles,
+        update_char_titles,
+        update_char_mining_ledger,
+        update_char_wallet,
+        update_char_transactions,
+        update_char_orders,
+        update_char_order_history,
+        update_char_contracts,
+        update_char_skill_list,
+        update_char_skill_queue,
+        update_char_clones,
+        update_char_mail,
+        update_char_loyaltypoints,
+        update_char_industry_jobs,
+        update_char_location,
+    )
+except ImportError:
+    logger.error("Corptools not installed, CT tasks will not be available.")
 
 
 @dataclass(frozen=True)

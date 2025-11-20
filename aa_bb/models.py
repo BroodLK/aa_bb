@@ -1,9 +1,3 @@
-"""
-App Models
-Create your models in here
-"""
-
-# Django
 from django.db import models
 from django.core.exceptions import ValidationError
 from solo.models import SingletonModel
@@ -11,9 +5,18 @@ from django.contrib.auth.models import User
 from django.db.models import JSONField
 from django_celery_beat.models import CrontabSchedule
 from django.utils import timezone
-from allianceauth.authentication.models import State, UserProfile
+
+from allianceauth.authentication.models import State
 from allianceauth.groupmanagement.models import AuthGroup
-from charlink.models import ComplianceFilter
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+try:
+    from charlink.models import ComplianceFilter
+except ImportError:
+    logger.warning("charlink not installed")
 
 
 
@@ -94,7 +97,7 @@ class General(models.Model):
             ("can_access_paps", "Can access PAP Stats"),
             ("can_generate_paps", "Can generate PAP Stats"),
             )
-        
+
 class UserStatus(models.Model):
     """
     Cached snapshot of every per-user signal displayed on BigBrother.
@@ -146,7 +149,7 @@ class UserStatus(models.Model):
     class Meta:
         verbose_name = "User Status"
         verbose_name_plural = "User Statuses"
-        
+
 class CorpStatus(models.Model):
     """
     CorpBrother equivalent of UserStatus.
@@ -239,7 +242,7 @@ class MessageType(models.Model):
 
     def __str__(self):
         return self.name
-    
+
 class PapsConfig(SingletonModel):
     """
     Singleton storing how PAP compliance is calculated.
@@ -255,27 +258,27 @@ class PapsConfig(SingletonModel):
       toggles and per-capital-group bonuses for members flagged as capital, super, or titan pilots.
     """
     required_paps = models.PositiveIntegerField(
-        default=1, 
+        default=1,
         help_text="How many PAPs per month should a user get?"
     )
 
     corp_modifier = models.PositiveIntegerField(
-        default=1, 
+        default=1,
         help_text="How many PAPs is a corp PAP worth?"
     )
 
     max_corp_paps = models.PositiveIntegerField(
-        default=1,  
+        default=1,
         help_text="How many Corp PAPs will count?"
     )
 
     alliance_modifier = models.PositiveIntegerField(
-        default=1,  
+        default=1,
         help_text="How many PAPs is an alliance PAP worth?"
     )
 
     coalition_modifier = models.PositiveIntegerField(
-        default=1,  
+        default=1,
         help_text="How many PAPs is a coalition PAP worth?"
     )
 
@@ -314,7 +317,7 @@ class PapsConfig(SingletonModel):
     )
 
     group_paps_modifier = models.PositiveIntegerField(
-        default=1,  
+        default=1,
         help_text="How many PAPs to add per group"
     )
 
@@ -334,7 +337,7 @@ class PapsConfig(SingletonModel):
     )
 
     cap_group_paps = models.PositiveIntegerField(
-        default=1,  
+        default=1,
         help_text="How many PAPs to add for being in the cap group"
     )
 
@@ -348,7 +351,7 @@ class PapsConfig(SingletonModel):
     )
 
     super_group_paps = models.PositiveIntegerField(
-        default=1,  
+        default=1,
         help_text="How many PAPs to add for being in the super group"
     )
 
@@ -362,7 +365,7 @@ class PapsConfig(SingletonModel):
     )
 
     titan_group_paps = models.PositiveIntegerField(
-        default=1,  
+        default=1,
         help_text="How many PAPs to add for being in the titan group"
     )
 
@@ -393,7 +396,7 @@ class BigBrotherConfig(SingletonModel):
         default=0,
         help_text="Input the role ID you want pinged when people need to investigate"
     )
-    
+
     pingroleID2 = models.CharField(
         max_length=255,
         null=True,
@@ -546,7 +549,7 @@ class BigBrotherConfig(SingletonModel):
     )
 
     dailyschedule = models.ForeignKey(
-        CrontabSchedule, 
+        CrontabSchedule,
         on_delete=models.CASCADE,
         related_name='bigbrother_dailyschedule',
         null=True,
@@ -555,7 +558,7 @@ class BigBrotherConfig(SingletonModel):
     )
 
     optschedule1 = models.ForeignKey(
-        CrontabSchedule, 
+        CrontabSchedule,
         on_delete=models.CASCADE,
         related_name='bigbrother_optschedule1',
         null=True,
@@ -564,7 +567,7 @@ class BigBrotherConfig(SingletonModel):
     )
 
     optschedule2 = models.ForeignKey(
-        CrontabSchedule, 
+        CrontabSchedule,
         on_delete=models.CASCADE,
         related_name='bigbrother_optschedule2',
         null=True,
@@ -573,7 +576,7 @@ class BigBrotherConfig(SingletonModel):
     )
 
     optschedule3 = models.ForeignKey(
-        CrontabSchedule, 
+        CrontabSchedule,
         on_delete=models.CASCADE,
         related_name='bigbrother_optschedule3',
         null=True,
@@ -582,7 +585,7 @@ class BigBrotherConfig(SingletonModel):
     )
 
     optschedule4 = models.ForeignKey(
-        CrontabSchedule, 
+        CrontabSchedule,
         on_delete=models.CASCADE,
         related_name='bigbrother_optschedule4',
         null=True,
@@ -591,7 +594,7 @@ class BigBrotherConfig(SingletonModel):
     )
 
     optschedule5 = models.ForeignKey(
-        CrontabSchedule, 
+        CrontabSchedule,
         on_delete=models.CASCADE,
         related_name='bigbrother_optschedule5',
         null=True,
@@ -676,7 +679,7 @@ class BigBrotherConfig(SingletonModel):
         editable=True,
         help_text="has the PAP stats module been activated/deactivated? (You will need to restart AA for this to take effect)"
     )
-    
+
     is_warmer_active = models.BooleanField(
         default=True,
         editable=True,
@@ -757,7 +760,7 @@ class BigBrotherConfig(SingletonModel):
                 setattr(self, field_name, new_value)
                 changed_fields.append(field_name)
         return changed_fields
-    
+
 class Corporation_names(models.Model):
     """
     Permanent store of corporation names resolved via ESI.
@@ -786,7 +789,7 @@ class Corporation_names(models.Model):
 
     def __str__(self):
         return f"{self.id}: {self.name}"
-    
+
 class Alliance_names(models.Model):
     """
     Permanent store of alliance/faction names resolved via ESI.
@@ -815,7 +818,7 @@ class Alliance_names(models.Model):
 
     def __str__(self):
         return f"{self.id}: {self.name}"
-    
+
 class Character_names(models.Model):
     """
     Permanent store of Character names resolved via ESI.
@@ -844,7 +847,7 @@ class Character_names(models.Model):
 
     def __str__(self):
         return f"{self.id}: {self.name}"
-    
+
 
 class id_types(models.Model):
     """
@@ -878,7 +881,7 @@ class id_types(models.Model):
 
     def __str__(self):
         return f"{self.id}: {self.name}"
-    
+
 
 class ProcessedMail(models.Model):
     """
@@ -988,7 +991,7 @@ class SusContractNote(models.Model):
 
     def __str__(self):
         return f"Contract {self.contract.contract_id} note for user {self.user_id}"
-    
+
 
     from django.db import models
 
@@ -1056,7 +1059,7 @@ class WarmProgress(models.Model):
 
     def __str__(self):
         return f"{self.user_main}: {self.current}/{self.total}"
-    
+
 
 class EntityInfoCache(models.Model):
     """Cache of resolved entity info (name + corp/alliance pointers) per timestamp."""

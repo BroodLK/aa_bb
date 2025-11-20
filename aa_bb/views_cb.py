@@ -1,8 +1,15 @@
 import html
 import logging
+import errno
+import socket
+import traceback
+import json
+import time
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.DEBUG)
 
 from django.contrib.auth.decorators import login_required, permission_required
-from django.contrib import messages
 from django.db import connection
 from django.core.handlers.wsgi import WSGIRequest
 from django.http import (
@@ -10,36 +17,24 @@ from django.http import (
     HttpResponseBadRequest,
     StreamingHttpResponse,
 )
-import errno
-import socket
-import traceback
-from django.shortcuts import render, redirect, get_object_or_404
-from django.views.decorators.http import require_POST
+from django.shortcuts import render
 from django.core.cache import cache
-import time
-from allianceauth.authentication.models import CharacterOwnership
 from django_celery_beat.models import PeriodicTask
-from django.utils.safestring import mark_safe
-import json
-from django.http import HttpResponseForbidden
-from .forms import LeaveRequestForm
-from aa_bb.checks.awox import render_awox_kills_html
-from aa_bb.checks.corp_changes import get_frequent_corp_changes
-from aa_bb.checks.cyno import render_user_cyno_info_html
+from django.utils import timezone
+
+from celery import shared_task
+from celery.exceptions import Ignore
+
+from allianceauth.authentication.models import CharacterOwnership
+
 from aa_bb.checks_cb.hostile_assets import render_assets
-from aa_bb.checks.hostile_clones import render_clones
-from aa_bb.checks.imp_blacklist import generate_blacklist_links
-from aa_bb.checks.lawn_blacklist import get_user_character_names_lawn
 from aa_bb.checks_cb.sus_trans import (
     get_user_transactions,
     is_transaction_hostile,
     gather_user_transactions,
-    render_transactions,
     SUS_TYPES,
 )
 from aa_bb.checks.corp_blacklist import (
-    get_corp_blacklist_html,
-    add_user_characters_to_blacklist,
     check_char_corp_bl,
 )
 from aa_bb.checks_cb.sus_contracts import (
@@ -48,20 +43,14 @@ from aa_bb.checks_cb.sus_contracts import (
     get_cell_style_for_contract_row,
     gather_user_contracts,
 )
-from .app_settings import get_system_owner, aablacklist_active, get_user_characters, get_entity_info, get_main_character_name, get_character_id, send_message, get_pings, resolve_corporation_name
+from .app_settings import get_user_characters, get_entity_info, get_character_id, resolve_corporation_name
 from .models import BigBrotherConfig, WarmProgress
-from .modelss import LeaveRequest
-from corptools.models import Contract  # Ensure this is the correct import for Contract model
-#from datetime import datetime
-from django.utils import timezone
-from celery import shared_task
-from celery.exceptions import Ignore
-from aa_bb.checks.skills import render_user_skills_html
-import sys
+try:
+    from corptools.models import Contract
+except ImportError:
+    logger.error("Corptools not not installed")
 
 
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.DEBUG)
 
 CARD_DEFINITIONS = [
     {"title": 'Assets in hostile space', "key": "sus_asset"},
@@ -443,7 +432,7 @@ def stream_contracts_sse(request: WSGIRequest):
         )
 
     def generator():
-        
+
         try:
             # Initial SSE heartbeat
             yield ": ok\n\n"
@@ -571,7 +560,7 @@ VISIBLE_CONTR = [
 
 def _render_contract_row_html(row: dict) -> str:
     """
-    Render one hostile contract row, applying inline styles 
+    Render one hostile contract row, applying inline styles
     from row['cell_styles'] *or* from any hidden-ID–based flags.
     """
     cells = []

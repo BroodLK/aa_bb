@@ -1,12 +1,21 @@
+import logging
+
+logger = logging.getLogger(__name__)
+
 from django.db import models
 from django.utils import timezone
-from allianceauth.authentication.models import UserProfile
-from charlink.models import ComplianceFilter
-from solo.models import SingletonModel
 from django.contrib.auth.models import User
-from datetime import timedelta
 from django.db.models import JSONField
 
+from allianceauth.authentication.models import UserProfile
+
+try:
+    from charlink.models import ComplianceFilter
+except ImportError:
+    logger.warning("charlink not installed")
+
+from solo.models import SingletonModel
+from datetime import timedelta
 
 class BigBrotherRedditSettings(SingletonModel):
     """
@@ -196,12 +205,12 @@ class TicketToolConfig(SingletonModel):
     ticket_counter = models.PositiveIntegerField(default=0, help_text="Rolling counter for ticket channel names", editable=False)
 
     max_months_without_pap_compliance = models.PositiveIntegerField(
-        default=1,  
+        default=1,
         help_text="How many months can a person be in corp w/o meeting the pap requirements? (this is a maximum points a user can get, 1 compliant month = plus 1 point, 1 non compliant = minus 1 point. If user has 0 points they get a ticket)"
     )
 
     starting_pap_compliance = models.PositiveIntegerField(
-        default=1,  
+        default=1,
         help_text="How many buffer months does a new user get? (starter value of the above)"
     )
 
@@ -224,12 +233,12 @@ class TicketToolConfig(SingletonModel):
     )
 
     corp_check = models.PositiveIntegerField(
-        default=30, 
+        default=30,
         help_text="How many days can a user be non compliant on Corp Auth before he should get kicked?"
     )
 
     corp_check_frequency = models.PositiveIntegerField(
-        default=1, 
+        default=1,
         help_text="How often should a user be reminded (in days)"
     )
 
@@ -254,12 +263,12 @@ class TicketToolConfig(SingletonModel):
     )
 
     paps_check = models.PositiveIntegerField(
-        default=45, 
+        default=45,
         help_text="How many days can a user not meet the PAP requirements before he should get kicked?"
     )
 
     paps_check_frequency = models.PositiveIntegerField(
-        default=1, 
+        default=1,
         help_text="How often should a user be reminded (in days)"
     )
 
@@ -284,17 +293,17 @@ class TicketToolConfig(SingletonModel):
     )
 
     Max_Afk_Days = models.PositiveIntegerField(
-        default=7, 
+        default=7,
         help_text="How many days can a user not login to game before he should get a ticket?"
     )
 
     afk_check = models.PositiveIntegerField(
-        default=7, 
+        default=7,
         help_text="How many days can a user not login to game after getting a ticket before he should get a ticket?"
     )
 
     afk_check_frequency = models.PositiveIntegerField(
-        default=1, 
+        default=1,
         help_text="How often should a user be reminded (in days)"
     )
 
@@ -319,12 +328,12 @@ class TicketToolConfig(SingletonModel):
     )
 
     discord_check = models.PositiveIntegerField(
-        default=2, 
+        default=2,
         help_text="How many days can a user not be on corp discord before he should get kicked?"
     )
 
     discord_check_frequency = models.PositiveIntegerField(
-        default=1, 
+        default=1,
         help_text="How often should a user be reminded (in days)"
     )
 
@@ -343,7 +352,7 @@ class TicketToolConfig(SingletonModel):
     )
 
     Category_ID = models.PositiveBigIntegerField(
-        default=0, 
+        default=0,
         null=True,
         blank=True,
         help_text="Category ID to create the tickets in"
@@ -355,7 +364,7 @@ class TicketToolConfig(SingletonModel):
     )
 
     Role_ID = models.PositiveBigIntegerField(
-        default=0, 
+        default=0,
         null=True,
         blank=True,
         help_text="Role ID to get pinged alongside the non compliant user"
@@ -475,7 +484,7 @@ class LeaveRequest(models.Model):
 
     def __str__(self):
         return f"{self.user.username}: {self.start_date} → {self.end_date} ({self.status})"
-    
+
 
 class CorporationInfoCache(models.Model):
     """
@@ -502,7 +511,7 @@ class CorporationInfoCache(models.Model):
     def is_fresh(self):
         """Check if cache entry is still valid (24h TTL)."""
         return timezone.now() - self.updated < timedelta(hours=24)
-    
+
 
 class AllianceHistoryCache(models.Model):
     """
@@ -527,7 +536,7 @@ class AllianceHistoryCache(models.Model):
     def is_fresh(self):
         """Check if data is still within TTL."""
         return timezone.now() - self.updated < timedelta(hours=24)
-    
+
 
 class SovereigntyMapCache(models.Model):
     """Single-row cache storing the ESI sovereignty map JSON."""
@@ -541,7 +550,7 @@ class SovereigntyMapCache(models.Model):
     @property
     def is_fresh(self):
         return timezone.now() - self.updated < timedelta(hours=24)
-    
+
 class CharacterAccountState(models.Model):
     """Persistent record of whether a character is Alpha, Omega, or Unknown."""
     ALPHA = "alpha"
@@ -560,7 +569,7 @@ class CharacterAccountState(models.Model):
 
     def __str__(self):
         return f"{self.char_id} - {self.state}"
-    
+
 
 class ComplianceTicket(models.Model):
     """

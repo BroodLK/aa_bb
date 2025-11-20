@@ -4,7 +4,6 @@ import time
 import json
 
 from django.contrib.auth.decorators import login_required, permission_required
-from django.contrib import messages
 from django.db import connection
 from django.core.handlers.wsgi import WSGIRequest
 from django.http import (
@@ -19,9 +18,16 @@ from django.core.cache import cache
 from django_celery_beat.models import PeriodicTask
 from django.utils import timezone
 
+from celery import shared_task
+from celery.exceptions import Ignore
+
 from allianceauth.authentication.models import UserProfile, CharacterOwnership
 
 from .forms import LeaveRequestForm
+from .app_settings import get_user_characters, get_entity_info, get_main_character_name, get_character_id, send_message, get_pings
+from .models import BigBrotherConfig, WarmProgress
+from .modelss import LeaveRequest
+
 from aa_bb.checks.awox import render_awox_kills_html
 from aa_bb.checks.corp_changes import get_frequent_corp_changes
 from aa_bb.checks.cyno import render_user_cyno_info_html
@@ -31,7 +37,6 @@ from aa_bb.checks.imp_blacklist import generate_blacklist_links
 from aa_bb.checks.lawn_blacklist import get_user_character_names_lawn
 from aa_bb.checks.sus_contacts import render_contacts
 from aa_bb.checks.sus_mails import (
-    get_user_mails,
     is_mail_row_hostile,
     get_cell_style_for_mail_cell,
     gather_user_mails,
@@ -57,18 +62,15 @@ from aa_bb.checks.sus_contracts import (
 )
 from aa_bb.checks.roles_and_tokens import render_user_roles_tokens_html
 from aa_bb.checks.clone_state import render_character_states_html
-from .app_settings import get_user_characters, get_entity_info, get_main_character_name, get_character_id, send_message, get_pings
-from .models import BigBrotherConfig, WarmProgress
-from .modelss import LeaveRequest
-from corptools.models import Contract  # Ensure this is the correct import for Contract model
-#from datetime import datetime
-from django.utils import timezone
-from celery import shared_task
-from celery.exceptions import Ignore
 from aa_bb.checks.skills import render_user_skills_html
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
+
+try:
+    from corptools.models import Contract
+except ImportError:
+    logger.error("Corptools not not installed")
 
 ALLOWED_LAWN_ALLIANCE_ID = 150097440
 ALLOWED_IMP_ALLIANCE_IDS = {
@@ -561,7 +563,7 @@ VISIBLE_CONTR = [
 
 def _render_contract_row_html(row: dict) -> str:
     """
-    Render one hostile contract row, applying inline styles 
+    Render one hostile contract row, applying inline styles
     from row['cell_styles'] *or* from any hidden-ID–based flags.
     """
     cells = []

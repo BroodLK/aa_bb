@@ -1,25 +1,45 @@
 """Celery tasks and helpers that manage compliance tickets and reminders."""
 
 import logging
+logger = logging.getLogger(__name__)
+
 from typing import Optional
 
-from celery import shared_task
 from django.utils import timezone
 from django.contrib.auth import get_user_model
+
+from celery import shared_task
+
 from allianceauth.authentication.models import UserProfile
 from allianceauth.eveonline.models import EveCharacter
 from allianceauth.services.modules.discord.models import DiscordUser
-from aadiscordbot.tasks import run_task_function
-from aadiscordbot.utils.auth import get_discord_user_id
-from aadiscordbot.cogs.utils.exceptions import NotAuthenticated
-from aadiscordbot.app_settings import get_admins
-from corptools.api.helpers import get_alts_queryset
+
+try:
+    from aadiscordbot.tasks import run_task_function
+    from aadiscordbot.utils.auth import get_discord_user_id
+    from aadiscordbot.cogs.utils.exceptions import NotAuthenticated
+    from aadiscordbot.app_settings import get_admins
+except ImportError:
+    logger.error("aadiscordbot not installed; compliance checks will not work.")
+    run_task_function = None
+    get_discord_user_id = None
+
+    class NotAuthenticated(Exception):
+        pass
+    get_admins = None
+
+try:
+    from corptools.api.helpers import get_alts_queryset
+except ImportError:
+    logger.error("corptools not installed; compliance checks will not work.")
+
+    def get_alts_queryset(*args, **kwargs):
+        return []
 
 from .models import BigBrotherConfig
 from .modelss import TicketToolConfig, PapCompliance, LeaveRequest, ComplianceTicket
 from .app_settings import send_message, get_user_profiles, get_character_id
 
-logger = logging.getLogger(__name__)
 User = get_user_model()
 
 

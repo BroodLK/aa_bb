@@ -10,8 +10,6 @@ from django.dispatch import receiver
 from django.db.models.signals import post_save, pre_delete
 
 from allianceauth.authentication.models import CharacterOwnership
-from aadiscordbot.tasks import run_task_function
-from aadiscordbot.utils.auth import get_discord_user_id
 
 from .models import BigBrotherConfig
 from .tasks import BB_register_message_tasks
@@ -22,10 +20,15 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+try:
+    from aadiscordbot.tasks import run_task_function
+    from aadiscordbot.utils.auth import get_discord_user_id
+except ImportError:
+    logger.error("aadiscordbot not installed, signaling won't work.")
 
 @receiver(post_save, sender=BigBrotherConfig)
 def trigger_task_sync(sender, instance, **kwargs):
-    """When the config changes make sure Celery schedules match the DB."""
+    """When the config changes, make sure Celery schedules match the DB."""
     BB_register_message_tasks.delay()
 
 
