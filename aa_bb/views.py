@@ -98,7 +98,7 @@ ALLOWED_COALITION_ALLIANCE_IDS = get_allowed_coalition_alliance_ids()
 CARD_DEFINITIONS = [
     {"title": 'Add User to Blacklist', "key": "corp_bl"},
     {"title": 'Audit Compliance', "key": "compliance"},
-    {"title": 'Blacklist', "key": "coalition_bl"},
+    # {"title": 'Blacklist', "key": "coalition_bl"},
     {"title": 'Blacklist', "key": "alliance_bl"},
     {"title": 'Player Corp History', "key": "freq_corp"},
     {"title": 'AWOX Kills', "key": "awox"},
@@ -924,6 +924,7 @@ def get_card_data(request, target_user_id: int, key: str):
                 status = False
         except ImportError:
             content = ('blacklist is not installed')
+            status  = True
 
     elif key == "corp_bl":  # Inline corp blacklist check (with add links).
         issuer_id = request.user.id

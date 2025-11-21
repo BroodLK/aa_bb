@@ -288,7 +288,8 @@ def hourly_compliance_check():
             kwargs={
                 "task_args": [ticket.discord_channel_id, ticket.discord_user_id, msg],
                 "task_kwargs": {}
-            }
+            },
+            queue='aadiscordbot'
         )
 
         # Mark today as reminded so the system does not ping again today
@@ -302,7 +303,8 @@ def hourly_compliance_check():
             kwargs={
                 "task_args": [],
                 "task_kwargs": {}
-            }
+            },
+            queue='aadiscordbot'
         )
     except Exception:
         # Non-fatal if scheduling fails
@@ -393,16 +395,20 @@ def ensure_ticket(user, reason):
             kwargs={
                 "task_args": [user.id, discord_id, reason, ticket_message],
                 "task_kwargs": {}
-            }
+            },
+            queue='aadiscordbot'
         )
 
 
 def close_ticket(ticket):
     """Close the Discord compliance ticket and delete it locally."""
-    run_task_function.delay(
-        "aa_bb.tasks_bot.close_ticket_channel",
-        task_args=[ticket.discord_channel_id],
-        task_kwargs={}
+    run_task_function.apply_async(
+        args=["aa_bb.tasks_bot.close_ticket_channel"],
+        kwargs={
+            "task_args": [ticket.discord_channel_id],
+            "task_kwargs": {}
+        },
+        queue='aadiscordbot'
     )
     ticket.delete()
 

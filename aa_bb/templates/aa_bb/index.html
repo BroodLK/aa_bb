@@ -387,9 +387,9 @@ async function loadSuspiciousTransactions(option, idx) {
 function updateCardStatus(idx, isClean) {
   const cardEl    = document.getElementById(`card${idx}`);
   if (isClean) {
-    cardEl.classList.remove('border-top-0 border-bottom-0 border-danger');
+    cardEl.classList.remove('border-top-0', 'border-bottom-0', 'border-danger');
   } else {
-    cardEl.classList.add('border-top-0 border-bottom-0 border-danger');
+    cardEl.classList.add('border-top-0', 'border-bottom-0', 'border-danger');
   }
   const header    = cardEl.querySelector('.card-header');
   header.querySelectorAll('span.text-success, span.text-danger')
