@@ -163,7 +163,7 @@ def render_user_roles_tokens_html(user_id: int) -> str:
             val = info.get(key, False)
             # highlight True roles in red if corporation_token is False
             if val:  # Highlight key roles even if tokens missing.
-                val_txt = mark_safe('<span class="text-warning">True</span>')
+                val_txt = mark_safe('<span class="text-success">True</span>')
                 has_roles = True
             else:
                 val_txt = "False"
@@ -182,7 +182,7 @@ def render_user_roles_tokens_html(user_id: int) -> str:
                 val_txt = mark_safe('<span class="text-danger">False</span> has no audit record.')
             elif key == "corporation_token" and not val:  # No corp token; severity depends on corp roles.
                 if has_roles:  # Elevated corp roles without corp token is especially risky.
-                    val_txt = mark_safe('<span class="text-danger">False</span> has elevated roles.')
+                    val_txt = mark_safe('<span class="text-danger">False</span> has elevated roles. A corporation token is expected.')
                 else:
                     val_txt = mark_safe('False')
             else:

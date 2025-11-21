@@ -10,6 +10,7 @@ from django.contrib.auth.models import User
 from allianceauth.authentication.models import CharacterOwnership
 
 from django.utils.html import format_html
+from django.utils.safestring import mark_safe
 from typing import List, Optional, Dict
 
 from ..app_settings import get_system_owner
@@ -19,9 +20,9 @@ import logging
 logger = logging.getLogger(__name__)
 
 try:
-    from corptools.models import CharacterAudit, Clone, JumpClone
+    from corptools.models import CharacterAudit, Clone, JumpClone, Implant
 except ImportError:
-    logger.error("Corptools not installed, corp checks will not work.")
+    logger.error("Corptools not installed, clone checks will not work.")
 
 def get_clones(user_id: int) -> Dict[int, Optional[str]]:
     """
@@ -122,8 +123,68 @@ def render_clones(user_id: int) -> Optional[str]:
     Returns an HTML table of clones, coloring hostile ones red,
     and labeling & highlighting Unresolvable owners appropriately.
     """
-    systems = get_clones(user_id)  # returns Dict[int, Optional[str]]
-    if not systems:  # No clones to report.
+    try:
+        user = User.objects.get(pk=user_id)
+    except User.DoesNotExist:
+        return None
+
+    clones_list = []
+
+    for co in CharacterOwnership.objects.filter(user=user).select_related('character'):
+        try:
+            char_audit = CharacterAudit.objects.get(character=co.character)
+        except CharacterAudit.DoesNotExist:
+            continue
+
+        # Home clone
+        try:
+            home_clone = Clone.objects.select_related('location_name__system').get(character=char_audit)
+            loc = home_clone.location_name
+            system_obj = getattr(loc, 'system', None)
+            if system_obj:
+                sys_name = system_obj.name
+                sys_id = system_obj.pk
+            else:
+                sys_name = None
+                sys_id = home_clone.location_id
+
+            clones_list.append({
+                'character': co.character.character_name,
+                'id': sys_id,
+                'name': sys_name,
+                'jump_clone': "Home Station",
+                'implants': [],  # Home clone implants not available via JumpClone Implant model
+            })
+        except Clone.DoesNotExist:
+            pass
+
+        # Jump clones
+        jump_clones = JumpClone.objects.select_related('location_name__system')\
+            .prefetch_related('implant_set__type_name')\
+            .filter(character=char_audit)
+
+        for jc in jump_clones:
+            loc = jc.location_name
+            jump_name = jc.name
+            system_obj = getattr(loc, 'system', None)
+            if system_obj:
+                sys_name = system_obj.name
+                sys_id = system_obj.pk
+            else:
+                sys_name = None
+                sys_id = jc.location_id
+
+            implants = [i.type_name.name for i in jc.implant_set.all() if i.type_name]
+
+            clones_list.append({
+                'character': co.character.character_name,
+                'id': sys_id,
+                'name': sys_name,
+                'jump_clone': jump_name,
+                'implants': implants,
+            })
+
+    if not clones_list:  # No clones to report.
         return None
 
     hostile_str = BigBrotherConfig.get_solo().hostile_alliances or ""
@@ -131,11 +192,16 @@ def render_clones(user_id: int) -> Optional[str]:
 
     html = [
         '<table class="table table-striped table-hover stats">',
-        '<thead><tr><th>System</th><th>Owner</th></tr></thead><tbody>'
+        '<thead><tr><th>Character</th><th>System</th><th>Clone Status</th><th>Implants</th><th>Owner</th></tr></thead><tbody>'
     ]
 
-    # systems: key = system_id, value = system_name (or None)
-    for system_id, system_name in systems.items():
+    # Sort by character then system name
+    clones_list.sort(key=lambda x: (x['character'], (x['name'] or "").lower()))
+
+    for clone in clones_list:
+        system_id = clone['id']
+        system_name = clone['name']
+
         # build the dict get_system_owner expects
         owner_info = get_system_owner({
             "id":   system_id,
@@ -153,16 +219,19 @@ def render_clones(user_id: int) -> Optional[str]:
             unresolvable = True
 
         if hostile:  # Highlight hostile entries in red.
-            row_tpl = '<tr><td>{}</td><td class="text-danger">{}</td></tr>'
+            row_tpl = '<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td class="text-danger">{}</td></tr>'
         elif unresolvable:  # Use warning styling for unknown owners.
-            row_tpl = '<tr><td>{}</td><td class="text-warning"><em>{}</em></td></tr>'
+            row_tpl = '<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td class="text-warning"><em>{}</em></td></tr>'
         else:  # Neutral owners get normal formatting.
-            row_tpl = '<tr><td>{}</td><td>{}</td></tr>'
+            row_tpl = '<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>'
 
         html.append(
             format_html(
                 row_tpl,
+                clone['character'],
                 system_name or f"ID {system_id}",
+                clone['jump_clone'] or "",
+                mark_safe("<br>".join(clone['implants'])),
                 oname
             )
         )
