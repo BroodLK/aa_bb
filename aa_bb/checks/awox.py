@@ -10,6 +10,7 @@ import requests
 import time
 import logging
 from django.utils.html import format_html
+from django.utils.safestring import mark_safe
 from allianceauth.authentication.models import CharacterOwnership
 from ..modelss import AwoxKillsCache
 from django.utils import timezone
@@ -22,6 +23,7 @@ from ..app_settings import (
     get_contact_email,
     get_owner_name,
     send_message,
+    resolve_alliance_name,
 )
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -34,6 +36,16 @@ HEADERS = {
     "Accept-Encoding": "gzip",
     "Accept": "application/json",
 }
+
+def _get_corp_name(corp_id):
+    if not corp_id:
+        return "None"
+    try:
+        operation = esi.client.Corporation.GetCorporationsCorporationId(corporation_id=corp_id)
+        result, _ = call_result(operation)
+        return result.get("name", f"Unknown ({corp_id})")
+    except Exception:
+        return f"Unknown ({corp_id})"
 
 # Limit zKill "down" notifications to once every 2 hours
 _last_zkill_down_notice_monotonic = 0.0
@@ -86,7 +98,6 @@ def fetch_awox_kills(user_id, delay=0.2):
     char_ids = [c.character.character_id for c in characters]
     char_id_map = {c.character.character_id: c.character.character_name for c in characters}
 
-    #logger.debug("Fetching AWOX kills for user {}: {}".format(user_id, char_id_map))
 
     kills_by_id = {}
 
@@ -162,21 +173,43 @@ def fetch_awox_kills(user_id, delay=0.2):
                 continue
 
             attackers = full_kill.get("attackers", [])
-            victim_id = full_kill.get("victim", {}).get("character_id")
+            victim = full_kill.get("victim", {})
+            victim_id = victim.get("character_id")
 
             attacker_names = set()
+            attacker_affiliations = []
+
             for attacker in attackers:
                 a_id = attacker.get("character_id")
                 if a_id in char_ids and a_id != victim_id:  # Friendly fire only counts when attacker differs from victim.
                     attacker_names.add(char_id_map.get(a_id))
+                    attacker_affiliations.append({
+                        "corp_id": attacker.get("corporation_id"),
+                        "alliance_id": attacker.get("alliance_id")
+                    })
 
             if not attacker_names:  # No awox behaviour detected for this killmail.
                 continue
 
+            # Resolve names
+            att_info = attacker_affiliations[0]
+            att_corp = _get_corp_name(att_info["corp_id"])
+            att_alli = resolve_alliance_name(att_info["alliance_id"]) if att_info["alliance_id"] else None
+
+            vic_corp_id = victim.get("corporation_id")
+            vic_alli_id = victim.get("alliance_id")
+            vic_corp = _get_corp_name(vic_corp_id)
+            vic_alli = resolve_alliance_name(vic_alli_id) if vic_alli_id else None
+
             kills_by_id[kill_id] = {
                 "value": int(value),
                 "link": f"https://zkillboard.com/kill/{kill_id}/",
-                "chars": attacker_names
+                "chars": attacker_names,
+                "att_corp": att_corp,
+                "att_alli": att_alli,
+                "vic_corp": vic_corp,
+                "vic_alli": vic_alli,
+                "date": full_kill.get("killmail_time"),
             }
 
     data_list = list(kills_by_id.values()) if kills_by_id else []
@@ -202,15 +235,29 @@ def render_awox_kills_html(userID):
         return None
 
     html = '<table class="table table-striped table-hover stats">'
-    html += '<thead><tr><th>Character(s)</th><th>Value</th><th>Link</th></tr></thead><tbody>'
+    html += '<thead><tr><th>Date</th><th>Character(s)</th><th>Killing</th><th>Dying</th><th>Value</th><th>Link</th></tr></thead><tbody>'
 
     for kill in kills:
         chars = ", ".join(sorted(kill.get("chars", [])))
         value = "{:,}".format(kill.get("value", 0))
         link = kill.get("link", "#")
 
-        row_html = '<tr><td>{}</td><td>{} ISK</td><td><a href="{}" target="_blank">View</a></td></tr>'
-        html += format_html(row_html, chars, value, link)
+        date_val = kill.get("date")
+        if hasattr(date_val, "strftime"):
+            date_str = date_val.strftime("%Y-%m-%d %H:%M")
+        else:
+            date_str = str(date_val).replace("T", " ").replace("Z", "")
+
+        att_html = kill.get("att_corp", "")
+        if kill.get("att_alli"):
+            att_html += f"<br><small>({kill.get('att_alli')})</small>"
+
+        vic_html = kill.get("vic_corp", "")
+        if kill.get("vic_alli"):
+            vic_html += f"<br><small>({kill.get('vic_alli')})</small>"
+
+        row_html = '<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{} ISK</td><td><a href="{}" target="_blank">View</a></td></tr>'
+        html += format_html(row_html, date_str, chars, mark_safe(att_html), mark_safe(vic_html), value, link)
 
     html += '</tbody></table>'
     return html
