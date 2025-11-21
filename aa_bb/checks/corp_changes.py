@@ -107,9 +107,9 @@ def get_frequent_corp_changes(user_id):
             membership_range = f"{start.date()} - {end.date()}"
 
             # Corp cell with external site favicons (fetched live)
-            corp_color = 'red' if (hostile_corps and corp_id in hostile_corps) else 'inherit'  # Highlight hostile corps.
+            corp_color = ' class="text-danger' if (hostile_corps and corp_id in hostile_corps) else ''  # Highlight hostile corps.
             corp_cell = (
-                f'<span style="color:{corp_color};">{corp_name}</span>'
+                f'<span{corp_color}>{corp_name}</span>'
                 f'<a href="https://zkillboard.com/corporation/{corp_id}/" target="_blank">'
                 f'<img src="{ZKILL_ICON}" width="16" height="16" style="margin-left:4px;vertical-align:middle;"/></a> '
                 f'<a href="https://evewho.com/corporation/{corp_id}" target="_blank">'
@@ -133,8 +133,8 @@ def get_frequent_corp_changes(user_id):
                     period = f"{seg_start.date()} - {seg_end.date()}"
 
                     if aid:  # Only render alliance rows when the corp was in an alliance.
-                        alliance_color = 'red' if (hostile_alliances and aid in hostile_alliances) else 'inherit'  # Flag hostile alliances.
-                        name_cell = f'<span style="color:{alliance_color};">{aname}</span>'
+                        alliance_color = ' class="text-danger"' if (hostile_alliances and aid in hostile_alliances) else ''  # Flag hostile alliances.
+                        name_cell = f'<span{alliance_color}>{aname}</span>'
                         icons = (
                             f'<a href="https://zkillboard.com/alliance/{aid}/" target="_blank">'
                             f'<img src="{ZKILL_ICON}" width="16" height="16" style="margin-left:4px;vertical-align:middle;"/></a> '
@@ -154,7 +154,7 @@ def get_frequent_corp_changes(user_id):
                 periods_html = [membership_range]
 
             # Duration cell coloring only
-            dur_color = 'red' if total_days < 10 else ('orange' if total_days < 30 else 'inherit')  # Quick visual for recent corps.
+            dur_color = ' class="text-danger"' if total_days < 10 else (' class="text-warning"' if total_days < 30 else '')  # Quick visual for recent corps.
 
             rows.append({
                 'corp_cell': corp_cell,
@@ -175,7 +175,7 @@ def get_frequent_corp_changes(user_id):
                 f'<td>{r["membership_range"]}</td>'
                 f'<td>{r["alliances_html"]}</td>'
                 f'<td>{r["periods_html"]}</td>'
-                f'<td style="color:{r["dur_color"]};">{r["total_days"]} days</td>'
+                f'<td{r["dur_color"]}>{r["total_days"]} days</td>'
                 '</tr>'
             )
             html += format_html(row_html)
