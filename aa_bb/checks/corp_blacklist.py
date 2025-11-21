@@ -92,8 +92,8 @@ def get_corp_blacklist_html(
             f"  <input type='hidden' name='issuer_user_id' value='{issuer_user_id}'/>",
             f"  <input type='hidden' name='target_user_id' value='{target_user_id}'/>",
             "  <label for='reason'>Reason (max 4000 chars):</label><br/>",
-            "  <textarea id='reason' name='reason' maxlength='4000' rows='4' cols='50'></textarea><br/>",
-            "  <button type='submit'>Add to Blacklist</button>",
+            "  <textarea id='reason' name='reason' maxlength='4000' rows='4' cols='50' class='form-control'></textarea><br/>",
+            "  <button type='submit' class='btn btn-secondary'>Add to Blacklist</button>",
             "</form>",
         ]
 

@@ -3,6 +3,7 @@ import logging
 import time
 import json
 
+from django.conf import settings
 from django.contrib.auth.decorators import login_required, permission_required
 from django.db import connection
 from django.core.handlers.wsgi import WSGIRequest
@@ -72,27 +73,33 @@ try:
 except ImportError:
     logger.error("Corptools not not installed")
 
-ALLOWED_ALLIANCE_ID = 150097440
-ALLOWED_COALITION_ALLIANCE_IDS = {
-    99003214,
-    99009163,
-    99012042,
-    150097440,
-    1354830081,
-    131511956,
-    99003995,
-    99010877,
-    99009331,
-    99001969,
-    99011162,
-    99011223,
-}
+
+def get_allowed_alliance_id():
+    cfg = BigBrotherConfig.get_solo()
+    if not cfg.member_alliances:
+        return None
+    return int(cfg.member_alliances.split(",")[0].strip())
+
+
+def get_allowed_coalition_alliance_ids():
+    cfg = BigBrotherConfig.get_solo()
+    if not cfg.whitelist_alliances:
+        return set()
+
+    return {
+        int(a.strip())
+        for a in cfg.whitelist_alliances.split(",")
+        if a.strip().isdigit()
+    }
+
+ALLOWED_ALLIANCE_ID = get_allowed_alliance_id()
+ALLOWED_COALITION_ALLIANCE_IDS = get_allowed_coalition_alliance_ids()
 
 CARD_DEFINITIONS = [
-    {"title": 'Compliance', "key": "compliance"},
-    {"title": 'Coalition Blacklist', "key": "coalition_bl"},
-    {"title": '<span style=\"color: Orange;\"><b>WiP </b></span>Alliance Blacklist', "key": "alliance_bl"},
-    {"title": 'Corp Blacklist', "key": "corp_bl"},
+    {"title": 'Add User to Blacklist', "key": "corp_bl"},
+    {"title": 'Audit Compliance', "key": "compliance"},
+    {"title": 'Blacklist', "key": "coalition_bl"},
+    {"title": 'Blacklist', "key": "alliance_bl"},
     {"title": 'Player Corp History', "key": "freq_corp"},
     {"title": 'AWOX Kills', "key": "awox"},
     {"title": 'Clone States', "key": "clone_states"},
@@ -869,7 +876,7 @@ def get_card_data(request, target_user_id: int, key: str):
 
     elif key == "freq_corp":  # Show frequent corporation changes timeline.
         content = get_frequent_corp_changes(target_user_id)
-        status  = "red" not in content
+        status  = "danger" not in content
 
     elif key == "sus_clones":  # Flag clones located in hostile space.
         content = render_clones(target_user_id)
@@ -877,7 +884,7 @@ def get_card_data(request, target_user_id: int, key: str):
 
     elif key == "sus_asset":  # Summarize assets currently stranded in hostile systems.
         content = render_assets(target_user_id)
-        status  = not (content and "red" in content)
+        status  = not (content and "danger" in content)
 
     elif key == "coalition_bl":
         links   = generate_blacklist_links(target_user_id)
@@ -885,25 +892,51 @@ def get_card_data(request, target_user_id: int, key: str):
         status  = False
 
     elif key == "alliance_bl":
-        names   = get_user_character_names_alliance(target_user_id)
-        content = (
-            "Go <a href='https://auth.lawnalliance.space/blacklist/blacklist/'>"
-            "here</a> and check those names:<br>" + names
-        )
-        status  = False
+        from django.contrib.auth.models import User
+        try:
+            from blacklist.models import BlacklistFilter
+
+            url = getattr(settings, "SITE_URL", "").rstrip("/")
+
+            # Use the Smart Filter to see if this user hits the blacklist
+            bf = BlacklistFilter()
+            results = bf.audit_filter(User.objects.filter(pk=target_user_id))
+            data = results.get(target_user_id, {"message": "", "check": True})
+
+            names = data.get("message", "")
+            is_clean = data.get("check", True)
+
+            if is_clean:
+                # No blacklisted hits for this user
+                content = (
+                    "No blacklisted characters found for this user."
+                )
+                status = True
+            else:
+                # User has blacklist hits; show them and link to the blacklist app
+                names_html = names.replace(",", "<br>")
+                content = (
+                    "The following characters (or their corps/alliances) are on the "
+                    "blacklist:<br><br>"
+                    f"{names_html}<br><br>"
+                    f"Go <a href='{url}/blacklist/blacklist/'>here</a> for full details."
+                )
+                status = False
+        except ImportError:
+            content = ('blacklist is not installed')
 
     elif key == "corp_bl":  # Inline corp blacklist check (with add links).
         issuer_id = request.user.id
         content   = get_corp_blacklist_html(request, issuer_id, target_user_id)
-        status    = not (content and "🚩" in content)
+        status    = not (content and "danger" in content)
 
     elif key == "sus_conta":  # Suspicious contact list card.
         content = render_contacts(target_user_id)
-        status  = not (content and "red" in content)
+        status  = not (content and "danger" in content)
 
     elif key == "sus_mail":  # Suspicious mail preview card.
         content = render_mails(target_user_id)
-        status  = not (content and "red" in content)
+        status  = not (content and "danger" in content)
 
     elif key == "sus_tra":  # Suspicious transaction summary card.
         content = render_transactions(target_user_id)
@@ -911,19 +944,19 @@ def get_card_data(request, target_user_id: int, key: str):
 
     elif key == "cyno":  # Cyno readiness / history panel.
         content = render_user_cyno_info_html(target_user_id)
-        status  = not (content and "red" in content)
+        status  = not (content and "danger" in content)
 
     elif key == "skills":  # Training gaps summary.
         content = render_user_skills_html(target_user_id)
-        status  = not (content and "red" in content)
+        status  = not (content and "danger" in content)
 
     elif key == "compliance":  # Role/token compliance overview.
         content = render_user_roles_tokens_html(target_user_id)
-        status  = not (content and "red" in content)
+        status  = not (content and "danger" in content)
 
     elif key == "clone_states":  # Clone state availability (alpha/omega).
         content = render_character_states_html(target_user_id)
-        status  = not (content and "red" in content)
+        status  = not (content and "danger" in content)
 
     else:
         content = "WiP"

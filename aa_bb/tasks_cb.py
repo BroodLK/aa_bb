@@ -364,8 +364,12 @@ import requests
 
 def get_corp_character_names(corp_id: int) -> str:
     """Return the full list of member names for `corp_id` via EveWho."""
+    time.sleep(3.5)
     url = f"https://evewho.com/api/corplist/{corp_id}"
-    resp = requests.get(url)
+    headers = {
+        "User-Agent": "AllianceAuth-CorpBrother"
+    }
+    resp = requests.get(url, headers=headers)
     resp.raise_for_status()
     data = resp.json()
 
@@ -373,8 +377,12 @@ def get_corp_character_names(corp_id: int) -> str:
 
 def get_ali_character_names(ali_id: int) -> str:
     """Return the full list of member names for `ali_id` via EveWho."""
+    time.sleep(3.5)
     url = f"https://evewho.com/api/allilist/{ali_id}"
-    resp = requests.get(url)
+    headers = {
+        "User-Agent": "AllianceAuth-CorpBrother"
+    }
+    resp = requests.get(url, headers=headers)
     resp.raise_for_status()
     data = resp.json()
 

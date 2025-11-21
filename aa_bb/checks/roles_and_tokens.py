@@ -142,10 +142,11 @@ def render_user_roles_tokens_html(user_id: int) -> str:
 
         # table start
         html += """
-        <table class="table table-striped">
+        <table class="table table-responsive compliance">
           <thead>
             <tr>
-              <th>Attribute</th><th>Value</th>
+              <th>Attribute</th>
+              <th>Value</th>
             </tr>
           </thead>
           <tbody>
@@ -178,10 +179,10 @@ def render_user_roles_tokens_html(user_id: int) -> str:
             val = info.get(key, False)
             # if character_token is False → make it red
             if key == "character_token" and not val:  # Character audit missing entirely.
-                val_txt = mark_safe('<span style="color:red;">False</span>')
+                val_txt = mark_safe('<span style="color:red;">False</span> has no audit record.')
             elif key == "corporation_token" and not val:  # No corp token; severity depends on corp roles.
                 if has_roles:  # Elevated corp roles without corp token is especially risky.
-                    val_txt = mark_safe('<span style="color:red;">False</span>')
+                    val_txt = mark_safe('<span style="color:red;">False</span> has elevated roles.')
                 else:
                     val_txt = mark_safe('False')
             else:
@@ -199,7 +200,7 @@ def render_user_roles_tokens_html(user_id: int) -> str:
                 html += format_html(
                     "<tr><td>{}</td><td colspan='2'>{}</td></tr>",
                     label,
-                    mark_safe(val)  # comma-separated string of missing scopes
+                    mark_safe(val.replace(",", "<br>"))  # comma-separated string of missing scopes
                 )
 
         # table end
