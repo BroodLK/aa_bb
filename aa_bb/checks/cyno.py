@@ -102,26 +102,22 @@ def get_user_cyno_info(user_id: int) -> dict:
 
     # 1) grab all of this user's owned characters
     ownership_map = get_user_characters(user_id)
-    #logger.info(f"ownership:{str(ownership_map)}")
     # 2) pre-fetch audits for only those characters
     audits = (
         CharacterAudit.objects
         .filter(character__character_id__in=ownership_map.keys())
     )
-    #logger.info(f"audits:{str(audits)}")
 
     # 3) fetch each skill once
     skill_data = {
         key: get_user_skill_info(user_id, skill_id)
         for key, skill_id in skill_ids.items()
     }
-    #logger.info(str(skill_data))
 
     result = {}
 
     for audit in audits:
         name = ownership_map[audit.character.character_id]
-        #logger.info(name)
         cid = get_character_id(name)
         age = get_char_age(cid)
         i_recon = owns_items_in_group(cid, 833)
