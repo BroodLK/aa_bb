@@ -201,7 +201,7 @@ def render_awox_kills_html(userID):
     if not kills:  # Nothing to render, let callers hide the section entirely.
         return None
 
-    html = '<table class="table table-striped">'
+    html = '<table class="table table-striped table-hover stats">'
     html += '<thead><tr><th>Character(s)</th><th>Value</th><th>Link</th></tr></thead><tbody>'
 
     for kill in kills:

@@ -126,7 +126,7 @@ def render_assets(user_id: int) -> Optional[str]:
     hostile_ids = {int(s) for s in hostile_str.split(",") if s.strip().isdigit()}
     #logger.debug(f"Hostile IDs for assets: {hostile_ids}")
 
-    html = '<table class="table table-striped">'
+    html = '<table class="table table-striped table-hover stats">'
     html += '<thead><tr><th>System</th><th>Owner</th></tr></thead><tbody>'
 
     for system_id, system_name in systems.items():

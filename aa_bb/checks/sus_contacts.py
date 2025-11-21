@@ -202,7 +202,7 @@ def render_contacts(user_id: int) -> str:
 
         # Fixed 3-column table per requirements
         headers = ['character', 'corporation', 'alliance']
-        html_parts.append('<table class="table table-striped">')
+        html_parts.append('<table class="table table-striped table-hover stats">')
         html_parts.append('  <thead>')
         html_parts.append('    <tr>')
         for h in headers:

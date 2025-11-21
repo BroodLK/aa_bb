@@ -195,10 +195,12 @@ def render_user_skills_html(user_id: int) -> str:
         else:
             sp_days = 0
 
+
+
         # Guard against missing or zero age
         if isinstance(char_age, (int, float)) and char_age > 0:  # Only compute ratios when age data available.
             sp_age_ratio = round(sp_days / char_age, 2)
-            formatted = mark_safe(f'<span style="color:red;">{sp_age_ratio}</span>')
+            formatted = mark_safe(f'<span class="text-danger">{sp_age_ratio}</span>')
             ratio_display = sp_age_ratio if sp_age_ratio < 1 else formatted
             age_display = char_age
         else:
@@ -207,16 +209,16 @@ def render_user_skills_html(user_id: int) -> str:
 
         # Header with total SP next to name
         html_parts.append(format_html(
-            "<h3>{} (<b>{}</b> SP / <b>{}</b> days old / SP to Age ratio: <b>{}</b>)</h3>",
+            "<h3>{}</h3> <small>(<b>{}</b> SP || <b>{}</b> Days Old || SP to Age Ratio: <b>{}</b>)</small>",
             char_name,
-            format_int(total_sp),
+            "{:,}".format(total_sp),
             age_display,
             ratio_display,
         ))
 
         # Build table header
         html_parts.append(
-            '<table class="table table-striped">'
+            '<table class="table table-striped table-hover stats">'
             '<thead><tr>'
             '<th>Skill</th>'
             '<th>Trained Level</th>'
@@ -233,10 +235,10 @@ def render_user_skills_html(user_id: int) -> str:
             style_t = ''
             style_a = ''
             skill_name = skill_name_map.get(sid, str(sid))
-            if trained > 0 and sid != 3426 or trained > 3:  # Highlight suspiciously high trained levels.
-                style_t = ' style="color:red;"'
+            if trained > 0 and sid != 3426 or trained > 3:  # Highlight suspiciously high-trained levels.
+                style_t = ' class="text-danger"'
             if active > 0 and sid != 3426 or active > 3:  # Same for active levels beyond alpha caps.
-                style_a = ' style="color:red;"'
+                style_a = ' class="text-danger"'
             html_parts.append(format_html(
                 "<tr>"
                 "<td>{skill}</td>"

@@ -130,7 +130,7 @@ def render_clones(user_id: int) -> Optional[str]:
     hostile_ids = {int(s) for s in hostile_str.split(",") if s.strip().isdigit()}
 
     html = [
-        '<table class="table table-striped">',
+        '<table class="table table-striped table-hover stats">',
         '<thead><tr><th>System</th><th>Owner</th></tr></thead><tbody>'
     ]
 

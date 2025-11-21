@@ -184,7 +184,7 @@ def render_transactions(user_id: int) -> str:
               'first_party_alliance_id','second_party_alliance_id','entry_id'}
     headers = [k for k in first.keys() if k not in HIDDEN]
 
-    parts = ['<table class="table table-striped">','<thead>','<tr>']
+    parts = ['<table class="table table-striped table-hover stats">','<thead>','<tr>']
     for h in headers:
         parts.append(f'<th>{html.escape(h.replace("_"," ").title())}</th>')
     parts.extend(['</tr>','</thead>','<tbody>'])

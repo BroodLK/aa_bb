@@ -166,7 +166,7 @@ def get_frequent_corp_changes(user_id):
             })
 
         html += format_html("<h3>{} {}</h3>", char_name, format_html(char_links))
-        html += '<table class="table table-striped blacklist">'
+        html += '<table class="table table-striped table-hover stats">'
         html += '<thead><tr><th>Corporation</th><th>Membership</th><th>Alliance(s)</th><th>Alliance Dates</th><th>Time in Corp</th></tr></thead><tbody>'
         for r in rows:
             row_html = (

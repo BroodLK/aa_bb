@@ -179,51 +179,62 @@ def get_user_cyno_info(user_id: int) -> dict:
         }
         jfff = 0
 
+        # Pre-calculate JF status to avoid ordering issues
+        jf_info = skill_data.get("jf", {}).get(name, {"trained_skill_level": 0, "active_skill_level": 0})
+        jf_req = required_levels.get("jf", 1)
+        if jf_info["trained_skill_level"] >= jf_req:
+            jfff = 1
+        if jf_info["active_skill_level"] >= jf_req:
+            jfff = 2
+
         # set flags based on required_levels
         for key, data in skill_data.items():
             lvl_req = required_levels.get(key, 1)
             info = data.get(name, {"trained_skill_level": 0, "active_skill_level": 0})
 
-            # s_<skill>
-        if key == "jf":  # Base jump freighter skill controls later racial logic.
-            if info["trained_skill_level"] >= lvl_req:  # Track base JF skill before checking racial subs.
-                jfff = 1
-            if info["active_skill_level"] >= lvl_req:  # Active JF unlock sets flag 2 for downstream branches.
-                jfff = 2
-        if key == "acarrier" or key == "ccarrier" or key == "gcarrier" or key == "mcarrier":  # Any racial carrier skill maps to generic carrier/fax/super flags.
-            if info["trained_skill_level"] >= lvl_req:  # Carrier skills also imply Super/FAX hull capabilities.
-                char_dic[f"s_carrier"] = 1
-                char_dic[f"s_super"] = 1
-                char_dic[f"s_fax"] = 1
-            if info["active_skill_level"] >= lvl_req:  # Active level 2 indicates Omega-ready for all related hulls.
-                char_dic[f"s_carrier"] = 2
-                char_dic[f"s_super"] = 2
-                char_dic[f"s_fax"] = 2
-        if key == "adread" or key == "cdread" or key == "gdread" or key == "mdread" or key == "tdread":  # Aggregate dreadnought skills.
-            if info["trained_skill_level"] >= lvl_req:  # Any dread skill counts toward the generic dread flag.
-                char_dic[f"s_dread"] = 1
-            if info["active_skill_level"] >= lvl_req:  # Active = Omega-ready dread pilot.
-                char_dic[f"s_dread"] = 2
-        if key == "atitan" or key == "ctitan" or key == "gtitan" or key == "mtitan":  # Any titan racial skill toggles titan readiness.
-            if info["trained_skill_level"] >= lvl_req:  # Any titan racial skill unlocks titan flag.
-                char_dic[f"s_titan"] = 1
-            if info["active_skill_level"] >= lvl_req:  # Active implies Omega titan readiness.
-                char_dic[f"s_titan"] = 2
-        if key == "ajf" or key == "cjf" or key == "gjf" or key == "mjf":  # Racial jump freighter hull skills require base JF.
-            if info["trained_skill_level"] >= lvl_req and jfff == 1:  # Only mark JF ready when base JF skill is satisfied.
-                char_dic[f"s_jf"] = 1
-                if info["active_skill_level"] >= lvl_req and jfff == 2:  # Active racial JF skill plus base skill unlocks JF flag.
-                    char_dic[f"s_jf"] = 2
-        if key == "rorq":  # Rorqual specific handling.
-            if info["trained_skill_level"] >= lvl_req:  # Rorqual skill acts like other hull checks.
-                char_dic[f"s_rorq"] = 1
+            if key == "jf":
+                continue
+
+            elif key in ["acarrier", "ccarrier", "gcarrier", "mcarrier"]:  # Any racial carrier skill maps to generic carrier/fax/super flags.
+                if info["trained_skill_level"] >= lvl_req:  # Carrier skills also imply Super/FAX hull capabilities.
+                    char_dic[f"s_carrier"] = 1
+                    char_dic[f"s_super"] = 1
+                    char_dic[f"s_fax"] = 1
+                if info["active_skill_level"] >= lvl_req:  # Active level 2 indicates Omega-ready for all related hulls.
+                    char_dic[f"s_carrier"] = 2
+                    char_dic[f"s_super"] = 2
+                    char_dic[f"s_fax"] = 2
+
+            elif key in ["adread", "cdread", "gdread", "mdread", "tdread"]:  # Aggregate dreadnought skills.
+                if info["trained_skill_level"] >= lvl_req:  # Any dread skill counts toward the generic dread flag.
+                    char_dic[f"s_dread"] = 1
+                if info["active_skill_level"] >= lvl_req:  # Active = Omega-ready dread pilot.
+                    char_dic[f"s_dread"] = 2
+
+            elif key in ["atitan", "ctitan", "gtitan", "mtitan"]:  # Any titan racial skill toggles titan readiness.
+                if info["trained_skill_level"] >= lvl_req:  # Any titan racial skill unlocks titan flag.
+                    char_dic[f"s_titan"] = 1
+                if info["active_skill_level"] >= lvl_req:  # Active implies Omega titan readiness.
+                    char_dic[f"s_titan"] = 2
+
+            elif key in ["ajf", "cjf", "gjf", "mjf"]:  # Racial jump freighter hull skills require base JF.
+                if info["trained_skill_level"] >= lvl_req and jfff >= 1:  # Only mark JF ready when base JF skill is satisfied.
+                    char_dic[f"s_jf"] = 1
+                    if info["active_skill_level"] >= lvl_req and jfff >= 2:  # Active racial JF skill plus base skill unlocks JF flag.
+                        char_dic[f"s_jf"] = 2
+
+            elif key == "rorq":  # Rorqual specific handling.
+                if info["trained_skill_level"] >= lvl_req:  # Rorqual skill acts like other hull checks.
+                    char_dic[f"s_rorq"] = 1
                 if info["active_skill_level"] >= lvl_req:  # Active skill toggles Rorqual omega-ready flag.
                     char_dic[f"s_rorq"] = 2
-        if key == "calscru" or key == "amascru" or key == "galscru" or key == "minscru":  # T3 cruiser subsystems map to generic T3 status.
-            if info["trained_skill_level"] >= lvl_req:  # Any T3 subsystem skill enables the general T3 flag.
-                char_dic[f"s_scru"] = 1
-                if info["active_skill_level"] >= lvl_req:  # Active T3 subsystem skill grants omega-ready status.
-                    char_dic[f"s_scru"] = 2
+
+            elif key in ["calscru", "amascru", "galscru", "minscru"]:  # T3 cruiser subsystems map to generic T3 status.
+                if info["trained_skill_level"] >= lvl_req:  # Any T3 subsystem skill enables the general T3 flag.
+                    char_dic[f"s_scru"] = 1
+                    if info["active_skill_level"] >= lvl_req:  # Active T3 subsystem skill grants omega-ready status.
+                        char_dic[f"s_scru"] = 2
+
             elif key == "cyno":  # Base cyno skill tracks both standard and covert cyno readiness.
                 if info["trained_skill_level"] >= lvl_req:  # Cyno 1 unlocks standard cyno ability.
                     char_dic[f"s_{key}"] = 1
@@ -233,11 +244,13 @@ def get_user_cyno_info(user_id: int) -> dict:
                     char_dic[f"s_cov_{key}"] = 1
                 if info["active_skill_level"] == 5:  # Active level 5 indicates cov cyno ready even as alpha (rare).
                     char_dic[f"s_cov_{key}"] = 2
+
             else:
                 if info["trained_skill_level"] >= lvl_req:  # Generic hull/skill gating.
                     char_dic[f"s_{key}"] = 1
                 if info["active_skill_level"] >= lvl_req:  # Active skill yields omega-ready status for generic hulls.
                     char_dic[f"s_{key}"] = 2
+
         if char_dic[f"s_cyno"] > 0 and char_dic[f"s_recon"] > 0 and char_dic[f"i_recon"] == True:  # Standard cyno + recon hull.
             char_dic[f"can_light"] = True
         if char_dic[f"s_cyno"] > 0 and char_dic[f"s_hic"] > 0 and char_dic[f"i_hic"] == True:  # Standard cyno + HIC hull.
@@ -288,7 +301,7 @@ def render_user_cyno_info_html(user_id: int) -> str:
 
         # table start
         html += """
-        <table class="table table-striped">
+        <table class="table table-striped table-hover stats">
           <thead>
             <tr>
               <th>Name</th><th>Can use</th><th>Owns ships</th>
@@ -322,12 +335,12 @@ def render_user_cyno_info_html(user_id: int) -> str:
             if s == 0:  # No training whatsoever.
                 s_txt = "False"
             elif s == 1:  # Trained but alpha (passive) status.
-                s_txt = mark_safe('<span style="color:orange;">True (but alpha)</span>')
+                s_txt = mark_safe('<span class="text-warning">True (but alpha)</span>')
             else:  # s == 2
-                s_txt = mark_safe('<span style="color:red;">True</span>')
+                s_txt = mark_safe('<span class="text-danger">True</span>')
             # only cyno has no “owns” flag
             if info.get(f"i_{key}", "") == True:  # Highlight ship ownership in red when true.
-                owns = mark_safe(f'<span style="color:red;">{info.get(f"i_{key}", "")}</span>')
+                owns = mark_safe(f'<span class="text-danger">{info.get(f"i_{key}", "")}</span>')
             else:
                 owns = f'{info.get(f"i_{key}", "")}'
             html += format_html(
@@ -337,11 +350,11 @@ def render_user_cyno_info_html(user_id: int) -> str:
 
         # add the “can light?” and age rows
         if info["can_light"] == True:  # Emphasize characters that can currently light cynos.
-            can_light = mark_safe(f'<span style="color:red;">{info["can_light"]}</span>')
+            can_light = mark_safe(f'<span class="text-danger">{info["can_light"]}</span>')
         else:
             can_light = f'{info["can_light"]}'
         if info["age"] < 90:  # Flag younger characters; cyno alts often need vetting.
-            age = mark_safe(f'<span style="color:red;">{info["age"]}</span>')
+            age = mark_safe(f'<span class="text-danger">{info["age"]}</span>')
         else:
             age = f'{info["age"]}'
         html += format_html(

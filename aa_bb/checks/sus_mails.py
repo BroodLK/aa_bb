@@ -197,7 +197,7 @@ def render_mails(user_id: int) -> str:
     ]
 
     # Build HTML table
-    html_parts = ['<table class="table table-striped">', '<thead><tr>']
+    html_parts = ['<table class="table table-striped table-hover stats">', '<thead><tr>']
     for col in VISIBLE:
         html_parts.append(f'<th>{html.escape(col.replace("_", " ").title())}</th>')
     html_parts.append('</tr></thead><tbody>')

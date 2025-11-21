@@ -154,7 +154,7 @@ def render_character_states_html(user_id: int) -> str:
     #logger.info(f"data: {str(data)}")
 
     html = """
-    <table class="table table-striped">
+    <table class="table table-striped table-hover stats">
       <thead>
         <tr>
           <th>Character</th>
@@ -169,10 +169,10 @@ def render_character_states_html(user_id: int) -> str:
 
         # state formatting
         state_val = info.get("state", "unknown")
-        if state_val == "omega":  # Style Omega entries in red for visibility.
-            state_val_html = mark_safe('<span style="color:red;">Omega</span>')
-        elif state_val == "alpha":  # Style Alpha entries in green.
-            state_val_html = mark_safe('<span style="color:green;">Alpha</span>')
+        if state_val == "omega":  # Style Omega entries in green.
+            state_val_html = mark_safe('<span class="text-success">Omega</span>')
+        elif state_val == "alpha":  # Style Alpha entries in red.
+            state_val_html = mark_safe('<span class="text-danger">Alpha</span>')
         else:
             state_val_html = "Unknown"
 
