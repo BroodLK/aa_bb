@@ -235,7 +235,7 @@ def render_awox_kills_html(userID):
         return None
 
     html = '<table class="table table-striped table-hover stats">'
-    html += '<thead><tr><th>Date</th><th>Character(s)</th><th>Killing</th><th>Dying</th><th>Value</th><th>Link</th></tr></thead><tbody>'
+    html += '<thead><tr><th>Date</th><th>Character(s)</th><th>Attacker</th><th>Victim</th><th>Value</th><th>Link</th></tr></thead><tbody>'
 
     for kill in kills:
         chars = ", ".join(sorted(kill.get("chars", [])))
