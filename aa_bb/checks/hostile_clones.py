@@ -85,6 +85,7 @@ def get_hostile_clone_locations(user_id: int) -> Dict[str, str]:
       - unresolvable.
     Respects system whitelists.
     """
+
     systems = get_clones(user_id)  # Dict[int, Optional[str]]
     if not systems:
         return {}
@@ -102,6 +103,7 @@ def get_hostile_clone_locations(user_id: int) -> Dict[str, str]:
     hostile_map: Dict[str, str] = {}
 
     for system_id, system_name in systems.items():
+        oname = "Unresolvable"
         if system_id in excluded_system_ids:
             continue
 
@@ -229,6 +231,7 @@ def render_clones(user_id: int) -> Optional[str]:
 
     clones_list.sort(key=lambda x: (x['character'], (x['name'] or "").lower()))
 
+    oname = "Unresolvable"
     for clone in clones_list:
         system_id = clone['id']
         system_name = clone['name']
@@ -249,9 +252,7 @@ def render_clones(user_id: int) -> Optional[str]:
         })
 
         oid = None
-        oname = "Unresolvable"
         unresolvable = False
-        hostile = False
 
         if owner_info:
             try:
