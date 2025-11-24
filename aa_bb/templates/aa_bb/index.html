@@ -1,13 +1,12 @@
-<!--
-  Main Big Brother dashboard for individual members.
-  Provides the account selector, result placeholders, and front-end logic that
-  loads each check card asynchronously from the Django JSON endpoints.
--->
 {% extends 'aa_bb/base.html' %}
 {% load i18n %}
 {% load humanize %}
 
 {% block details %}
+<!-- TomSelect CSS for searchable dropdown -->
+<link rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/css/tom-select.css" />
+
 <style>
     /* Base table */
     .table.compliance {
@@ -47,8 +46,8 @@
         border-left: 1px solid var(--bs-gray-dark);
         border-right: 1px solid var(--bs-gray-dark);
     }
-
 </style>
+
 <!-- Dropdown -->
 <div class="mb-4">
   <label for="pageDropdown">{% translate "Select Account" %}</label>
@@ -79,19 +78,53 @@
 {% endblock %}
 
 {% block extra_javascript %}
+<!-- TomSelect JS (no jQuery required) -->
+<script src="https://cdn.jsdelivr.net/npm/tom-select@2.3.1/dist/js/tom-select.complete.min.js"></script>
+
 <script>
 document.addEventListener('DOMContentLoaded', () => {
+  const dropdown         = document.getElementById('pageDropdown');
+  const container        = document.getElementById('cardsContainer');
+  const spinner          = document.getElementById('loadingSpinner');
+  const generalMessage   = document.getElementById('messageBox');
+  const contractMessage  = document.getElementById('contractMessage');
+  const errorMessages    = document.getElementById('errorMessages');
+  const warmerBox        = document.getElementById('warmerBox');
+
+  // ---- Searchable, SINGLE-select account picker ----
+  let accountSelect = null;
+  if (window.TomSelect) {
+    accountSelect = new TomSelect('#pageDropdown', {
+      placeholder: '-- Choose an account --',
+      allowEmptyOption: true,
+      maxItems: 1,             // enforce single selection
+      mode: 'single',          // single-select mode
+      searchField: ['text'],
+      create: false,
+      closeAfterSelect: true,  // close dropdown after picking
+      sortField: { field: 'text', direction: 'asc' }
+    });
+
+    // Only fire once a definite account has been selected
+    accountSelect.on('item_add', function(value, item) {
+      if (!value) return;
+      fetch("{% url 'BigBrother:warm_cache' %}?option=" + encodeURIComponent(value));
+      loadAll(value);
+    });
+  } else {
+    // Fallback if TomSelect fails for some reason
+    dropdown.addEventListener('change', () => {
+      if (!dropdown.value) return;
+      fetch("{% url 'BigBrother:warm_cache' %}?option=" + encodeURIComponent(dropdown.value));
+      loadAll(dropdown.value);
+    });
+  }
+
   const CARD_DEFINITIONS = [
     {% for card in CARD_DEFINITIONS %}
       { title: `{{ card.title|escapejs }}`, key: `{{ card.key }}` }{% if not forloop.last %},{% endif %}
     {% endfor %}
   ];
-  const dropdown         = document.getElementById('pageDropdown');
-  const container        = document.getElementById('cardsContainer');
-  const spinner          = document.getElementById('loadingSpinner');
-  const generalMessage   = document.getElementById('messageBox');
-  const contractMessage  = document.getElementById('contractMessage');  // second box
-  const errorMessages    = document.getElementById('errorMessages');
   const MAIL_KEYWORDS = {{ MAIL_KEYWORDS|default:"[]" }};
   const MAIL_VISIBLE = [
     "sent_date", "subject",
@@ -128,34 +161,34 @@ document.addEventListener('DOMContentLoaded', () => {
     contractMessage.style.display = 'none';
   }
 
-function renderCard(idx, title, content, status) {
-  const collapseId = `collapse${idx}`;
-  const cardId     = `card${idx}`;           // NEW
-  const icon = status
-    ? '<span class="text-success"><i class="fa-solid fa-circle"></i></span>'
-    : '<span class="text-danger"><i class="fa-solid fa-circle"></i></span>';
-  const cardDiv = document.createElement('div');
-  cardDiv.id        = cardId;                // NEW
-  cardDiv.className = status ? 'card mb-2' : 'card mb-2 border-top-0 border-bottom-0 border-danger';
-  cardDiv.innerHTML = `
-    <div class="card-header d-flex justify-content-between align-items-center">
-      <div class="d-flex align-items-center">
-        <button class="btn btn-sm btn-link toggle-card mr-2" type="button" data-target="#${collapseId}">
-          <span><i class="fa-solid fa-angle-down"></i></span>
-        </button>
-        <span>${title}</span>
+  function renderCard(idx, title, content, status) {
+    const collapseId = `collapse${idx}`;
+    const cardId     = `card${idx}`;
+    const icon = status
+      ? '<span class="text-success"><i class="fa-solid fa-circle"></i></span>'
+      : '<span class="text-danger"><i class="fa-solid fa-circle"></i></span>';
+    const cardDiv = document.createElement('div');
+    cardDiv.id        = cardId;
+    cardDiv.className = status ? 'card mb-2' : 'card mb-2 border-top-0 border-bottom-0 border-danger';
+    cardDiv.innerHTML = `
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <div class="d-flex align-items-center">
+          <button class="btn btn-sm btn-link toggle-card mr-2" type="button" data-target="#${collapseId}">
+            <span><i class="fa-solid fa-angle-down"></i></span>
+          </button>
+          <span>${title}</span>
+        </div>
+        ${icon}
       </div>
-      ${icon}
-    </div>
-    <div id="${collapseId}" class="collapse">
-      <div class="card-body">${content}</div>
-    </div>
-  `;
-  container.appendChild(cardDiv);
-  cardDiv.querySelector('.toggle-card').addEventListener('click', e => {
-    document.querySelector(e.currentTarget.dataset.target).classList.toggle('collapse');
-  });
-}
+      <div id="${collapseId}" class="collapse">
+        <div class="card-body">${content}</div>
+      </div>
+    `;
+    container.appendChild(cardDiv);
+    cardDiv.querySelector('.toggle-card').addEventListener('click', e => {
+      document.querySelector(e.currentTarget.dataset.target).classList.toggle('collapse');
+    });
+  }
 
   async function fetchCard(option, idx) {
     const url = `{% url 'BigBrother:load_card' %}?option=${encodeURIComponent(option)}&index=${idx}`;
@@ -165,371 +198,357 @@ function renderCard(idx, title, content, status) {
     return data;
   }
 
-async function loadSuspiciousContracts(option, idx) {
-  showContract('Loading suspicious contracts…', 'info');
+  async function loadSuspiciousContracts(option, idx) {
+    showContract('Loading suspicious contracts…', 'info');
 
-  // Prepare the card body with an empty table
-  const cardBody = document.querySelector(`#collapse${idx} .card-body`);
-  cardBody.innerHTML = `
-    <table class="table table-striped">
-      <thead>
-        <tr id="contracts-header">
-          ${CONTR_VISIBLE.map(h => `<th>${h.replace(/_/g,' ')}</th>`).join('')}
-        </tr>
-      </thead>
-      <tbody id="contracts-body"></tbody>
-    </table>`
+    const cardBody = document.querySelector(`#collapse${idx} .card-body`);
+    cardBody.innerHTML = `
+      <table class="table table-striped">
+        <thead>
+          <tr id="contracts-header">
+            ${CONTR_VISIBLE.map(h => `<th>${h.replace(/_/g,' ')}</th>`).join('')}
+          </tr>
+        </thead>
+        <tbody id="contracts-body"></tbody>
+      </table>`;
 
-  return new Promise((resolve, reject) => {
-    const source = new EventSource(
-      `{% url 'BigBrother:stream_contracts_sse' %}?option=${encodeURIComponent(option)}`
-    );
-    const thead = cardBody.querySelector('#contracts-header');
-    const tbody = cardBody.querySelector('#contracts-body');
-    let hostileCount = 0;
-
-    source.addEventListener('header', e => {
-      // Set up column headers
-      thead.innerHTML = JSON.parse(e.data);
-    });
-
-    source.addEventListener('contract', e => {
-      // Add each hostile contract row
-      tbody.insertAdjacentHTML('beforeend', JSON.parse(e.data));
-      hostileCount++;
-      // Flip icon red on first hostile
-      if (hostileCount === 1) {
-        updateCardStatus(idx, false);
-      }
-    });
-
-    source.addEventListener('progress', e => {
-      const [processed, total] = e.data.split(',').map(Number);
-      showContract(
-        `Checked ${processed}/${total} contracts, hostile so far: ${hostileCount}`,
-        'info'
+    return new Promise((resolve, reject) => {
+      const source = new EventSource(
+        `{% url 'BigBrother:stream_contracts_sse' %}?option=${encodeURIComponent(option)}`
       );
-    });
+      const thead = cardBody.querySelector('#contracts-header');
+      const tbody = cardBody.querySelector('#contracts-body');
+      let hostileCount = 0;
 
-    source.addEventListener('done', () => {
-      source.close();
-      hideContract();
-      // If none hostile, ensure green
-      const clean = hostileCount === 0;
-      if (clean) {
-        updateCardStatus(idx, true);
+      source.addEventListener('header', e => {
+        // Set up column headers
+        thead.innerHTML = JSON.parse(e.data);
+      });
 
-        // **NEW**: inject a “no hostile” row
-        const tbody = cardBody.querySelector('#contracts-body');
-        const colspan = thead.querySelectorAll('th').length;
-        tbody.insertAdjacentHTML('beforeend',
-          `<tr><td colspan="${colspan}" class="text-center text-muted">
-             No hostile contracts found
-           </td></tr>`
-        );
-      }
-      resolve(clean);
-    });
+      source.addEventListener('contract', e => {
+        // Add each hostile contract row
+        tbody.insertAdjacentHTML('beforeend', JSON.parse(e.data));
+        hostileCount++;
+        // Flip icon red on first hostile
+        if (hostileCount === 1) {
+          updateCardStatus(idx, false);
+        }
+      });
 
-    source.onerror = err => {
-      source.close();
-      const errorMessages = document.getElementById('errorMessages');
-      errorMessages.innerHTML = '<div class="alert alert-warning">Contract stream failed, please wait for the cache to warm up and try again or get your IT to increase(or set to 0) your gunicorn timeout in supervisor.conf</div>';
-      updateCardStatus(idx, true);
-      reject(err);
-    };
-  });
-}
-
-
-
-    // New: load & render hostile mails via streaming endpoint
-async function loadSuspiciousMails(option, idx) {
-  showContract('Loading mails…', 'info');
-
-  const cardBody = document.querySelector(`#collapse${idx} .card-body`);
-  cardBody.innerHTML = `
-    <table class="table table-striped">
-      <thead>
-        <tr>${MAIL_VISIBLE.map(h=>`<th>${h.replace(/_/g,' ')}</th>`).join('')}</tr>
-      </thead>
-      <tbody></tbody>
-    </table>`;
-
-  return new Promise((resolve, reject) => {
-    const source = new EventSource(
-      `{% url 'BigBrother:stream_mails_sse' %}?option=${encodeURIComponent(option)}`
-    );
-    const tbody = cardBody.querySelector('tbody');
-    let hostileCount = 0;
-
-    source.addEventListener('mail', e => {
-      // Insert the hostile row
-      tbody.insertAdjacentHTML('beforeend', JSON.parse(e.data));
-
-      hostileCount++;
-      // On first hostile mail, immediately flip the icon red
-      if (hostileCount === 1) {
-        updateCardStatus(idx, false);
-      }
-    });
-
-    source.addEventListener('progress', e => {
-      const [processed, total] = e.data.split(',').map(Number);
-      showContract(
-        `Checked ${processed}/${total} mails, hostile so far: ${hostileCount}`,
-        'info'
-      );
-    });
-
-    source.addEventListener('done', () => {
-      source.close();
-      hideContract();
-      // If no hostile entries were seen, ensure the icon is green
-      const clean = hostileCount === 0;
-      if (clean) {
-        updateCardStatus(idx, true);
-
-        // **NEW**: inject a “no hostile” mail row
-        const tbody = cardBody.querySelector('tbody');
-        const colspan = MAIL_VISIBLE.length;
-        tbody.insertAdjacentHTML('beforeend',
-          `<tr><td colspan="${colspan}" class="text-center text-muted">
-             No hostile mails found
-           </td></tr>`
-        );
-      }
-      resolve(clean);
-    });
-
-    source.onerror = err => {
-      source.close();
-      const errorMessages = document.getElementById('errorMessages');
-      errorMessages.innerHTML = '<div class="alert alert-warning">Mail stream failed, please wait for the cache to warm up and try again or get your IT to increase(or set to 0) your gunicorn timeout in supervisor.conf</div>';
-      updateCardStatus(idx, true);
-      reject(err);
-    };
-  });
-}
-
-
-async function loadSuspiciousTransactions(option, idx) {
-  showContract('Loading transactions…', 'info');
-
-  // Prepare empty table in the card-body
-  const cardBody = document.querySelector(`#collapse${idx} .card-body`);
-  //const headersCols = /* same list as server: you can hardcode or fetch via API */;
-  cardBody.innerHTML = `
-    <table class="table table-striped">
-      <thead><tr id="tx-header"></tr></thead>
-      <tbody id="tx-body"></tbody>
-    </table>
-  `;
-
-  return new Promise((resolve, reject) => {
-    const source = new EventSource(
-      `{% url 'BigBrother:stream_transactions_sse' %}?option=${encodeURIComponent(option)}`
-    );
-    const thead = cardBody.querySelector('#tx-header');
-    const tbody = cardBody.querySelector('#tx-body');
-    let hostileCount = 0;
-
-    source.addEventListener('header', e => {
-      // render the <th>… row
-      thead.innerHTML = JSON.parse(e.data);
-    });
-
-    source.addEventListener('transaction', e => {
-      // append each hostile <tr>
-      tbody.insertAdjacentHTML('beforeend', JSON.parse(e.data));
-      hostileCount++;
-      if (hostileCount === 1) {
-        updateCardStatus(idx, false);
-      }
-    });
-
-    source.addEventListener('progress', e => {
-      const [done, total] = e.data.split(',').map(Number);
-      showContract(
-        `Checked ${done}/${total} transactions, hostile so far: ${hostileCount}`, 'info'
-      );
-    });
-
-    source.addEventListener('done', () => {
-      source.close();
-      hideContract();
-      const clean = hostileCount === 0;
-      if (clean) {
-        updateCardStatus(idx, true);
-        // inject “no hostile” row
-        const colspan = thead.querySelectorAll('th').length || 1;
-        tbody.insertAdjacentHTML('beforeend',
-          `<tr><td colspan="${colspan}" class="text-center text-muted">
-             No hostile transactions found
-           </td></tr>`
-        );
-      }
-      resolve(clean);
-    });
-
-    source.onerror = err => {
-      source.close();
-      document.getElementById('errorMessages').innerHTML =
-        '<div class="alert alert-warning">Transaction stream failed, please wait for the cache to warm up and try again or get your IT to increase(or set to 0) your gunicorn timeout in supervisor.conf</div>';
-      updateCardStatus(idx, true);
-      reject(err);
-    };
-  });
-}
-
-
-
-function updateCardStatus(idx, isClean) {
-  const cardEl    = document.getElementById(`card${idx}`);
-  if (isClean) {
-    cardEl.classList.remove('border-top-0', 'border-bottom-0', 'border-danger');
-  } else {
-    cardEl.classList.add('border-top-0', 'border-bottom-0', 'border-danger');
-  }
-  const header    = cardEl.querySelector('.card-header');
-  header.querySelectorAll('span.text-success, span.text-danger')
-        .forEach(el => el.remove());
-  header.insertAdjacentHTML('beforeend',
-    isClean
-      ? '<span class="text-success">🟢</span>'
-      : '<span class="text-danger">🔴</span>'
-  );
-}
-
-
-
-async function loadAll(option) {
-  container.innerHTML     = '';
-  errorMessages.innerHTML = '';
-  loadedNonSus            = 0;
-  hideGeneral();
-  hideContract();
-  showSpinner(true);
-
-  for (let i = 0; i < CARD_DEFINITIONS.length; i++) {
-    const { key, title } = CARD_DEFINITIONS[i];
-
-    try {
-      if (key === SUS_CONTR_KEY) {
-        // 1) Render the card with an empty contracts table:
-        renderCard(i, title,
-          `<table class="table table-striped">
-             <thead><tr id="contracts-header"></tr></thead>
-             <tbody id="contracts-body"></tbody>
-           </table>`,
-          true // assume clean until a hostile contract is detected
-        );
-
-        // 2) Stream the contracts; returns allClean flag
-        const allClean = await loadSuspiciousContracts(option, i);
-
-        // 3) Update dot color based on whether any hostile were found
-        updateCardStatus(i, allClean);
-        loadedNonSus++;
-        showGeneral(
-          `${loadedNonSus}/${TOTAL_CARDS} loaded… This may take a while, do not refresh`,
+      source.addEventListener('progress', e => {
+        const [processed, total] = e.data.split(',').map(Number);
+        showContract(
+          `Checked ${processed}/${total} contracts, hostile so far: ${hostileCount}`,
           'info'
         );
-      }
-      else if (key === 'sus_mail') {
-        // Suspicious Mails
-        renderCard(i, title,
-          `<table class="table table-striped">
-             <thead><tr>${MAIL_VISIBLE.map(h=>`<th>${h.replace(/_/g,' ')}</th>`).join('')}</tr></thead>
-             <tbody></tbody>
-           </table>`,
-          true
-        );
+      });
 
-        // stream; allClean = true if no hostile found
-        const allClean = await loadSuspiciousMails(option, i);
+      source.addEventListener('done', () => {
+        source.close();
+        hideContract();
+        // If none hostile, ensure green
+        const clean = hostileCount === 0;
+        if (clean) {
+          updateCardStatus(idx, true);
 
-        // update the dot color
-        updateCardStatus(i, allClean);
-        loadedNonSus++;
-        showGeneral(
-          `${loadedNonSus}/${TOTAL_CARDS} loaded… This may take a while, do not refresh`,
-          'info'
-        );
-      }else if (key === 'sus_tra') {
-        renderCard(i, title,
-          `<table class="table table-striped">
-            <thead><tr id="tx-header"></tr></thead>
-            <tbody id="tx-body"></tbody>
-          </table>`,
-          true
-        );
-        const allClean = await loadSuspiciousTransactions(option, i);
-        updateCardStatus(i, allClean);
-        loadedNonSus++;
-        showGeneral(
-          `${loadedNonSus}/${TOTAL_CARDS} loaded…`, 'info'
-        );
-      }
-      else {
-        // everything else
-        const { content, status } = await fetchCard(option, i);
-        loadedNonSus++;
-        showGeneral(
-          `${loadedNonSus}/${TOTAL_CARDS} loaded… This may take a while, do not refresh`,
-          'info'
-        );
-        renderCard(i, title, content, status);
-      }
-    } catch (err) {
-      renderCard(i, title, `<p>Error: ${err.message}</p>`, false);
-      console.error(err);
-    }
+          // inject a “no hostile” row
+          const tbody = cardBody.querySelector('#contracts-body');
+          const colspan = thead.querySelectorAll('th').length;
+          tbody.insertAdjacentHTML('beforeend',
+            `<tr><td colspan="${colspan}" class="text-center text-muted">
+               No hostile contracts found
+             </td></tr>`
+          );
+        }
+        resolve(clean);
+      });
+
+      source.onerror = err => {
+        source.close();
+        errorMessages.innerHTML =
+          '<div class="alert alert-warning">Contract stream failed, please wait for the cache to warm up and try again or get your IT to increase(or set to 0) your gunicorn timeout in supervisor.conf</div>';
+        updateCardStatus(idx, true);
+        reject(err);
+      };
+    });
   }
 
-  showSpinner(false);
-  hideGeneral();
-}
+  // load & render hostile mails via streaming endpoint
+  async function loadSuspiciousMails(option, idx) {
+    showContract('Loading mails…', 'info');
 
+    const cardBody = document.querySelector(`#collapse${idx} .card-body`);
+    cardBody.innerHTML = `
+      <table class="table table-striped">
+        <thead>
+          <tr>${MAIL_VISIBLE.map(h=>`<th>${h.replace(/_/g,' ')}</th>`).join('')}</tr>
+        </thead>
+        <tbody></tbody>
+      </table>`;
 
-dropdown.addEventListener('change', () => {
-  fetch("{% url 'BigBrother:warm_cache' %}?option=" + encodeURIComponent(dropdown.value));
-  loadAll(dropdown.value);
-});
+    return new Promise((resolve, reject) => {
+      const source = new EventSource(
+        `{% url 'BigBrother:stream_mails_sse' %}?option=${encodeURIComponent(option)}`
+      );
+      const tbody = cardBody.querySelector('tbody');
+      let hostileCount = 0;
 
-// Poll every 5 seconds for warming-progress updates
-const warmerBox = document.getElementById('warmerBox');
-let progressInFlight = false;
-async function fetchProgress() {
-  if (progressInFlight) return;
-  progressInFlight = true;
-  try {
-    const res = await fetch("{% url 'aa_bb:warm_progress' %}", { keepalive: true });
-    if (!res.ok) throw new Error('Progress fetch failed');
-    const data = await res.json();
-     if (data.in_progress) {
-      const parts = data.users.map(u => `${u.user} (${u.current}/${u.total})`);
-      let msg = `<strong>Warming up cache for:</strong> ${parts.join(', ')}`;
-      if (data.queued.count > 0) {
-        msg += `<br><strong>${data.queued.count} still queued:</strong> ${data.queued.names.join(', ')}`;
-      }
-      msg += `<br>Your gunicorn is likely to kill the streams for contracts, mails and transactions if the cache isn't warm for the selected user(it starts warming up the 1st time you select it so try and if it falls, go touch grass or something until this is done or get your IT to increase(or set to 0) your gunicorn timeout in supervisor.conf)`;
-      warmerBox.innerHTML = msg;
-      warmerBox.style.display = 'block';
+      source.addEventListener('mail', e => {
+        // Insert the hostile row
+        tbody.insertAdjacentHTML('beforeend', JSON.parse(e.data));
+
+        hostileCount++;
+        // On first hostile mail, immediately flip the icon red
+        if (hostileCount === 1) {
+          updateCardStatus(idx, false);
+        }
+      });
+
+      source.addEventListener('progress', e => {
+        const [processed, total] = e.data.split(',').map(Number);
+        showContract(
+          `Checked ${processed}/${total} mails, hostile so far: ${hostileCount}`,
+          'info'
+        );
+      });
+
+      source.addEventListener('done', () => {
+        source.close();
+        hideContract();
+        // If no hostile entries were seen, ensure the icon is green
+        const clean = hostileCount === 0;
+        if (clean) {
+          updateCardStatus(idx, true);
+
+          // inject a “no hostile” mail row
+          const tbody = cardBody.querySelector('tbody');
+          const colspan = MAIL_VISIBLE.length;
+          tbody.insertAdjacentHTML('beforeend',
+            `<tr><td colspan="${colspan}" class="text-center text-muted">
+               No hostile mails found
+             </td></tr>`
+          );
+        }
+        resolve(clean);
+      });
+
+      source.onerror = err => {
+        source.close();
+        errorMessages.innerHTML =
+          '<div class="alert alert-warning">Mail stream failed, please wait for the cache to warm up and try again or get your IT to increase(or set to 0) your gunicorn timeout in supervisor.conf</div>';
+        updateCardStatus(idx, true);
+        reject(err);
+      };
+    });
+  }
+
+  async function loadSuspiciousTransactions(option, idx) {
+    showContract('Loading transactions…', 'info');
+
+    // Prepare empty table in the card-body
+    const cardBody = document.querySelector(`#collapse${idx} .card-body`);
+    cardBody.innerHTML = `
+      <table class="table table-striped">
+        <thead><tr id="tx-header"></tr></thead>
+        <tbody id="tx-body"></tbody>
+      </table>
+    `;
+
+    return new Promise((resolve, reject) => {
+      const source = new EventSource(
+        `{% url 'BigBrother:stream_transactions_sse' %}?option=${encodeURIComponent(option)}`
+      );
+      const thead = cardBody.querySelector('#tx-header');
+      const tbody = cardBody.querySelector('#tx-body');
+      let hostileCount = 0;
+
+      source.addEventListener('header', e => {
+        // render the <th>… row
+        thead.innerHTML = JSON.parse(e.data);
+      });
+
+      source.addEventListener('transaction', e => {
+        // append each hostile <tr>
+        tbody.insertAdjacentHTML('beforeend', JSON.parse(e.data));
+        hostileCount++;
+        if (hostileCount === 1) {
+          updateCardStatus(idx, false);
+        }
+      });
+
+      source.addEventListener('progress', e => {
+        const [done, total] = e.data.split(',').map(Number);
+        showContract(
+          `Checked ${done}/${total} transactions, hostile so far: ${hostileCount}`, 'info'
+        );
+      });
+
+      source.addEventListener('done', () => {
+        source.close();
+        hideContract();
+        const clean = hostileCount === 0;
+        if (clean) {
+          updateCardStatus(idx, true);
+          // inject “no hostile” row
+          const colspan = thead.querySelectorAll('th').length || 1;
+          tbody.insertAdjacentHTML('beforeend',
+            `<tr><td colspan="${colspan}" class="text-center text-muted">
+               No hostile transactions found
+             </td></tr>`
+          );
+        }
+        resolve(clean);
+      });
+
+      source.onerror = err => {
+        source.close();
+        errorMessages.innerHTML =
+          '<div class="alert alert-warning">Transaction stream failed, please wait for the cache to warm up and try again or get your IT to increase(or set to 0) your gunicorn timeout in supervisor.conf</div>';
+        updateCardStatus(idx, true);
+        reject(err);
+      };
+    });
+  }
+
+  function updateCardStatus(idx, isClean) {
+    const cardEl    = document.getElementById(`card${idx}`);
+    if (!cardEl) return;
+    if (isClean) {
+      cardEl.classList.remove('border-top-0', 'border-bottom-0', 'border-danger');
     } else {
-      warmerBox.style.display = 'none';
+      cardEl.classList.add('border-top-0', 'border-bottom-0', 'border-danger');
     }
-  } catch (e) {
-    console.error('Warm-progress error:', e);
-    warmerBox.style.display = 'none';
-  } finally {
-    progressInFlight = false;
+    const header    = cardEl.querySelector('.card-header');
+    header.querySelectorAll('span.text-success, span.text-danger')
+          .forEach(el => el.remove());
+    header.insertAdjacentHTML('beforeend',
+      isClean
+        ? '<span class="text-success">🟢</span>'
+        : '<span class="text-danger">🔴</span>'
+    );
   }
-}
 
-// Kick off immediately and then every 5s
-fetchProgress();
-setInterval(fetchProgress, 5000);
+  async function loadAll(option) {
+    container.innerHTML     = '';
+    errorMessages.innerHTML = '';
+    loadedNonSus            = 0;
+    hideGeneral();
+    hideContract();
+    showSpinner(true);
+
+    for (let i = 0; i < CARD_DEFINITIONS.length; i++) {
+      const { key, title } = CARD_DEFINITIONS[i];
+
+      try {
+        if (key === SUS_CONTR_KEY) {
+          // 1) Render the card with an empty contracts table:
+          renderCard(i, title,
+            `<table class="table table-striped">
+               <thead><tr id="contracts-header"></tr></thead>
+               <tbody id="contracts-body"></tbody>
+             </table>`,
+            true // assume clean until a hostile contract is detected
+          );
+
+          // 2) Stream the contracts; returns allClean flag
+          const allClean = await loadSuspiciousContracts(option, i);
+
+          // 3) Update dot color based on whether any hostile were found
+          updateCardStatus(i, allClean);
+          loadedNonSus++;
+          showGeneral(
+            `${loadedNonSus}/${TOTAL_CARDS} loaded… This may take a while, do not refresh`,
+            'info'
+          );
+        }
+        else if (key === 'sus_mail') {
+          // Suspicious Mails
+          renderCard(i, title,
+            `<table class="table table-striped">
+               <thead><tr>${MAIL_VISIBLE.map(h=>`<th>${h.replace(/_/g,' ')}</th>`).join('')}</tr></thead>
+               <tbody></tbody>
+             </table>`,
+            true
+          );
+
+          // stream; allClean = true if no hostile found
+          const allClean = await loadSuspiciousMails(option, i);
+
+          // update the dot color
+          updateCardStatus(i, allClean);
+          loadedNonSus++;
+          showGeneral(
+            `${loadedNonSus}/${TOTAL_CARDS} loaded… This may take a while, do not refresh`,
+            'info'
+          );
+        }
+        else if (key === 'sus_tra') {
+          renderCard(i, title,
+            `<table class="table table-striped">
+              <thead><tr id="tx-header"></tr></thead>
+              <tbody id="tx-body"></tbody>
+            </table>`,
+            true
+          );
+          const allClean = await loadSuspiciousTransactions(option, i);
+          updateCardStatus(i, allClean);
+          loadedNonSus++;
+          showGeneral(
+            `${loadedNonSus}/${TOTAL_CARDS} loaded…`, 'info'
+          );
+        }
+        else {
+          // everything else
+          const { content, status } = await fetchCard(option, i);
+          loadedNonSus++;
+          showGeneral(
+            `${loadedNonSus}/${TOTAL_CARDS} loaded… This may take a while, do not refresh`,
+            'info'
+          );
+          renderCard(i, title, content, status);
+        }
+      } catch (err) {
+        renderCard(i, title, `<p>Error: ${err.message}</p>`, false);
+        console.error(err);
+      }
+    }
+
+    showSpinner(false);
+    hideGeneral();
+  }
+
+  // Warm-progress polling
+  let progressInFlight = false;
+  async function fetchProgress() {
+    if (progressInFlight) return;
+    progressInFlight = true;
+    try {
+      const res = await fetch("{% url 'aa_bb:warm_progress' %}", { keepalive: true });
+      if (!res.ok) throw new Error('Progress fetch failed');
+      const data = await res.json();
+       if (data.in_progress) {
+        const parts = data.users.map(u => `${u.user} (${u.current}/${u.total})`);
+        let msg = `<strong>Warming up cache for:</strong> ${parts.join(', ')}`;
+        if (data.queued.count > 0) {
+          msg += `<br><strong>${data.queued.count} still queued:</strong> ${data.queued.names.join(', ')}`;
+        }
+        msg += `<br>Your gunicorn is likely to kill the streams for contracts, mails and transactions if the cache isn't warm for the selected user(it starts warming up the 1st time you select it so try and if it falls, go touch grass or something until this is done or get your IT to increase(or set to 0) your gunicorn timeout in supervisor.conf)`;
+        warmerBox.innerHTML = msg;
+        warmerBox.style.display = 'block';
+      } else {
+        warmerBox.style.display = 'none';
+      }
+    } catch (e) {
+      console.error('Warm-progress error:', e);
+      warmerBox.style.display = 'none';
+    } finally {
+      progressInFlight = false;
+    }
+  }
+
+  // Kick off immediately and then every 5s
+  fetchProgress();
+  setInterval(fetchProgress, 5000);
 });
 </script>
 {% endblock %}
