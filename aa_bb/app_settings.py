@@ -33,6 +33,9 @@ from esi.exceptions import HTTPClientError, HTTPServerError, HTTPNotModified
 from .esi_client import esi, to_plain, call_result, call_results, parse_expires
 from .esi_cache import expiry_cache_key, get_cached_expiry, set_cached_expiry
 from .app_settings_2 import *
+from allianceauth.eveonline.models import EveCorporationInfo, EveAllianceInfo
+from eveuniverse.models import EveSolarSystem
+from django.core.cache import cache
 
 logger = logging.getLogger(__name__)
 
@@ -882,7 +885,7 @@ def resolve_corporation_name(corp_id: int) -> str:
         e_short  = e.__class__.__name__
         e_detail = getattr(e, 'code', None) or getattr(e, 'status', None) or str(e)
         return f"Unresolvable eve map{e_short}{e_detail}"
-    
+
 def resolve_character_name(char_id: int) -> str:
     """
     Resolve character ID to name via ESI, storing permanently in Character_names.
@@ -938,15 +941,15 @@ def get_system_owner(system: str) -> Dict[str, str]:
     system_id = system.get("id")
     system_nam = system.get("name")
     system_name = str()
-    if system_nam:  # Convert provided name into a proper string when available.
+    if system_nam:  # Convert the provided name into a proper string when available.
         system_name = str(system_nam)
 
-    # 2) Fetch sovereignty map
     try:
         sov_map = _get_sov_map()
         entry = next((s for s in sov_map if s.get("system_id") == system_id), None)
-        if not entry:  # No sovereignty info for this system.
+        if not entry:
             return {"owner_id": owner_id, "owner_name": f"Unresolvable structure due to lack of docking rights", "owner_type": owner_type}
+
     except Exception as e:
         logger.exception(f"Failed to fetch sovereignty for system ID {system_id}: {e}")
         e_short = e.__class__.__name__
@@ -1007,3 +1010,54 @@ def get_user_id(character_name):
         return ownership.user.id
     except CharacterOwnership.DoesNotExist:
         return None
+
+def is_nullsec(system_id):
+    try:
+        sys = EveSolarSystem.objects.get(id=system_id)
+        return sys.security_status <= 0.0
+    except EveSolarSystem.DoesNotExist:
+        return False
+
+def is_player_structure(location_id):
+    """
+    Returns True if location_id likely corresponds to a player-owned structure
+    (Citadel, Engineering Complex, Refinery) rather than an NPC station.
+    Structure IDs are typically large (>= 1,000,000,000,000).
+    """
+    return location_id >= 1_000_000_000_000
+
+def is_ship(type_id):
+    return False # Placeholder logic will be inline or enhanced if needed.
+
+def get_safe_entities():
+    """
+    Returns a set of safe entity IDs (whitelist, ignored, members).
+    """
+    from .models import BigBrotherConfig
+    cfg = BigBrotherConfig.get_solo()
+
+    ids = set()
+
+    # Whitelists
+    if cfg.whitelist_alliances:
+        ids.update(int(x) for x in cfg.whitelist_alliances.split(',') if x.strip().isdigit())
+    if cfg.whitelist_corporations:
+        ids.update(int(x) for x in cfg.whitelist_corporations.split(',') if x.strip().isdigit())
+
+    # Ignored
+    if cfg.ignored_corporations:
+        ids.update(int(x) for x in cfg.ignored_corporations.split(',') if x.strip().isdigit())
+
+    # Members
+    if cfg.member_corporations:
+        ids.update(int(x) for x in cfg.member_corporations.split(',') if x.strip().isdigit())
+    if cfg.member_alliances:
+        ids.update(int(x) for x in cfg.member_alliances.split(',') if x.strip().isdigit())
+
+    # Main corp/alliance
+    if cfg.main_corporation_id:
+        ids.add(cfg.main_corporation_id)
+    if cfg.main_alliance_id:
+        ids.add(cfg.main_alliance_id)
+
+    return ids

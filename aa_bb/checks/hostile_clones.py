@@ -13,7 +13,7 @@ from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 from typing import List, Optional, Dict
 
-from ..app_settings import get_system_owner
+from ..app_settings import get_system_owner, is_nullsec, get_safe_entities
 from ..models import BigBrotherConfig
 import logging
 
@@ -79,38 +79,59 @@ def get_hostile_clone_locations(user_id: int) -> Dict[str, str]:
     """
     Returns a dict of system display name → owning alliance name,
     including 'Unresolvable' where owner info is unavailable.
-    Only includes locations owned by hostile alliances or unresolvable.
+    Includes locations that are:
+      - in a hostile alliance, or
+      - in nullsec when consider_nullsec_hostile is enabled, or
+      - unresolvable.
+    Respects system whitelists.
     """
     systems = get_clones(user_id)  # Dict[int, Optional[str]]
     if not systems:
         return {}
 
-    hostile_str = BigBrotherConfig.get_solo().hostile_alliances or ""
+    cfg = BigBrotherConfig.get_solo()
+    hostile_str = cfg.hostile_alliances or ""
     hostile_ids = {int(s) for s in hostile_str.split(",") if s.strip().isdigit()}
+
+    excluded_systems_str = cfg.excluded_systems or ""
+    excluded_system_ids = {int(s) for s in excluded_systems_str.split(",") if s.strip().isdigit()}
+
+    consider_nullsec = cfg.consider_nullsec_hostile
+    safe_entities = get_safe_entities()
 
     hostile_map: Dict[str, str] = {}
 
-    # systems: key = system_id (int), value = system_name (str or None)
     for system_id, system_name in systems.items():
+        if system_id in excluded_system_ids:
+            continue
+
         display_name = system_name or f"ID {system_id}"
 
-        # build the dict get_system_owner expects
         owner_info = get_system_owner({
-            "id":   system_id,
+            "id": system_id,
             "name": display_name
         })
 
-        if not owner_info:  # Unresolved sovereignty, mark as unresolvable entry.
-            # fully unresolvable
-            hostile_map[display_name] = "Unresolvable"
-            #logger.debug(f"No owner info for clone in {display_name}; marked Unresolvable")
+        nullsec_flag = consider_nullsec and is_nullsec(system_id)
+
+        if not owner_info:
+            # fully unresolvable, still worth flagging
+            oname = "Unresolvable"
+            hostile_map[display_name] = oname
+            logger.info(f"Hostile clone (unresolvable): {display_name}")
             continue
 
-        oid = int(owner_info["owner_id"])
-        oname = owner_info["owner_name"] or f"ID {oid}"
-
-        # include only hostile or unresolvable owners
-        if oid in hostile_ids or "Unresolvable" in oname:  # Alert when clone sits in hostile or unknown space.
+        try:
+            oid = int(owner_info["owner_id"])
+        except (ValueError, TypeError):
+            oid = None
+            oname = owner_info.get("owner_name") or (f"ID {oid}" if oid is not None else "Unresolvable")
+            # Nullsec is hostile unless sov owner is “safe”
+            nullsec_flag = False
+        if consider_nullsec and is_nullsec(system_id):
+            if oid is None or oid not in safe_entities:
+                nullsec_flag = True
+        if nullsec_flag or (oid in hostile_ids if oid is not None else False) or "Unresolvable" in oname:
             hostile_map[display_name] = oname
             logger.info(f"Hostile clone: {display_name} owned by {oname} ({oid})")
 
@@ -122,6 +143,10 @@ def render_clones(user_id: int) -> Optional[str]:
     """
     Returns an HTML table of clones, coloring hostile ones red,
     and labeling & highlighting Unresolvable owners appropriately.
+    Hostile if:
+      - system owner alliance is in hostile_alliances, or
+      - system is nullsec and consider_nullsec_hostile is enabled.
+    Respects system whitelists.
     """
     try:
         user = User.objects.get(pk=user_id)
@@ -153,14 +178,14 @@ def render_clones(user_id: int) -> Optional[str]:
                 'id': sys_id,
                 'name': sys_name,
                 'jump_clone': "Home Station",
-                'implants': [],  # Home clone implants not available via JumpClone Implant model
+                'implants': [],
             })
         except Clone.DoesNotExist:
             pass
 
         # Jump clones
-        jump_clones = JumpClone.objects.select_related('location_name__system')\
-            .prefetch_related('implant_set__type_name')\
+        jump_clones = JumpClone.objects.select_related('location_name__system') \
+            .prefetch_related('implant_set__type_name') \
             .filter(character=char_audit)
 
         for jc in jump_clones:
@@ -184,45 +209,79 @@ def render_clones(user_id: int) -> Optional[str]:
                 'implants': implants,
             })
 
-    if not clones_list:  # No clones to report.
+    if not clones_list:
         return None
 
-    hostile_str = BigBrotherConfig.get_solo().hostile_alliances or ""
+    cfg = BigBrotherConfig.get_solo()
+    hostile_str = cfg.hostile_alliances or ""
     hostile_ids = {int(s) for s in hostile_str.split(",") if s.strip().isdigit()}
+
+    excluded_systems_str = cfg.excluded_systems or ""
+    excluded_system_ids = {int(s) for s in excluded_systems_str.split(",") if s.strip().isdigit()}
+
+    consider_nullsec = cfg.consider_nullsec_hostile
+    safe_entities = get_safe_entities()
 
     html = [
         '<table class="table table-striped table-hover stats">',
         '<thead><tr><th>Character</th><th>System</th><th>Clone Status</th><th>Implants</th><th>Owner</th></tr></thead><tbody>'
     ]
 
-    # Sort by character then system name
     clones_list.sort(key=lambda x: (x['character'], (x['name'] or "").lower()))
 
     for clone in clones_list:
         system_id = clone['id']
         system_name = clone['name']
 
-        # build the dict get_system_owner expects
+        if system_id in excluded_system_ids:
+            continue
+
         owner_info = get_system_owner({
-            "id":   system_id,
+            "id": system_id,
             "name": system_name
         })
 
-        if owner_info:
-            oid = int(owner_info["owner_id"])
-            oname = owner_info["owner_name"] or f"ID {oid}"
-            hostile = oid in hostile_ids or "Unresolvable" in oname
-            unresolvable = False
-        else:
-            oname = "Unresolvable"  # No sovereignty info returned.
-            hostile = False
-            unresolvable = True
+        nullsec_flag = consider_nullsec and is_nullsec(system_id)
 
-        if hostile:  # Highlight hostile entries in red.
+        owner_info = get_system_owner({
+            "id": system_id,
+            "name": system_name
+        })
+
+        oid = None
+        oname = "Unresolvable"
+        unresolvable = False
+        hostile = False
+
+        if owner_info:
+            try:
+                oid = int(owner_info["owner_id"])
+            except (ValueError, TypeError):
+                oid = None
+
+            oname = owner_info.get("owner_name") or (f"ID {oid}" if oid is not None else "Unresolvable")
+
+            base_hostile = (oid in hostile_ids) or ("Unresolvable" in oname)
+        else:
+            base_hostile = True
+            oname = "Unresolvable"
+
+        # Nullsec logic
+        if consider_nullsec and is_nullsec(system_id):
+            if oid is None or oid not in safe_entities:
+                nullsec_flag = True
+            else:
+                nullsec_flag = False
+        else:
+            nullsec_flag = False
+
+        hostile = base_hostile or nullsec_flag
+
+        if hostile:
             row_tpl = '<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td class="text-danger">{}</td></tr>'
-        elif unresolvable:  # Use warning styling for unknown owners.
+        elif unresolvable:
             row_tpl = '<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td class="text-warning"><em>{}</em></td></tr>'
-        else:  # Neutral owners get normal formatting.
+        else:
             row_tpl = '<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>'
 
         html.append(

@@ -19,6 +19,7 @@ class AaBbConfig(AppConfig):
         import aa_bb.signals
         import aa_bb.tasks_reddit  # noqa: F401  # ensure Celery auto-discovery
         import logging
+        from django.db.utils import OperationalError, ProgrammingError
         logger = logging.getLogger(__name__)
         from .models import MessageType
         from allianceauth.authentication.models import State

@@ -7,7 +7,12 @@ that can be sent when a user has assets in systems owned by enemies.
 
 from allianceauth.authentication.models import CharacterOwnership
 from django.contrib.auth.models import User
-from ..app_settings import get_system_owner
+from ..app_settings import (
+    get_system_owner,
+    is_nullsec,
+    is_player_structure,
+    get_safe_entities,
+)
 from ..models import BigBrotherConfig
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
@@ -20,6 +25,11 @@ try:
     from corptools.models import CharacterAudit, CharacterAsset, EveLocation
 except ImportError:
     logger.error("Corptools not installed, asset checks will not work.")
+
+def _parse_id_list(value: Optional[str]) -> set[int]:
+    if not value:
+        return set()
+    return {int(x) for x in value.split(",") if x.strip().isdigit()}
 
 def get_asset_locations(user_id: int) -> Dict[int, dict]:
     """
@@ -121,92 +131,160 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
 
 def get_hostile_asset_locations(user_id: int) -> Dict[str, str]:
     """
-    Returns a dict of system display name → owning alliance name
-    for systems where the user's characters have assets in space,
-    including only those owned by hostile alliances or that are
-    unresolvable.
+    Returns a dict of system display name → owning alliance name (plus ship context)
+    for systems where the user's characters have assets in space, including only
+    those considered hostile under the configured rules.
     """
-    # get_asset_locations now returns hierarchical structure
     systems = get_asset_locations(user_id)
     if not systems:
         return {}
 
-    # parse hostile alliance IDs
-    config = BigBrotherConfig.get_solo()
-    hostile_str = config.hostile_alliances or ""
-    hostile_ids = {int(s) for s in hostile_str.split(",") if s.strip().isdigit()}
-    hostile_corp_str = config.hostile_corporations or ""
-    hostile_corp_ids = {int(s) for s in hostile_corp_str.split(",") if s.strip().isdigit()}
+    cfg = BigBrotherConfig.get_solo()
+
+    hostile_ids = _parse_id_list(cfg.hostile_alliances or "")
+    hostile_corp_ids = _parse_id_list(cfg.hostile_corporations or "")
+
+    excluded_system_ids = _parse_id_list(cfg.excluded_systems or "")
+    excluded_station_ids = _parse_id_list(cfg.excluded_stations or "")
+
+    consider_nullsec = cfg.consider_nullsec_hostile
+    consider_structures = cfg.consider_all_structures_hostile
+    consider_npc = getattr(cfg, "consider_npc_stations_hostile", False)
+    ships_only = getattr(cfg, "hostile_assets_ships_only", False)
+
+    safe_entities = get_safe_entities()
 
     logger.debug(f"Hostile alliance IDs: {hostile_ids}")
+    logger.debug(f"Hostile corporation IDs: {hostile_corp_ids}")
 
     hostile_map: Dict[str, str] = {}
 
-    # iterate system_id, data pairs
     for system_id, data in systems.items():
+        # System whitelist – never mark these as hostile
+        if system_id in excluded_system_ids:
+            continue
+
         system_name = data["name"]
         display_name = system_name or f"Unknown ({system_id})"
 
         owner_info = get_system_owner({
-            "id":   system_id,
+            "id": system_id,
             "name": display_name
         })
 
-        if not owner_info:
-            hostile_map[display_name] = "Unresolvable"
+        oid: Optional[int] = None
+        oname = "Unresolvable"
+        base_hostile = False
+
+        if owner_info:
+            try:
+                oid = int(owner_info["owner_id"])
+            except (ValueError, TypeError):
+                oid = None
+
+            oname = owner_info.get("owner_name") or (f"ID {oid}" if oid is not None else "Unresolvable")
+            base_hostile = (
+                (oid in hostile_ids) or
+                (oid in hostile_corp_ids) or
+                ("Unresolvable" in oname)
+            )
+        else:
+            # No sov info – keep "Unresolvable" behaviour
+            base_hostile = True
+
+        # Config: treat all nullsec as hostile
+        nullsec_flag = consider_nullsec and is_nullsec(system_id)
+
+        # Config: structural / station-type based hostility
+        struct_flag = False
+        npc_flag = False
+        if consider_structures or consider_npc:
+            for loc_id, loc_data in data["locations"].items():
+                if not loc_id or loc_id in excluded_station_ids:
+                    continue
+
+                is_struct = is_player_structure(loc_id)
+
+                # Player-owned structures not on any safe list
+                if consider_structures and is_struct:
+                    if oid is None or oid not in safe_entities:
+                        struct_flag = True
+
+                # NPC stations (non player-owned), if opted in
+                if consider_npc and not is_struct:
+                    npc_flag = True
+
+                if struct_flag or npc_flag:
+                    break
+
+        system_hostile = base_hostile or nullsec_flag or struct_flag or npc_flag
+        if not system_hostile:
             continue
 
-        try:
-            oid = int(owner_info["owner_id"])
-        except (ValueError, TypeError):
-            oid = None
+        # Flatten ships for context + ship-only filter
+        all_ships: list[str] = []
+        for loc in data["locations"].values():
+            for char_ships in loc["characters"].values():
+                all_ships.extend(char_ships)
 
-        oname = owner_info.get("owner_name") or (f"ID {oid}" if oid is not None else "Unresolvable")
+        if ships_only and not all_ships:
+            # Config says: ignore systems where we only have non-ship assets
+            continue
 
-        if oid in hostile_ids or oid in hostile_corp_ids or "Unresolvable" in oname:
-            # Flatten ships for notification context
-            all_ships = []
-            for loc in data["locations"].values():
-                for char_ships in loc["characters"].values():
-                    all_ships.extend(char_ships)
+        oname_with_ships = oname
+        if all_ships:
+            oname_with_ships = f"{oname} (Ships: {', '.join(all_ships)})"
 
-            if all_ships:
-                # Deduplicate ships nicely if needed, currently listing all instances
-                oname += f" (Ships: {', '.join(all_ships)})"
-            hostile_map[display_name] = oname
-            logger.info(f"Hostile asset system: {display_name} owned by {oname} ({oid})")
+        hostile_map[display_name] = oname_with_ships
+        logger.info(f"Hostile asset system: {display_name} owned by {oname_with_ships} ({oid})")
 
     return hostile_map
+
 
 
 def render_assets(user_id: int) -> Optional[str]:
     """
     Returns an HTML table listing each system where the user's characters have assets,
-    the system's sovereign owner, and highlights in red any owner on the hostile list.
+    the system's sovereign owner, and highlights in red any owner on the hostile list,
+    respecting nullsec / structure / NPC / whitelist / ship-only settings.
     """
     systems = get_asset_locations(user_id)
     if not systems:
         return None
 
-    config = BigBrotherConfig.get_solo()
-    hostile_str = config.hostile_alliances or ""
-    hostile_ids = {int(s) for s in hostile_str.split(",") if s.strip().isdigit()}
-    hostile_corp_str = config.hostile_corporations or ""
-    hostile_corp_ids = {int(s) for s in hostile_corp_str.split(",") if s.strip().isdigit()}
+    cfg = BigBrotherConfig.get_solo()
+
+    hostile_ids = _parse_id_list(cfg.hostile_alliances or "")
+    hostile_corp_ids = _parse_id_list(cfg.hostile_corporations or "")
+
+    excluded_system_ids = _parse_id_list(cfg.excluded_systems or "")
+    excluded_station_ids = _parse_id_list(cfg.excluded_stations or "")
+
+    consider_nullsec = cfg.consider_nullsec_hostile
+    consider_structures = cfg.consider_all_structures_hostile
+    consider_npc = getattr(cfg, "consider_npc_stations_hostile", False)
+    ships_only = getattr(cfg, "hostile_assets_ships_only", False)
+
+    safe_entities = get_safe_entities()
 
     rows = []
 
     for system_id, data in systems.items():
+        # System whitelist – skip entirely
+        if system_id in excluded_system_ids:
+            continue
+
         system_name = data["name"]
         display_name = system_name or f"Unknown ({system_id})"
 
         owner_info = get_system_owner({
-            "id":   system_id,
+            "id": system_id,
             "name": display_name
         })
 
-        hostile = False
+        oid: Optional[int] = None
         oname = "—"
+        base_hostile = False
 
         if owner_info:
             try:
@@ -216,42 +294,87 @@ def render_assets(user_id: int) -> Optional[str]:
 
             if oid is not None:
                 oname = owner_info["owner_name"] or f"ID {oid}"
-                hostile = oid in hostile_ids or oid in hostile_corp_ids or "Unresolvable" in oname
+                base_hostile = (
+                    (oid in hostile_ids) or
+                    (oid in hostile_corp_ids) or
+                    ("Unresolvable" in oname)
+                )
+        else:
+            oname = "Unresolvable"
+            base_hostile = True
+
+        nullsec_flag = False
+        if consider_nullsec and is_nullsec(system_id):
+            if oid is None or oid not in safe_entities:
+                nullsec_flag = True
+
+        struct_flag = False
+        npc_flag = False
+        if consider_structures or consider_npc:
+            for loc_id, loc_data in data["locations"].items():
+                if not loc_id or loc_id in excluded_station_ids:
+                    continue
+
+                is_struct = is_player_structure(loc_id)
+
+                if consider_structures and is_struct:
+                    if oid is None or oid not in safe_entities:
+                        struct_flag = True
+
+                if consider_npc and not is_struct:
+                    npc_flag = True
+
+                if struct_flag or npc_flag:
+                    break
+
+        system_hostile = base_hostile or nullsec_flag or struct_flag or npc_flag
 
         # Iterate locations inside system
         for loc_id, loc_data in data["locations"].items():
+            # Station/structure whitelist
+            if loc_id in excluded_station_ids:
+                continue
+
             loc_name = loc_data["name"]
 
-            # Iterate characters at location
             for char_name, ships in loc_data["characters"].items():
+                # Optionally ignore non-ship assets entirely
+                if ships_only and not ships:
+                    continue
+
                 ship_str = ", ".join(ships) if ships else ""
                 rows.append({
                     "system": display_name,
                     "location": loc_name,
                     "character": char_name,
                     "owner": oname,
-                    "hostile": hostile,
+                    "hostile": system_hostile,
                     "ships": ship_str
                 })
 
-    # Sort rows: hostile first, then system name, then location
+    if not rows:
+        return '<p>No hostile assets found.</p>'
+
     rows.sort(key=lambda x: (not x["hostile"], x["system"], x["location"], x["character"]))
 
     html = '<table class="table table-striped table-hover stats">'
-    html += ('<thead>'
-             '  <tr>'
-             '      <th style="width: 20%">System</th>'
-             '      <th style="width: 20%">Station</th>'
-             '      <th style="width: 20%">Character</th>'
-             '      <th style="width: 20%">Owner</th>'
-             '      <th style="width: 20%">Hostile Asset</th>'
-             '  </tr>'
-             '</thead>'
-             '<tbody>')
+    html += (
+        '<thead>'
+        '  <tr>'
+        '      <th style="width: 20%">System</th>'
+        '      <th style="width: 20%">Station</th>'
+        '      <th style="width: 20%">Character</th>'
+        '      <th style="width: 20%">Owner</th>'
+        '      <th style="width: 20%">Hostile Asset</th>'
+        '  </tr>'
+        '</thead>'
+        '<tbody>'
+    )
 
     for row in rows:
         system_cell = row["system"]
         owner_cell = row["owner"]
+        hostile_ship = row["ships"] if row["hostile"] else ""
         if row["hostile"]:
             owner_cell = mark_safe(f'<span class="text-danger">{owner_cell}</span>')
 
@@ -267,8 +390,8 @@ def render_assets(user_id: int) -> Optional[str]:
             row["location"],
             row["character"],
             owner_cell,
-            row["ships"]
+            hostile_ship,
         )
 
-    html += "</tbody></table>"
+    html += '</tbody></table>'
     return html

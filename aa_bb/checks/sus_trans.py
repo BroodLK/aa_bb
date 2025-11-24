@@ -58,6 +58,7 @@ def gather_user_transactions(user_id: int):
     qs = WalletJournalEntry.objects.filter(
         second_party_id__in=user_ids
     )
+    qs = qs.exclude(first_party_id__in=user_ids, second_party_id__in=user_ids)
     #for entry in qs:
     #    entry.character.
     return qs
@@ -129,10 +130,27 @@ def get_user_transactions(qs) -> Dict[int, Dict]:
     return result
 
 
-def is_transaction_hostile(tx: dict) -> bool:
+def is_transaction_hostile(tx: dict, user_ids: set = None) -> bool:
     """
     Mark transaction as hostile if first_party or second_party or corps/alliances are blacklisted
     """
+    # Check 1: Internal transaction (both parties are user characters)
+    if user_ids:
+        if tx.get('first_party_id') in user_ids and tx.get('second_party_id') in user_ids:
+            return False
+
+    # Check 2: Same Corporation
+    fp_corp = tx.get('first_party_corporation_id')
+    sp_corp = tx.get('second_party_corporation_id')
+    if fp_corp and sp_corp and fp_corp == sp_corp:
+        return False
+
+    # Check 3: Same Alliance
+    fp_alli = tx.get('first_party_alliance_id')
+    sp_alli = tx.get('second_party_alliance_id')
+    if fp_alli and sp_alli and fp_alli == sp_alli:
+        return False
+
     cfg = BigBrotherConfig.get_solo()
     if check_char_corp_bl(tx.get('first_party_id')) or check_char_corp_bl(tx.get('second_party_id')):  # Immediate hit via blacklist.
         return True
@@ -168,9 +186,12 @@ def render_transactions(user_id: int) -> str:
     qs = gather_user_transactions(user_id)
     txs = get_user_transactions(qs)
 
+    user_chars = get_user_characters(user_id)
+    user_ids = set(user_chars.keys())
+
     # sort by date desc
     all_list = sorted(txs.values(), key=lambda x: x['date'], reverse=True)
-    hostile = [t for t in all_list if is_transaction_hostile(t)]
+    hostile = [t for t in all_list if is_transaction_hostile(t, user_ids)]
     if not hostile:  # No transactions require attention.
         return '<p>No hostile transactions found.</p>'
 
@@ -232,11 +253,15 @@ def get_user_hostile_transactions(user_id: int) -> Dict[int, str]:
     if new:  # Only process entries not already recorded in ProcessedTransaction.
         new_qs = qs_all.filter(entry_id__in=new)
         rows = get_user_transactions(new_qs)
+
+        user_chars = get_user_characters(user_id)
+        user_ids = set(user_chars.keys())
+
         for eid, tx in rows.items():
             pt, created = ProcessedTransaction.objects.get_or_create(entry_id=eid)
             if not created:  # Another worker finished first; skip duplicates.
                 continue
-            if not is_transaction_hostile(tx):  # Notes persist only for hostile entries.
+            if not is_transaction_hostile(tx, user_ids):  # Notes persist only for hostile entries.
                 continue
             flags = []
             if tx['type']:  # Skip type analysis when CCP omitted the ref type.

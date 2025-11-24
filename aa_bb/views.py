@@ -7,6 +7,7 @@ from django.conf import settings
 from django.contrib.auth.decorators import login_required, permission_required
 from django.db import connection
 from django.core.handlers.wsgi import WSGIRequest
+from django.db.utils import OperationalError, ProgrammingError
 from django.http import (
     JsonResponse,
     HttpResponseBadRequest,
@@ -91,9 +92,11 @@ def get_allowed_coalition_alliance_ids():
         for a in cfg.whitelist_alliances.split(",")
         if a.strip().isdigit()
     }
-
-ALLOWED_ALLIANCE_ID = get_allowed_alliance_id()
-ALLOWED_COALITION_ALLIANCE_IDS = get_allowed_coalition_alliance_ids()
+try:
+    ALLOWED_ALLIANCE_ID = get_allowed_alliance_id()
+    ALLOWED_COALITION_ALLIANCE_IDS = get_allowed_coalition_alliance_ids()
+except (OperationalError, ProgrammingError):
+    ALLOWED_ALLIANCE_ID = None
 
 CARD_DEFINITIONS = [
     {"title": 'Add User to Blacklist', "key": "corp_bl"},

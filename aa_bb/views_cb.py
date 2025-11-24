@@ -124,11 +124,18 @@ def load_cards(request: WSGIRequest) -> JsonResponse:
     cards = []
     for card in CARD_DEFINITIONS:
         content, status = get_card_data(request, corp_id, card["key"])
-        cards.append({
-            "title":   card["title"],
-            "content": content,
-            "status":  status,
-        })
+        if content is None:
+            return JsonResponse({
+                "title": card["title"],
+                "content": "",
+                "status": status,
+            })
+        else:
+            cards.append({
+                "title":   card["title"],
+                "content": content,
+                "status":  status,
+            })
     logger.warning("load_cards")
     return JsonResponse({"cards": cards})
 

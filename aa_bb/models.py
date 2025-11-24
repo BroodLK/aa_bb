@@ -460,6 +460,38 @@ class BigBrotherConfig(SingletonModel):
         help_text="List of corporation IDs considered hostile, separated by ','"
     )
 
+    consider_nullsec_hostile = models.BooleanField(
+        default=False,
+        help_text="Consider all nullsec regions as hostile?"
+    )
+
+    consider_all_structures_hostile = models.BooleanField(
+        default=False,
+        help_text="Consider all player owned structures that are not listed as 'whitelist, ignored or member' as hostile?"
+    )
+
+    consider_npc_stations_hostile = models.BooleanField(
+        default=False,
+        help_text="Consider assets in any non-player owned (NPC) station as hostile?"
+    )
+
+    excluded_systems = models.TextField(
+        blank=True,
+        null=True,
+        help_text="List of system IDs excluded from hostile checks, separated by ','"
+    )
+
+    excluded_stations = models.TextField(
+        blank=True,
+        null=True,
+        help_text="List of station/structure IDs excluded from hostile checks, separated by ','"
+    )
+
+    hostile_assets_ships_only = models.BooleanField(
+        default=False,
+        help_text="Only consider ship assets when checking and rendering hostile asset locations?"
+    )
+
     whitelist_alliances = models.TextField(
         default="",
         blank=True,
