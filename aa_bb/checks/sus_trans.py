@@ -152,30 +152,54 @@ def is_transaction_hostile(tx: dict, user_ids: set = None) -> bool:
         return False
 
     cfg = BigBrotherConfig.get_solo()
+
+    # Check 4: Explicit character blacklist always wins
     if check_char_corp_bl(tx.get('first_party_id')) or check_char_corp_bl(tx.get('second_party_id')):  # Immediate hit via blacklist.
         return True
+
+    # Whitelists
     wlcorp = set((cfg.whitelist_corporations or "").split(','))
     wlali = set((cfg.whitelist_alliances or "").split(','))
-    fpcorp = str(tx.get('first_party_corporation_id') or '')
-    spcorp = str(tx.get('second_party_corporation_id') or '')
-    fpali = str(tx.get('first_party_alliance_id') or '')
-    spali = str(tx.get('second_party_alliance_id') or '')
+    fpcorp_str = str(fp_corp or '')
+    spcorp_str = str(sp_corp or '')
+    fpali_str = str(fp_alli or '')
+    spali_str = str(sp_alli or '')
     # Check if both parties are whitelisted (corp OR alliance)
-    fp_whitelisted = fpcorp in wlcorp or fpali in wlali
-    sp_whitelisted = spcorp in wlcorp or spali in wlali
-    # logger.info(f"first party:{tx.get('first_party_id')}, cid:{fpcorp}, aid:{fpali}, fpwl:{fp_whitelisted}, 2nd: {tx.get('second_party_id')}, cid:{spcorp}, aid:{spali}, spwl:{sp_whitelisted}, wlali:{wlali}")
+    fp_whitelisted = fpcorp_str in wlcorp or fpali_str in wlali
+    sp_whitelisted = spcorp_str in wlcorp or spali_str in wlali
 
     if fp_whitelisted and sp_whitelisted:  # Allow transactions where both sides are explicitly trusted.
         return False
+
+    # treat intra-group transfers as non-hostile
+    member_corps = {int(s) for s in (cfg.member_corporations or "").split(",") if s.strip().isdigit()}
+    member_allis = {int(s) for s in (cfg.member_alliances or "").split(",") if s.strip().isdigit()}
+    ignored_corps = {int(s) for s in (cfg.ignored_corporations or "").split(",") if s.strip().isdigit()}
+
+    def _is_member_or_ignored(corp_id, alli_id) -> bool:
+        return (
+            (corp_id is not None and corp_id in member_corps) or
+            (corp_id is not None and corp_id in ignored_corps) or
+            (alli_id is not None and alli_id in member_allis)
+        )
+
+    if _is_member_or_ignored(fp_corp, fp_alli) and _is_member_or_ignored(sp_corp, sp_alli):
+        # Both sides are in member/ignored space → ignore to prevent redundant flags
+        return False
+
+    # Suspicious ref types
     for key in SUS_TYPES:
         if key in tx.get('type'):  # Suspicious ref types always raise flags.
             return True
+
+    # Hostile corps / alliances
     for key in ('first_party_corporation_id', 'second_party_corporation_id'):
         if tx.get(key) and str(tx[key]) in cfg.hostile_corporations:  # Hostile corp on either side.
             return True
     for key in ('first_party_alliance_id', 'second_party_alliance_id'):
         if tx.get(key) and str(tx[key]) in cfg.hostile_alliances:  # Hostile alliance on either side.
             return True
+
     return False
 
 
