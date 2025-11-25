@@ -160,7 +160,7 @@ def BB_send_recurring_stats():
         for st in selected_states:
             cur = auth_by_state.get(str(st.pk), 0)
             old = prev_auth_by_state.get(str(st.pk))
-            lines.append(f"- {st.name} ({fmt_delta(cur, old)})")
+            lines.append(f"- {st.name}: {cur} ({fmt_delta(cur, old)})")
 
         lines.append("")  # spacer
 
@@ -174,7 +174,7 @@ def BB_send_recurring_stats():
         for st in selected_states:
             cur = discord_by_state.get(str(st.pk), 0)
             old = prev_discord_by_state.get(str(st.pk))
-            lines.append(f"- {st.name} ({fmt_delta(cur, old)})")
+            lines.append(f"- {st.name}: {cur} ({fmt_delta(cur, old)})")
 
         lines.append("")
 
@@ -188,7 +188,7 @@ def BB_send_recurring_stats():
         for st in selected_states:
             cur = mumble_by_state.get(str(st.pk), 0)
             old = prev_mumble_by_state.get(str(st.pk))
-            lines.append(f"- {st.name} ({fmt_delta(cur, old)})")
+            lines.append(f"- {st.name}: {cur} ({fmt_delta(cur, old)})")
 
         lines.append("")
 
