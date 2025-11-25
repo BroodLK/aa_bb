@@ -641,6 +641,12 @@ def BB_register_message_tasks():
             "schedule_attr": "optschedule5",
             "active_attr": "are_opt_messages5_active",
         },
+        {
+            "name": "BB send recurring stats",  # ← new
+            "task_path": "aa_bb.tasks_other.BB_send_recurring_stats",
+            "schedule_attr": "stats_schedule",
+            "active_attr": "are_recurring_stats_active",
+        },
     ]
 
     for task_info in tasks:

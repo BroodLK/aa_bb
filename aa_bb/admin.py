@@ -12,7 +12,7 @@ from django.contrib import admin
 
 from .models import (
     BigBrotherConfig, Messages, OptMessages1, OptMessages2, OptMessages3, OptMessages4,
-    OptMessages5, UserStatus, WarmProgress, PapsConfig
+    OptMessages5, UserStatus, WarmProgress, PapsConfig, RecurringStatsConfig
 )
 from .modelss import (
     TicketToolConfig,
@@ -76,11 +76,13 @@ class LoaModuleVisibilityMixin(DLCVisibilityMixin):
     """Show admin pages only when the LoA module is enabled."""
     dlc_attr = "dlc_loa_active"
 
-
 class DailyMessagesVisibilityMixin(DLCVisibilityMixin):
     """Hide daily/optional message models when that DLC is off."""
     dlc_attr = "dlc_daily_messages_active"
 
+class RecurringStatsVisibilityMixin(DLCVisibilityMixin):
+    """Hide recurring stats models when that DLC is off."""
+    dlc_attr = "dlc_are_recurring_stats_active"
 
 @admin.register(BigBrotherConfig)
 class BB_ConfigAdmin(SingletonModelAdmin):
@@ -92,6 +94,7 @@ class BB_ConfigAdmin(SingletonModelAdmin):
                 "is_loa_active",
                 "is_paps_active",
                 "are_daily_messages_active",
+                "are_recurring_stats_active",
             )
         }),
 
@@ -104,6 +107,7 @@ class BB_ConfigAdmin(SingletonModelAdmin):
                 "dlc_tickets_active",
                 "dlc_reddit_active",
                 "dlc_daily_messages_active",
+                "dlc_are_recurring_stats_active",
             )
         }),
 
@@ -128,6 +132,7 @@ class BB_ConfigAdmin(SingletonModelAdmin):
                 "optwebhook3",
                 "optwebhook4",
                 "optwebhook5",
+                "stats_webhook",
             )
         }),
 
@@ -187,6 +192,7 @@ class BB_ConfigAdmin(SingletonModelAdmin):
         'dlc_tickets_active',
         'dlc_reddit_active',
         'dlc_daily_messages_active',
+        'dlc_are_recurring_stats_active',
     )
     filter_horizontal = (
         "pingrole1_messages",
@@ -344,3 +350,48 @@ class PapComplianceConfig(PapModuleVisibilityMixin, admin.ModelAdmin):
     """Shows the most recent PAP compliance calculation per user."""
     search_fields = ['user_profile']
     list_display = ['user_profile', 'pap_compliant']
+
+@admin.register(RecurringStatsConfig)
+class RecurringStatsConfigAdmin(SingletonModelAdmin):
+    fieldsets = (
+        (
+            "General",
+            {
+                "fields": ("enabled",),
+            },
+        ),
+        (
+            "States",
+            {
+                "fields": ("states",),
+                "description": "Select which states you want broken out (Member, Blue, Alumni, etc.).",
+            },
+        ),
+        (
+            "Included Stats",
+            {
+                "fields": (
+                    "include_auth_users",
+                    "include_discord_users",
+                    "include_mumble_users",
+                    "include_characters",
+                    "include_corporations",
+                    "include_alliances",
+                    "include_tokens",
+                    "include_unique_tokens",
+                    "include_character_audits",
+                    "include_corporation_audits",
+                ),
+            },
+        ),
+        (
+            "Internal",
+            {
+                "fields": ("last_run_at", "last_snapshot"),
+                "classes": ("collapse",),
+            },
+        ),
+    )
+
+    filter_horizontal = ("states",)
+    readonly_fields = ("last_run_at", "last_snapshot")

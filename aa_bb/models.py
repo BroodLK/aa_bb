@@ -558,6 +558,12 @@ class BigBrotherConfig(SingletonModel):
         help_text="Discord webhook for sending BB notifications"
     )
 
+    stats_webhook = models.URLField(
+        blank=True,
+        null=True,
+        help_text="Discord webhook for posting recurring stats."
+    )
+
     loawebhook = models.URLField(
         blank=True,
         null=True,
@@ -598,6 +604,15 @@ class BigBrotherConfig(SingletonModel):
         blank=True,
         null=True,
         help_text="Discord webhook for sending optional messages 5"
+    )
+
+    stats_schedule = models.ForeignKey(
+        CrontabSchedule,
+        on_delete=models.CASCADE,
+        related_name="bigbrother_stats_schedule",
+        null=True,
+        blank=True,
+        help_text="Schedule for recurring stats posts."
     )
 
     dailyschedule = models.ForeignKey(
@@ -720,6 +735,12 @@ class BigBrotherConfig(SingletonModel):
         help_text="Read-only flag showing if the Daily Messages module is enabled for this token."
     )
 
+    dlc_are_recurring_stats_active = models.BooleanField(
+        default=False,
+        editable=True,
+        help_text="Read-only flag showing if the recurring stats posts activated/deactivated."
+    )
+
     is_loa_active = models.BooleanField(
         default=False,
         editable=True,
@@ -741,6 +762,12 @@ class BigBrotherConfig(SingletonModel):
     loa_max_logoff_days = models.IntegerField(
         default=30,
         help_text="How many days can a user not login w/o a loa request before notifications"
+    )
+
+    are_recurring_stats_active = models.BooleanField(
+        default=False,
+        editable=True,
+        help_text="Are recurring stats posts activated/deactivated?"
     )
 
     are_daily_messages_active = models.BooleanField(
@@ -1130,3 +1157,86 @@ class EntityInfoCache(models.Model):
             models.Index(fields=["entity_id", "as_of"]),
             models.Index(fields=["updated"]),
         ]
+
+class RecurringStatsConfig(SingletonModel):
+    """
+    Configuration for recurring stats posts.
+
+    - Controls which states are counted
+    - Which stats are included
+    - Holds the previous snapshot so we can calculate deltas
+    """
+
+    enabled = models.BooleanField(
+        default=True,
+        help_text="Master toggle for recurring stats generation."
+    )
+
+    states = models.ManyToManyField(
+        State,
+        blank=True,
+        help_text="States to break out in the recurring stats (e.g. Member, Blue, Alumni)."
+    )
+
+    # Toggles for which blocks are included
+    include_auth_users = models.BooleanField(
+        default=True,
+        help_text="Include total users in auth and per-state breakdown."
+    )
+    include_discord_users = models.BooleanField(
+        default=True,
+        help_text="Include Discord users totals and per-state breakdown (if Discord service is installed)."
+    )
+    include_mumble_users = models.BooleanField(
+        default=True,
+        help_text="Include Mumble users totals and per-state breakdown (if Mumble service is installed)."
+    )
+
+    include_characters = models.BooleanField(
+        default=True,
+        help_text="Include total number of known characters."
+    )
+    include_corporations = models.BooleanField(
+        default=True,
+        help_text="Include total number of known corporations."
+    )
+    include_alliances = models.BooleanField(
+        default=True,
+        help_text="Include total number of known alliances."
+    )
+
+    include_tokens = models.BooleanField(
+        default=True,
+        help_text="Include total number of ESI tokens."
+    )
+    include_unique_tokens = models.BooleanField(
+        default=True,
+        help_text="Include number of unique token owners."
+    )
+
+    include_character_audits = models.BooleanField(
+        default=True,
+        help_text="Include total number of Character Audits (from corptools)."
+    )
+    include_corporation_audits = models.BooleanField(
+        default=True,
+        help_text="Include total number of Corporation Audits (from corptools)."
+    )
+
+    # Snapshot + timestamp for delta calculations
+    last_run_at = models.DateTimeField(
+        blank=True,
+        null=True,
+        help_text="When recurring stats were last posted."
+    )
+    last_snapshot = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Previous stats snapshot for delta calculations."
+    )
+
+    def __str__(self) -> str:
+        return "Recurring Stats Configuration"
+
+    class Meta:
+        verbose_name = "Recurring Stats Configuration"

@@ -21,6 +21,8 @@ from aa_bb.checks.corp_changes import time_in_corp
 from .tasks_cb import *
 from .tasks_ct import *
 from .tasks_tickets import *
+from .tasks_other import *
+
 import logging
 logger = logging.getLogger(__name__)
 
