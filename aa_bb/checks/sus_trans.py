@@ -307,15 +307,13 @@ def get_user_hostile_transactions(user_id: int) -> Dict[int, str]:
             flags_text = "\n    - ".join(flags)
 
             note = (
-                f"- **{tx['date']}**: "
-                f"\n  - amount **{tx['amount']}**, "
-                f"\n  - type **{tx['type']}**, "
-                f"\n  - reason **{tx['reason']}**, "
-                f"\n  - from **{tx['first_party_name']}**(**{tx['first_party_corporation']}**/"
-                  f"**{tx['first_party_alliance']}**), "
-                f"\n  - to **{tx['second_party_name']}**(**{tx['second_party_corporation']}**/"
-                  f"**{tx['second_party_alliance']}**); "
-                f"\n  - flags:\n    - {flags_text}"
+                f">>> - **{tx['date']}**:"
+                f"\n - **{tx['amount']}**"
+                f"\n  - Reason:"
+                f"\n    - **{tx['reason']}**"
+                f"\n  - **{tx['first_party_name']}**({tx['first_party_corporation']} | {tx['first_party_alliance']})"
+                f" **→** **{tx['second_party_name']}**({tx['second_party_corporation']} | {tx['second_party_alliance']})"
+                f"\n  - Flags:\n    - {flags_text}"
             )
             SusTransactionNote.objects.update_or_create(
                 transaction=pt,

@@ -162,6 +162,9 @@ def BB_run_regular_updates():
                 # load (or create) cached status so diffs apply correctly
                 status, created = UserStatus.objects.get_or_create(user_id=user_id)
 
+                # On the very first run for this user, silently create a baseline
+                send_notifications = not created
+
                 changes = []
 
                 def as_dict(x):
@@ -238,11 +241,11 @@ def BB_run_regular_updates():
                     link_list2 = "\n".join(f"- {link}" for link in old_links)
                     logger.info(f"{char_name} old links {link_list2}")
                     if status.has_awox_kills != has_awox and has_awox:  # first time awox kills were spotted for this user
-                        changes.append(f"## AwoX kills: {'🚩' if has_awox else '✖'}")
+                        changes.append(f"## AWOX Kill Status: {'🔴' if has_awox else '🟢'}")
                         status.has_awox_kills = has_awox
                         logger.info(f"{char_name} changed")
                     if new_links:  # send notifications only for links not yet alerted on
-                        changes.append(f"##{get_pings('AwoX')} New AwoX kill(s):\n{link_list}")
+                        changes.append(f"##{get_pings('AwoX')} New AWOX Kill(s):\n{link_list}")
                         logger.info(f"{char_name} new links")
                         tcfg = TicketToolConfig.get_solo()
                         if tcfg.awox_monitor_enabled and time_in_corp(user_id) >= 1:  # guardrail: only fire tickets for monitored corps
@@ -278,7 +281,7 @@ def BB_run_regular_updates():
                 if status.has_cyno != has_cyno or norm(cyno_result) != norm(status.cyno or {}):  # cyno readiness changed?
                     # 1) Flag change for top-level boolean
                     if status.has_cyno != has_cyno:  # flip the top-level boolean when overall readiness changes
-                        changes.append(f"Cyno: {'🚩' if has_cyno else '✖'}")
+                        changes.append(f"Cyno Status: {'🔴' if has_cyno else '🟢'}")
                         status.has_cyno = has_cyno
 
                     # 2) Grab the old vs. new JSON blobs
@@ -382,7 +385,7 @@ def BB_run_regular_updates():
                             can_light_old = old_entry.get("can_light", False)
                             can_light_new = new_entry.get("can_light", False)
                             table_lines.append("")
-                            table_lines.append(f"{'Can Light':<22} | {'🚩' if can_light_old else '✖'} | {'🚩' if can_light_new else '✖'}")
+                            table_lines.append(f"{'Can Light':<22} | {'Yes' if can_light_old else 'No'} | {'Yes' if can_light_new else 'No'}")
 
                             # 👉 Add corp time here
                             try:
@@ -402,9 +405,9 @@ def BB_run_regular_updates():
 
 
                 if status.has_skills != has_skills or skills_norm(skills_result) != skills_norm(status.skills or {}):  # skill list changed?
-                    # 1) If the boolean flag flipped, append the 🚩 / ✖ as before
+                    # 1) If the boolean flag flipped, append the 🔴 / 🟢 as before
                     if status.has_skills != has_skills:  # emit coarse-grained flag when the threshold crosses zero/any skills
-                        changes.append(f"## Skills: {'🚩' if has_skills else '✖'}")
+                        changes.append(f"## Skill Status: {'🔴' if has_skills else '🟢'}")
                         status.has_skills = has_skills
 
                     # 2) Grab the old vs. new JSON blobs
@@ -548,7 +551,7 @@ def BB_run_regular_updates():
                     link_list2 = "\n- ".join(f"🔗 {link}" for link in old_links)
                     logger.info(f"{char_name} old assets {link_list2}")
                     if status.has_hostile_assets != has_hostile_assets:  # overall hostiles flag flipped
-                        changes.append(f"## Hostile Assets: {'🚩' if has_hostile_assets else '✖'}")
+                        changes.append(f"## Hostile Asset Status: {'🔴' if has_hostile_assets else '🟢'}")
                         logger.info(f"{char_name} changed")
                     if new_links:  # only announce newly discovered systems
                         changes.append(f"##{get_pings('New Hostile Assets')} New Hostile Assets:\n{link_list}")
@@ -569,7 +572,7 @@ def BB_run_regular_updates():
                     link_list2 = "\n".join(f"🔗 {link}" for link in old_links)
                     logger.info(f"{char_name} old clones: {link_list2}")
                     if status.has_hostile_clones != has_hostile_clones:  # boolean changed → emit summary
-                        changes.append(f"## Hostile Clones: {'🚩' if has_hostile_clones else '✖'}")
+                        changes.append(f"## Hostile Clone Status: {'🔴' if has_hostile_clones else '🟢'}")
                         logger.info(f"{char_name} changed")
                     if new_links:  # list out newly detected clone systems
                         changes.append(f"##{get_pings('New Hostile Clones')} New Hostile Clone(s):\n{link_list}")
@@ -598,14 +601,14 @@ def BB_run_regular_updates():
                         logger.info(f"{char_name} old assets:\n{old_link_list}")
 
                     if status.has_sus_contacts != has_sus_contacts:  # flag boolean flip
-                        changes.append(f"## Sus Contacts: {'🚩' if has_sus_contacts else '✖'}")
+                        changes.append(f"## Suspicious Contact Status: {'🔴' if has_sus_contacts else '🟢'}")
                     logger.info(f"{char_name} status changed")
 
                     if new_links:  # include the new contact entries in the summary
-                        changes.append(f"## New Sus Contacts:")
+                        changes.append(f"## New Suspicious Contacts:")
                         for cid in new_links:
                             res = sus_contacts_result[cid]
-                            ping = get_pings('New Sus Contacts')
+                            ping = get_pings('New Suspicious Contacts')
                             if res.startswith("- A -"):  # skip ping for alliance-only entries
                                 ping = ""
                             changes.append(f"{res} {ping}")
@@ -634,14 +637,14 @@ def BB_run_regular_updates():
                         logger.info(f"{char_name} old assets:\n{old_link_list}")
 
                     if status.has_sus_contracts != has_sus_contracts:  # summarize boolean change
-                        changes.append(f"## Sus Contracts: {'🚩' if has_sus_contracts else '✖'}")
+                        changes.append(f"## Suspicious Contract Status: {'🔴' if has_sus_contracts else '🟢'}")
                     logger.info(f"{char_name} status changed")
 
                     if new_links:  # write each new contract entry to the report
-                        changes.append(f"## New Sus Contracts:")
+                        changes.append(f"## New Suspicious Contracts:")
                         for issuer_id in new_links:
                             res = sus_contracts_result[issuer_id]
-                            ping = get_pings('New Sus Contracts')
+                            ping = get_pings('New Suspicious Contracts')
                             if res.startswith("- A -"):  # skip ping for alliance-level alerts
                                 ping = ""
                             changes.append(f"{res} {ping}")
@@ -670,14 +673,14 @@ def BB_run_regular_updates():
                         logger.info(f"{char_name} old assets:\n{old_link_list}")
 
                     if status.has_sus_mails != has_sus_mails:  # summarize boolean change
-                        changes.append(f"## Sus Mails: {'🚩' if has_sus_mails else '✖'}")
+                        changes.append(f"## Suspicious Mail Status: {'🔴' if has_sus_mails else '🟢'}")
                     logger.info(f"{char_name} status changed")
 
                     if new_links:  # enumerate the new mail entries for the report
-                        changes.append(f"## New Sus Mails:")
+                        changes.append(f"## New Suspicious Mails:")
                         for issuer_id in new_links:
                             res = sus_mails_result[issuer_id]
-                            ping = get_pings('New Sus Mails')
+                            ping = get_pings('New Suspicious Mails')
                             if res.startswith("- A -"):  # skip ping for alliance-level alerts
                                 ping = ""
                             changes.append(f"{res} {ping}")
@@ -699,36 +702,28 @@ def BB_run_regular_updates():
                         )
                         logger.info(f"{char_name} new trans:\n{link_list}")
 
-                    if old_ids:  # optional logging for historical entries
+                    if old_ids:
                         old_link_list = "\n".join(
                             f"{old_trans[issuer_id]}" for issuer_id in old_ids if issuer_id in old_trans
                         )
                         logger.info(f"{char_name} old trans:\n{old_link_list}")
 
-                    if status.has_sus_trans != has_sus_trans:  # summarize boolean change
-                        changes.append(f"## Sus Transactions: {'🚩' if has_sus_trans else '✖'}")
+                    if status.has_sus_trans != has_sus_trans:
+                        changes.append(f"## Suspicious Transactions Status: {'🔴' if has_sus_trans else '🟢'}")
                     logger.info(f"{char_name} status changed")
-                    changes.append(f"## New Sus Transactions{get_pings('New Sus Transactions')}:\n{link_list}")
-                    #if new_links:
-                    #    changes.append(f"## New Sus Transactions @here:")
-                    #    for issuer_id in new_links:
-                    #        res = sus_trans_result[issuer_id]
-                    #        ping = f""
-                    #        if res.startswith("- A -"):
-                    #            ping = ""
-                    #        changes.append(f"{res} {ping}")
+                    changes.append(f"## New Suspicious Transactions{get_pings('New Suspicious Transactions')}:\n{link_list}")
 
                     status.has_sus_trans = has_sus_trans
                     status.sus_trans = sus_trans_result
 
-                if changes:  # emit each of the accumulated change summaries
+                if send_notifications and changes:  # emit each of the accumulated change summaries
                     for i in range(0, len(changes)):
                         chunk = changes[i]
-                        if i == 0:  # first chunk gets the header
+                        if i == 0:  # the first chunk gets the header
                             msg = f"# 🛑 Status change detected for **{char_name}**:\n" + "\n" + chunk
                         else:
                             msg = chunk
-                        logger.info(f"Measage: {msg}")
+                        logger.info(f"Message: {msg}")
                         send_message(msg)
                         time.sleep(0.03)
                 status.updated = timezone.now()
@@ -739,8 +734,7 @@ def BB_run_regular_updates():
         instance.is_active = True
         instance.save()
         send_message(
-            f"#{get_pings('Error')} Big Brother encountered an unexpected error and disabled itself, "
-            "please forward your aa worker.log and the error below to support"
+            f"#{get_pings('Error')} Big Brother encountered an unexpected error"
         )
 
         # send the error in chunks to keep within discord limits and keep it in code blocks
@@ -764,4 +758,4 @@ def BB_run_regular_updates():
     task_name = 'BB run regular updates'
     task = PeriodicTask.objects.filter(name=task_name).first()
     if not task.enabled:  # inform admins when the periodic task finished its initial run
-        send_message("Big Brother task has finished, you can now enable the task")
+        send_message("initial Big Brother task has finished, you can now enable the task")
