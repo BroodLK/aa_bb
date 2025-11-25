@@ -725,7 +725,7 @@ def BB_run_regular_updates():
                             for i in range(0, len(changes)):
                                 chunk = changes[i]
                                 if i == 0:  # the first chunk gets the header
-                                    msg = f"# 🛑 Status change detected for **{char_name}**:\n" + "\n" + chunk
+                                    msg = f"# ‼️ Status change detected for **{char_name}**:\n" + "\n" + chunk
                                 else:
                                     msg = chunk
                                 logger.info(f"Message: {msg}")
