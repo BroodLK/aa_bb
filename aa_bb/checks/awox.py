@@ -12,6 +12,8 @@ import logging
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 from allianceauth.authentication.models import CharacterOwnership
+
+from ..models import BigBrotherConfig
 from ..modelss import AwoxKillsCache
 from django.utils import timezone
 from esi.exceptions import HTTPNotModified
@@ -70,7 +72,9 @@ def _notify_zkill_down_once(preview: str, status: int | None, content_type: str 
         f"body preview: ```{preview}```"
     )
     try:
-        send_message(msg)
+        awox_notify = BigBrotherConfig.awox_notify
+        if awox_notify:
+            send_message(msg)
     except Exception as e:
         logger.warning(f"Failed to send zKill down notification: {e}")
 
@@ -146,7 +150,6 @@ def fetch_awox_kills(user_id, delay=0.2):
             )
             _notify_zkill_down_once(text_preview, response.status_code, content_type)
             continue
-        #logger.debug("Character {} has {} potential awox kills".format(char_id, len(killmails)))
 
         for kill in killmails:
             kill_id = kill.get("killmail_id")
@@ -158,7 +161,6 @@ def fetch_awox_kills(user_id, delay=0.2):
             if kill_id in kills_by_id:  # Skip duplicates pulled from multiple characters.
                 continue
 
-            #time.sleep(delay)
             operation = esi.client.Killmails.GetKillmailsKillmailIdKillmailHash(
                 killmail_id=kill_id,
                 killmail_hash=hash_,

@@ -215,6 +215,8 @@ def hourly_compliance_check():
                 ensure_ticket(user, reason)
 
     # 2. Process existing tickets
+    ticket_resolved_manually_notify = BigBrotherConfig.ticket_notify_man
+    ticket_resolved_automatic_notify = BigBrotherConfig.ticket_notify_auto
     for ticket in ComplianceTicket.objects.all():
         reason = ticket.reason
 
@@ -223,7 +225,8 @@ def hourly_compliance_check():
             if ticket.is_resolved:  # Completed ticket can be closed out and announced.
                 logger.info(f"reason:{reason}")
                 close_ticket(ticket)
-                send_message(f"ticket for <@{ticket.discord_user_id}> resolved")
+                if ticket_resolved_manually_notify:
+                    send_message(f"ticket for <@{ticket.discord_user_id}> resolved")
             continue
 
         checker, _ = reason_checkers[reason]
@@ -231,17 +234,20 @@ def hourly_compliance_check():
         # resolved?
         if ticket.user and checker(ticket.user):  # Condition cleared, close and notify.
             close_ticket(ticket)
-            send_message(f"ticket for <@{ticket.discord_user_id}> resolved")
+            if ticket_resolved_automatic_notify:
+                send_message(f"ticket for <@{ticket.discord_user_id}> resolved")
             continue
 
         if ticket.user not in allowed_users:  # User left the org, close ticket and alert.
             close_ticket(ticket)
-            send_message(f"User <@{ticket.discord_user_id}> is no longer a member, closing ticket")
+            if ticket_resolved_automatic_notify:
+                send_message(f"User <@{ticket.discord_user_id}> is no longer a member, closing ticket")
             continue
 
         if not ticket.user:  # Missing auth user entirely, close ticket.
             close_ticket(ticket)
-            send_message(f"ticket for <@{ticket.discord_user_id}> closed due to missing auth user")
+            if ticket_resolved_automatic_notify:
+                send_message(f"ticket for <@{ticket.discord_user_id}> closed due to missing auth user")
             continue
 
         # Reminder logic with per-reason frequency + max-days cap

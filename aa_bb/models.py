@@ -389,6 +389,26 @@ class BigBrotherConfig(SingletonModel):
     - main_corporation / main_alliance IDs + names, member thresholds, and handshake booleans (is_active) are populated by the updater.
     - bigbrother_tokens, bb_install_token, update timing fields, and reddit/daily message pointers track upstream licensing and version checks.
     """
+    ct_notify = models.BooleanField(
+        default=True,
+        help_text="Whether to send CT audit completion notifications to discord"
+    )
+
+    awox_notify = models.BooleanField(
+        default=True,
+        help_text="Whether to send AWOX notificaitons to discord"
+    )
+
+    ticket_notify_man = models.BooleanField(
+        default=True,
+        help_text="Whether to send ticket resolution notifications when manually closed to discord"
+    )
+
+    ticket_notify_auto = models.BooleanField(
+        default=True,
+        help_text="Whether to send ticket resolution notifications when automatically closed to discord"
+    )
+
     pingroleID = models.CharField(
         max_length=255,
         null=True,

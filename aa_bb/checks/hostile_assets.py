@@ -26,10 +26,12 @@ try:
 except ImportError:
     logger.error("Corptools not installed, asset checks will not work.")
 
+
 def _parse_id_list(value: Optional[str]) -> set[int]:
     if not value:
         return set()
     return {int(x) for x in value.split(",") if x.strip().isdigit()}
+
 
 def get_asset_locations(user_id: int) -> Dict[int, dict]:
     """
@@ -63,7 +65,7 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
         sys_name = None
 
         if system_obj:
-            key = getattr(system_obj, 'pk', None)
+            key = getattr(system_obj, "pk", None)
             sys_name = system_obj.name
         elif location_id:
             # Fallback if system object isn't available but we have a location ID
@@ -79,44 +81,52 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
             return
 
         if key not in system_map:
-            system_map[key] = {
-                "name": sys_name,
-                "locations": {}
-            }
+            system_map[key] = {"name": sys_name, "locations": {}}
 
         # Determine location name to use as key/label
         loc_key = location_id or 0
         if loc_key not in system_map[key]["locations"]:
             system_map[key]["locations"][loc_key] = {
                 "name": location_name or f"Unknown Location {location_id}",
-                "characters": {}
+                "characters": {},
             }
 
         if char_name not in system_map[key]["locations"][loc_key]["characters"]:
             system_map[key]["locations"][loc_key]["characters"][char_name] = []
 
         if ship_name:
-            system_map[key]["locations"][loc_key]["characters"][char_name].append(ship_name)
+            system_map[key]["locations"][loc_key]["characters"][char_name].append(
+                ship_name
+            )
 
     # for each EVE character owned by this user
-    for co in CharacterOwnership.objects.filter(user=user).select_related('character'):
+    for co in CharacterOwnership.objects.filter(user=user).select_related("character"):
         try:
             char_audit = CharacterAudit.objects.get(character=co.character)
         except CharacterAudit.DoesNotExist:
             continue
 
         # all their assets in space (exclude station containers, etc.)
-        assets = CharacterAsset.objects.select_related(
-            'location_name__system',
-            'type_name__group__category'
-        ).filter(character=char_audit).exclude(location_flag="solar_system")
+        assets = (
+            CharacterAsset.objects.select_related(
+                "location_name__system", "type_name__group__category"
+            )
+            .filter(character=char_audit)
+            .exclude(location_flag="solar_system")
+        )
 
         for asset in assets:
+            if (asset.location_flag or "").lower() == "assetsafety":
+                continue
+
             loc = asset.location_name
-            system_obj = getattr(loc, 'system', None) if loc else None
+            system_obj = getattr(loc, "system", None) if loc else None
             # Fix: EveLocation uses location_name for the name string
-            loc_name = getattr(loc, 'location_name',
-                               f"Location {asset.location_id}") if loc else f"Location {asset.location_id}"
+            loc_name = (
+                getattr(loc, "location_name", f"Location {asset.location_id}")
+                if loc
+                else f"Location {asset.location_id}"
+            )
 
             ship_name = None
             try:
@@ -125,9 +135,12 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
             except AttributeError:
                 pass
 
-            add_asset(system_obj, asset.location_id, loc_name, co.character.character_name, ship_name)
+            add_asset(
+                system_obj, asset.location_id, loc_name, co.character.character_name, ship_name
+            )
 
     return system_map
+
 
 def get_hostile_asset_locations(user_id: int) -> Dict[str, str]:
     """
@@ -167,10 +180,7 @@ def get_hostile_asset_locations(user_id: int) -> Dict[str, str]:
         system_name = data["name"]
         display_name = system_name or f"Unknown ({system_id})"
 
-        owner_info = get_system_owner({
-            "id": system_id,
-            "name": display_name
-        })
+        owner_info = get_system_owner({"id": system_id, "name": display_name})
 
         oid: Optional[int] = None
         oname = "Unresolvable"
@@ -182,11 +192,13 @@ def get_hostile_asset_locations(user_id: int) -> Dict[str, str]:
             except (ValueError, TypeError):
                 oid = None
 
-            oname = owner_info.get("owner_name") or (f"ID {oid}" if oid is not None else "Unresolvable")
+            oname = owner_info.get("owner_name") or (
+                f"ID {oid}" if oid is not None else "Unresolvable"
+            )
             base_hostile = (
-                (oid in hostile_ids) or
-                (oid in hostile_corp_ids) or
-                ("Unresolvable" in oname)
+                (oid in hostile_ids)
+                or (oid in hostile_corp_ids)
+                or ("Unresolvable" in oname)
             )
         else:
             # No sov info – keep "Unresolvable" behaviour
@@ -236,10 +248,11 @@ def get_hostile_asset_locations(user_id: int) -> Dict[str, str]:
             oname_with_ships = f"{oname} (Ships: {', '.join(all_ships)})"
 
         hostile_map[display_name] = oname_with_ships
-        logger.info(f"Hostile asset system: {display_name} owned by {oname_with_ships} ({oid})")
+        logger.info(
+            f"Hostile asset system: {display_name} owned by {oname_with_ships} ({oid})"
+        )
 
     return hostile_map
-
 
 
 def render_assets(user_id: int) -> Optional[str]:
@@ -267,7 +280,7 @@ def render_assets(user_id: int) -> Optional[str]:
 
     safe_entities = get_safe_entities()
 
-    rows = []
+    rows: List[Dict] = []
 
     for system_id, data in systems.items():
         # System whitelist – skip entirely
@@ -295,9 +308,9 @@ def render_assets(user_id: int) -> Optional[str]:
             if oid is not None:
                 oname = owner_info["owner_name"] or f"ID {oid}"
                 base_hostile = (
-                    (oid in hostile_ids) or
-                    (oid in hostile_corp_ids) or
-                    ("Unresolvable" in oname)
+                    (oid in hostile_ids)
+                    or (oid in hostile_corp_ids)
+                    or ("Unresolvable" in oname)
                 )
         else:
             oname = "Unresolvable"
@@ -343,19 +356,28 @@ def render_assets(user_id: int) -> Optional[str]:
                     continue
 
                 ship_str = ", ".join(ships) if ships else ""
-                rows.append({
-                    "system": display_name,
-                    "location": loc_name,
-                    "character": char_name,
-                    "owner": oname,
-                    "hostile": system_hostile,
-                    "ships": ship_str
-                })
+                rows.append(
+                    {
+                        "system": display_name,
+                        "location": loc_name,
+                        "character": char_name,
+                        "owner": oname,
+                        "hostile": system_hostile,
+                        "ships": ship_str,
+                    }
+                )
 
     if not rows:
-        return '<p>No hostile assets found.</p>'
+        return "<p>No hostile assets found.</p>"
 
-    rows.sort(key=lambda x: (not x["hostile"], x["system"], x["location"], x["character"]))
+    rows.sort(
+        key=lambda x: (
+            not x["hostile"],
+            x["system"],
+            x["location"],
+            x["character"],
+        )
+    )
 
     html = '<table class="table table-striped table-hover stats">'
     html += (

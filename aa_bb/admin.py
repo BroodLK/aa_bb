@@ -84,6 +84,96 @@ class DailyMessagesVisibilityMixin(DLCVisibilityMixin):
 
 @admin.register(BigBrotherConfig)
 class BB_ConfigAdmin(SingletonModelAdmin):
+    fieldsets = (
+        ("Core Activation", {
+            "fields": (
+                "is_active",
+                "is_warmer_active",
+                "is_loa_active",
+                "is_paps_active",
+                "are_daily_messages_active",
+            )
+        }),
+
+        ("DLC Flags", {
+            "classes": ("collapse",),
+            "fields": (
+                "dlc_corp_brother_active",
+                "dlc_loa_active",
+                "dlc_pap_active",
+                "dlc_tickets_active",
+                "dlc_reddit_active",
+                "dlc_daily_messages_active",
+            )
+        }),
+
+        ("Ping / Messaging Roles", {
+            "fields": (
+                "pingroleID",
+                "pingroleID2",
+                "pingrole1_messages",
+                "pingrole2_messages",
+                "here_messages",
+                "everyone_messages",
+            )
+        }),
+
+        ("Webhooks", {
+            "fields": (
+                "webhook",
+                "loawebhook",
+                "dailywebhook",
+                "optwebhook1",
+                "optwebhook2",
+                "optwebhook3",
+                "optwebhook4",
+                "optwebhook5",
+            )
+        }),
+
+        ("User State & Membership", {
+            "fields": (
+                "bb_guest_states",
+                "bb_member_states",
+                "member_corporations",
+                "member_alliances",
+                "ignored_corporations",
+            )
+        }),
+
+        ("Hostile / Whitelist Rules", {
+            "fields": (
+                "hostile_alliances",
+                "hostile_corporations",
+                "whitelist_alliances",
+                "whitelist_corporations",
+                "consider_nullsec_hostile",
+                "consider_all_structures_hostile",
+                "consider_npc_stations_hostile",
+                "excluded_systems",
+                "excluded_stations",
+                "hostile_assets_ships_only",
+            )
+        }),
+
+        ("Scopes", {
+            "classes": ("collapse",),
+            "fields": (
+                "character_scopes",
+                "corporation_scopes",
+            )
+        }),
+
+        ("Main Corp / Alliance", {
+            "classes": ("collapse",),
+            "fields": (
+                "main_corporation_id",
+                "main_corporation",
+                "main_alliance_id",
+                "main_alliance",
+            )
+        }),
+    )
     """Singleton config for the core BigBrother module."""
     readonly_fields = (
         'main_corporation',
@@ -106,7 +196,7 @@ class BB_ConfigAdmin(SingletonModelAdmin):
         "bb_guest_states",
         "bb_member_states",
     )
-    
+
     def has_add_permission(self, request):
         """Prevent duplicate singleton rows."""
         if BigBrotherConfig.objects.exists():  # Disallow when a config already exists.
@@ -135,7 +225,7 @@ class PapsConfigAdmin(PapModuleVisibilityMixin, SingletonModelAdmin):
     def has_delete_permission(self, request, obj=None):
         """Allow deletes so admins can rebuild the configuration."""
         return True
-    
+
 @admin.register(TicketToolConfig)
 class TicketToolConfigAdmin(TicketModuleVisibilityMixin, SingletonModelAdmin):
     """Ticket automation thresholds + templates."""
@@ -192,37 +282,37 @@ class BigBrotherRedditMessageAdmin(RedditAdminVisibilityMixin, admin.ModelAdmin)
     list_display = ("title", "used_in_cycle", "created")
     list_filter = ("used_in_cycle",)
     search_fields = ("title", "content")
-    
+
 @admin.register(Messages)
 class DailyMessageConfig(DailyMessagesVisibilityMixin, admin.ModelAdmin):
     """Standard daily webhook messages rotated each cycle."""
     search_fields = ['text']
     list_display = ['text', 'sent_in_cycle']
-    
+
 @admin.register(OptMessages1)
 class OptMessage1Config(DailyMessagesVisibilityMixin, admin.ModelAdmin):
     """Optional webhook stream #1."""
     search_fields = ['text']
     list_display = ['text', 'sent_in_cycle']
-    
+
 @admin.register(OptMessages2)
 class OptMessage2Config(DailyMessagesVisibilityMixin, admin.ModelAdmin):
     """Optional webhook stream #2."""
     search_fields = ['text']
     list_display = ['text', 'sent_in_cycle']
-    
+
 @admin.register(OptMessages3)
 class OptMessage3Config(DailyMessagesVisibilityMixin, admin.ModelAdmin):
     """Optional webhook stream #3."""
     search_fields = ['text']
     list_display = ['text', 'sent_in_cycle']
-    
+
 @admin.register(OptMessages4)
 class OptMessage4Config(DailyMessagesVisibilityMixin, admin.ModelAdmin):
     """Optional webhook stream #4."""
     search_fields = ['text']
     list_display = ['text', 'sent_in_cycle']
-    
+
 @admin.register(OptMessages5)
 class OptMessage5Config(DailyMessagesVisibilityMixin, admin.ModelAdmin):
     """Optional webhook stream #5."""
@@ -248,7 +338,7 @@ class ComplianceTicketConfig(TicketModuleVisibilityMixin, admin.ModelAdmin):
 class LeaveRequestConfig(LoaModuleVisibilityMixin, admin.ModelAdmin):
     """Expose LeaveRequest records to staff when LoA is enabled."""
     list_display = ['main_character', 'start_date', 'end_date', 'reason', 'status']
-    
+
 @admin.register(PapCompliance)
 class PapComplianceConfig(PapModuleVisibilityMixin, admin.ModelAdmin):
     """Shows the most recent PAP compliance calculation per user."""
