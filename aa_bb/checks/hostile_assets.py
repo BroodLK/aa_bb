@@ -111,7 +111,7 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
             CharacterAsset.objects.select_related(
                 "location_name__system", "type_name__group__category"
             )
-            .filter(character=char_audit)
+            .filter(character=char_audit, location_name__location_type="station")
             .exclude(location_flag="solar_system")
         )
 
