@@ -668,15 +668,15 @@ def BB_register_message_tasks():
                 logger.info(f"✅ Created '{name}' periodic task with enabled=True")
             else:
                 updated = False
-                if existing_task.crontab != schedule:  # Update schedule if admin changed it.
-                    existing_task.crontab = schedule
-                    updated = True
+                # if existing_task.crontab != schedule:  # Update schedule if admin changed it.
+                #     existing_task.crontab = schedule
+                #     updated = True
                 if existing_task.task != task_path:  # Ensure callable matches configuration.
                     existing_task.task = task_path
                     updated = True
-                if not existing_task.enabled:  # Re-enable tasks that were left disabled.
-                    existing_task.enabled = True
-                    updated = True
+                # if not existing_task.enabled:  # Re-enable tasks that were left disabled.
+                #     existing_task.enabled = True
+                #     updated = True
                 if updated:  # Persist/log only when the model was mutated.
                     existing_task.save()
                     logger.info(f"✅ Updated '{name}' periodic task")
