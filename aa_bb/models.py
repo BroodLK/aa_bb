@@ -389,6 +389,11 @@ class BigBrotherConfig(SingletonModel):
     - main_corporation / main_alliance IDs + names, member thresholds, and handshake booleans (is_active) are populated by the updater.
     - bigbrother_tokens, bb_install_token, update timing fields, and reddit/daily message pointers track upstream licensing and version checks.
     """
+    cyno_notify = models.BooleanField(
+        default=True,
+        help_text="Whether to send Cyno change notifications to discord"
+    )
+
     ct_notify = models.BooleanField(
         default=True,
         help_text="Whether to send CT audit completion notifications to discord"

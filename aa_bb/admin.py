@@ -136,11 +136,12 @@ class BB_ConfigAdmin(SingletonModelAdmin):
             "Notifications",
             {
                 "fields": (
+                    "loa_max_logoff_days",
                     "ct_notify",
                     "awox_notify",
                     "ticket_notify_man",
                     "ticket_notify_auto",
-                    "loa_max_logoff_days",
+                    "cyno_notify",
                 ),
             },
         ),
@@ -176,7 +177,6 @@ class BB_ConfigAdmin(SingletonModelAdmin):
         (
             "Schedules",
             {
-                "classes": ("collapse",),
                 "fields": (
                     "dailyschedule",
                     "optschedule1",
@@ -230,7 +230,6 @@ class BB_ConfigAdmin(SingletonModelAdmin):
         (
             "Main Corp / Alliance",
             {
-                "classes": ("collapse",),
                 "fields": (
                     "main_corporation_id",
                     "main_corporation",

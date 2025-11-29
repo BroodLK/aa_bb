@@ -1,11 +1,15 @@
 from django.db.utils import OperationalError
 import time
+from django.utils import timezone
 
 from .models import UserStatus
 
 from .app_settings import (
     resolve_character_name,
+    get_entity_info,
+    get_character_id,
 )
+
 from aa_bb.checks.awox import  get_awox_kill_links
 from aa_bb.checks.cyno import get_user_cyno_info, get_current_stint_days_in_corp
 from aa_bb.checks.skills import get_multiple_user_skill_info, skill_ids, get_char_age
@@ -392,17 +396,20 @@ def BB_run_regular_updates():
                                     can_light_old = old_entry.get("can_light", False)
                                     can_light_new = new_entry.get("can_light", False)
                                     table_lines.append("")
-                                    table_lines.append(f"{'Can Light':<22} | {'Yes' if can_light_old else 'No'} | {'Yes' if can_light_new else 'No'}")
+                                    table_lines.append(
+                                        f"{'Can Light':<22} | {'Yes' if can_light_old else 'No'} | {'Yes' if can_light_new else 'No'}")
 
                                     # 👉 Add corp time here
                                     try:
                                         cid = get_character_id(charname)
-                                        corp_days = get_current_stint_days_in_corp(cid, BigBrotherConfig.get_solo().main_corporation_id)
-                                        corp_label = f"Time in {BigBrotherConfig.get_solo().main_corporation}"
+                                        char_info = get_entity_info(cid, timezone.now())
+                                        current_corp_id = char_info['corp_id']
+                                        current_corp_name = char_info['corp_name']
+                                        corp_days = get_current_stint_days_in_corp(cid, current_corp_id)
+                                        corp_label = f"Time in {current_corp_name}"
                                         table_lines.append(f"{corp_label:<22} | {corp_days} days")
                                     except Exception as e:
                                         logger.warning(f"Could not fetch corp time for {charname}: {e}")
-
 
                                     table_block = "```\n" + "\n".join(table_lines) + "\n```"
                                     changes.append(table_block)
@@ -414,7 +421,8 @@ def BB_run_regular_updates():
                         if status.has_skills != has_skills or skills_norm(skills_result) != skills_norm(status.skills or {}):  # skill list changed?
                             # 1) If the boolean flag flipped, append the 🔴 / 🟢 as before
                             if status.has_skills != has_skills:  # emit coarse-grained flag when the threshold crosses zero/any skills
-                                changes.append(f"## Skill Status: {'🔴' if has_skills else '🟢'}")
+                                if BigBrotherConfig.cyno_notify:
+                                    changes.append(f"## Skill Status: {'🔴' if has_skills else '🟢'}")
                                 status.has_skills = has_skills
 
                             # 2) Grab the old vs. new JSON blobs
@@ -478,7 +486,8 @@ def BB_run_regular_updates():
                                 ]
 
                                 if changed_chars:  # preface the per-character tables with a summary line
-                                    changes.append(f"##{get_pings('skills')} Changes in skills detected:")
+                                    if BigBrotherConfig.cyno_notify:
+                                        changes.append(f"##{get_pings('skills')} Changes in skills detected:")
 
                                 for charname in changed_chars:
                                     # Defensive retrieval of old vs. new
@@ -501,7 +510,8 @@ def BB_run_regular_updates():
 
 
                                     # 3a) Append the “- **CharacterName**:” header
-                                    changes.append(f"- **{charname}**:")
+                                    if BigBrotherConfig.cyno_notify:
+                                        changes.append(f"- **{charname}**:")
 
                                     # 3b) Build the table header and separator
                                     table_lines = [
@@ -539,11 +549,10 @@ def BB_run_regular_updates():
 
                                     # 3d) Wrap the lines in triple backticks
                                     table_block = "```\n" + "\n".join(table_lines) + "\n```"
-                                    changes.append(table_block)
+                                    if BigBrotherConfig.cyno_notify:
+                                        changes.append(table_block)
 
-                            # 4) Finally, write back the new blob so that next time “old” is fresh
                             status.skills = new_skills
-                        # …rest of your saving logic, e.g. status.save(), etc.
 
 
                         if status.has_hostile_assets != has_hostile_assets or set(hostile_assets_result) != set(status.hostile_assets or []):  # asset list changed?
