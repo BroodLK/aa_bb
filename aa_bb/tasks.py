@@ -122,7 +122,7 @@ def send_status_embed(
 
     if VERBOSE_WEBHOOK_LOGGING:
         logger.debug("[EMBED] sending embed payload")
-
+    time.sleep(1)
     send_message(embed)
 
 
