@@ -21,8 +21,11 @@ from .esi_client import esi, to_plain, call_result, parse_expires
 from .esi_cache import expiry_cache_key, get_cached_expiry, set_cached_expiry
 
 
-import logging
-logger = logging.getLogger(__name__)
+from allianceauth.services.hooks import get_extension_logger
+logger = get_extension_logger(__name__)
+
+VERBOSE_WEBHOOK_LOGGING = True
+
 TTL_SHORT = timedelta(hours=4)
 
 def get_owner_name():
@@ -115,109 +118,202 @@ def afat_active():
     return apps.is_installed("afat")
 
 
-
-
 _webhook_history = deque()  # stores timestamp floats of last webhook sends
 _channel_history = deque()  # stores timestamp floats of last channel sends
 
-def send_message(message: str, hook: str = None):
+
+def send_message(message, hook: str = None):
     """
-    Sends `message` via Discord webhook, splitting long messages,
-    honoring Retry-After on 429, AND proactively rate-limiting:
-      - ≤5 req per 2s
-      - ≤30 msgs per 60s
+    Sends `message` via Discord webhook with rate limiting.
+
+    `message` may be:
+      - str  -> sent as {"content": message}, with chunking.
+      - dict -> sent directly as JSON, for embeds etc.
     """
-    if hook:  # Allow callers to override the default webhook target.
-        webhook_url = hook
-    else:
-        webhook_url = BigBrotherConfig.get_solo().webhook
-    MAX_LEN     = 2000
-    SPLIT_LEN   = 1900
+    webhook_url = hook or BigBrotherConfig.get_solo().webhook
+
+    if VERBOSE_WEBHOOK_LOGGING:
+        logger.debug(
+            "[WEBHOOK] send_message called | type=%s | hook_override=%s",
+            type(message).__name__,
+            bool(hook),
+        )
+
+    MAX_LEN = 2000
+    SPLIT_LEN = 1900
 
     def _throttle():
-        """Block until both webhook/channel rate limits allow another send."""
         now = time.monotonic()
+
+        if VERBOSE_WEBHOOK_LOGGING:
+            logger.debug(
+                "[WEBHOOK] throttle check | webhook_hist=%d | channel_hist=%d",
+                len(_webhook_history),
+                len(_channel_history),
+            )
 
         # -- webhook limit: max 5 per 2s --
         while len(_webhook_history) >= 5:
             earliest = _webhook_history[0]
             elapsed = now - earliest
-            if elapsed >= 2.0:  # Drop timestamps once they fall outside 2s window.
-                _webhook_history.popleft()
+            if elapsed >= 2.0:
+                popped = _webhook_history.popleft()
+                if VERBOSE_WEBHOOK_LOGGING:
+                    logger.debug(
+                        "[WEBHOOK] throttle: popped webhook ts %.4f", popped
+                    )
             else:
-                time_to_wait = 2.0 - elapsed
-                time.sleep(time_to_wait)
+                sleep_for = 2.0 - elapsed
+                if VERBOSE_WEBHOOK_LOGGING:
+                    logger.debug(
+                        "[WEBHOOK] throttle: webhook sleep %.3fs", sleep_for
+                    )
+                time.sleep(sleep_for)
                 now = time.monotonic()
 
         # -- channel limit: max 30 per 60s --
         while len(_channel_history) >= 30:
             earliest = _channel_history[0]
             elapsed = now - earliest
-            if elapsed >= 60.0:  # Drop timestamps once they fall outside 60s window.
-                _channel_history.popleft()
+            if elapsed >= 60.0:
+                popped = _channel_history.popleft()
+                if VERBOSE_WEBHOOK_LOGGING:
+                    logger.debug(
+                        "[WEBHOOK] throttle: popped channel ts %.4f", popped
+                    )
             else:
-                time_to_wait = 60.0 - elapsed
-                time.sleep(time_to_wait)
+                sleep_for = 60.0 - elapsed
+                if VERBOSE_WEBHOOK_LOGGING:
+                    logger.debug(
+                        "[WEBHOOK] throttle: channel sleep %.3fs", sleep_for
+                    )
+                time.sleep(sleep_for)
                 now = time.monotonic()
 
-        # record this send
         _webhook_history.append(now)
         _channel_history.append(now)
 
-    def _post_with_retries(content: str):
-        """Send a payload with retry/backoff logic for rate limits or hiccups."""
-        payload = {"content": content}
+        if VERBOSE_WEBHOOK_LOGGING:
+            logger.debug(
+                "[WEBHOOK] throttle pass | new_ts=%.4f", now
+            )
+
+    def _post_with_retries(payload: dict):
+        attempt = 0
         while True:
-            _throttle()  # Ensure proactive rate limits are honored before sending.
+            attempt += 1
+            _throttle()
+
+            if VERBOSE_WEBHOOK_LOGGING:
+                logger.debug(
+                    "[WEBHOOK] POST attempt %d | keys=%s",
+                    attempt,
+                    list(payload.keys()),
+                )
+
             try:
                 response = requests.post(webhook_url, json=payload)
+
+                if VERBOSE_WEBHOOK_LOGGING:
+                    logger.debug(
+                        "[WEBHOOK] HTTP %s | len=%d",
+                        response.status_code,
+                        len(response.content or b""),
+                    )
+
                 response.raise_for_status()
-                return  # success
+                return
+
             except requests.exceptions.HTTPError:
-                if response.status_code == 429:  # Discord rate-limited the request; honor Retry-After.
-                    # obey Discord's Retry-After header
+                if response.status_code == 429:
                     retry_after = response.headers.get("Retry-After")
                     try:
                         backoff = float(retry_after)
                     except (TypeError, ValueError):
                         backoff = 1.0
+
+                    logger.warning(
+                        "[WEBHOOK] 429 rate limit | retry_after=%.3f",
+                        backoff,
+                    )
                     time.sleep(backoff)
-                    continue  # retry
+                    continue
                 else:
-                    # other HTTP errors: log once and give up
-                    logger.error(f"HTTP error sending: {response.status_code} {response.text}")
+                    logger.error(
+                        "[WEBHOOK] HTTP error %s: %s",
+                        response.status_code,
+                        response.text,
+                    )
                     return
+
             except Exception as e:
-                # network hiccup: wait briefly and retry
-                logger.error(f"Error sending message: {e!r}, retrying in 2s")
+                logger.error(
+                    "[WEBHOOK] Exception sending payload | attempt=%d | err=%r",
+                    attempt,
+                    e,
+                )
                 time.sleep(2.0)
                 continue
 
-    # if short enough, send directly
-    if len(message) <= MAX_LEN:  # No need to chunk short messages.
+    # ---- DISPATCH ----
+
+    if isinstance(message, dict):
+        if VERBOSE_WEBHOOK_LOGGING:
+            logger.debug(
+                "[WEBHOOK] sending embed payload | embeds=%d",
+                len(message.get("embeds", [])),
+            )
         _post_with_retries(message)
         return
 
-    # else split on newlines and chunk
+    # message is str
+    if VERBOSE_WEBHOOK_LOGGING:
+        logger.debug(
+            "[WEBHOOK] sending text | length=%d",
+            len(message),
+        )
+
+    if len(message) <= MAX_LEN:
+        _post_with_retries({"content": message})
+        return
+
+    # Chunking path
+    logger.info(
+        "[WEBHOOK] chunking long message | length=%d",
+        len(message),
+    )
+
     raw_lines = message.split("\n")
     parts = []
+
     for line in raw_lines:
-        if len(line) <= MAX_LEN:  # Keep original line when it fits under Discord limit.
+        if len(line) <= MAX_LEN:
             parts.append(line)
         else:
+            logger.debug(
+                "[WEBHOOK] splitting overlong line | length=%d",
+                len(line),
+            )
             for i in range(0, len(line), SPLIT_LEN):
-                chunk = line[i : i + SPLIT_LEN]
                 prefix = "# split due to length\n" if i > 0 else ""
-                parts.append(prefix + chunk)
+                parts.append(prefix + line[i : i + SPLIT_LEN])
 
     buffer = ""
     for part in parts:
         candidate = buffer + ("\n" if buffer else "") + part
-        if len(candidate) > MAX_LEN:  # Current buffer would exceed Discord limit; flush first.
-            _post_with_retries(buffer)
+        if len(candidate) > MAX_LEN:
+            logger.debug(
+                "[WEBHOOK] flushing chunk | length=%d",
+                len(buffer),
+            )
+            _post_with_retries({"content": buffer})
             buffer = part
         else:
             buffer = candidate
 
-    if buffer:  # Flush the remaining text after chunking.
-        _post_with_retries(buffer)
+    if buffer:
+        logger.debug(
+            "[WEBHOOK] flushing final chunk | length=%d",
+            len(buffer),
+        )
+        _post_with_retries({"content": buffer})

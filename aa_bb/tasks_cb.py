@@ -32,8 +32,15 @@ from .models import (
     ProcessedMail, SusMailNote,
     ProcessedTransaction, SusTransactionNote,
 )
-
-from .app_settings import send_message, get_pings, resolve_corporation_name, get_users, get_user_id, get_character_id, get_user_profiles
+from .app_settings import (
+    send_message,
+    get_pings,
+    resolve_corporation_name,
+    get_users,
+    get_user_id,
+    get_character_id,
+    get_user_profiles,
+)
 from aa_bb.checks_cb.hostile_assets import get_corp_hostile_asset_locations
 from aa_bb.checks_cb.sus_contracts import get_corp_hostile_contracts
 from aa_bb.checks_cb.sus_trans import get_corp_hostile_transactions
@@ -52,9 +59,171 @@ except ImportError:
     logger.error("corptools not installed, CB tasks will not be available.")
 from .modelss import PapCompliance, LeaveRequest
 
-
-
 from django.db import transaction
+
+VERBOSE_WEBHOOK_LOGGING = True
+
+
+def send_status_embed(
+    subject: str,
+    lines: list[str],
+    *,
+    override_title: str | None = None,
+    color: int = 0xED4245,  # Discord red
+) -> None:
+    """
+    Send a Discord embed via the existing send_message() webhook.
+
+    - subject: usually the corp name
+    - lines: list of lines to go into embed description
+    - override_title: optional explicit title
+    - color: embed accent color (int)
+    """
+
+    if VERBOSE_WEBHOOK_LOGGING:
+        logger.debug(
+            "[EMBED] send_status_embed called | subject=%r | lines=%d",
+            subject,
+            len(lines) if lines else 0,
+        )
+
+    # Defensive: never send empty embeds
+    if not lines:
+        if VERBOSE_WEBHOOK_LOGGING:
+            logger.debug("[EMBED] aborted: no lines supplied")
+        return
+
+    # Discord limits
+    MAX_DESC = 4096
+    MAX_LINES = 50
+
+    title = override_title if override_title is not None else subject
+
+    if VERBOSE_WEBHOOK_LOGGING:
+        logger.debug(
+            "[EMBED] title resolved | title=%r | color=%#x",
+            title,
+            color,
+        )
+
+    # Trim excessive lines but keep tables / sections intact
+    safe_lines = lines[:MAX_LINES]
+    if len(lines) > MAX_LINES:
+        logger.warning(
+            "[EMBED] line cap exceeded | original=%d | capped=%d",
+            len(lines),
+            MAX_LINES,
+        )
+
+    description = "\n".join(safe_lines)
+
+    # Hard truncate if someone messed up
+    if len(description) > MAX_DESC:
+        logger.error(
+            "[EMBED] description overflow | chars=%d | truncating",
+            len(description),
+        )
+        description = description[: MAX_DESC - 3] + "..."
+
+    if VERBOSE_WEBHOOK_LOGGING:
+        logger.debug(
+            "[EMBED] payload ready | lines=%d | chars=%d",
+            len(safe_lines),
+            len(description),
+        )
+
+    embed = {
+        "embeds": [
+            {
+                "title": title,
+                "description": description,
+                "color": color,
+            }
+        ]
+    }
+
+    if VERBOSE_WEBHOOK_LOGGING:
+        logger.debug("[EMBED] sending embed payload")
+
+    send_message(embed)
+
+
+def _chunk_embed_lines(lines: list[str], max_chars: int = 1900) -> list[list[str]]:
+    """
+    Split a list of lines into chunks whose joined text length
+    is <= max_chars, without breaking ``` code blocks.
+
+    Returns: List[List[str]] – each inner list is one embed body.
+    """
+    # First, group into "segments": either a full code block or a run of normal lines
+    segments: list[list[str]] = []
+    current_segment: list[str] = []
+    in_code = False
+
+    for line in lines:
+        stripped = line.strip()
+
+        if stripped.startswith("```"):
+            # Starting a new code block
+            if not in_code:
+                # flush any accumulated non-code segment
+                if current_segment:
+                    segments.append(current_segment)
+                    current_segment = []
+                in_code = True
+                current_segment = [line]
+            else:
+                # closing an existing code block
+                current_segment.append(line)
+                segments.append(current_segment)
+                current_segment = []
+                in_code = False
+        else:
+            current_segment.append(line)
+
+    if current_segment:
+        segments.append(current_segment)
+
+    # Now pack segments into chunks by total char length
+    chunks: list[list[str]] = []
+    current_chunk: list[str] = []
+    current_len = 0
+
+    for seg in segments:
+        seg_text = "\n".join(seg)
+        seg_len = len(seg_text) + (1 if current_chunk else 0)  # newline before segment
+
+        if seg_len > max_chars:
+            # Segment itself is huge; fall back to splitting inside it line-by-line
+            for line in seg:
+                line_len = len(line) + (1 if current_chunk else 0)
+                if current_len + line_len > max_chars and current_chunk:
+                    chunks.append(current_chunk)
+                    current_chunk = [line]
+                    current_len = len(line)
+                else:
+                    current_chunk.append(line)
+                    current_len += line_len
+            continue
+
+        if current_len + seg_len > max_chars and current_chunk:
+            # Start a new chunk
+            chunks.append(current_chunk)
+            current_chunk = list(seg)
+            current_len = len(seg_text)
+        else:
+            # Add segment to current chunk
+            if current_chunk:
+                current_chunk.append("")  # blank line between segments
+                current_len += 1
+            current_chunk.extend(seg)
+            current_len += len(seg_text)
+
+    if current_chunk:
+        chunks.append(current_chunk)
+
+    return chunks
+
 @shared_task
 def CB_run_regular_updates():
     """
@@ -197,7 +366,8 @@ def CB_run_regular_updates():
                     if corpstatus.has_sus_trans != has_sus_trans:  # Change summary for top-level state.
                         corp_changes.append(f"## Sus Transactions: {'🚩' if has_sus_trans else '✖'}")
                     logger.info(f"{corp_name} status changed")
-                    corp_changes.append(f"## New Sus Transactions{get_pings('New Sus Transactions')}:\n{link_list}")
+                    if new_links:
+                        corp_changes.append(f"## New Sus Transactions{get_pings('New Sus Transactions')}:\n{link_list}")
                     #if new_links:
                     #    changes.append(f"## New Sus Transactions @here:")
                     #    for issuer_id in new_links:
@@ -210,16 +380,40 @@ def CB_run_regular_updates():
                     corpstatus.has_sus_trans = has_sus_trans
                     corpstatus.sus_trans = sus_trans_result
 
-                if corp_changes:  # Dispatch Discord updates only when changes were recorded.
-                    for i in range(0, len(corp_changes)):
-                        chunk = corp_changes[i]
-                        if i == 0:  # First chunk gets the header to emphasize the corp name.
-                            msg = f"# 🛑 Status change detected for **{corp_name}**:\n" + "\n" + chunk
-                        else:
-                            msg = chunk
-                        logger.info(f"Measage: {msg}")
-                        send_message(msg)
-                        time.sleep(0.03)
+                if corp_changes:
+                    # Flatten blocks into individual lines
+                    all_lines: list[str] = []
+                    for block in corp_changes:
+                        # each block may already contain newlines; preserve them
+                        all_lines.extend(str(block).split("\n"))
+
+                    chunks = _chunk_embed_lines(all_lines, max_chars=1900)
+                    for idx, chunk in enumerate(chunks):
+                        title = (
+                            f"🛑 Status change detected for {corp_name}"
+                            if idx == 0
+                            else f"Status change (cont.) for {corp_name}"
+                        )
+
+                        if VERBOSE_WEBHOOK_LOGGING:
+                            logger.debug(
+                                "[CB_EMBED] sending chunk %d/%d for corp %s | lines=%d",
+                                idx + 1,
+                                len(chunks),
+                                corp_name,
+                                len(chunk),
+                            )
+
+                        send_status_embed(
+                            subject=corp_name,
+                            lines=chunk,
+                            override_title=title,
+                            color=0xED4245,
+                        )
+
+                        # tiny delay between messages to avoid hammering the webhook
+                        time.sleep(0.05)
+
                 corpstatus.updated = timezone.now()
                 corpstatus.save()
 

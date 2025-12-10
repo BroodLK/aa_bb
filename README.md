@@ -1,6 +1,6 @@
 # BigBrother
 
-BigBrother is an Alliance Auth plugin for EVE Online corps and alliances.  
+BigBrother is an Alliance Auth plugin for EVE Online corps and alliances.
 It gathers the intel you already have—ESI, zKillboard, Corptools, Charlink, FATs—and turns it into one actionable dashboard so leadership can act fast without digging through spreadsheets.
 
 ## What BigBrother Does for You
@@ -34,7 +34,7 @@ It gathers the intel you already have—ESI, zKillboard, Corptools, Charlink, FA
 ## BigBrotherConfig Settings Cheat Sheet
 
 - **Installation & Identity** – `main_corporation`/`main_alliance` and `is_active` are filled in by the updater after it inspects your superusers’ characters. You normally never touch these manually.
-- **Module Entitlements** – `dlc_*_active` flags (CorpBrother, LoA, PAPs, Tickets, Reddit, Daily Messages) mirror what your installation unlocks. They flip automatically each time “BB run regular updates” executes.
+- **Module Entitlements** – `dlc_*_active` flags (CorpBrother, LoA, PAPs, Tickets, Reddit, Daily Messages) mirror what your installation unlocks. They flip automatically each time “BB: Run regular updates” executes.
 - **Access Control** – `bb_guest_states`/`bb_member_states` define who counts as a guest vs. member; `member_*` fields let you whitelist outside corps/alliances; `ignored_corporations` hides IDs from CorpBrother menus and compliance checks.
 - **Hostile & Whitelists** – `hostile_alliances`/`hostile_corporations` power the red highlights in cards, mails, contracts, and transactions; `whitelist_*` keeps friendly IDs safe even if the default data marks them as hostile.
 - **Discord Notifications** – `pingroleID`, `pingroleID2`, and the `pingrole*_messages`/`here_messages`/`everyone_messages` relationships decide which MessageTypes mention which roles; `webhook`, `loawebhook`, `dailywebhook`, and `optwebhook1-5` route the alerts to different channels.

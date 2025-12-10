@@ -84,25 +84,93 @@ def get_clones(user_id: int) -> Dict[int, Optional[str]]:
 
 def get_hostile_clone_locations(user_id: int) -> Dict[str, str]:
     """
-    Returns a dict of system display name → owning alliance name,
-    including 'Unresolvable' where owner info is unavailable.
-    Includes locations that are:
-      - in a hostile alliance, or
-      - in nullsec when consider_nullsec_hostile is enabled, or
-      - unresolvable.
-    Respects system whitelists.
-    """
+    Returns a dict of system display name -> owner/clone summary string
+    for systems where this user has home or jump clones in space and the
+    system is considered hostile under the configured rules.
 
-    systems = get_clones(user_id)  # Dict[int, Optional[str]]
-    if not systems:
+    The summary string includes:
+      - the owning alliance/corp (or "Unresolvable"),
+      - optional character names that have clones in that system.
+    """
+    try:
+        user = User.objects.get(pk=user_id)
+    except User.DoesNotExist:
         return {}
 
+    # Ensure corptools models are available (imported at module level)
+    try:
+        CharacterAudit  # type: ignore[name-defined]
+        Clone           # type: ignore[name-defined]
+        JumpClone       # type: ignore[name-defined]
+    except NameError:
+        logger.error("Corptools not installed, clone checks will not work.")
+        return {}
+
+    # Build a map of system_id -> name and system_id -> set of character names
+    system_name_map: Dict[int, Optional[str]] = {}
+    system_char_map: Dict[int, set] = {}
+
+    def add_location(system_obj, loc_id, char_name: str) -> None:
+        # Store system name/id and which character has a clone there.
+        if system_obj:  # known system object
+            sid = getattr(system_obj, "pk", None)
+            if sid is None:
+                return
+            system_name_map[sid] = system_obj.name
+        elif loc_id is not None:
+            sid = loc_id
+            system_name_map.setdefault(sid, None)
+        else:
+            return
+
+        system_char_map.setdefault(sid, set()).add(char_name)
+
+    # Walk all owned characters and their clones
+    for co in CharacterOwnership.objects.filter(user=user).select_related("character"):
+        char_name = co.character.character_name
+
+        try:
+            char_audit = CharacterAudit.objects.get(  # type: ignore[name-defined]
+                character=co.character
+            )
+        except CharacterAudit.DoesNotExist:  # type: ignore[attr-defined]
+            continue
+
+        # Home clone
+        try:
+            home_clone = Clone.objects.select_related(  # type: ignore[name-defined]
+                "location_name__system"
+            ).get(character=char_audit)
+            loc = home_clone.location_name
+            add_location(getattr(loc, "system", None), home_clone.location_id, char_name)
+        except Clone.DoesNotExist:  # type: ignore[attr-defined]
+            pass
+
+        # Jump clones
+        jump_clones = JumpClone.objects.select_related(  # type: ignore[name-defined]
+            "location_name__system"
+        ).filter(character=char_audit)
+        for jc in jump_clones:
+            loc = jc.location_name
+            add_location(getattr(loc, "system", None), jc.location_id, char_name)
+
+    if not system_name_map:
+        return {}
+
+    # Sort systems by name for stable output
+    systems: Dict[int, Optional[str]] = dict(
+        sorted(system_name_map.items(), key=lambda kv: (kv[1] or "").lower())
+    )
+
     cfg = BigBrotherConfig.get_solo()
+
     hostile_str = cfg.hostile_alliances or ""
     hostile_ids = {int(s) for s in hostile_str.split(",") if s.strip().isdigit()}
 
     excluded_systems_str = cfg.excluded_systems or ""
-    excluded_system_ids = {int(s) for s in excluded_systems_str.split(",") if s.strip().isdigit()}
+    excluded_system_ids = {
+        int(s) for s in excluded_systems_str.split(",") if s.strip().isdigit()
+    }
 
     consider_nullsec = cfg.consider_nullsec_hostile
     safe_entities = get_safe_entities()
@@ -110,7 +178,6 @@ def get_hostile_clone_locations(user_id: int) -> Dict[str, str]:
     hostile_map: Dict[str, str] = {}
 
     for system_id, system_name in systems.items():
-        oname = "Unresolvable"
         if system_id in excluded_system_ids:
             continue
 
@@ -124,33 +191,48 @@ def get_hostile_clone_locations(user_id: int) -> Dict[str, str]:
         )
 
         nullsec_flag = consider_nullsec and is_nullsec(system_id)
+        oname = "Unresolvable"
+        oid: Optional[int] = None
 
         if not owner_info:
             # fully unresolvable, still worth flagging
-            oname = "Unresolvable"
-            hostile_map[display_name] = oname
-            logger.info(f"Hostile clone (unresolvable): {display_name}")
+            parts = [oname]
+            char_list = sorted(system_char_map.get(system_id, set()))
+            if char_list:
+                parts.append("Chars: " + ", ".join(char_list))
+            hostile_map[display_name] = " | ".join(parts)
+            logger.info("Hostile clone (unresolvable): %s", display_name)
             continue
 
         try:
             oid = int(owner_info["owner_id"])
         except (ValueError, TypeError):
             oid = None
-            oname = owner_info.get("owner_name") or (
-                f"ID {oid}" if oid is not None else "Unresolvable"
-            )
-            # Nullsec is hostile unless sov owner is “safe”
-            nullsec_flag = False
+        oname = owner_info.get("owner_name") or (
+            f"ID {oid}" if oid is not None else "Unresolvable"
+        )
+
         if consider_nullsec and is_nullsec(system_id):
             if oid is None or oid not in safe_entities:
                 nullsec_flag = True
+
         if (
             nullsec_flag
             or (oid in hostile_ids if oid is not None else False)
             or "Unresolvable" in oname
         ):
-            hostile_map[display_name] = oname
-            logger.info(f"Hostile clone: {display_name} owned by {oname} ({oid})")
+            parts = [oname]
+            char_list = sorted(system_char_map.get(system_id, set()))
+            if char_list:
+                parts.append("Chars: " + ", ".join(char_list))
+            summary = " | ".join(parts)
+            hostile_map[display_name] = summary
+            logger.info(
+                "Hostile clone: %s owned by %s (%s)",
+                display_name,
+                summary,
+                oid,
+            )
 
     return hostile_map
 

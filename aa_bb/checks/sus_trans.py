@@ -304,17 +304,35 @@ def get_user_hostile_transactions(user_id: int) -> Dict[int, str]:
                 flags.append(f"second_party corp **{tx['second_party_corporation']}** is hostile")
             if str(tx['second_party_alliance_id']) in BigBrotherConfig.get_solo().hostile_alliances:  # Counterparty alliance is hostile.
                 flags.append(f"second_party alliance **{tx['second_party_alliance']}** is hostile")
-            flags_text = "\n    - ".join(flags)
+            # Build human-readable note for Discord embeds
+            if flags:
+                flags_lines = [f"    - {flag}" for flag in flags]
+            else:
+                flags_lines = ["    - (no extra flags)"]
 
-            note = (
-                f">>> - **{tx['date']}**:"
-                f"\n - **{tx['amount']}**"
-                f"\n  - Reason:"
-                f"\n    - **{tx['reason']}**"
-                f"\n  - **{tx['first_party_name']}**({tx['first_party_corporation']} | {tx['first_party_alliance']})"
-                f" **→** **{tx['second_party_name']}**({tx['second_party_corporation']} | {tx['second_party_alliance']})"
-                f"\n  - Flags:\n    - {flags_text}"
-            )
+            note_lines = [
+                # Main line: timestamp + amount
+                f"- **{tx['date']}** · **{tx['amount']} ISK**",
+                # Parties
+                (
+                    f"  {tx['first_party_name']} "
+                    f"({tx['first_party_corporation']} | {tx['first_party_alliance']})"
+                    f" **→** "
+                    f"{tx['second_party_name']} "
+                    f"({tx['second_party_corporation']} | {tx['second_party_alliance']})"
+                ),
+            ]
+
+            # Optional reason line
+            if tx.get("reason"):
+                note_lines.append(f"  Reason: **{tx['reason']}**")
+
+            # Flags
+            note_lines.append("  Flags:")
+            note_lines.extend(flags_lines)
+
+            note = "\n".join(note_lines)
+
             SusTransactionNote.objects.update_or_create(
                 transaction=pt,
                 defaults={'user_id': user_id, 'note': note}

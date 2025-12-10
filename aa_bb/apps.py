@@ -61,15 +61,19 @@ class AaBbConfig(AppConfig):
         try:
             from django_celery_beat.models import PeriodicTask, IntervalSchedule, CrontabSchedule
 
-            schedule, _ = IntervalSchedule.objects.get_or_create(
-                every=1,
-                period=IntervalSchedule.HOURS,
+            schedule, _ = CrontabSchedule.objects.get_or_create(
+                minute='25',
+                hour='*',
+                day_of_week='*',
+                day_of_month='*',
+                month_of_year='*',
+                timezone='UTC',
             )
 
             task, created = PeriodicTask.objects.get_or_create(
                 name="BB run regular updates",
                 defaults={
-                    "interval": schedule,
+                    "crontab": schedule,
                     "task": "aa_bb.tasks.BB_run_regular_updates",
                     "enabled": False,  # only on creation
                 },
@@ -77,13 +81,16 @@ class AaBbConfig(AppConfig):
 
             if not created:  # Existing record found; ensure configuration matches expectations.
                 updated = False
-                if task.interval != schedule or task.task != "aa_bb.tasks.BB_run_regular_updates":  # Ensure interval/task stay canonical.
+                if task.interval:
+                    task.interval = None
+                    updated = True
+                if task.crontab != schedule or task.task != "aa_bb.tasks.BB_run_regular_updates":  # Ensure interval/task stay canonical.
                     # Realign interval/task bindings to the expected values.
-                    task.interval = schedule
+                    task.crontab = schedule
                     task.task = "aa_bb.tasks.BB_run_regular_updates"
-                    task.save()
                     updated = True
                 if updated:  # Surface when the periodic task required modification.
+                    task.save()
                     logger.info("✅ Updated ‘BB run regular updates’ periodic task")
                 else:
                     logger.info("ℹ️ ‘BB run regular updates’ periodic task already exists and is up to date")
@@ -93,7 +100,7 @@ class AaBbConfig(AppConfig):
             task_cb, created_cb = PeriodicTask.objects.get_or_create(
                 name="CB run regular updates",
                 defaults={
-                    "interval": schedule,
+                    "crontab": schedule,
                     "task": "aa_bb.tasks_cb.CB_run_regular_updates",
                     "enabled": False,  # only on creation
                 },
@@ -101,13 +108,16 @@ class AaBbConfig(AppConfig):
 
             if not created_cb:  # Existing CorpBrother task detected.
                 updated_cb = False
-                if task_cb.interval != schedule or task_cb.task != "aa_bb.tasks_cb.CB_run_regular_updates":  # Keep CB task mapping aligned.
+                if task_cb.interval:
+                    task_cb.interval = None
+                    updated_cb = True
+                if task_cb.crontab != schedule or task_cb.task != "aa_bb.tasks_cb.CB_run_regular_updates":  # Keep CB task mapping aligned.
                     # Bring the CB task settings back to the canonical values.
-                    task_cb.interval = schedule
+                    task_cb.crontab = schedule
                     task_cb.task = "aa_bb.tasks_cb.CB_run_regular_updates"
-                    task_cb.save()
                     updated_cb = True
                 if updated_cb:  # Only log when changes were saved.
+                    task_cb.save()
                     logger.info("✅ Updated ‘CB run regular updates’ periodic task")
                 else:
                     logger.info("ℹ️ ‘CB run regular updates’ periodic task already exists and is up to date")
@@ -117,7 +127,7 @@ class AaBbConfig(AppConfig):
             task_ct, created_ct = PeriodicTask.objects.get_or_create(
                 name="BB kickstart stale CT modules",
                 defaults={
-                    "interval": schedule,
+                    "crontab": schedule,
                     "task": "aa_bb.tasks_ct.kickstart_stale_ct_modules",
                     "enabled": False,  # only on creation
                 },
@@ -126,15 +136,15 @@ class AaBbConfig(AppConfig):
             if not created_ct:  # Existing kickstart task found; ensure it matches defaults.
                 updated_ct = False
                 # Clear interval if set
-                if task_ct.crontab is not None:  # Force interval mode by clearing stale crontab assignments.
-                    task_ct.crontab = None
+                if task_ct.interval is not None:  # Force crontab mode by clearing stale interval assignments.
+                    task_ct.interval = None
                     updated_ct = True
-                if task_ct.interval != schedule or task_ct.task != "aa_bb.tasks_ct.kickstart_stale_ct_modules":  # Align interval/task fields.
-                    task_ct.interval = schedule
+                if task_ct.crontab != schedule or task_ct.task != "aa_bb.tasks_ct.kickstart_stale_ct_modules":  # Align interval/task fields.
+                    task_ct.crontab = schedule
                     task_ct.task = "aa_bb.tasks_ct.kickstart_stale_ct_modules"
-                    task_ct.save()
                     updated_ct = True
                 if updated_ct:  # Report when the stored task required tweaks.
+                    task_ct.save()
                     logger.info("✅ Updated ‘BB kickstart stale CT modules’ periodic task")
                 else:
                     logger.info("ℹ️ ‘BB kickstart stale CT modules’ periodic task already exists and is up to date")
@@ -144,7 +154,7 @@ class AaBbConfig(AppConfig):
             task_tickets, created_tickets = PeriodicTask.objects.get_or_create(
                 name="tickets run regular updates",
                 defaults={
-                    "interval": schedule,
+                    "crontab": schedule,
                     "task": "aa_bb.tasks_tickets.hourly_compliance_check",
                     "enabled": False,  # only on creation
                 },
@@ -152,12 +162,15 @@ class AaBbConfig(AppConfig):
 
             if not created_tickets:  # Tickets beat already exists; keep it in sync.
                 updated_tickets = False
-                if task_tickets.interval != schedule or task_tickets.task != "aa_bb.tasks_tickets.hourly_compliance_check":  # Align interval/task fields.
-                    task_tickets.interval = schedule
+                if task_tickets.interval:
+                    task_tickets.interval = None
+                    updated_tickets = True
+                if task_tickets.crontab != schedule or task_tickets.task != "aa_bb.tasks_tickets.hourly_compliance_check":  # Align interval/task fields.
+                    task_tickets.crontab = schedule
                     task_tickets.task = "aa_bb.tasks_tickets.hourly_compliance_check"
-                    task_tickets.save()
                     updated_tickets = True
                 if updated_tickets:  # Log when configuration drift was corrected.
+                    task_tickets.save()
                     logger.info("✅ Updated 'tickets run regular updates’ periodic task")
                 else:
                     logger.info("ℹ️ ‘tickets run regular updates’ periodic task already exists and is up to date")
@@ -227,6 +240,40 @@ class AaBbConfig(AppConfig):
             else:
                 logger.info("✅ Created ‘BB check member compliance’ periodic task with enabled=False")
 
+            schedule_stats, _ = CrontabSchedule.objects.get_or_create(
+                minute="0",
+                hour="12",
+                day_of_week="0",
+                day_of_month="*",
+                month_of_year="*",
+                timezone="UTC",
+            )
+
+            task_stats, created_stats = PeriodicTask.objects.get_or_create(
+                name="BB send recurring stats",
+                defaults={
+                    "crontab": schedule_stats,
+                    "task": "aa_bb.tasks_other.BB_send_recurring_stats",
+                    "enabled": False,  # only on creation
+                },
+            )
+
+            if not created_stats:
+                updated_stats = False
+                if task_stats.interval is not None:
+                    task_stats.interval = None
+                    updated_stats = True
+                if task_stats.crontab != schedule_stats or task_stats.task != "aa_bb.tasks_other.BB_send_recurring_stats":
+                    task_stats.crontab = schedule_stats
+                    task_stats.task = "aa_bb.tasks_other.BB_send_recurring_stats"
+                    task_stats.save()
+                    updated_stats = True
+                if updated_stats:
+                    logger.info("✅ Updated ‘BB send recurring stats’ periodic task")
+                else:
+                    logger.info("ℹ️ ‘BB send recurring stats’ periodic task already exists and is up to date")
+            else:
+                    logger.info("✅ Created ‘BB send recurring stats’ periodic task with enabled=False")
 
 
 

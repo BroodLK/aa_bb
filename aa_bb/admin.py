@@ -136,11 +136,11 @@ class BB_ConfigAdmin(SingletonModelAdmin):
             "Notifications",
             {
                 "fields": (
-                    "loa_max_logoff_days",
                     "ct_notify",
                     "awox_notify",
                     "ticket_notify_man",
                     "ticket_notify_auto",
+                    "loa_max_logoff_days",
                     "cyno_notify",
                 ),
             },

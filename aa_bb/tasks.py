@@ -1,16 +1,21 @@
 from django.db.utils import OperationalError
 import time
+import traceback
 from django.utils import timezone
+from celery import shared_task
 
-from .models import UserStatus
+from .models import UserStatus, BigBrotherConfig
+from .modelss import TicketToolConfig
 
 from .app_settings import (
     resolve_character_name,
-    get_entity_info,
+    get_users,
+    get_user_id,
     get_character_id,
+    get_pings,
+    send_message
 )
-
-from aa_bb.checks.awox import  get_awox_kill_links
+from aa_bb.checks.awox import get_awox_kill_links
 from aa_bb.checks.cyno import get_user_cyno_info, get_current_stint_days_in_corp
 from aa_bb.checks.skills import get_multiple_user_skill_info, skill_ids, get_char_age
 from aa_bb.checks.hostile_assets import get_hostile_asset_locations
@@ -22,13 +27,1010 @@ from aa_bb.checks.sus_trans import get_user_hostile_transactions
 from aa_bb.checks.clone_state import determine_character_state
 from aa_bb.checks.corp_changes import time_in_corp
 
+# Import sibling tasks to maintain module API surface
 from .tasks_cb import *
 from .tasks_ct import *
 from .tasks_tickets import *
 from .tasks_other import *
 
-import logging
-logger = logging.getLogger(__name__)
+from allianceauth.eveonline.models import EveCharacter
+from django.contrib.auth import get_user_model
+
+try:
+    from aadiscordbot.utils.auth import get_discord_user_id
+    from aadiscordbot.tasks import run_task_function
+except ImportError:
+    get_discord_user_id = None
+    run_task_function = None
+
+from allianceauth.services.hooks import get_extension_logger
+
+logger = get_extension_logger(__name__)
+VERBOSE_WEBHOOK_LOGGING = True
+def send_status_embed(
+    subject: str,
+    lines: list[str],
+    *,
+    override_title: str | None = None,
+    color: int = 0xED4245,  # Discord red
+):
+    """
+    Send a Discord embed via the existing send_message() webhook.
+    """
+
+    if VERBOSE_WEBHOOK_LOGGING:
+        logger.debug(
+            "[EMBED] send_status_embed called | subject=%r | lines=%d",
+            subject,
+            len(lines) if lines else 0,
+        )
+
+    # Defensive: never send empty embeds
+    if not lines:
+        logger.debug("[EMBED] aborted: no lines supplied")
+        return
+
+    # Discord limits
+    MAX_DESC = 4096
+    MAX_LINES = 50
+
+    title = override_title if override_title is not None else subject
+
+    if VERBOSE_WEBHOOK_LOGGING:
+        logger.debug(
+            "[EMBED] title resolved | title=%r | color=%#x",
+            title,
+            color,
+        )
+
+    # Trim excessive lines but keep tables intact
+    safe_lines = lines[:MAX_LINES]
+
+    if len(lines) > MAX_LINES:
+        logger.warning(
+            "[EMBED] line cap exceeded | original=%d | capped=%d",
+            len(lines),
+            MAX_LINES,
+        )
+
+    description = "\n".join(safe_lines)
+
+    # Hard truncate if someone messed up
+    if len(description) > MAX_DESC:
+        logger.error(
+            "[EMBED] description overflow | chars=%d | truncating",
+            len(description),
+        )
+        description = description[: MAX_DESC - 3] + "..."
+
+    if VERBOSE_WEBHOOK_LOGGING:
+        logger.debug(
+            "[EMBED] payload ready | lines=%d | chars=%d",
+            len(safe_lines),
+            len(description),
+        )
+
+    embed = {
+        "embeds": [
+            {
+                "title": title,
+                "description": description,
+                "color": color,
+            }
+        ]
+    }
+
+    if VERBOSE_WEBHOOK_LOGGING:
+        logger.debug("[EMBED] sending embed payload")
+
+    send_message(embed)
+
+
+# Helper to keep embed lines reasonably narrow for mobile (≈40 chars)
+def _chunk_embed_lines(lines, max_chars=1900):
+    """
+    Split a list of lines into chunks whose joined text length
+    is <= max_chars, without breaking ``` code blocks.
+
+    Returns: List[List[str]] – each inner list is one embed body.
+    """
+    # First, group into "segments": either a full code block or a run of normal lines
+    segments = []
+    current_segment = []
+    in_code = False
+
+    for line in lines:
+        stripped = line.strip()
+
+        if stripped.startswith("```"):
+            # Starting a new code block
+            if not in_code:
+                # flush any accumulated non-code segment
+                if current_segment:
+                    segments.append(current_segment)
+                    current_segment = []
+                in_code = True
+                current_segment = [line]
+            else:
+                # closing an existing code block
+                current_segment.append(line)
+                segments.append(current_segment)
+                current_segment = []
+                in_code = False
+        else:
+            current_segment.append(line)
+
+    if current_segment:
+        segments.append(current_segment)
+
+    # Now pack segments into chunks by total char length
+    chunks = []
+    current_chunk = []
+    current_len = 0
+
+    for seg in segments:
+        # Estimate length if we add this segment (with newlines)
+        seg_text = "\n".join(seg)
+        seg_len = len(seg_text) + (1 if current_chunk else 0)  # +1 for newline before segment
+
+        if seg_len > max_chars:
+            # Segment itself is huge; fall back to splitting inside it line-by-line
+            for line in seg:
+                line_len = len(line) + (1 if current_chunk else 0)
+                if current_len + line_len > max_chars and current_chunk:
+                    chunks.append(current_chunk)
+                    current_chunk = [line]
+                    current_len = len(line)
+                else:
+                    current_chunk.append(line)
+                    current_len += line_len
+            continue
+
+        if current_len + seg_len > max_chars and current_chunk:
+            # Start a new chunk
+            chunks.append(current_chunk)
+            current_chunk = list(seg)
+            current_len = len(seg_text)
+        else:
+            # Add segment to current chunk
+            if current_chunk:
+                current_chunk.append("")  # ensure a blank line between segments
+                current_len += 1
+            current_chunk.extend(seg)
+            current_len += len(seg_text)
+
+    if current_chunk:
+        chunks.append(current_chunk)
+
+    return chunks
+
+
+def parse_hostile_summary(summary: str):
+    """
+    Parse the summary string from get_hostile_asset_locations /
+    get_hostile_clone_locations into (owner, ships, chars).
+
+    Expected format from helpers is:
+      "Owner Name | Ships: A, B | Chars: X, Y"
+    or
+      "Owner Name | Chars: X, Y"
+
+    Ships may be empty for clones.
+    """
+    owner = summary or "Unresolvable"
+    ships = ""
+    chars: list[str] = []
+
+    if not summary:
+        return owner, ships, chars
+
+    parts = [p.strip() for p in summary.split("|") if p.strip()]
+    if parts:
+        owner = parts[0]
+
+    for seg in parts[1:]:
+        label, _, rest = seg.partition(":")
+        label = label.strip().lower()
+        value = rest.strip()
+        if label == "ships":
+            ships = value
+        elif label == "chars":
+            if value:
+                chars = [c.strip() for c in value.split(",") if c.strip()]
+
+    return owner, ships, chars
+
+
+@shared_task
+def BB_update_single_user(user_id, char_name):
+    """
+    Process updates for a single user.
+    Broken out from BB_run_regular_updates for scalability.
+    """
+    logger.info(f"START Update for user: {char_name} (ID: {user_id})")
+
+    instance = BigBrotherConfig.get_solo()
+    if not instance.is_active:
+        logger.info(f"BigBrother inactive. Skipping update for {char_name}.")
+        return
+
+    User = get_user_model()
+
+    # Retry logic previously inside the main loop
+    for attempt in range(3):
+        try:
+            # pingroleID = instance.pingroleID # Unused variable?
+
+            logger.info(f"[{char_name}] Fetching Cyno Info...")
+            cyno_result = get_user_cyno_info(user_id)
+
+            logger.info(f"[{char_name}] Fetching Skill Info...")
+            skills_result = get_multiple_user_skill_info(user_id, skill_ids)
+
+            logger.info(f"[{char_name}] Determining Character State...")
+            state_result = determine_character_state(user_id, True)
+
+            logger.info(f"[{char_name}] Fetching AWOX Links...")
+            awox_data = get_awox_kill_links(user_id)
+            awox_links = [x["link"] for x in awox_data]
+            awox_map = {x["link"]: x for x in awox_data}
+
+            logger.info(f"[{char_name}] Fetching Hostile Clones...")
+            hostile_clones_result = get_hostile_clone_locations(user_id)
+
+            logger.info(f"[{char_name}] Fetching Hostile Assets...")
+
+            hostile_assets_result = get_hostile_asset_locations(user_id)
+
+            logger.info(f"[{char_name}] Fetching Sus Contacts/Contracts/Mails/Trans...")
+            sus_contacts_result = {str(cid): v for cid, v in get_user_hostile_notifications(user_id).items()}
+            sus_contracts_result = {str(issuer_id): v for issuer_id, v in get_user_hostile_contracts(user_id).items()}
+            sus_mails_result = {str(issuer_id): v for issuer_id, v in get_user_hostile_mails(user_id).items()}
+            sus_trans_result = {str(issuer_id): v for issuer_id, v in get_user_hostile_transactions(user_id).items()}
+
+            sp_age_ratio_result: dict[str, dict] = {}
+
+            def norm(d):
+                d = d or {}
+                return {
+                    n: {k: v for k, v in (entry if isinstance(entry, dict) else {}).items() if k != 'age'}
+                    # drop 'age' noise when diffing
+                    for n, entry in d.items()
+                }
+
+            def skills_norm(d):
+                out = {}
+                for name, entry in (d or {}).items():
+                    if not isinstance(entry, dict):  # ignore non-dict placeholders just in case
+                        continue
+                    filtered = {}
+                    for k, v in entry.items():
+                        k_str = str(k)
+                        if k_str == 'total_sp':  # skip total SP row when comparing per skill
+                            continue
+                        if isinstance(v, dict):  # only keep nested skill dicts
+                            filtered[k_str] = {
+                                'trained': v.get('trained', 0) or 0,
+                                'active': v.get('active', 0) or 0,
+                            }
+                    out[name] = filtered
+                return out
+
+            logger.info(f"[{char_name}] Processing SP Ratios...")
+            for char_nameeee, data in skills_result.items():
+                char_id = get_character_id(char_nameeee)
+                char_age = get_char_age(char_id)
+                total_sp = data["total_sp"]
+                sp_days = (total_sp - 384000) / 64800 if total_sp else 0  # convert SP into training-day equivalent
+
+                sp_age_ratio_result[char_nameeee] = {
+                    **data,  # keep original skill info
+                    "sp_days": sp_days,
+                    "char_age": char_age,
+                }
+
+            has_cyno = any(
+                char_dic.get("can_light", False)
+                for char_dic in (cyno_result or {}).values()
+            )
+            has_skills = any(
+                entry[sid]["trained"] > 0 or entry[sid]["active"] > 0
+                for entry in skills_result.values()
+                for sid in skill_ids
+            )
+            has_awox = bool(awox_links)
+            has_hostile_clones = bool(hostile_clones_result)
+            has_hostile_assets = bool(hostile_assets_result)
+            has_sus_contacts = bool(sus_contacts_result)
+            has_sus_contracts = bool(sus_contracts_result)
+            has_sus_mails = bool(sus_mails_result)
+            has_sus_trans = bool(sus_trans_result)
+
+            # load (or create) cached status so diffs apply correctly
+            status, created = UserStatus.objects.get_or_create(user_id=user_id)
+
+            # On the very first run for this user, silently create a baseline
+            # send_notifications = not created
+            send_notifications = True
+            logger.info(f"[{char_name}] Status loaded (created={created}). Calculating changes...")
+
+            changes = []
+
+            def as_dict(x):
+                return x if isinstance(x, dict) else {}  # utility to guard against None/non-dict entries
+
+            if set(state_result) != set(status.clone_status or []):  # clone-state map changed?
+                # capture clone-state transitions (alpha→omega etc.)
+                old_states = status.clone_status or {}
+                diff = {}
+                flagggs = []
+
+                # build dict of changes
+                for char_idddd, new_data in state_result.items():
+                    old_data = old_states.get(str(char_idddd)) or old_states.get(char_idddd)  # handle str/int keys
+                    if not old_data or old_data.get("state") != new_data.get(
+                        "state"):  # capture per-character state transitions
+                        diff[char_idddd] = {
+                            "old": old_data.get("state") if old_data else None,  # previous state (None when unseen)
+                            "new": new_data.get("state"),
+                        }
+
+                # add messages to flags
+                for char_idddd, change in diff.items():
+                    char_nameeeee = resolve_character_name(char_idddd)
+                    flagggs.append(
+                        f"\n- **{char_nameeeee}**: {change['old']} → **{change['new']}**"
+                    )
+
+                pinggg = ""
+
+                if "omega" in flagggs:  # ping when someone upgrades to omega
+                    pinggg = get_pings('Omega Detected')
+
+                # final summary message
+                if flagggs:  # only when changes are detected should notifications and saves occur
+                    changes.append(f"###{pinggg} Clone state change detected:{''.join(flagggs)}")
+                    status.clone_status = state_result
+                    status.save()
+
+            if set(sp_age_ratio_result) != set(status.sp_age_ratio_result or []):  # detect changes in SP-to-age ratios
+                flaggs = []
+
+                def _safe_ratio(info: dict):
+                    age = info.get("char_age")
+                    if not isinstance(age, (int, float)) or age <= 0:  # bail when no usable age is available
+                        return None
+                    return (info.get("sp_days") or 0) / max(age, 1)
+
+                for char_nameee, new_info in sp_age_ratio_result.items():
+                    old_info = (status.sp_age_ratio_result or {}).get(char_nameee, {})
+                    old_ratio = _safe_ratio(old_info)
+                    new_ratio = _safe_ratio(new_info)
+
+                    if old_ratio is not None and new_ratio is not None and new_ratio > old_ratio:  # only flag when ratio increased
+                        flaggs.append(
+                            f"- **{char_nameee}'s** SP to age ratio went up from **{old_ratio}** to **{new_ratio}**\n"
+                        )
+
+                if flaggs:  # only send notification when at least one character’s ratio increased
+                    sp_list = "".join(flaggs)
+                    changes.append(f"## {get_pings('SP Injected')} Skill Injection detected:\n{sp_list}")
+
+            status.sp_age_ratio_result = sp_age_ratio_result
+            status.save()
+
+            if status.has_awox_kills != has_awox or set(awox_links) != set(
+                status.awox_kill_links or []):  # new awox activity?
+                # detect new AWOX links and optionally raise a ticket
+                # Compare and find new links
+                old_links = set(status.awox_kill_links or [])
+                new_links = set(awox_links) - old_links
+
+                def format_awox_line(link):
+                    details = awox_map.get(link)
+                    if details:
+                        return (f"- {link}\n"
+                                f"  - Date: {details.get('date')}\n"
+                                f"  - Value: {details.get('value')} ISK")
+                    return f"- {link}"
+
+                link_list = "\n".join(format_awox_line(link) for link in new_links)
+                logger.info(f"{char_name} new links {link_list}")
+                link_list3 = "\n".join(f"- {link}" for link in awox_links)
+                logger.info(f"{char_name} new links {link_list3}")
+                link_list2 = "\n".join(f"- {link}" for link in old_links)
+                logger.info(f"{char_name} old links {link_list2}")
+                if status.has_awox_kills != has_awox and has_awox:  # first time awox kills were spotted for this user
+                    if not has_awox:
+                        changes.append(f"### AWOX Kill Status: 🟢")
+                    status.has_awox_kills = has_awox
+                    logger.info(f"{char_name} changed")
+                if new_links:  # send notifications only for links not yet alerted on
+                    changes.append(f"###{get_pings('AwoX')} New AWOX Kill(s):\n{link_list}")
+                    logger.info(f"{char_name} new links")
+                    tcfg = TicketToolConfig.get_solo()
+                    if tcfg.awox_monitor_enabled and time_in_corp(
+                        user_id) >= 1:  # guardrail: only fire tickets for monitored corps
+                        try:
+                            try:
+                                user = User.objects.get(id=user_id)
+                                discord_id = get_discord_user_id(user)
+
+                                ticket_message = f"<@&{tcfg.Role_ID}>,<@{discord_id}> detection indicates your involvement in an AWOX kill, please explain:\n{link_list}"
+                                send_message(f"ticket for {instance.user} created, reason - AWOX Kill")
+                                run_task_function.apply_async(
+                                    args=["aa_bb.tasks_bot.create_compliance_ticket"],
+                                    kwargs={
+                                        "task_args": [instance.user.id, discord_id, "awox_kill", ticket_message],
+                                        "task_kwargs": {}
+                                    }
+                                )
+                            except Exception as e:
+                                logger.error(e)
+                                pass
+
+                        except Exception as e:
+                            logger.error(e)
+                            pass
+                old = set(status.awox_kill_links or [])
+                new = set(awox_links) - old
+                if new:  # merge newly seen links into the cached list
+                    # notify
+                    status.awox_kill_links = list(old | new)
+                    status.updated = timezone.now()
+                    status.save()
+
+            if status.has_cyno != has_cyno or norm(cyno_result) != norm(status.cyno or {}):  # cyno readiness changed?
+
+                # 1) Flag change for top-level boolean
+                if status.has_cyno != has_cyno:  # flip the top-level boolean when overall readiness changes
+                    if not has_cyno:
+                        changes.append(f"### Cyno Status: 🟢")
+                    status.has_cyno = has_cyno
+
+                # 2) Grab the old vs. new JSON blobs
+                old_cyno: dict = status.cyno or {}
+                new_cyno: dict = cyno_result
+
+                # Determine which character names actually changed
+                changed_chars = []
+                for char_namee, new_data in new_cyno.items():
+                    old_data = old_cyno.get(char_namee, {})
+                    old_filtered = {k: v for k, v in old_data.items() if
+                                    k != 'age'}  # ignore 'age' helper field in comparisons
+                    new_filtered = {k: v for k, v in new_data.items() if
+                                    k != 'age'}  # ignore 'age' helper field in comparisons
+
+                    if old_filtered != new_filtered:  # record only characters whose cyno skill blob changed
+                        changed_chars.append(char_namee)
+
+                # 3) If any changed, build one table per character
+                if changed_chars:  # only build the verbose table output when someone’s cyno profile actually changed
+                    # Mapping for display names
+                    cyno_display = {
+                        "s_cyno": "Cyno Skill",
+                        "s_cov_cyno": "CovOps Cyno",
+                        "s_recon": "Recon Ships",
+                        "s_hic": "Heavy Interdiction",
+                        "s_blops": "Black Ops",
+                        "s_covops": "Covert Ops",
+                        "s_brun": "Blockade Runners",
+                        "s_sbomb": "Stealth Bombers",
+                        "s_scru": "Strat Cruisers",
+                        "s_expfrig": "Expedition Frigs",
+                        "s_carrier": "Carriers",
+                        "s_dread": "Dreads",
+                        "s_fax": "FAXes",
+                        "s_super": "Supers",
+                        "s_titan": "Titans",
+                        "s_jf": "JFs",
+                        "s_rorq": "Rorqs",
+                        "i_recon": "Has a Recon",
+                        "i_hic": "Has a HIC",
+                        "i_blops": "Has a Blops",
+                        "i_covops": "Has a Covops",
+                        "i_brun": "Has a Blockade Runner",
+                        "i_sbomb": "Has a Bomber",
+                        "i_scru": "Has a T3C",
+                        "i_expfrig": "Has a Exp. Frig.",
+                        "i_carrier": "Has a Carrier",
+                        "i_dread": "Has a Dread",
+                        "i_fax": "Has a FAX",
+                        "i_super": "Has a Super",
+                        "i_titan": "Has a Titan",
+                        "i_jf": "Has a JF",
+                        "i_rorq": "Has a Rorq",
+                    }
+
+                    # Column order
+                    cyno_keys = [
+                        "s_cyno", "s_cov_cyno", "s_recon", "s_hic", "s_blops",
+                        "s_covops", "s_brun", "s_sbomb", "s_scru", "s_expfrig",
+                        "s_carrier", "s_dread", "s_fax", "s_super", "s_titan", "s_jf", "s_rorq",
+                        "i_recon", "i_hic", "i_blops", "i_covops", "i_brun",
+                        "i_sbomb", "i_scru", "i_expfrig",
+                        "i_carrier", "i_dread", "i_fax", "i_super", "i_titan", "i_jf", "i_rorq",
+                    ]
+
+                    if changed_chars:  # only build table output when specific characters changed
+                        changes.append(f"###{get_pings('All Cyno Changes')} Changes in cyno capabilities detected:")
+
+                    for charname in changed_chars:
+                        old_entry = old_cyno.get(charname, {})
+                        new_entry = new_cyno.get(charname, {})
+                        anything = any(
+                            val in (1, 2, 3, 4, 5)
+                            for val in new_entry.values()
+                        )
+                        if anything == False:  # skip characters that have no meaningful cyno skills
+                            continue
+                        if new_entry.get("can_light", False) == True:  # highlight characters that can actively light cynos
+                            pingrole = get_pings('Can Light Cyno')
+                        else:
+                            pingrole = get_pings('Cyno Update')
+
+                        changes.append(f"- **{charname}**{pingrole}:")
+                        table_lines = [
+                            "(1 = trained but alpha, 2 = active)",
+                            "Value                 | Old   | New",
+                            "------------------------------------"
+                        ]
+
+                        for key in cyno_keys:
+                            display = cyno_display.get(key, key)
+                            old_val = str(old_entry.get(key, 0))
+                            new_val = str(new_entry.get(key, 0))
+                            if old_val != new_val:
+                                table_lines.append(f"{display.ljust(21)} | {old_val.ljust(7)} | {new_val.ljust(6)}")
+
+                        # Show can_light as a summary at bottom
+                        can_light_old = old_entry.get("can_light", False)
+                        can_light_new = new_entry.get("can_light", False)
+                        table_lines.append("")
+                        table_lines.append(
+                            f"{'Can Light'.ljust(21)} | "
+                            f"{('Yes' if can_light_old else 'No').ljust(7)} | "
+                            f"{('Yes' if can_light_new else 'No').ljust(6)}")
+
+
+                        # 👉 Add corp time here
+                        try:
+                            cid = get_character_id(charname)
+                            corp_days = get_current_stint_days_in_corp(cid,
+                                                                       BigBrotherConfig.get_solo().main_corporation_id)
+                            corp_label = f"Time in {BigBrotherConfig.get_solo().main_corporation}"
+                            table_lines.append(f"{corp_label:<21} | {corp_days} days")
+                        except Exception as e:
+                            logger.warning(f"Could not fetch corp time for {charname}: {e}")
+
+                        table_block = "```\n" + "\n".join(table_lines) + "\n```"
+                        changes.append(table_block)
+
+                # 4) Save new blob
+                status.cyno = new_cyno
+
+            if status.has_skills != has_skills or skills_norm(skills_result) != skills_norm(
+                status.skills or {}):  # skill list changed?
+                # 1) If the boolean flag flipped, append the 🔴 / 🟢 as before
+                if status.has_skills != has_skills:  # emit coarse-grained flag when the threshold crosses zero/any skills
+                    if not has_skills:
+                        changes.append(f"### Skill Status: 🟢")
+                    status.has_skills = has_skills
+
+                # 2) Grab the old vs. new JSON blobs
+                old_skills: dict = status.skills or {}
+                new_skills: dict = skills_result
+
+                # Determine which character names actually changed
+                changed_chars = []
+
+                def normalize_keys(d):
+                    return {
+                        str(k): v for k, v in d.items()
+                        if str(k) != "total_sp"  # ignore total SP entry when diffing
+                    }
+
+                for character_name, new_data in new_skills.items():
+                    # Defensive: ensure old_data is a dict; otherwise treat as empty
+                    old_data = old_skills.get(character_name)
+                    if not isinstance(old_data, dict):  # treat missing blobs as empty dicts
+                        old_data = {}
+
+                    # Defensive: ensure new_data is a dict as well
+                    if not isinstance(new_data, dict):  # same safeguard for new data
+                        new_data = {}
+
+                    old_data_norm = normalize_keys(old_data)
+                    new_data_norm = normalize_keys(new_data)
+
+                    if old_data_norm != new_data_norm:  # record only characters whose skill payload changed
+                        changed_chars.append(character_name)
+
+                # 3) If any changed, build one table per character
+                if changed_chars:
+                    # A mapping from skill_id → human-readable name
+                    skill_names = {
+                        3426: "CPU Management",
+                        21603: "Cyno Field Theory",
+                        22761: "Recon Ships",
+                        28609: "HICs",
+                        28656: "Black Ops",
+                        12093: "CovOps/SBs",
+                        20533: "Capital Ships",
+                        19719: "Blockade Runners",
+                        30651: "Caldari T3Cs",
+                        30652: "Gallente T3Cs",
+                        30653: "Minmatar T3Cs",
+                        30650: "Amarr T3Cs",
+                        33856: "Expedition Frig",
+                    }
+
+                    # Keep the same order you gave, but dedupe 12093 once
+                    ordered_skill_ids = [
+                        3426, 21603, 22761, 28609, 28656,
+                        12093, 20533, 19719,
+                        30651, 30652, 30653, 30650, 33856,
+                    ]
+
+                    if changed_chars:  # preface the per-character tables with a summary line
+                        changes.append(f"##{get_pings('skills')} Changes in skills detected:")
+
+                    for charname in changed_chars:
+                        raw_old = old_skills.get(charname)
+                        old_entry = raw_old if isinstance(raw_old, dict) else {}
+
+                        raw_new = new_skills.get(charname)
+                        new_entry = raw_new if isinstance(raw_new, dict) else {}
+                        anything = any(
+                            (
+                                new_entry.get(sid, {"trained": 0, "active": 0})["trained"] > 0
+                                or
+                                new_entry.get(sid, {"trained": 0, "active": 0})["active"] > 0
+                            )
+                            for sid in ordered_skill_ids
+                        )
+                        if anything == False:  # skip characters with zero relevant skills (just noise)
+                            continue
+                        logger.info(new_entry.values())
+
+                        changes.append(f"- **{charname}**:")
+
+                        table_lines = [
+                            "Skill              | Old       | New",
+                            "------------------------------------"
+                        ]
+
+                        for sid in ordered_skill_ids:
+                            name = skill_names.get(sid, f"Skill ID {sid}")
+
+                            old_skill = old_entry.get(str(sid), {"trained": 0, "active": 0})
+                            new_skill = new_entry.get(sid, {"trained": 0, "active": 0})
+
+                            if not isinstance(old_skill, dict):  # guard against malformed cache entries
+                                old_skill = {"trained": 0, "active": 0}
+                            if not isinstance(new_skill, dict):  # same safeguard for new data
+                                new_skill = {"trained": 0, "active": 0}
+
+                            old_tr = old_skill.get("trained", 0)
+                            old_ac = old_skill.get("active", 0)
+                            new_tr = new_skill.get("trained", 0)
+                            new_ac = new_skill.get("active", 0)
+
+                            old_fmt = f"{old_tr}/{old_ac}"
+                            new_fmt = f"{new_tr}/{new_ac}"
+
+                            name_padded = name.ljust(18)
+
+                            table_lines.append(f"{name_padded} | {old_fmt.ljust(9)} | {new_fmt.ljust(8)}")
+
+                        table_block = "```\n" + "\n".join(table_lines) + "\n```"
+                        changes.append(table_block)
+
+                status.skills = new_skills
+            if status.has_hostile_assets != has_hostile_assets or set(hostile_assets_result) != set(
+                status.hostile_assets or []
+            ):
+                old_systems = set(status.hostile_assets or [])
+                new_systems = set(hostile_assets_result) - old_systems
+
+                # Build mapping: char -> list of (system, owner, ships)
+                assets_by_char: dict[str, list[tuple[str, str, str]]] = {}
+
+                for system in new_systems:
+                    summary = hostile_assets_result.get(system, "")
+                    owner, ships, chars = parse_hostile_summary(summary)
+
+                    # If helper didn't give chars for some reason, fall back
+                    if not chars:
+                        chars = ["Unknown Character"]
+
+                    for cname in chars:
+                        assets_by_char.setdefault(cname, []).append(
+                            (system, owner, ships)
+                        )
+
+                lines: list[str] = []
+                for cname in sorted(assets_by_char.keys()):
+                    lines.append(f"- {cname}")
+                    for system, owner, ships in assets_by_char[cname]:
+                        lines.append(f"  - {system} ({owner})")
+                        if ships:
+                            lines.append(f"    - {ships}")
+
+                if lines:
+                    link_list = "\n".join(lines)
+                    logger.info(f"{char_name} new hostile assets:\n{link_list}")
+
+                # Overall boolean flip
+                if status.has_hostile_assets != has_hostile_assets:
+                    if not has_hostile_assets:
+                        changes.append("### Hostile Asset Status: 🟢")
+                    logger.info(f"{char_name} hostile asset status changed")
+
+                # Only add a "New Hostile Assets" section when there are actually new systems
+                if new_systems and lines:
+                    changes.append(
+                        f"###{get_pings('New Hostile Assets')} New Hostile Assets:\n{link_list}"
+                    )
+                    logger.info(f"{char_name} new hostile asset systems: {', '.join(sorted(new_systems))}")
+
+                status.has_hostile_assets = has_hostile_assets
+                status.hostile_assets = hostile_assets_result
+
+            if status.has_hostile_clones != has_hostile_clones or set(hostile_clones_result) != set(
+                status.hostile_clones or []
+            ):
+                old_systems = set(status.hostile_clones or [])
+                new_systems = set(hostile_clones_result) - old_systems
+
+                # Build mapping: char -> list of (system, owner)
+                clones_by_char: dict[str, list[tuple[str, str]]] = {}
+
+                for system in new_systems:
+                    summary = hostile_clones_result.get(system, "")
+                    owner, _ships, chars = parse_hostile_summary(summary)
+
+                    if not chars:
+                        chars = ["Unknown Character"]
+
+                    for cname in chars:
+                        clones_by_char.setdefault(cname, []).append(
+                            (system, owner)
+                        )
+
+                lines: list[str] = []
+                for cname in sorted(clones_by_char.keys()):
+                    lines.append(f"- {cname}")
+                    for system, owner in clones_by_char[cname]:
+                        lines.append(f"  - {system} ({owner})")
+
+                if lines:
+                    link_list = "\n".join(lines)
+                    logger.info(f"{char_name} new hostile clones:\n{link_list}")
+
+                # Overall boolean flip
+                if status.has_hostile_clones != has_hostile_clones:
+                    if not has_hostile_clones:
+                        changes.append("### Hostile Clone Status: 🟢")
+                    logger.info(f"{char_name} hostile clone status changed")
+
+                if new_systems and lines:
+                    changes.append(
+                        f"###{get_pings('New Hostile Clones')} New Hostile Clone(s):\n{link_list}"
+                    )
+                    logger.info(f"{char_name} new hostile clone systems: {', '.join(sorted(new_systems))}")
+
+                status.has_hostile_clones = has_hostile_clones
+                status.hostile_clones = hostile_clones_result
+
+            if status.has_sus_contacts != has_sus_contacts or set(sus_contacts_result) != set(
+                as_dict(status.sus_contacts) or {}):  # suspect contacts changed?
+                old_contacts = as_dict(status.sus_contacts) or {}
+                # normalized_old = { str(cid): v for cid, v in status.sus_contacts.items() }
+                # normalized_new = { str(cid): v for cid, v in sus_contacts_result.items() }
+
+                old_ids = set(as_dict(status.sus_contacts).keys())
+                new_ids = set(sus_contacts_result.keys())
+                new_links = new_ids - old_ids
+                if new_links:  # highlight only contacts not previously reported
+                    link_list = "\n".join(
+                        f"🔗 {sus_contacts_result[cid]}" for cid in new_links
+                    )
+                    logger.info(f"{char_name} new assets:\n{link_list}")
+
+                if old_ids:  # optional debug log for existing entries
+                    old_link_list = "\n".join(
+                        f"🔗 {old_contacts[cid]}" for cid in old_ids if cid in old_contacts
+                    )
+                    logger.info(f"{char_name} old assets:\n{old_link_list}")
+
+                if status.has_sus_contacts != has_sus_contacts:  # flag boolean flip
+                    if not has_sus_contacts:
+                        changes.append(f"### Suspicious Contact Status: 🟢")
+                logger.info(f"{char_name} status changed")
+
+                if new_links:  # include the new contact entries in the summary
+                    changes.append(f"### New Suspicious Contacts:")
+                    for cid in new_links:
+                        res = sus_contacts_result[cid]
+                        ping = get_pings('New Suspicious Contacts')
+                        if res.startswith("- A -"):  # skip ping for alliance-only entries
+                            ping = ""
+                        changes.append(f"{res} {ping}")
+
+                status.has_sus_contacts = has_sus_contacts
+                status.sus_contacts = sus_contacts_result
+
+            if status.has_sus_contracts != has_sus_contracts or set(sus_contracts_result) != set(
+                as_dict(status.sus_contracts) or {}):  # suspicious contracts changed?
+                old_contracts = as_dict(status.sus_contracts) or {}
+                # normalized_old = { str(cid): v for cid, v in status.sus_contacts.items() }
+                # normalized_new = { str(cid): v for cid, v in sus_contacts_result.items() }
+
+                old_ids = set(as_dict(status.sus_contracts).keys())
+                new_ids = set(sus_contracts_result.keys())
+                new_links = new_ids - old_ids
+                if new_links:  # only surface contracts not yet alerted on
+                    link_list = "\n".join(
+                        f"🔗 {sus_contracts_result[issuer_id]}" for issuer_id in new_links
+                    )
+                    logger.info(f"{char_name} new assets:\n{link_list}")
+
+                if old_ids:  # optional logging for previous entries
+                    old_link_list = "\n".join(
+                        f"🔗 {old_contracts[issuer_id]}" for issuer_id in old_ids if issuer_id in old_contracts
+                    )
+                    logger.info(f"{char_name} old assets:\n{old_link_list}")
+
+                if status.has_sus_contracts != has_sus_contracts:  # summarize boolean change
+                    if not has_sus_contracts:
+                        changes.append(f"## Suspicious Contract Status: 🟢")
+                logger.info(f"{char_name} status changed")
+
+                if new_links:  # write each new contract entry to the report
+                    changes.append(f"## New Suspicious Contracts:")
+                    for issuer_id in new_links:
+                        res = sus_contracts_result[issuer_id]
+                        ping = get_pings('New Suspicious Contracts')
+                        if res.startswith("- A -"):  # skip ping for alliance-level alerts
+                            ping = ""
+                        changes.append(f"{res} {ping}")
+
+                status.has_sus_contracts = has_sus_contracts
+                status.sus_contracts = sus_contracts_result
+
+            if status.has_sus_mails != has_sus_mails or set(sus_mails_result) != set(
+                as_dict(status.sus_mails) or {}):  # suspicious mails changed?
+                old_mails = as_dict(status.sus_mails) or {}
+                # normalized_old = { str(cid): v for cid, v in status.sus_contacts.items() }
+                # normalized_new = { str(cid): v for cid, v in sus_contacts_result.items() }
+
+                old_ids = set(as_dict(status.sus_mails).keys())
+                new_ids = set(sus_mails_result.keys())
+                new_links = new_ids - old_ids
+                if new_links:  # only highlight unseen mail threads
+                    link_list = "\n".join(
+                        f"🔗 {sus_mails_result[issuer_id]}" for issuer_id in new_links
+                    )
+                    logger.info(f"{char_name} new assets:\n{link_list}")
+
+                if old_ids:  # optional logging for previous entries
+                    old_link_list = "\n".join(
+                        f"🔗 {old_mails[issuer_id]}" for issuer_id in old_ids if issuer_id in old_mails
+                    )
+                    logger.info(f"{char_name} old assets:\n{old_link_list}")
+
+                if status.has_sus_mails != has_sus_mails:  # summarize boolean change
+                    if not has_sus_mails:
+                        changes.append(f"### Suspicious Mail Status: 🟢")
+                logger.info(f"{char_name} status changed")
+
+                if new_links:  # enumerate the new mail entries for the report
+                    changes.append(f"### New Suspicious Mails:")
+                    for issuer_id in new_links:
+                        res = sus_mails_result[issuer_id]
+                        ping = get_pings('New Suspicious Mails')
+                        if res.startswith("- A -"):  # skip ping for alliance-level alerts
+                            ping = ""
+                        changes.append(f"{res} {ping}")
+
+                status.has_sus_mails = has_sus_mails
+                status.sus_mails = sus_mails_result
+
+            if status.has_sus_trans != has_sus_trans or set(sus_trans_result) != set(
+                as_dict(status.sus_trans) or {}):  # suspicious wallet txns changed?
+                old_trans = as_dict(status.sus_trans) or {}
+                # normalized_old = { str(cid): v for cid, v in status.sus_contacts.items() }
+                # normalized_new = { str(cid): v for cid, v in sus_contacts_result.items() }
+
+                old_ids = set(as_dict(status.sus_trans).keys())
+                new_ids = set(sus_trans_result.keys())
+                new_links = new_ids - old_ids
+                if new_links:  # only highlight newly detected transactions
+                    link_list = "\n".join(
+                        f"{sus_trans_result[issuer_id]}" for issuer_id in new_links
+                    )
+                    logger.info(f"{char_name} new trans:\n{link_list}")
+
+                if old_ids:
+                    old_link_list = "\n".join(
+                        f"{old_trans[issuer_id]}" for issuer_id in old_ids if issuer_id in old_trans
+                    )
+                    logger.info(f"{char_name} old trans:\n{old_link_list}")
+
+                if status.has_sus_trans != has_sus_trans:
+                    if not has_sus_trans:
+                        changes.append(f"## Suspicious Transactions Status: 🟢")
+                logger.info(f"{char_name} status changed")
+                if new_links:
+                    changes.append(
+                        f"### New Suspicious Transactions{get_pings('New Suspicious Transactions')}:\n{link_list}"
+                    )
+                status.has_sus_trans = has_sus_trans
+                status.sus_trans = sus_trans_result
+
+            if send_notifications and changes:
+                """
+                Send each accumulated change as a separate embed, using the
+                same style as manual_notif_test.send_status_embed for
+                mobile-friendly, chunked notifications.
+                """
+                logger.info(
+                    f"[{char_name}] Sending {len(changes)} embed notifications to Discord..."
+                )
+
+                # 1) Overall header (single embed, like manual_notif_test)
+                header_lines = [f"‼️ Status change detected for {char_name}"]
+                for header_chunk in _chunk_embed_lines(header_lines, max_chars=1900):
+                    send_status_embed(
+                        char_name,
+                        header_chunk,
+                        override_title="",  # keep title small; most info in body
+                    )
+                    time.sleep(0.05)
+
+                # 2) One or more embeds per change block, chunked by char count
+                for chunk in changes:
+                    raw_lines = [ln for ln in chunk.split("\n") if ln.strip()]
+
+                    for body_chunk in _chunk_embed_lines(raw_lines, max_chars=1900):
+                        logger.info(
+                            f"[{char_name}] Embed body chunk lines: {len(body_chunk)}"
+                        )
+                        send_status_embed(
+                            char_name,
+                            body_chunk,
+                            override_title="",  # per-section titles already in body text
+                        )
+                        time.sleep(0.05)
+
+            status.updated = timezone.now()
+            status.save()
+
+            logger.info(f"END Update for user: {char_name} (ID: {user_id}) - Success")
+            break
+
+        except OperationalError as e:
+            code = e.args[0] if e.args else None
+            if code == 1213 or "deadlock" in str(e).lower():
+                delay = 0.5 * (attempt + 1)
+                logger.warning(
+                    f"Deadlock while processing {char_name} "
+                    f"(attempt {attempt + 1}/3); sleeping {delay:.1f}s before retry."
+                )
+                time.sleep(delay)
+                # after last attempt, give up on this user but keep the overall stream alive
+                if attempt == 2:
+                    logger.error(
+                        f"Skipping {char_name} after repeated deadlocks."
+                    )
+                continue
+            # not a deadlock → re-raise and let outer handler deal with it
+            raise
+        except Exception as e:
+            logger.error(f"Failed to update user {char_name}: {e}", exc_info=True)
+            raise
+
 
 @shared_task
 def BB_run_regular_updates():
@@ -88,681 +1090,21 @@ def BB_run_regular_updates():
             for field_name in BigBrotherConfig.DLC_FLAG_MAP.values():
                 setattr(instance, field_name, True)
 
-
         instance.save()
 
         # walk each eligible user and rebuild their status snapshot
         if instance.is_active:  # skip user iteration entirely when plugin disabled/unlicensed
             users = get_users()
+            logger.info(f"BB_run_regular_updates: Dispatching updates for {len(users)} users.")
 
             for char_name in users:
                 user_id = get_user_id(char_name)
                 if not user_id:  # defensive: skip orphaned mains lacking a user id
                     continue
 
-                for attempt in range(3):
-                    try:
-                        pingroleID = instance.pingroleID
+                # Dispatch async task for each user
+                BB_update_single_user.delay(user_id, char_name)
 
-                        # eager-load all check data so diffing below is cheap
-                        cyno_result = get_user_cyno_info(user_id)
-                        skills_result = get_multiple_user_skill_info(user_id, skill_ids)
-                        state_result = determine_character_state(user_id, True)
-                        awox_links = get_awox_kill_links(user_id)
-                        hostile_clones_result = get_hostile_clone_locations(user_id)
-                        hostile_assets_result = get_hostile_asset_locations(user_id)
-                        sus_contacts_result = { str(cid): v for cid, v in get_user_hostile_notifications(user_id).items() }
-                        sus_contracts_result = { str(issuer_id): v for issuer_id, v in get_user_hostile_contracts(user_id).items() }
-                        sus_mails_result = { str(issuer_id): v for issuer_id, v in get_user_hostile_mails(user_id).items() }
-                        sus_trans_result = { str(issuer_id): v for issuer_id, v in get_user_hostile_transactions(user_id).items() }
-                        sp_age_ratio_result: dict[str, dict] = {}
-
-                        def norm(d):
-                            d = d or {}
-                            return {
-                                n: {k: v for k, v in (entry if isinstance(entry, dict) else {}).items() if k != 'age'}  # drop 'age' noise when diffing
-                                for n, entry in d.items()
-                            }
-                        def skills_norm(d):
-                            out = {}
-                            for name, entry in (d or {}).items():
-                                if not isinstance(entry, dict):  # ignore non-dict placeholders just in case
-                                    continue
-                                filtered = {}
-                                for k, v in entry.items():
-                                    k_str = str(k)
-                                    if k_str == 'total_sp':  # skip total SP row when comparing per skill
-                                        continue
-                                    if isinstance(v, dict):  # only keep nested skill dicts
-                                        filtered[k_str] = {
-                                            'trained': v.get('trained', 0) or 0,
-                                            'active': v.get('active', 0) or 0,
-                                        }
-                                out[name] = filtered
-                            return out
-
-                        for char_nameeee, data in skills_result.items():
-                            char_id = get_character_id(char_nameeee)
-                            char_age = get_char_age(char_id)
-                            total_sp = data["total_sp"]
-                            sp_days = (total_sp-384000)/64800 if total_sp else 0  # convert SP into training-day equivalent
-
-                            sp_age_ratio_result[char_nameeee] = {
-                                **data,  # keep original skill info
-                                "sp_days": sp_days,
-                                "char_age": char_age,
-                            }
-
-                        has_cyno = any(
-                            char_dic.get("can_light", False)
-                            for char_dic in (cyno_result or {}).values()
-                        )
-                        has_skills = any(
-                            entry[sid]["trained"] > 0 or entry[sid]["active"] > 0
-                            for entry in skills_result.values()
-                            for sid in skill_ids
-                        )
-                        has_awox = bool(awox_links)
-                        has_hostile_clones = bool(hostile_clones_result)
-                        has_hostile_assets = bool(hostile_assets_result)
-                        has_sus_contacts = bool(sus_contacts_result)
-                        has_sus_contracts = bool(sus_contracts_result)
-                        has_sus_mails = bool(sus_mails_result)
-                        has_sus_trans = bool(sus_trans_result)
-
-                        # load (or create) cached status so diffs apply correctly
-                        status, created = UserStatus.objects.get_or_create(user_id=user_id)
-
-                        # On the very first run for this user, silently create a baseline
-                        send_notifications = not created
-
-                        changes = []
-
-                        def as_dict(x):
-                            return x if isinstance(x, dict) else {}  # utility to guard against None/non-dict entries
-
-                        if set(state_result) != set(status.clone_status or []):  # clone-state map changed?
-                            # capture clone-state transitions (alpha→omega etc.)
-                            old_states = status.clone_status or {}
-                            diff = {}
-                            flagggs = []
-
-                            # build dict of changes
-                            for char_idddd, new_data in state_result.items():
-                                old_data = old_states.get(str(char_idddd)) or old_states.get(char_idddd)  # handle str/int keys
-                                if not old_data or old_data.get("state") != new_data.get("state"):  # capture per-character state transitions
-                                    diff[char_idddd] = {
-                                        "old": old_data.get("state") if old_data else None,  # previous state (None when unseen)
-                                        "new": new_data.get("state"),
-                                    }
-
-                            # add messages to flags
-                            for char_idddd, change in diff.items():
-                                char_nameeeee = resolve_character_name(char_idddd)
-                                flagggs.append(
-                                    f"\n- **{char_nameeeee}**: {change['old']} → **{change['new']}**"
-                                )
-
-                            pinggg = ""
-
-                            if "omega" in flagggs:  # ping when someone upgrades to omega
-                                pinggg = get_pings('Omega Detected')
-
-                            # final summary message
-                            if flagggs:  # only when changes are detected should notifications and saves occur
-                                changes.append(f"##{pinggg} Clone state change detected:{''.join(flagggs)}")
-                                status.clone_status = state_result
-                                status.save()
-
-                        if set(sp_age_ratio_result) != set(status.sp_age_ratio_result or []):  # detect changes in SP-to-age ratios
-                                flaggs = []
-
-                                def _safe_ratio(info: dict):
-                                    age = info.get("char_age")
-                                    if not isinstance(age, (int, float)) or age <= 0:  # bail when no usable age is available
-                                        return None
-                                    return (info.get("sp_days") or 0) / max(age, 1)
-
-                                for char_nameee, new_info in sp_age_ratio_result.items():
-                                    old_info = (status.sp_age_ratio_result or {}).get(char_nameee, {})
-                                    old_ratio = _safe_ratio(old_info)
-                                    new_ratio = _safe_ratio(new_info)
-
-                                    if old_ratio is not None and new_ratio is not None and new_ratio > old_ratio:  # only flag when ratio increased
-                                        flaggs.append(
-                                            f"- **{char_nameee}'s** SP to age ratio went up from **{old_ratio}** to **{new_ratio}**\n"
-                                        )
-
-                                if flaggs:  # only send notification when at least one character’s ratio increased
-                                    sp_list = "".join(flaggs)
-                                    changes.append(f"## {get_pings('SP Injected')} Skill Injection detected:\n{sp_list}")
-
-                        status.sp_age_ratio_result = sp_age_ratio_result
-                        status.save()
-
-                        if status.has_awox_kills != has_awox or set(awox_links) != set(status.awox_kill_links or []):  # new awox activity?
-                            # detect new AWOX links and optionally raise a ticket
-                            # Compare and find new links
-                            old_links = set(status.awox_kill_links or [])
-                            new_links = set(awox_links) - old_links
-                            link_list = "\n".join(f"- {link}" for link in new_links)
-                            logger.info(f"{char_name} new links {link_list}")
-                            link_list3 = "\n".join(f"- {link}" for link in awox_links)
-                            logger.info(f"{char_name} new links {link_list3}")
-                            link_list2 = "\n".join(f"- {link}" for link in old_links)
-                            logger.info(f"{char_name} old links {link_list2}")
-                            if status.has_awox_kills != has_awox and has_awox:  # first time awox kills were spotted for this user
-                                changes.append(f"## AWOX Kill Status: {'🔴' if has_awox else '🟢'}")
-                                status.has_awox_kills = has_awox
-                                logger.info(f"{char_name} changed")
-                            if new_links:  # send notifications only for links not yet alerted on
-                                changes.append(f"##{get_pings('AwoX')} New AWOX Kill(s):\n{link_list}")
-                                logger.info(f"{char_name} new links")
-                                tcfg = TicketToolConfig.get_solo()
-                                if tcfg.awox_monitor_enabled and time_in_corp(user_id) >= 1:  # guardrail: only fire tickets for monitored corps
-                                    try:
-                                        try:
-                                            user = User.objects.get(id=user_id)
-                                            discord_id = get_discord_user_id(user)
-
-                                            ticket_message = f"<@&{tcfg.Role_ID}>,<@{discord_id}> detection indicates your involvement in an AWOX kill, please explain:\n{link_list}"
-                                            send_message(f"ticket for {instance.user} created, reason - AWOX Kill")
-                                            run_task_function.apply_async(
-                                                args=["aa_bb.tasks_bot.create_compliance_ticket"],
-                                                kwargs={
-                                                    "task_args": [instance.user.id, discord_id, "awox_kill", ticket_message],
-                                                    "task_kwargs": {}
-                                                }
-                                            )
-                                        except Exception as e:
-                                            logger.error(e)
-                                            pass
-
-                                    except Exception as e:
-                                        logger.error(e)
-                                        pass
-                            old = set(status.awox_kill_links or [])
-                            new = set(awox_links) - old
-                            if new:  # merge newly seen links into the cached list
-                                # notify
-                                status.awox_kill_links = list(old | new)
-                                status.updated = timezone.now()
-                                status.save()
-
-                        if status.has_cyno != has_cyno or norm(cyno_result) != norm(status.cyno or {}):  # cyno readiness changed?
-                            # 1) Flag change for top-level boolean
-                            if status.has_cyno != has_cyno:  # flip the top-level boolean when overall readiness changes
-                                changes.append(f"Cyno Status: {'🔴' if has_cyno else '🟢'}")
-                                status.has_cyno = has_cyno
-
-                            # 2) Grab the old vs. new JSON blobs
-                            old_cyno: dict = status.cyno or {}
-                            new_cyno: dict = cyno_result
-
-                            # Determine which character names actually changed
-                            changed_chars = []
-                            for char_namee, new_data in new_cyno.items():
-                                old_data = old_cyno.get(char_namee, {})
-                                old_filtered = {k: v for k, v in old_data.items() if k != 'age'}  # ignore 'age' helper field in comparisons
-                                new_filtered = {k: v for k, v in new_data.items() if k != 'age'}  # ignore 'age' helper field in comparisons
-
-                                #logger.info(f"Comparing skills for character '{char_namee}':")
-                                #logger.info(f"Old data normalized: {old_filtered}")
-                                #logger.info(f"New data normalized: {new_filtered}")
-                                #from deepdiff import DeepDiff
-                                #diff = DeepDiff(old_filtered, new_filtered, ignore_order=True)
-                                #logger.info(f"Diff for '{char_namee}': {diff}")
-                                if old_filtered != new_filtered:  # record only characters whose cyno skill blob changed
-                                    changed_chars.append(char_namee)
-
-                            # 3) If any changed, build one table per character
-                            if changed_chars:  # only build the verbose table output when someone’s cyno profile actually changed
-                                # Mapping for display names
-                                cyno_display = {
-                                    "s_cyno":    "Cyno Skill",
-                                    "s_cov_cyno":"CovOps Cyno",
-                                    "s_recon":   "Recon Ships",
-                                    "s_hic":     "Heavy Interdiction",
-                                    "s_blops":   "Black Ops",
-                                    "s_covops":  "Covert Ops",
-                                    "s_brun":    "Blockade Runners",
-                                    "s_sbomb":   "Stealth Bombers",
-                                    "s_scru":    "Strat Cruisers",
-                                    "s_expfrig": "Expedition Frigs",
-                                    "s_carrier": "Carriers",
-                                    "s_dread":   "Dreads",
-                                    "s_fax":     "FAXes",
-                                    "s_super":   "Supers",
-                                    "s_titan":   "Titans",
-                                    "s_jf":      "JFs",
-                                    "s_rorq":    "Rorqs",
-                                    "i_recon":   "Has a Recon",
-                                    "i_hic":     "Has a Hic",
-                                    "i_blops":   "Has a Blops",
-                                    "i_covops":  "Has a covops",
-                                    "i_brun":    "Has a blockade Runner",
-                                    "i_sbomb":   "Has a bomber",
-                                    "i_scru":    "Has a strat crus",
-                                    "i_expfrig": "Has a exp frig",
-                                    "i_carrier": "Has a Carrier",
-                                    "i_dread":   "Has a Dread",
-                                    "i_fax":     "Has a FAX",
-                                    "i_super":   "Has a Super",
-                                    "i_titan":   "Has a Titan",
-                                    "i_jf":      "Has a JF",
-                                    "i_rorq":    "Has a Rorq",
-                                }
-
-                                # Column order
-                                cyno_keys = [
-                                    "s_cyno", "s_cov_cyno", "s_recon", "s_hic", "s_blops",
-                                    "s_covops", "s_brun", "s_sbomb", "s_scru", "s_expfrig",
-                                    "s_carrier", "s_dread", "s_fax", "s_super", "s_titan", "s_jf", "s_rorq",
-                                    "i_recon", "i_hic", "i_blops", "i_covops", "i_brun",
-                                    "i_sbomb", "i_scru", "i_expfrig",
-                                    "i_carrier", "i_dread", "i_fax", "i_super", "i_titan", "i_jf", "i_rorq",
-                                ]
-
-                                if changed_chars:  # only build table output when specific characters changed
-                                    changes.append(f"##{get_pings('All Cyno Changes')} Changes in cyno capabilities detected:")
-
-                                for charname in changed_chars:
-                                    old_entry = old_cyno.get(charname, {})
-                                    new_entry = new_cyno.get(charname, {})
-                                    anything = any(
-                                        val in (1, 2, 3, 4, 5)
-                                        for val in new_entry.values()
-                                    )
-                                    if anything == False:  # skip characters that have no meaningful cyno skills
-                                        continue
-                                    if new_entry.get("can_light", False) == True:  # highlight characters that can actively light cynos
-                                        pingrole = get_pings('Can Light Cyno')
-                                    else:
-                                        pingrole = get_pings('Cyno Update')
-
-                                    changes.append(f"- **{charname}**{pingrole}:")
-                                    table_lines = [
-                                        "Value                  | Old | New (1 = trained but alpha, 2 = active)",
-                                        "-----------------------------------"
-                                    ]
-
-                                    for key in cyno_keys:
-                                        display = cyno_display.get(key, key)
-                                        old_val = str(old_entry.get(key, 0))
-                                        new_val = str(new_entry.get(key, 0))
-                                        table_lines.append(f"{display.ljust(22)} | {old_val.ljust(3)} | {new_val.ljust(3)}")
-
-                                    # Show can_light as a summary at bottom
-                                    can_light_old = old_entry.get("can_light", False)
-                                    can_light_new = new_entry.get("can_light", False)
-                                    table_lines.append("")
-                                    table_lines.append(
-                                        f"{'Can Light':<22} | {'Yes' if can_light_old else 'No'} | {'Yes' if can_light_new else 'No'}")
-
-                                    # 👉 Add corp time here
-                                    try:
-                                        cid = get_character_id(charname)
-                                        char_info = get_entity_info(cid, timezone.now())
-                                        current_corp_id = char_info['corp_id']
-                                        current_corp_name = char_info['corp_name']
-                                        corp_days = get_current_stint_days_in_corp(cid, current_corp_id)
-                                        corp_label = f"Time in {current_corp_name}"
-                                        table_lines.append(f"{corp_label:<22} | {corp_days} days")
-                                    except Exception as e:
-                                        logger.warning(f"Could not fetch corp time for {charname}: {e}")
-
-                                    table_block = "```\n" + "\n".join(table_lines) + "\n```"
-                                    changes.append(table_block)
-
-                            # 4) Save new blob
-                            status.cyno = new_cyno
-
-
-                        if status.has_skills != has_skills or skills_norm(skills_result) != skills_norm(status.skills or {}):  # skill list changed?
-                            # 1) If the boolean flag flipped, append the 🔴 / 🟢 as before
-                            if status.has_skills != has_skills:  # emit coarse-grained flag when the threshold crosses zero/any skills
-                                if BigBrotherConfig.cyno_notify:
-                                    changes.append(f"## Skill Status: {'🔴' if has_skills else '🟢'}")
-                                status.has_skills = has_skills
-
-                            # 2) Grab the old vs. new JSON blobs
-                            old_skills: dict = status.skills or {}
-                            new_skills: dict = skills_result
-
-                            # Determine which character names actually changed
-                            changed_chars = []
-                            def normalize_keys(d):
-                                return {
-                                    str(k): v for k, v in d.items()
-                                    if str(k) != "total_sp"  # ignore total SP entry when diffing
-                                }
-                            for character_name, new_data in new_skills.items():
-                                # Defensive: ensure old_data is a dict; otherwise treat as empty
-                                old_data = old_skills.get(character_name)
-                                if not isinstance(old_data, dict):  # treat missing blobs as empty dicts
-                                    old_data = {}
-
-                                # Defensive: ensure new_data is a dict as well
-                                if not isinstance(new_data, dict):  # same safeguard for new data
-                                    new_data = {}
-
-                                old_data_norm = normalize_keys(old_data)
-                                new_data_norm = normalize_keys(new_data)
-
-                                #logger.info(f"Comparing skills for character '{character_name}':")
-                                #logger.info(f"Old data normalized: {old_data_norm}")
-                                #logger.info(f"New data normalized: {new_data_norm}")
-                                #from deepdiff import DeepDiff
-                                #diff = DeepDiff(old_data_norm, new_data_norm, ignore_order=True)
-                                #logger.info(f"Diff for '{character_name}': {diff}")
-
-                                if old_data_norm != new_data_norm:  # record only characters whose skill payload changed
-                                    changed_chars.append(character_name)
-
-                            # 3) If any changed, build one table per character
-                            if changed_chars:
-                                # A mapping from skill_id → human-readable name
-                                skill_names = {
-                                    3426:   "CPU Management",
-                                    21603:  "Cynosural Field Theory",
-                                    22761:  "Recon Ships",
-                                    28609:  "Heavy Interdiction Cruisers",
-                                    28656:  "Black Ops",
-                                    12093:  "Covert Ops / Stealth Bombers",
-                                    20533:  "Capital Ships",
-                                    19719:  "Blockade Runners",
-                                    30651:  "Caldari Strategic Cruisers",
-                                    30652:  "Gallente Strategic Cruisers",
-                                    30653:  "Minmatar Strategic Cruisers",
-                                    30650:  "Amarr Strategic Cruisers",
-                                    33856:  "Expedition Frigates",
-                                }
-
-                                # Keep the same order you gave, but dedupe 12093 once
-                                ordered_skill_ids = [
-                                    3426, 21603, 22761, 28609, 28656,
-                                    12093, 20533, 19719,
-                                    30651, 30652, 30653, 30650, 33856,
-                                ]
-
-                                if changed_chars:  # preface the per-character tables with a summary line
-                                    if BigBrotherConfig.cyno_notify:
-                                        changes.append(f"##{get_pings('skills')} Changes in skills detected:")
-
-                                for charname in changed_chars:
-                                    # Defensive retrieval of old vs. new
-                                    raw_old = old_skills.get(charname)
-                                    old_entry = raw_old if isinstance(raw_old, dict) else {}
-
-                                    raw_new = new_skills.get(charname)
-                                    new_entry = raw_new if isinstance(raw_new, dict) else {}
-                                    anything = any(
-                                        (
-                                            new_entry.get(sid, {"trained": 0, "active": 0})["trained"] > 0
-                                            or
-                                            new_entry.get(sid, {"trained": 0, "active": 0})["active"] > 0
-                                        )
-                                        for sid in ordered_skill_ids
-                                    )
-                                    if anything == False:  # skip characters with zero relevant skills (just noise)
-                                        continue
-                                    logger.info(new_entry.values())
-
-
-                                    # 3a) Append the “- **CharacterName**:” header
-                                    if BigBrotherConfig.cyno_notify:
-                                        changes.append(f"- **{charname}**:")
-
-                                    # 3b) Build the table header and separator
-                                    table_lines = [
-                                        "Skill                           | Old (Trained/Active) | New (Trained/Active)",
-                                        "------------------------------------------------------"
-                                    ]
-
-                                    # 3c) For each skill_id in order, look up old vs. new levels
-                                    for sid in ordered_skill_ids:
-                                        name = skill_names.get(sid, f"Skill ID {sid}")
-
-                                        # Because JSONField stores keys as strings, do str(sid)
-                                        old_skill = old_entry.get(str(sid), {"trained": 0, "active": 0})
-                                        new_skill = new_entry.get(sid, {"trained": 0, "active": 0})
-
-                                        # Defensive: if old_skill is not a dict, coerce it
-                                        if not isinstance(old_skill, dict):  # guard against malformed cache entries
-                                            old_skill = {"trained": 0, "active": 0}
-                                        if not isinstance(new_skill, dict):  # same safeguard for new data
-                                            new_skill = {"trained": 0, "active": 0}
-
-                                        old_tr = old_skill.get("trained", 0)
-                                        old_ac = old_skill.get("active", 0)
-                                        new_tr = new_skill.get("trained", 0)
-                                        new_ac = new_skill.get("active", 0)
-
-                                        old_fmt = f"{old_tr}/{old_ac}"
-                                        new_fmt = f"{new_tr}/{new_ac}"
-
-                                        # Pad the skill name to 30 chars for alignment
-                                        name_padded = name.ljust(30)
-
-                                        # Pad the “trained/active” to at least 9 chars so columns line up
-                                        table_lines.append(f"{name_padded} | {old_fmt.ljust(9)} | {new_fmt.ljust(9)}")
-
-                                    # 3d) Wrap the lines in triple backticks
-                                    table_block = "```\n" + "\n".join(table_lines) + "\n```"
-                                    if BigBrotherConfig.cyno_notify:
-                                        changes.append(table_block)
-
-                            status.skills = new_skills
-
-
-                        if status.has_hostile_assets != has_hostile_assets or set(hostile_assets_result) != set(status.hostile_assets or []):  # asset list changed?
-                            # Compare and find new links
-                            old_links = set(status.hostile_assets or [])
-                            new_links = set(hostile_assets_result) - old_links
-                            link_list = "\n".join(
-                                f"- {system} owned by {hostile_assets_result[system]}"
-                                for system in (set(hostile_assets_result) - set(status.hostile_assets or []))
-                            )
-                            logger.info(f"{char_name} new assets {link_list}")
-                            link_list2 = "\n- ".join(f"🔗 {link}" for link in old_links)
-                            logger.info(f"{char_name} old assets {link_list2}")
-                            if status.has_hostile_assets != has_hostile_assets:  # overall hostiles flag flipped
-                                changes.append(f"## Hostile Asset Status: {'🔴' if has_hostile_assets else '🟢'}")
-                                logger.info(f"{char_name} changed")
-                            if new_links:  # only announce newly discovered systems
-                                changes.append(f"##{get_pings('New Hostile Assets')} New Hostile Assets:\n{link_list}")
-                                logger.info(f"{char_name} new assets")
-                            status.has_hostile_assets = has_hostile_assets
-                            status.hostile_assets = hostile_assets_result
-
-
-                        if status.has_hostile_clones != has_hostile_clones or set(hostile_clones_result) != set(status.hostile_clones or []):  # hostile clone locations changed?
-                            # Compare and find new links
-                            old_links = set(status.hostile_clones or [])
-                            new_links = set(hostile_clones_result) - old_links
-                            link_list = "\n".join(
-                                f"- {system} owned by {hostile_clones_result[system]}"
-                                for system in (set(hostile_clones_result) - set(status.hostile_clones or []))
-                            )
-                            logger.info(f"{char_name} new clones: {link_list}")
-                            link_list2 = "\n".join(f"🔗 {link}" for link in old_links)
-                            logger.info(f"{char_name} old clones: {link_list2}")
-                            if status.has_hostile_clones != has_hostile_clones:  # boolean changed → emit summary
-                                changes.append(f"## Hostile Clone Status: {'🔴' if has_hostile_clones else '🟢'}")
-                                logger.info(f"{char_name} changed")
-                            if new_links:  # list out newly detected clone systems
-                                changes.append(f"##{get_pings('New Hostile Clones')} New Hostile Clone(s):\n{link_list}")
-                                logger.info(f"{char_name} new clones")
-                            status.has_hostile_clones = has_hostile_clones
-                            status.hostile_clones = hostile_clones_result
-
-                        if status.has_sus_contacts != has_sus_contacts or set(sus_contacts_result) != set(as_dict(status.sus_contacts) or {}):  # suspect contacts changed?
-                            old_contacts = as_dict(status.sus_contacts) or {}
-                            #normalized_old = { str(cid): v for cid, v in status.sus_contacts.items() }
-                            #normalized_new = { str(cid): v for cid, v in sus_contacts_result.items() }
-
-                            old_ids   = set(as_dict(status.sus_contacts).keys())
-                            new_ids   = set(sus_contacts_result.keys())
-                            new_links = new_ids - old_ids
-                            if new_links:  # highlight only contacts not previously reported
-                                link_list = "\n".join(
-                                    f"🔗 {sus_contacts_result[cid]}" for cid in new_links
-                                )
-                                logger.info(f"{char_name} new assets:\n{link_list}")
-
-                            if old_ids:  # optional debug log for existing entries
-                                old_link_list = "\n".join(
-                                    f"🔗 {old_contacts[cid]}" for cid in old_ids if cid in old_contacts
-                                )
-                                logger.info(f"{char_name} old assets:\n{old_link_list}")
-
-                            if status.has_sus_contacts != has_sus_contacts:  # flag boolean flip
-                                changes.append(f"## Suspicious Contact Status: {'🔴' if has_sus_contacts else '🟢'}")
-                            logger.info(f"{char_name} status changed")
-
-                            if new_links:  # include the new contact entries in the summary
-                                changes.append(f"## New Suspicious Contacts:")
-                                for cid in new_links:
-                                    res = sus_contacts_result[cid]
-                                    ping = get_pings('New Suspicious Contacts')
-                                    if res.startswith("- A -"):  # skip ping for alliance-only entries
-                                        ping = ""
-                                    changes.append(f"{res} {ping}")
-
-                            status.has_sus_contacts = has_sus_contacts
-                            status.sus_contacts = sus_contacts_result
-
-                        if status.has_sus_contracts != has_sus_contracts or set(sus_contracts_result) != set(as_dict(status.sus_contracts) or {}):  # suspicious contracts changed?
-                            old_contracts = as_dict(status.sus_contracts) or {}
-                            #normalized_old = { str(cid): v for cid, v in status.sus_contacts.items() }
-                            #normalized_new = { str(cid): v for cid, v in sus_contacts_result.items() }
-
-                            old_ids   = set(as_dict(status.sus_contracts).keys())
-                            new_ids   = set(sus_contracts_result.keys())
-                            new_links = new_ids - old_ids
-                            if new_links:  # only surface contracts not yet alerted on
-                                link_list = "\n".join(
-                                    f"🔗 {sus_contracts_result[issuer_id]}" for issuer_id in new_links
-                                )
-                                logger.info(f"{char_name} new assets:\n{link_list}")
-
-                            if old_ids:  # optional logging for previous entries
-                                old_link_list = "\n".join(
-                                    f"🔗 {old_contracts[issuer_id]}" for issuer_id in old_ids if issuer_id in old_contracts
-                                )
-                                logger.info(f"{char_name} old assets:\n{old_link_list}")
-
-                            if status.has_sus_contracts != has_sus_contracts:  # summarize boolean change
-                                changes.append(f"## Suspicious Contract Status: {'🔴' if has_sus_contracts else '🟢'}")
-                            logger.info(f"{char_name} status changed")
-
-                            if new_links:  # write each new contract entry to the report
-                                changes.append(f"## New Suspicious Contracts:")
-                                for issuer_id in new_links:
-                                    res = sus_contracts_result[issuer_id]
-                                    ping = get_pings('New Suspicious Contracts')
-                                    if res.startswith("- A -"):  # skip ping for alliance-level alerts
-                                        ping = ""
-                                    changes.append(f"{res} {ping}")
-
-                            status.has_sus_contracts = has_sus_contracts
-                            status.sus_contracts = sus_contracts_result
-
-                        if status.has_sus_mails != has_sus_mails or set(sus_mails_result) != set(as_dict(status.sus_mails) or {}):  # suspicious mails changed?
-                            old_mails = as_dict(status.sus_mails) or {}
-                            #normalized_old = { str(cid): v for cid, v in status.sus_contacts.items() }
-                            #normalized_new = { str(cid): v for cid, v in sus_contacts_result.items() }
-
-                            old_ids   = set(as_dict(status.sus_mails).keys())
-                            new_ids   = set(sus_mails_result.keys())
-                            new_links = new_ids - old_ids
-                            if new_links:  # only highlight unseen mail threads
-                                link_list = "\n".join(
-                                    f"🔗 {sus_mails_result[issuer_id]}" for issuer_id in new_links
-                                )
-                                logger.info(f"{char_name} new assets:\n{link_list}")
-
-                            if old_ids:  # optional logging for previous entries
-                                old_link_list = "\n".join(
-                                    f"🔗 {old_mails[issuer_id]}" for issuer_id in old_ids if issuer_id in old_mails
-                                )
-                                logger.info(f"{char_name} old assets:\n{old_link_list}")
-
-                            if status.has_sus_mails != has_sus_mails:  # summarize boolean change
-                                changes.append(f"## Suspicious Mail Status: {'🔴' if has_sus_mails else '🟢'}")
-                            logger.info(f"{char_name} status changed")
-
-                            if new_links:  # enumerate the new mail entries for the report
-                                changes.append(f"## New Suspicious Mails:")
-                                for issuer_id in new_links:
-                                    res = sus_mails_result[issuer_id]
-                                    ping = get_pings('New Suspicious Mails')
-                                    if res.startswith("- A -"):  # skip ping for alliance-level alerts
-                                        ping = ""
-                                    changes.append(f"{res} {ping}")
-
-                            status.has_sus_mails = has_sus_mails
-                            status.sus_mails = sus_mails_result
-
-                        if status.has_sus_trans != has_sus_trans or set(sus_trans_result) != set(as_dict(status.sus_trans) or {}):  # suspicious wallet txns changed?
-                            old_trans = as_dict(status.sus_trans) or {}
-                            #normalized_old = { str(cid): v for cid, v in status.sus_contacts.items() }
-                            #normalized_new = { str(cid): v for cid, v in sus_contacts_result.items() }
-
-                            old_ids   = set(as_dict(status.sus_trans).keys())
-                            new_ids   = set(sus_trans_result.keys())
-                            new_links = new_ids - old_ids
-                            if new_links:  # only highlight newly detected transactions
-                                link_list = "\n".join(
-                                    f"{sus_trans_result[issuer_id]}" for issuer_id in new_links
-                                )
-                                logger.info(f"{char_name} new trans:\n{link_list}")
-
-                            if old_ids:
-                                old_link_list = "\n".join(
-                                    f"{old_trans[issuer_id]}" for issuer_id in old_ids if issuer_id in old_trans
-                                )
-                                logger.info(f"{char_name} old trans:\n{old_link_list}")
-
-                            if status.has_sus_trans != has_sus_trans:
-                                changes.append(f"## Suspicious Transactions Status: {'🔴' if has_sus_trans else '🟢'}")
-                            logger.info(f"{char_name} status changed")
-                            changes.append(f"## New Suspicious Transactions{get_pings('New Suspicious Transactions')}:\n{link_list}")
-
-                            status.has_sus_trans = has_sus_trans
-                            status.sus_trans = sus_trans_result
-
-                        if send_notifications and changes:  # emit each of the accumulated change summaries
-                            for i in range(0, len(changes)):
-                                chunk = changes[i]
-                                if i == 0:  # the first chunk gets the header
-                                    msg = f"# ‼️ Status change detected for **{char_name}**:\n" + "\n" + chunk
-                                else:
-                                    msg = chunk
-                                logger.info(f"Message: {msg}")
-                                send_message(msg)
-                                time.sleep(0.03)
-                        status.updated = timezone.now()
-                        status.save()
-
-                        break
-                    except OperationalError as e:
-                        code = e.args[0] if e.args else None
-                        if code == 1213 or "deadlock" in str(e).lower():
-                            delay = 0.5 * (attempt + 1)
-                            logger.warning(
-                                f"Deadlock while processing {char_name} "
-                                f"(attempt {attempt + 1}/3); sleeping {delay:.1f}s before retry."
-                            )
-                            time.sleep(delay)
-                            # after last attempt, give up on this user but keep the overall stream alive
-                            if attempt == 2:
-                                logger.error(
-                                    f"Skipping {char_name} after repeated deadlocks."
-                                )
-                            continue
-                        # not a deadlock → re-raise and let outer handler deal with it
-                        raise
     except Exception as e:
         logger.error("Task failed", exc_info=True)
         instance.is_active = True
@@ -785,6 +1127,7 @@ def BB_run_regular_updates():
                 if nl != -1 and nl > start:  # break on newline if it exists inside this chunk
                     end = nl + 1
             chunk = tb_str[start:end]
+            time.sleep(1)
             send_message(f"```{chunk}```")
             start = end
 
@@ -792,4 +1135,4 @@ def BB_run_regular_updates():
     task_name = 'BB run regular updates'
     task = PeriodicTask.objects.filter(name=task_name).first()
     if not task.enabled:  # inform admins when the periodic task finished its initial run
-        send_message("initial Big Brother task has finished, you can now enable the task")
+        send_message("initial run of the Big Brother task has finished, you can now enable the task")

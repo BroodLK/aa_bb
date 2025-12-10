@@ -273,4 +273,21 @@ def get_awox_kill_links(user_id):
     if not kills:  # No cached kills yet; callers expect empty list.
         return []
 
-    return [kill["link"] for kill in kills if "link" in kill]  # Only return entries that include a URL.
+    results = []
+    for kill in kills:
+        if "link" not in kill:
+            continue
+
+        date_val = kill.get("date")
+        if hasattr(date_val, "strftime"):
+            date_str = date_val.strftime("%Y-%m-%d %H:%M")
+        else:
+            date_str = str(date_val).replace("T", " ").replace("Z", "")
+
+        results.append({
+            "link": kill["link"],
+            "date": date_str,
+            "value": "{:,}".format(kill.get("value", 0))
+        })
+
+    return results

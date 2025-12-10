@@ -148,9 +148,14 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
 
 def get_hostile_asset_locations(user_id: int) -> Dict[str, str]:
     """
-    Returns a dict of system display name → owning alliance name (plus ship context)
-    for systems where the user's characters have assets in space, including only
-    those considered hostile under the configured rules.
+    Returns a mapping of system display name -> owner/asset summary string
+    for systems where the user's characters have assets in space and the
+    system is considered hostile under the configured rules.
+
+    The summary string includes:
+      - the owning alliance/corp (or "Unresolvable"),
+      - optional ship names present in that system,
+      - optional character names that have assets there.
     """
     systems = get_asset_locations(user_id)
     if not systems:
@@ -171,8 +176,8 @@ def get_hostile_asset_locations(user_id: int) -> Dict[str, str]:
 
     safe_entities = get_safe_entities()
 
-    logger.debug(f"Hostile alliance IDs: {hostile_ids}")
-    logger.debug(f"Hostile corporation IDs: {hostile_corp_ids}")
+    logger.debug("Hostile alliance IDs: %s", hostile_ids)
+    logger.debug("Hostile corporation IDs: %s", hostile_corp_ids)
 
     hostile_map: Dict[str, str] = {}
 
@@ -181,7 +186,7 @@ def get_hostile_asset_locations(user_id: int) -> Dict[str, str]:
         if system_id in excluded_system_ids:
             continue
 
-        system_name = data["name"]
+        system_name = data.get("name")
         display_name = system_name or f"Unknown ({system_id})"
 
         owner_info = get_system_owner({"id": system_id, "name": display_name})
@@ -214,8 +219,9 @@ def get_hostile_asset_locations(user_id: int) -> Dict[str, str]:
         # Config: structural / station-type based hostility
         struct_flag = False
         npc_flag = False
+
         if consider_structures or consider_npc:
-            for loc_id, loc_data in data["locations"].items():
+            for loc_id, loc_data in data.get("locations", {}).items():
                 if not loc_id or loc_id in excluded_station_ids:
                     continue
 
@@ -237,26 +243,40 @@ def get_hostile_asset_locations(user_id: int) -> Dict[str, str]:
         if not system_hostile:
             continue
 
-        # Flatten ships for context + ship-only filter
+        # Flatten ships and characters for context + ship-only filter
         all_ships: list[str] = []
-        for loc in data["locations"].values():
-            for char_ships in loc["characters"].values():
+        char_names = set()
+
+        for loc in data.get("locations", {}).values():
+            for char_name, char_ships in loc.get("characters", {}).items():
+                char_names.add(char_name)
                 all_ships.extend(char_ships)
 
         if ships_only and not all_ships:
             # Config says: ignore systems where we only have non-ship assets
             continue
 
-        oname_with_ships = oname
-        if all_ships:
-            oname_with_ships = f"{oname} (Ships: {', '.join(all_ships)})"
+        # Build the owner/detail string
+        parts = [oname]
 
-        hostile_map[display_name] = oname_with_ships
+        if all_ships:
+            parts.append("Ships: " + ", ".join(sorted(all_ships)))
+
+        if char_names:
+            parts.append("Chars: " + ", ".join(sorted(char_names)))
+
+        owner_summary = " | ".join(parts)
+
+        hostile_map[display_name] = owner_summary
         logger.info(
-            f"Hostile asset system: {display_name} owned by {oname_with_ships} ({oid})"
+            "Hostile asset system: %s owned by %s (%s)",
+            display_name,
+            owner_summary,
+            oid,
         )
 
     return hostile_map
+
 
 
 def render_assets(user_id: int) -> Optional[str]:
