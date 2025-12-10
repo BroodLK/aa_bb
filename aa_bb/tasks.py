@@ -122,7 +122,7 @@ def send_status_embed(
 
     if VERBOSE_WEBHOOK_LOGGING:
         logger.debug("[EMBED] sending embed payload")
-    time.sleep(1)
+    time.sleep(0.25)
     send_message(embed)
 
 
@@ -404,17 +404,40 @@ def BB_update_single_user(user_id, char_name):
 
                 for char_nameee, new_info in sp_age_ratio_result.items():
                     old_info = (status.sp_age_ratio_result or {}).get(char_nameee, {})
+
                     old_ratio = _safe_ratio(old_info)
                     new_ratio = _safe_ratio(new_info)
 
-                    if old_ratio is not None and new_ratio is not None and new_ratio > old_ratio:  # only flag when ratio increased
+                    # Pull total SP values (fallback to 0 if missing)
+                    old_total_sp = old_info.get("total_sp") or 0
+                    new_total_sp = new_info.get("total_sp") or 0
+
+                    # Estimated injected SP is simply the SP delta, clamped at 0
+                    injected_est = max(0, new_total_sp - old_total_sp)
+
+                    # Only flag when ratio increased and we have both ratios
+                    if old_ratio is not None and new_ratio is not None and new_ratio > old_ratio:
+                        # Format nicely with thousand separators and trimmed ratios
                         flaggs.append(
-                            f"- **{char_nameee}'s** SP to age ratio went up from **{old_ratio}** to **{new_ratio}**\n"
+                            "- **{name}**:\n"
+                            "  • Previous total SP: {old_sp:,}\n"
+                            "  • New total SP: {new_sp:,}\n"
+                            "  • Est. injected: **{inj_sp:,} SP**\n"
+                            "  • SP/age ratio: {old_r:.2f} → **{new_r:.2f}**\n".format(
+                                name=char_nameee,
+                                old_sp=old_total_sp,
+                                new_sp=new_total_sp,
+                                inj_sp=injected_est,
+                                old_r=old_ratio,
+                                new_r=new_ratio,
+                            )
                         )
 
                 if flaggs:  # only send notification when at least one character’s ratio increased
                     sp_list = "".join(flaggs)
-                    changes.append(f"## {get_pings('SP Injected')} Skill Injection detected:\n{sp_list}")
+                    changes.append(
+                        f"## {get_pings('SP Injected')} Skill Injection detected:\n{sp_list}"
+                    )
 
             status.sp_age_ratio_result = sp_age_ratio_result
             status.save()
@@ -592,16 +615,22 @@ def BB_update_single_user(user_id, char_name):
                             f"{('Yes' if can_light_old else 'No').ljust(7)} | "
                             f"{('Yes' if can_light_new else 'No').ljust(6)}")
 
-
-                        # 👉 Add corp time here
                         try:
                             cid = get_character_id(charname)
-                            corp_days = get_current_stint_days_in_corp(cid,
-                                                                       BigBrotherConfig.get_solo().main_corporation_id)
-                            corp_label = f"Time in {BigBrotherConfig.get_solo().main_corporation}"
+                            ev = EveCharacter.objects.get(character_id=cid)
+
+                            corp_id = ev.corporation_id
+                            corp_name = ev.corporation_name
+
+                            corp_days = get_current_stint_days_in_corp(cid, corp_id)
+                            corp_label = f"Time in {corp_name}"
+
                             table_lines.append(f"{corp_label:<21} | {corp_days} days")
+                        except EveCharacter.DoesNotExist:
+                            logger.warning(f"EveCharacter not found for {charname} (id={cid}), skipping corp time.")
                         except Exception as e:
                             logger.warning(f"Could not fetch corp time for {charname}: {e}")
+
 
                         table_block = "```\n" + "\n".join(table_lines) + "\n```"
                         changes.append(table_block)
@@ -715,6 +744,11 @@ def BB_update_single_user(user_id, char_name):
                             old_ac = old_skill.get("active", 0)
                             new_tr = new_skill.get("trained", 0)
                             new_ac = new_skill.get("active", 0)
+
+                            if old_tr != new_tr or old_ac != new_ac:
+                                table_lines.append(
+                                    f"{name_padded} | {old_fmt.ljust(9)} | {new_fmt.ljust(8)}"
+                                )
 
                             old_fmt = f"{old_tr}/{old_ac}"
                             new_fmt = f"{new_tr}/{new_ac}"
@@ -971,23 +1005,22 @@ def BB_update_single_user(user_id, char_name):
 
             if send_notifications and changes:
                 """
-                Send each accumulated change as a separate embed, using the
-                same style as manual_notif_test.send_status_embed for
-                mobile-friendly, chunked notifications.
+                Build all embed chunks and hand them off to a dedicated
+                send task so Discord messages are serialized and never
+                interleave between users.
                 """
                 logger.info(
-                    f"[{char_name}] Sending {len(changes)} embed notifications to Discord..."
+                    "[%s] Preparing %d change blocks for Discord...",
+                    char_name,
+                    len(changes),
                 )
 
-                # 1) Overall header (single embed, like manual_notif_test)
+                all_chunks: list[list[str]] = []
+
+                # 1) Overall header – almost always a tiny single-chunk embed
                 header_lines = [f"‼️ Status change detected for {char_name}"]
                 for header_chunk in _chunk_embed_lines(header_lines, max_chars=1900):
-                    send_status_embed(
-                        char_name,
-                        header_chunk,
-                        override_title="",  # keep title small; most info in body
-                    )
-                    time.sleep(0.05)
+                    all_chunks.append(header_chunk)
 
                 # 2) One or more embeds per change block, chunked by char count
                 for chunk in changes:
@@ -995,14 +1028,20 @@ def BB_update_single_user(user_id, char_name):
 
                     for body_chunk in _chunk_embed_lines(raw_lines, max_chars=1900):
                         logger.info(
-                            f"[{char_name}] Embed body chunk lines: {len(body_chunk)}"
-                        )
-                        send_status_embed(
+                            "[%s] Prepared embed chunk with %d lines",
                             char_name,
-                            body_chunk,
-                            override_title="",  # per-section titles already in body text
+                            len(body_chunk),
                         )
-                        time.sleep(0.05)
+                        all_chunks.append(body_chunk)
+
+                if all_chunks:
+                    logger.info(
+                        "[%s] Enqueuing %d embed chunks to BB_send_discord_notifications",
+                        char_name,
+                        len(all_chunks),
+                    )
+                    BB_send_discord_notifications.delay(char_name, all_chunks)
+
 
             status.updated = timezone.now()
             status.save()
@@ -1094,16 +1133,55 @@ def BB_run_regular_updates():
 
         # walk each eligible user and rebuild their status snapshot
         if instance.is_active:  # skip user iteration entirely when plugin disabled/unlicensed
-            users = get_users()
-            logger.info(f"BB_run_regular_updates: Dispatching updates for {len(users)} users.")
+            users = list(get_users())
+            total_users = len(users)
+            logger.info(
+                f"BB_run_regular_updates: Dispatching updates for {total_users} users (staggered)."
+            )
 
-            for char_name in users:
+            if total_users == 0:
+                return
+
+            # We want to spread the work roughly across 1 hour (3600s)
+            # so we don't spike CPU at the top of the hour.
+            from datetime import timedelta
+
+            window_seconds = 3600
+            # minimum spacing between users, so tasks don't all land at the same second
+            if total_users < 720:
+                min_spacing = 5
+            elif total_users < 900:
+                min_spacing = 4
+            elif total_users < 1200:
+                min_spacing = 3
+            elif total_users < 1800:
+                min_spacing = 2
+            else: # good upto 3600 users.
+                min_spacing = 1
+
+            # Compute spacing so that N users fit into ~window_seconds
+            spacing = max(min_spacing, window_seconds // max(total_users, 1))
+
+            now = timezone.now()
+
+            for index, char_name in enumerate(users):
                 user_id = get_user_id(char_name)
                 if not user_id:  # defensive: skip orphaned mains lacking a user id
                     continue
 
-                # Dispatch async task for each user
-                BB_update_single_user.delay(user_id, char_name)
+                # Schedule each user with an increasing ETA so the load is flattened
+                offset = index * spacing
+                eta = now + timedelta(seconds=offset)
+
+                logger.info(
+                    f"Scheduling BB_update_single_user for {char_name} (id={user_id}) "
+                    f"in {offset}s at {eta.isoformat()}."
+                )
+
+                BB_update_single_user.apply_async(
+                    args=(user_id, char_name),
+                    eta=eta,
+                )
 
     except Exception as e:
         logger.error("Task failed", exc_info=True)
@@ -1127,7 +1205,7 @@ def BB_run_regular_updates():
                 if nl != -1 and nl > start:  # break on newline if it exists inside this chunk
                     end = nl + 1
             chunk = tb_str[start:end]
-            time.sleep(1)
+            time.sleep(0.25)
             send_message(f"```{chunk}```")
             start = end
 
@@ -1136,3 +1214,35 @@ def BB_run_regular_updates():
     task = PeriodicTask.objects.filter(name=task_name).first()
     if not task.enabled:  # inform admins when the periodic task finished its initial run
         send_message("initial run of the Big Brother task has finished, you can now enable the task")
+
+@shared_task()
+def BB_send_discord_notifications(subject: str, chunks: list[list[str]]) -> None:
+    """
+    Dedicated task to send Discord embeds for BigBrother.
+
+    - subject: usually the character name
+    - chunks: list of "lines lists" – each inner list becomes one embed body
+
+    Run this on a single-worker queue (concurrency=1) so embeds never
+    interleave between users or checks.
+    """
+    logger.info(
+        "[BB_SEND] Dispatching %d embed chunks for %s",
+        len(chunks),
+        subject,
+    )
+
+    for idx, lines in enumerate(chunks):
+        logger.debug(
+            "[BB_SEND] Sending chunk %d/%d for %s (lines=%d)",
+            idx + 1,
+            len(chunks),
+            subject,
+            len(lines),
+        )
+        send_status_embed(
+            subject=subject,
+            lines=lines,
+            override_title="",  # keep titles minimal; content is in the body
+        )
+        time.sleep(0.25)  # tiny delay to be nice to the webhook
