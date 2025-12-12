@@ -3,7 +3,7 @@
 > Because this repository is public, anyone can read the detection logic for skills, cyno activity, injected SP, suspicious transactions, hostile assets and clones, and other monitored behaviors. Hostile groups may use this information to avoid detection. Operate with discretion.
 
 # BigBrother — Initial Release (Beta) 3.1.0b1
-BigBrother is an Alliance Auth plugin that performs continuous pilot auditing, compliance monitoring, intelligence gathering, and behavioral analysis. It monitors activity such as skills, cyno capabilities, SP injections, corporation movement, assets, clones, and more, then delivers structured leadership-focused reports.
+BigBrother is an Alliance Auth plugin, **_originally written by Andrew Xadi_**, that performs continuous pilot auditing, compliance monitoring, intelligence gathering, and behavioral analysis. It monitors activity such as skills, cyno capabilities, SP injections, corporation movement, assets, clones, and more, then delivers structured leadership-focused reports.
 > [!IMPORTANT]
 > Users who used this tool while it was private can safely upgrade but may run into a rare but serious complication where duplicate tasks are generated preventing the auth from starting.
 
