@@ -1,90 +1,232 @@
-# BigBrother
 
-BigBrother is an Alliance Auth plugin for EVE Online corps and alliances.
-It gathers the intel you already have—ESI, zKillboard, Corptools, Charlink, FATs—and turns it into one actionable dashboard so leadership can act fast without digging through spreadsheets.
+> [!CAUTION]
+> Because this repository is public, anyone can read the detection logic for skills, cyno activity, injected SP, suspicious transactions, hostile assets and clones, and other monitored behaviors. Hostile groups may use this information to avoid detection. Operate with discretion.
 
-## What BigBrother Does for You
+# BigBrother — Initial Release (Beta) 3.1.0b1
+BigBrother is an Alliance Auth plugin that performs continuous pilot auditing, compliance monitoring, intelligence gathering, and behavioral analysis. It monitors activity such as skills, cyno capabilities, SP injections, corporation movement, assets, clones, and more, then delivers structured leadership-focused reports.
+> [!IMPORTANT]
+> Users who used this tool while it was private can safely upgrade but may run into a rare but serious complication where duplicate tasks are generated preventing the auth from starting.
 
-- **See everything about a pilot in one place** – Pick a member and their page lights up with cards for corp history, compliance, suspicious mails/contracts/transactions, Cyno state, clones and assets in hostile space, skills, killboard hits, etc. No more jumping between tools.
-- **Watch entire corporations (CorpBrother)** – Flip to the corp-level dashboard to view the same intel rolled up by corporation so recruiters and diplo staff can vet groups just as quickly.
-- **Self-service Leave of Absence** – Members submit LoA requests in-app, managers approve/deny from their own view, and Discord/webhook pings keep everyone informed.
-- **Track PAP goals** – Enter PAP counts manually or pull them from FATs, then show members their totals, history charts, and compliance scores.
-- **Automated compliance tickets** – Define rules (corp auth, PAPs, AFK, Discord link, removed alts, awox kills, etc.) and BigBrother opens/updates Discord tickets automatically until the user is compliant again.
-- **Optional recruitment autopilot** – Rotate Reddit recruitment posts, respect cooldowns, and alert when replies land (feature currently paused until Reddit’s API settles but ready for reuse).
-- **Constant reminders, zero button mashing** – Scheduled Celery jobs warm caches, refresh statuses, and send preconfigured Discord notifications so officers only step in when something needs a human decision. The flagship task, `BB_run_regular_updates`, is enabled through Celery Beat when the app starts; it loops through every member, refreshes their status cards, and fires the right Discord alerts (pinging the message types configured in `BigBrotherConfig`) whenever clones move, Cynos change, hostiles appear, or compliance slips.
+> [!WARNING]
+> This is a **beta** release. Please report issues through GitHub.
 
-## Feature Highlights (under the hood)
+## Core Requirements
+### The following AllianceAuth plugins are **_required_**:
 
-- **Member security cockpit** – The `aa_bb` dashboard renders collapsible “cards” (see `views.py`) covering compliance, corp switches, awox kills, clone states, cyno capability, hostile assets/clones, suspicious mails/contracts/transactions, IMP & LAWN blacklist hits, skills, and more. Data is sourced via the modules in `aa_bb/checks/*`.
-- **CorpBrother** – The sister site (`views_cb.py` + `urls_cb.py`) looks at corporations instead of individuals, sharing the same warm-cache + SSE loaders to spot hostile assets, transactions, or contracts at the corp level.
-- **Leave of Absence (LoA)** – Users can file, edit, and track LoA requests (`LeaveRequest` in `modelss.py`, templates under `templates/loa`). Recruiters and directors get dedicated admin views plus Discord/webhook notifications for state changes.
-- **PAP statistics** – The `paps` module (`views_paps.py`) pulls FAT data, group membership, and manual inputs to calculate corp/alliance/coalition PAPs, generates Matplotlib charts, and stores compliance scores in `PapCompliance`.
-- **Ticket & compliance automation** – `tasks_tickets.py` ties Charlink `ComplianceFilter`, PAP targets, AFK status, corp membership, and Discord linkage together. Non-compliant users automatically receive Discord tickets via `aadiscordbot`, and tickets close themselves when the checks pass again.
-- **Recruitment automation** – `modelss.BigBrotherRedditSettings` and `tasks_reddit.py` run a full Reddit posting workflow: OAuth, rotating message bank, cooldown enforcement, and reply monitoring with webhook pings. (currently not working due to reddit api changes)
-- **Background workers with guardrails** – Celery tasks (`tasks*.py`) are pre-registered in `apps.py` with `django-celery-beat` schedules. They warm caches (`WarmProgress`), collect ESI scopes defined in `models.py`, sync corptools data, and rate-limit zKillboard calls so leadership sees near-real-time intel without overwhelming third-party APIs.
-
-## Architecture at a Glance
-
-- **Django app**: Lives in `aa_bb/aa_bb/` with standard `urls.py` + `views.py` pairs for BigBrother, CorpBrother, LoA, and PAPs.
-- **Checks**: Every risk signal is isolated in `aa_bb/checks/` (awox, clone_state, corp_blacklist, cyno, hostile_assets/clones, imp/lawn blacklist, notifications, roles_and_tokens, skills, suspicious contacts/contracts/mails/transactions, etc.). Each module exposes both render helpers and raw data fetchers so they can be reused by views and Celery tasks.
-- **Data model**: Configuration uses `solo` singletons (`BigBrotherConfig`, `TicketToolConfig`, `PapsConfig`, `BigBrotherRedditSettings`). Operational data is tracked via `UserStatus`, `CorpStatus`, async progress tables, and message queues for Discord/webhook output.
-- **Integrations**: Relies on Alliance Auth ≥ 4.3.1, allianceauth-corptools, django-esi, aadiscordbot, django-celery-beat, Matplotlib, and (optionally) AFAT. Discord pings are routed through `send_message` (see `app_settings.py`), and killmail lookups use zKillboard + ESI hybrids.
-- **Front-end**: Templates under `aa_bb/templates/**` ship with Bootstrap-based dashboards plus streamed updates (SSE endpoints in `views.py`) for huge contract/mail datasets. JavaScript in `templates/aa_bb/index.html` mirrors the `CARD_DEFINITIONS` in Python so the UI stays declarative.
-
-## BigBrotherConfig Settings Cheat Sheet
-
-- **Installation & Identity** – `main_corporation`/`main_alliance` and `is_active` are filled in by the updater after it inspects your superusers’ characters. You normally never touch these manually.
-- **Module Entitlements** – `dlc_*_active` flags (CorpBrother, LoA, PAPs, Tickets, Reddit, Daily Messages) mirror what your installation unlocks. They flip automatically each time “BB: Run regular updates” executes.
-- **Access Control** – `bb_guest_states`/`bb_member_states` define who counts as a guest vs. member; `member_*` fields let you whitelist outside corps/alliances; `ignored_corporations` hides IDs from CorpBrother menus and compliance checks.
-- **Hostile & Whitelists** – `hostile_alliances`/`hostile_corporations` power the red highlights in cards, mails, contracts, and transactions; `whitelist_*` keeps friendly IDs safe even if the default data marks them as hostile.
-- **Discord Notifications** – `pingroleID`, `pingroleID2`, and the `pingrole*_messages`/`here_messages`/`everyone_messages` relationships decide which MessageTypes mention which roles; `webhook`, `loawebhook`, `dailywebhook`, and `optwebhook1-5` route the alerts to different channels.
-- **ESI Scope Enforcement** – `character_scopes` and `corporation_scopes` are comma-separated requirements; any missing scope is surfaced in the Compliance card so you can chase the pilot.
-- **Scheduling & Toggles** – `dailyschedule` plus `optschedule1-5` pick which celery-beat schedule objects drive the daily/optional digests; `is_loa_active`, `is_paps_active`, `is_warmer_active`, and `are_*_messages_active` let you pause LoA/PAP modules, cache warming, or outbound messages without ripping out cron entries; `loa_max_logoff_days` sets how long someone can stay offline before LoA reminders escalate.
-
-## PapsConfig Settings Cheat Sheet
-
-- **Monthly Targets & Modifiers** – `required_paps`, `corp_modifier`, `max_corp_paps`, `alliance_modifier`, and `coalition_modifier` define how many PAPs matter per source each month.
-- **Group-Based Awards** – `group_paps` plus `group_paps_modifier` grant bonus PAPs for specified Auth groups, while `capital_groups_get_paps` and the `cap/super/titan` group fields let you award fixed PAPs to capital programs.
-- **Exclusions & Overrides** – `excluded_groups` and `excluded_groups_get_paps` control whether conflicting groups zero-out or cap the modifier, and `excluded_users` / `excluded_users_paps` let you opt individuals in or out of the different calculators without deleting data.
-
-## TicketToolConfig Settings Cheat Sheet
-
-- **General Filters** – `compliance_filter`, `max_months_without_pap_compliance`, `starting_pap_compliance`, `char_removed_enabled`, and `awox_monitor_enabled` tune who gets checked and which events can open tickets; `ticket_counter` is read-only and just labels Discord channels.
-- **Corp Auth Checks** – `corp_check_enabled`, `corp_check`, `corp_check_frequency`, `corp_check_reason`, and `corp_check_reminder` determine when pilots missing corp auth access are warned and how often reminders fire.
-- **PAP Compliance** – `paps_check_enabled` with the matching `_check`, `_frequency`, `_reason`, and `_reminder` fields mirrors the corp flow but for PAP scores pulled from `PapsConfig`.
-- **AFK Monitoring** – `afk_check_enabled`, `Max_Afk_Days`, `afk_check`, `afk_check_frequency`, `afk_check_reason`, and `afk_check_reminder` leverage Charlink/GunAA logoff data to raise inactivity tickets.
-- **Discord Linking** – `discord_check_enabled` plus its `_check`, `_frequency`, `_reason`, and `_reminder` templates enforce “link your Discord” policies when aadiscordbot says the account is missing.
-- **Ticket Channels** – `Category_ID`, `staff_roles`, `Role_ID`, and `excluded_users` decide where tickets are created, who can see them, which escalation role gets pinged, and which pilots are ignored entirely.
-
-## BigBrotherRedditSettings Cheat Sheet
-
-- **OAuth & Identity** – `reddit_client_id`, `reddit_client_secret`, `reddit_user_agent`, `reddit_scope`, and `reddit_redirect_override` provide the credentials needed for Reddit OAuth; `reddit_account_name`, `reddit_access_token`, `reddit_refresh_token`, `reddit_token_type`, and `reddit_token_obtained` are filled automatically once you authorise.
-- **Posting Behaviour** – `enabled`, `reddit_subreddit`, and `post_interval_days` decide if/where posts go and how long BigBrother waits between submissions; `last_submission_*` fields are read-only history.
-- **Discord Notifications** – `reddit_webhook` plus `reddit_webhook_message` send confirmations into Discord, while `reply_message_template` shapes the alerts that fire when `monitor_reddit_replies` sees a new comment.
-- **Message Pool** – Recruitment copy lives in `BigBrotherRedditMessage` entries; the scheduler marks `used_in_cycle` as posts go out to avoid repeats until the entire set has been used.
-
-## Repository Map
-
-```
-aa_bb/
-├── aa_bb/                 # Django app
-│   ├── checks/            # All intel and compliance checks
-│   ├── tasks*.py          # Celery tasks (core, corp, CT, tickets, reddit, bot)
-│   ├── templates/         # BigBrother, CorpBrother, LoA, PAPs, FAQ views
-│   ├── urls*.py           # Namespaced URLconfs (BigBrother, CorpBrother, LoA, PAPs)
-│   ├── views*.py          # UI controllers and SSE helpers
-│   ├── models.py          # Core models, user/corp status, messaging
-│   ├── modelss.py         # Singleton configs, PAP + ticket data, Reddit settings
-│   └── app_settings*.py   # ESI helpers, Discord webhooks, cache utilities
-├── CHANGELOG.md
-├── LICENSE
-├── Makefile / tox.ini     # Dev workflow helpers
-└── pyproject.toml         # Packaging metadata
+```md
+allianceauth-afat >= 4.1.1
+allianceauth-blacklist >= 0.1.1
+allianceauth-corptools >= 2.12.0 (this app will adopt 3.0.0 as soon as version 3 is out of beta)
+allianceauth-discordbot >= 4.1.0
+aa-charlink >= 1.11.1
+django-esi >= 8.2.0
 ```
 
-## Requirements & Expectations
+You do not have to use afat, but it does need to be installed.
 
-- Python 3.10+ / Django 4.2 (Alliance Auth dependency tree).
-- Alliance Auth ≥ 4.3.1 with `allianceauth-corptools`, `django-esi`, `aadiscordbot`, and `django-celery-beat`.
-- Celery workers + beat scheduler so the periodic tasks declared in `apps.py` can run.
-- Access to Eve ESI scopes listed in `models.DEFAULT_CHARACTER_SCOPES` and `.DEFAULT_CORPORATION_SCOPES`, plus zKillboard and Reddit (if the module is enabled).
+## Install Instructions
+After making sure to add the above prerequisite applications.
+```bash
+source /home/allianceserver/venv/auth/bin/activate && cd /home/allianceserver/myauth/
+```
+```bash
+pip install aa_bb
+```
+```bash
+vi myauth/settings/local.py
+```
+add `aa_bb` to installed apps.
+```bash
+python manage.py migrate && python manage.py collectstatic
+```
+> [!IMPORTANT]
+> It is recommended to use a threaded worker setup with memmon for this application. The following is an example
+
+In your supervisor.conf
+```bash
+[program:worker]
+command=/home/allianceserver/venv/auth/bin/celery -A myauth worker -P threads -c 10 -l INFO -n %(program_name)s_%(process_num)02d
+directory=/home/allianceserver/myauth
+user=allianceserver
+numprocs=2
+process_name=%(program_name)s_%(process_num)02d
+stdout_logfile=/home/allianceserver/myauth/log/worker.log
+stderr_logfile=/home/allianceserver/myauth/log/worker.log
+autostart=true
+autorestart=true
+startsecs=10
+stopwaitsecs = 600
+killasgroup=true
+priority=998
+
+[eventlistener:memmon]
+command=/home/allianceserver/venv/auth/bin/memmon -p worker_00=512MB -p worker_01=512MB -p -p gunicorn=512MB
+directory=/home/allianceserver/myauth
+events=TICK_60
+stdout_logfile=/home/allianceserver/myauth/log/memmon.log
+stderr_logfile=/home/allianceserver/myauth/log/memmon.log
+```
+
+> [!IMPORTANT]
+> Failure to follow the next steps before running the initial tasks can cause in an undesired result
+
+In your AA Admin navigate to AA_BB
+- Navigate to Big Brother Config
+  - Under **_Core Activation_**
+    - Make sure Warmer Is Active is enabled
+    - Enable any features you plan to use
+      - paps,
+      - loa,
+      - daily messages (messages that repeat every 24 hours),
+      - recurring stats,
+      - optional messages 1-5
+  - Under Notifications
+    - Select if you would like to opt out of any notifications sent to the main Discord Webhook for user changes
+  - Under Ping / Messaging Rules
+    - Enter in your desired role ID that you wish to be pinged, and select the conditions under which those roles will be pinged.
+    - Select any @here conditions
+    - Select any @everyone conditions
+  - Under Webhooks
+  - >Dont forget you can send to a thread by using `https://discordapp.com/api/webhooks/<url>/<url>?thread_id=<threadid>`\
+    The thread must be in the same channel that the webhook is configured to.
+    - **The main "Webhook" This is used to send notifications of user and corp changes to Discord**
+    - LOA Webhook
+    - Daily Webhook
+    - Recurring Stats
+    - Optional Message Webhooks 1-5
+  - Under Schedules
+    - Configure specific schedules for daily messages, optional messages, and recurring stats.
+  - Under User State and Membership
+    - >[!WARNING] Failure to configure this will result in AA_BB not working
+    - Configure what states you consider "memebers" you will receive updates on these in discord
+    - Configure what states you consider "guest" these will be preloaded into cache, but not notified in discord.
+    - Configure what corporations you consider to be members, these are friendly entities.
+      - You do not need to configure a corporation, if your corporation is inside an alliance that is set as member
+    - Configure what alliances you consider to be members.
+    - Configure ignore corporations, such as alt corps, that will be ignored when checks are run
+  - Under Hostile / Whitelist Rules
+    - Configure Alliances you consider hostile
+      - Coming Soon(tm) ability to consider anyone who isnt member/ignored as hostile
+    - Configure Corporations you consider hostile
+    - Configure Whitelisted Alliance and Corporations, these act the same as ignored and are... ignored
+    - Configure if you consider all nullsec, minus what you ignore/whitelist/member, as hostile.
+    - Configure if all player structures are hostile, minus what you ignore/whitelist/member.
+    - Configure if all npc stations are hostile, minus what you ignore/whitelist/member.
+    - Configure Excluded systems and stations, these will be ignored and can be considered the same as "member", "ignored" or "whitelisted"
+
+# Features
+
+> [!WARNING]
+> Reddit Support\
+> Reddit functionality requires paid API access. Because of this requirement, Reddit posting and monitoring features have not been tested.\
+> As such, a list of what it does do will not be included in this readme for now.
+
+## Dashboard
+
+### The BigBrother dashboard provides a unified view of any pilot in your organization.
+Selecting a user displays a set of analytical cards that summarize compliance, risk factors, and suspicious activity signals.
+
+Tracked metrics include:
+
+- **Blacklist Status**
+  - Whether the pilot or any linked character appears on the blacklist.
+
+
+- **Audit Completion**
+  - Whether all characters and corporations associated with the user have been fully audited.
+
+
+- **Corporation Stability**
+  - Detection of short or erratic corporation history (“corp hopping”) that may indicate instability or intent to evade tracking.
+
+
+- **AWOX Activity**
+  - Identification of kills against friendly entities that may indicate internal security risks.
+
+
+- **Account State**
+  - Whether individual characters are Omega or Alpha, useful for evaluating cyno capability, skill progression, and account investment.
+
+
+- **Hostile Jump Clone Placement**
+  - Detection of jump clones located in regions or structures considered hostile.
+
+
+- **Hostile Asset Placement**
+  - Identification of assets located in hostile regions, including breakdown by character and location.
+
+
+- **Hostile Contacts**
+  - Checks for contacts marked as hostile, which may indicate ties to enemy groups.
+
+
+- **Hostile Contracts**
+  - Detection of contracts sent to or received from hostile entities, helping highlight supply-chain leaks or suspicious ISK movement.
+
+
+- **Suspicious Mails**
+  - Detection of in-game mail to or from entities that we consider hostile.
+
+
+- **Suspicious Transactions**
+  - Checks for transactions, such as player donations and trades, that may be related to hostile entity activity.
+
+
+- **Cyno Check**
+  - Provides a breakdown of what each character belonging to the user is capable of when it comes to cynos.
+  - > This includes owning and being able to fly potentially interesting ships
+
+
+- **Skill Check**
+  A breakdown of potentially interesting skills
+
+
+## Corp Dashboard
+> [!WARNING]
+> Corp Dashboard has not yet received much love
+
+- **Suspicious Transactions**
+  - Checks for transactions, such as corporation donations, that may be related to hostile entity activity.
+
+- **Hostile Contracts**
+  - Detection of contracts sent to or received from hostile entities, helping highlight supply-chain leaks or suspicious ISK movement.
+
+- **Hostile Asset Placement**
+  - Identification of assets located in hostile regions or structures.
+
+
+## Discord Notifications
+### All outbound Discord notifications are serialized through a dedicated task to ensure messages never overlap and always arrive in chronological order.
+- Get instant notifications about any corp or user changes that have been listed above under their respective categories, each part of a user's discord notification is adjustable in the settings.
+
+## Ticket System
+### BigBrother can automatically generate tickets to notify leadership when pilots violate compliance or operational rules.
+
+- **Triggers include**:
+  - Charlink Compliance Filters
+    - Detects when users have not added required applications or connections via aa-charlink.
+  - PAP Compliance
+    - Flags users who fall below configured PAP or activity thresholds.
+  - Character Removal From Auth
+    - Creates a ticket when a user removes a character from AllianceAuth, potentially hiding assets or behavior.
+  - AWOX Activity
+    - Generates a ticket when a pilot AWOXs a friendly character.
+  - Missing Corporation Audit (Director Role)
+    - Detects directors who have not enabled or completed corporation audits.
+  - AFK Detection
+    - Flags users who go AFK without registering an LOA in Auth.
+  - Missing Discord Link
+    - Generates a ticket when a user has not connected their Discord account to Auth.
+### Non Specific Ticket Configuration
+  - Ping Targets
+    - Choose which roles to notify when a ticket is created.
+  - Ticket Category
+    - Tickets are created as new channels inside of a category, deleting the channel will close the ticket
+  - Exemptions
+    - Users,  can be marked as exempt from specific checks to avoid ticket spam where it is not needed.
+
+## Automated Discord Messages
+- Configure an unlimited number of messages to be sent to upto 5 different discords webhooks, each with their own individual schedules.
+
+## Recurring stats
+- Send stats to a webhook that covers interesting statistics from AA

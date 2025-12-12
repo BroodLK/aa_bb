@@ -1000,7 +1000,8 @@ def BB_daily_DB_cleanup():
     for model, name in models_to_cleanup:
         old_entries = model.objects.filter(updated__lt=two_months_ago)
         count, _ = old_entries.delete()
-        flags.append(f"- Deleted {count} old {name} records.")
+        if count > 1:
+            flags.append(f"- Deleted {count} old {name} records.")
 
     # Cleanup caches using last_accessed
     last_access_models = [

@@ -4,7 +4,10 @@ import traceback
 from django.utils import timezone
 from celery import shared_task
 
-from .models import UserStatus, BigBrotherConfig
+from .models import (
+    UserStatus,
+    BigBrotherConfig
+)
 from .modelss import TicketToolConfig
 
 from .app_settings import (
@@ -389,7 +392,8 @@ def BB_update_single_user(user_id, char_name):
 
                 # final summary message
                 if flagggs:  # only when changes are detected should notifications and saves occur
-                    changes.append(f"###{pinggg} Clone state change detected:{''.join(flagggs)}")
+                    if BigBrotherConfig.clone_notify:
+                        changes.append(f"###{pinggg} Clone state change detected:{''.join(flagggs)}")
                     status.clone_status = state_result
                     status.save()
 
@@ -435,9 +439,8 @@ def BB_update_single_user(user_id, char_name):
 
                 if flaggs:  # only send notification when at least one character’s ratio increased
                     sp_list = "".join(flaggs)
-                    changes.append(
-                        f"## {get_pings('SP Injected')} Skill Injection detected:\n{sp_list}"
-                    )
+                    if BigBrotherConfig.sp_inject_notify:
+                        changes.append(f"## {get_pings('SP Injected')} Skill Injection detected:\n{sp_list}")
 
             status.sp_age_ratio_result = sp_age_ratio_result
             status.save()
@@ -465,11 +468,13 @@ def BB_update_single_user(user_id, char_name):
                 logger.info(f"{char_name} old links {link_list2}")
                 if status.has_awox_kills != has_awox and has_awox:  # first time awox kills were spotted for this user
                     if not has_awox:
-                        changes.append(f"### AWOX Kill Status: 🟢")
+                        if BigBrotherConfig.awox_notify:
+                            changes.append(f"### AWOX Kill Status: 🟢")
                     status.has_awox_kills = has_awox
                     logger.info(f"{char_name} changed")
                 if new_links:  # send notifications only for links not yet alerted on
-                    changes.append(f"###{get_pings('AwoX')} New AWOX Kill(s):\n{link_list}")
+                    if BigBrotherConfig.awox_notify:
+                        changes.append(f"###{get_pings('AwoX')} New AWOX Kill(s):\n{link_list}")
                     logger.info(f"{char_name} new links")
                     tcfg = TicketToolConfig.get_solo()
                     if tcfg.awox_monitor_enabled and time_in_corp(
@@ -508,7 +513,8 @@ def BB_update_single_user(user_id, char_name):
                 # 1) Flag change for top-level boolean
                 if status.has_cyno != has_cyno:  # flip the top-level boolean when overall readiness changes
                     if not has_cyno:
-                        changes.append(f"### Cyno Status: 🟢")
+                        if BigBrotherConfig.cyno_notify:
+                            changes.append(f"### Cyno Status: 🟢")
                     status.has_cyno = has_cyno
 
                 # 2) Grab the old vs. new JSON blobs
@@ -576,7 +582,8 @@ def BB_update_single_user(user_id, char_name):
                     ]
 
                     if changed_chars:  # only build table output when specific characters changed
-                        changes.append(f"###{get_pings('All Cyno Changes')} Changes in cyno capabilities detected:")
+                        if BigBrotherConfig.cyno_notify:
+                            changes.append(f"###{get_pings('All Cyno Changes')} Changes in cyno capabilities detected:")
 
                     for charname in changed_chars:
                         old_entry = old_cyno.get(charname, {})
@@ -591,8 +598,8 @@ def BB_update_single_user(user_id, char_name):
                             pingrole = get_pings('Can Light Cyno')
                         else:
                             pingrole = get_pings('Cyno Update')
-
-                        changes.append(f"- **{charname}**{pingrole}:")
+                        if BigBrotherConfig.cyno_notify:
+                            changes.append(f"- **{charname}**{pingrole}:")
                         table_lines = [
                             "(1 = trained but alpha, 2 = active)",
                             "Value                 | Old   | New",
@@ -633,7 +640,8 @@ def BB_update_single_user(user_id, char_name):
 
 
                         table_block = "```\n" + "\n".join(table_lines) + "\n```"
-                        changes.append(table_block)
+                        if BigBrotherConfig.cyno_notify:
+                            changes.append(table_block)
 
                 # 4) Save new blob
                 status.cyno = new_cyno
@@ -641,9 +649,10 @@ def BB_update_single_user(user_id, char_name):
             if status.has_skills != has_skills or skills_norm(skills_result) != skills_norm(
                 status.skills or {}):  # skill list changed?
                 # 1) If the boolean flag flipped, append the 🔴 / 🟢 as before
-                if status.has_skills != has_skills:  # emit coarse-grained flag when the threshold crosses zero/any skills
+                if status.has_skills != has_skills:  # emit a coarse-grained flag when the threshold crosses zero/any skills
                     if not has_skills:
-                        changes.append(f"### Skill Status: 🟢")
+                        if BigBrotherConfig.cyno_notify:
+                            changes.append(f"### Skill Status: 🟢")
                     status.has_skills = has_skills
 
                 # 2) Grab the old vs. new JSON blobs
@@ -702,7 +711,8 @@ def BB_update_single_user(user_id, char_name):
                     ]
 
                     if changed_chars:  # preface the per-character tables with a summary line
-                        changes.append(f"##{get_pings('skills')} Changes in skills detected:")
+                        if BigBrotherConfig.cyno_notify:
+                            changes.append(f"##{get_pings('skills')} Changes in skills detected:")
 
                     for charname in changed_chars:
                         raw_old = old_skills.get(charname)
@@ -722,11 +732,11 @@ def BB_update_single_user(user_id, char_name):
                             continue
                         logger.info(new_entry.values())
 
-                        changes.append(f"- **{charname}**:")
-
+                        if BigBrotherConfig.cyno_notify:
+                            changes.append(f"- **{charname}**:")
                         table_lines = [
                             "Skill              | Old       | New",
-                            "------------------------------------"
+                            "------------------------------------",
                         ]
 
                         for sid in ordered_skill_ids:
@@ -745,20 +755,21 @@ def BB_update_single_user(user_id, char_name):
                             new_tr = new_skill.get("trained", 0)
                             new_ac = new_skill.get("active", 0)
 
-                            if old_tr != new_tr or old_ac != new_ac:
-                                table_lines.append(
-                                    f"{name_padded} | {old_fmt.ljust(9)} | {new_fmt.ljust(8)}"
-                                )
+                            if old_tr == new_tr and old_ac == new_ac:
+                                continue
 
                             old_fmt = f"{old_tr}/{old_ac}"
                             new_fmt = f"{new_tr}/{new_ac}"
-
                             name_padded = name.ljust(18)
 
-                            table_lines.append(f"{name_padded} | {old_fmt.ljust(9)} | {new_fmt.ljust(8)}")
+                            table_lines.append(
+                                f"{name_padded} | {old_fmt.ljust(9)} | {new_fmt.ljust(8)}"
+                            )
 
-                        table_block = "```\n" + "\n".join(table_lines) + "\n```"
-                        changes.append(table_block)
+                        if len(table_lines) > 2:
+                            table_block = "```\n" + "\n".join(table_lines) + "\n```"
+                            if BigBrotherConfig.cyno_notify:
+                                changes.append(table_block)
 
                 status.skills = new_skills
             if status.has_hostile_assets != has_hostile_assets or set(hostile_assets_result) != set(
@@ -798,14 +809,14 @@ def BB_update_single_user(user_id, char_name):
                 # Overall boolean flip
                 if status.has_hostile_assets != has_hostile_assets:
                     if not has_hostile_assets:
-                        changes.append("### Hostile Asset Status: 🟢")
+                        if BigBrotherConfig.asset_notify:
+                            changes.append("### Hostile Asset Status: 🟢")
                     logger.info(f"{char_name} hostile asset status changed")
 
                 # Only add a "New Hostile Assets" section when there are actually new systems
                 if new_systems and lines:
-                    changes.append(
-                        f"###{get_pings('New Hostile Assets')} New Hostile Assets:\n{link_list}"
-                    )
+                    if BigBrotherConfig.asset_notify:
+                        changes.append(f"###{get_pings('New Hostile Assets')} New Hostile Assets:\n{link_list}")
                     logger.info(f"{char_name} new hostile asset systems: {', '.join(sorted(new_systems))}")
 
                 status.has_hostile_assets = has_hostile_assets
@@ -845,13 +856,13 @@ def BB_update_single_user(user_id, char_name):
                 # Overall boolean flip
                 if status.has_hostile_clones != has_hostile_clones:
                     if not has_hostile_clones:
-                        changes.append("### Hostile Clone Status: 🟢")
+                        if BigBrotherConfig.clone_notify:
+                            changes.append("### Hostile Clone Status: 🟢")
                     logger.info(f"{char_name} hostile clone status changed")
 
                 if new_systems and lines:
-                    changes.append(
-                        f"###{get_pings('New Hostile Clones')} New Hostile Clone(s):\n{link_list}"
-                    )
+                    if BigBrotherConfig.clone_notify:
+                        changes.append(f"###{get_pings('New Hostile Clones')} New Hostile Clone(s):\n{link_list}")
                     logger.info(f"{char_name} new hostile clone systems: {', '.join(sorted(new_systems))}")
 
                 status.has_hostile_clones = has_hostile_clones
@@ -880,17 +891,19 @@ def BB_update_single_user(user_id, char_name):
 
                 if status.has_sus_contacts != has_sus_contacts:  # flag boolean flip
                     if not has_sus_contacts:
-                        changes.append(f"### Suspicious Contact Status: 🟢")
+                        if BigBrotherConfig.contact_notify:
+                            changes.append(f"### Suspicious Contact Status: 🟢")
                 logger.info(f"{char_name} status changed")
 
                 if new_links:  # include the new contact entries in the summary
-                    changes.append(f"### New Suspicious Contacts:")
-                    for cid in new_links:
-                        res = sus_contacts_result[cid]
-                        ping = get_pings('New Suspicious Contacts')
-                        if res.startswith("- A -"):  # skip ping for alliance-only entries
-                            ping = ""
-                        changes.append(f"{res} {ping}")
+                    if BigBrotherConfig.contact_notify:
+                        changes.append(f"### New Suspicious Contacts:")
+                        for cid in new_links:
+                            res = sus_contacts_result[cid]
+                            ping = get_pings('New Suspicious Contacts')
+                            if res.startswith("- A -"):  # skip ping for alliance-only entries
+                                ping = ""
+                            changes.append(f"{res} {ping}")
 
                 status.has_sus_contacts = has_sus_contacts
                 status.sus_contacts = sus_contacts_result
@@ -918,17 +931,19 @@ def BB_update_single_user(user_id, char_name):
 
                 if status.has_sus_contracts != has_sus_contracts:  # summarize boolean change
                     if not has_sus_contracts:
-                        changes.append(f"## Suspicious Contract Status: 🟢")
+                        if BigBrotherConfig.contract_notify:
+                            changes.append(f"## Suspicious Contract Status: 🟢")
                 logger.info(f"{char_name} status changed")
 
                 if new_links:  # write each new contract entry to the report
-                    changes.append(f"## New Suspicious Contracts:")
-                    for issuer_id in new_links:
-                        res = sus_contracts_result[issuer_id]
-                        ping = get_pings('New Suspicious Contracts')
-                        if res.startswith("- A -"):  # skip ping for alliance-level alerts
-                            ping = ""
-                        changes.append(f"{res} {ping}")
+                    if BigBrotherConfig.contract_notify:
+                        changes.append(f"## New Suspicious Contracts:")
+                        for issuer_id in new_links:
+                            res = sus_contracts_result[issuer_id]
+                            ping = get_pings('New Suspicious Contracts')
+                            if res.startswith("- A -"):  # skip ping for alliance-level alerts
+                                ping = ""
+                            changes.append(f"{res} {ping}")
 
                 status.has_sus_contracts = has_sus_contracts
                 status.sus_contracts = sus_contracts_result
@@ -956,17 +971,19 @@ def BB_update_single_user(user_id, char_name):
 
                 if status.has_sus_mails != has_sus_mails:  # summarize boolean change
                     if not has_sus_mails:
-                        changes.append(f"### Suspicious Mail Status: 🟢")
+                        if BigBrotherConfig.mail_notify:
+                            changes.append(f"### Suspicious Mail Status: 🟢")
                 logger.info(f"{char_name} status changed")
 
                 if new_links:  # enumerate the new mail entries for the report
-                    changes.append(f"### New Suspicious Mails:")
-                    for issuer_id in new_links:
-                        res = sus_mails_result[issuer_id]
-                        ping = get_pings('New Suspicious Mails')
-                        if res.startswith("- A -"):  # skip ping for alliance-level alerts
-                            ping = ""
-                        changes.append(f"{res} {ping}")
+                    if BigBrotherConfig.mail_notify:
+                        changes.append(f"### New Suspicious Mails:")
+                        for issuer_id in new_links:
+                            res = sus_mails_result[issuer_id]
+                            ping = get_pings('New Suspicious Mails')
+                            if res.startswith("- A -"):  # skip ping for alliance-level alerts
+                                ping = ""
+                            changes.append(f"{res} {ping}")
 
                 status.has_sus_mails = has_sus_mails
                 status.sus_mails = sus_mails_result
@@ -994,12 +1011,12 @@ def BB_update_single_user(user_id, char_name):
 
                 if status.has_sus_trans != has_sus_trans:
                     if not has_sus_trans:
-                        changes.append(f"## Suspicious Transactions Status: 🟢")
+                        if BigBrotherConfig.transaction_notify:
+                            changes.append(f"## Suspicious Transactions Status: 🟢")
                 logger.info(f"{char_name} status changed")
                 if new_links:
-                    changes.append(
-                        f"### New Suspicious Transactions{get_pings('New Suspicious Transactions')}:\n{link_list}"
-                    )
+                    if BigBrotherConfig.transaction_notify:
+                        changes.append(f"### New Suspicious Transactions{get_pings('New Suspicious Transactions')}:\n{link_list}")
                 status.has_sus_trans = has_sus_trans
                 status.sus_trans = sus_trans_result
 

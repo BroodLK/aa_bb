@@ -389,9 +389,35 @@ class BigBrotherConfig(SingletonModel):
     - main_corporation / main_alliance IDs + names, member thresholds, and handshake booleans (is_active) are populated by the updater.
     - bigbrother_tokens, bb_install_token, update timing fields, and reddit/daily message pointers track upstream licensing and version checks.
     """
+
     cyno_notify = models.BooleanField(
         default=True,
-        help_text="Whether to send Cyno change notifications to discord"
+        help_text="Whether to send Cyno Change notifications to discord"
+    )
+
+    sp_inject_notify = models.BooleanField(
+        default=True,
+        help_text="Whether to send SP Injection notifications to discord"
+    )
+
+    clone_notify = models.BooleanField(
+        default=True,
+        help_text="Whether to send Clone State Change notifications to discord"
+    )
+
+    asset_notify = models.BooleanField(
+        default=True,
+        help_text="Whether to send Asset Change notifications to discord"
+    )
+
+    contact_notify = models.BooleanField(
+        default=True,
+        help_text="Whether to send Contact Change notifications to discord"
+    )
+
+    contract_notify = models.BooleanField(
+        default=True,
+        help_text="Whether to send Contract Change notifications to discord"
     )
 
     ct_notify = models.BooleanField(
@@ -402,6 +428,16 @@ class BigBrotherConfig(SingletonModel):
     awox_notify = models.BooleanField(
         default=True,
         help_text="Whether to send AWOX notificaitons to discord"
+    )
+
+    mail_notify = models.BooleanField(
+        default=True,
+        help_text="Whether to send Suspicious Mail notifications to discord"
+    )
+
+    transaction_notify = models.BooleanField(
+        default=True,
+        help_text="Whether to send Suspicious Transaction notifications to discord"
     )
 
     ticket_notify_man = models.BooleanField(
