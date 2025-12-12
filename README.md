@@ -97,7 +97,7 @@ In your AA Admin navigate to AA_BB
   - Under Schedules
     - Configure specific schedules for daily messages, optional messages, and recurring stats.
   - Under User State and Membership
-    - >[!WARNING] Failure to configure this will result in AA_BB not working
+    >[!WARNING] Failure to configure this will result in AA_BB not working
     - Configure what states you consider "memebers" you will receive updates on these in discord
     - Configure what states you consider "guest" these will be preloaded into cache, but not notified in discord.
     - Configure what corporations you consider to be members, these are friendly entities.
@@ -112,12 +112,17 @@ In your AA Admin navigate to AA_BB
     - Configure if you consider all nullsec, minus what you ignore/whitelist/member, as hostile.
     - Configure if all player structures are hostile, minus what you ignore/whitelist/member.
     - Configure if all npc stations are hostile, minus what you ignore/whitelist/member.
-    - Configure Excluded systems and stations, these will be ignored and can be considered the same as "member", "ignored" or "whitelisted"
+    - Configure Excluded systems and stations, these will be ignored and can be considered the same as "member" "ignored" or "whitelisted"
+
+Once you are satisfied with the configuration, you may explore the other configurations available, such as ticket tool configuration, recurring stats, and daily and optional messages.
+
+Okay, but now you want it to actually do the things, go to `Periodic Tasks` and **Enable** `BB run regular updates`
+That's it. Just let the timer click over and it will create any missing tasks and start the process.
 
 # Features
 
 > [!WARNING]
-> Reddit Support\
+> **_Reddit Support_**:\
 > Reddit functionality requires paid API access. Because of this requirement, Reddit posting and monitoring features have not been tested.\
 > As such, a list of what it does do will not be included in this readme for now.
 
