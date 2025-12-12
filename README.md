@@ -2,13 +2,28 @@
 > [!CAUTION]
 > Because this repository is public, anyone can read the detection logic for skills, cyno activity, injected SP, suspicious transactions, hostile assets and clones, and other monitored behaviors. Hostile groups may use this information to avoid detection. Operate with discretion.
 
-# BigBrother — Initial Release (Beta) 3.1.0b1
+# BigBrother
 BigBrother is an Alliance Auth plugin, **_originally written by Andrew Xadi_**, that performs continuous pilot auditing, compliance monitoring, intelligence gathering, and behavioral analysis. It monitors activity such as skills, cyno capabilities, SP injections, corporation movement, assets, clones, and more, then delivers structured leadership-focused reports.
 > [!IMPORTANT]
 > Users who used this tool while it was private can safely upgrade but may run into a rare but serious complication where duplicate tasks are generated preventing the auth from starting.
 
+To correct the above, see instructions [Here](#fix-duplicated-tasks-error)
+
 > [!WARNING]
 > This is a **beta** release. Please report issues through GitHub.
+
+## Index
+
+- [BigBrother](#bigbrother)
+  - [Core Requirements](#core-requirements)
+  - [Install Instructions](#install-instructions)
+- [Features](#features)
+  - [Dashboard](#dashboard)
+  - [Corp Dashboard](#corp-dashboard)
+  - [Discord Notifications](#discord-notifications)
+  - [Ticket System](#ticket-system)
+  - [Automated Discord Messages](#automated-discord-messages)
+  - [Recurring stats](#recurring-stats)
 
 ## Core Requirements
 ### The following AllianceAuth plugins are **_required_**:
@@ -68,7 +83,7 @@ stderr_logfile=/home/allianceserver/myauth/log/memmon.log
 ```
 
 > [!IMPORTANT]
-> Failure to follow the next steps before running the initial tasks can cause in an undesired result
+> Failure to follow the next steps before running the initial tasks can cause an undesired result
 
 In your AA Admin navigate to AA_BB
 - Navigate to Big Brother Config
@@ -235,3 +250,62 @@ Tracked metrics include:
 
 ## Recurring stats
 - Send stats to a webhook that covers interesting statistics from AA
+
+
+### Fix Duplicated Tasks error
+Find the duplicate
+```sql
+SELECT
+  minute,
+  hour,
+  day_of_week,
+  day_of_month,
+  month_of_year,
+  timezone,
+  COUNT(*) AS cnt
+FROM django_celery_beat_crontabschedule
+GROUP BY
+  minute,
+  hour,
+  day_of_week,
+  day_of_month,
+  month_of_year,
+  timezone
+HAVING COUNT(*) > 1;
+```
+Get the ID, replace the cron with the duplicate values
+```sql
+SELECT
+  id,
+  minute,
+  hour,
+  day_of_week,
+  day_of_month,
+  month_of_year,
+  timezone
+FROM django_celery_beat_crontabschedule
+WHERE
+  minute = '0'
+  AND hour = '12'
+  AND day_of_week = '0'
+  AND day_of_month = '*'
+  AND month_of_year = '*'
+  AND timezone = 'UTC';
+```
+Find out if any tasks are using the schedules, replace the numbers with the proper IDs
+```sql
+SELECT id, name, crontab_id
+FROM django_celery_beat_periodictask
+WHERE crontab_id IN (5, 12);
+```
+If some tasks are using both, reassign one of them
+```sql
+UPDATE django_celery_beat_periodictask
+SET crontab_id = 5
+WHERE crontab_id = 12;
+```
+Finally delete the duplicate
+```sql
+DELETE FROM django_celery_beat_crontabschedule
+WHERE id IN (12);
+```
