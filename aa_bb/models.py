@@ -440,6 +440,12 @@ class BigBrotherConfig(SingletonModel):
         help_text="Whether to send Suspicious Transaction notifications to discord"
     )
 
+    new_user_notify = models.BooleanField(
+        default=False,
+        help_text="Whether to send notifications of all previous user history when a user first gets audited, "
+                  "this can be VERY spammy on a first time load of the tool"
+    )
+
     ticket_notify_man = models.BooleanField(
         default=True,
         help_text="Whether to send ticket resolution notifications when manually closed to discord"

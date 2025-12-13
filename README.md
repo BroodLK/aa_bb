@@ -7,7 +7,7 @@ BigBrother is an Alliance Auth plugin, **_originally written by Andrew Xadi_**, 
 > [!IMPORTANT]
 > Users who used this tool while it was private can safely upgrade but may run into a rare but serious complication where duplicate tasks are generated preventing the auth from starting.
 
-To correct the above, see instructions [Here](#fix-duplicated-tasks-error)
+To correct the above, see instructions [here](#fix-duplicated-tasks-error)
 
 > [!WARNING]
 > This is a **beta** release. Please report issues through GitHub.
@@ -95,14 +95,17 @@ In your AA Admin navigate to AA_BB
       - daily messages (messages that repeat every 24 hours),
       - recurring stats,
       - optional messages 1-5
+      - Set the number of days for an LOA
   - Under Notifications
     - Select if you would like to opt out of any notifications sent to the main Discord Webhook for user changes
+    - By default, the app will not send a notification when a new user adds their audit; however, this can be enabled.
+      - When enabled, it will treat non-existent data as old data and send a notification to discord on all the user's stats, treating them as if they are changes.
   - Under Ping / Messaging Rules
-    - Enter in your desired role ID that you wish to be pinged, and select the conditions under which those roles will be pinged.
+    - Enter in your desired role ID that you wish to be pinged and select the conditions under which those roles will be pinged.
     - Select any @here conditions
     - Select any @everyone conditions
   - Under Webhooks
-  - >Dont forget you can send to a thread by using `https://discordapp.com/api/webhooks/<url>/<url>?thread_id=<threadid>`\
+  - >Dont forget you can send it to a thread by using `https://discordapp.com/api/webhooks/<url>/<url>?thread_id=<threadid>`\
     The thread must be in the same channel that the webhook is configured to.
     - **The main "Webhook" This is used to send notifications of user and corp changes to Discord**
     - LOA Webhook
@@ -112,19 +115,19 @@ In your AA Admin navigate to AA_BB
   - Under Schedules
     - Configure specific schedules for daily messages, optional messages, and recurring stats.
   - Under User State and Membership
-    >[!WARNING] Failure to configure this will result in AA_BB not working
-    - Configure what states you consider "memebers" you will receive updates on these in discord
+  >[!WARNING] Failure to configure this will result in AA_BB not working
+    - Configure what states you consider "members" you will receive updates on these in discord
     - Configure what states you consider "guest" these will be preloaded into cache, but not notified in discord.
     - Configure what corporations you consider to be members, these are friendly entities.
-      - You do not need to configure a corporation, if your corporation is inside an alliance that is set as member
+      - You do not need to configure a corporation if your corporation is inside an alliance that is set as member
     - Configure what alliances you consider to be members.
     - Configure ignore corporations, such as alt corps, that will be ignored when checks are run
   - Under Hostile / Whitelist Rules
     - Configure Alliances you consider hostile
-      - Coming Soon(tm) ability to consider anyone who isnt member/ignored as hostile
+      - Coming Soon(tm) the ability to consider anyone who isn't a member /ignored as hostile
     - Configure Corporations you consider hostile
     - Configure Whitelisted Alliance and Corporations, these act the same as ignored and are... ignored
-    - Configure if you consider all nullsec, minus what you ignore/whitelist/member, as hostile.
+    - Configure if you consider all null sec, minus what you ignore/whitelist/member, as hostile.
     - Configure if all player structures are hostile, minus what you ignore/whitelist/member.
     - Configure if all npc stations are hostile, minus what you ignore/whitelist/member.
     - Configure Excluded systems and stations, these will be ignored and can be considered the same as "member" "ignored" or "whitelisted"
@@ -132,7 +135,7 @@ In your AA Admin navigate to AA_BB
 Once you are satisfied with the configuration, you may explore the other configurations available, such as ticket tool configuration, recurring stats, and daily and optional messages.
 
 Okay, but now you want it to actually do the things, go to `Periodic Tasks` and **Enable** `BB run regular updates`
-That's it. Just let the timer click over and it will create any missing tasks and start the process.
+That's it. Let the timer click over, and it will create any missing tasks and start the process.
 
 # Features
 
@@ -241,12 +244,12 @@ Tracked metrics include:
   - Ping Targets
     - Choose which roles to notify when a ticket is created.
   - Ticket Category
-    - Tickets are created as new channels inside of a category, deleting the channel will close the ticket
+    - Tickets are created as new channels inside a category, deleting the channel will close the ticket
   - Exemptions
-    - Users,  can be marked as exempt from specific checks to avoid ticket spam where it is not needed.
+    - Users can be marked as exempt from specific checks to avoid ticket spam where it is unnecessary.
 
 ## Automated Discord Messages
-- Configure an unlimited number of messages to be sent to upto 5 different discords webhooks, each with their own individual schedules.
+- Configure an unlimited number of messages to be sent to up to five different discord webhooks, each with their own individual schedules.
 
 ## Recurring stats
 - Send stats to a webhook that covers interesting statistics from AA

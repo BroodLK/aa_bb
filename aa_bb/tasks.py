@@ -353,8 +353,10 @@ def BB_update_single_user(user_id, char_name):
             status, created = UserStatus.objects.get_or_create(user_id=user_id)
 
             # On the very first run for this user, silently create a baseline
-            # send_notifications = not created
-            send_notifications = True
+            if not BigBrotherConfig.new_user_notify:
+                send_notifications = not created
+            else:
+                send_notifications = True
             logger.info(f"[{char_name}] Status loaded (created={created}). Calculating changes...")
 
             changes = []
