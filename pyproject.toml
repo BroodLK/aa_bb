@@ -15,6 +15,7 @@ keywords = [
 license = { file = "LICENSE" }
 authors = [
     { name = "Andrew Xadi", email = "andrewxadi@gmail.com" },
+    { name = "BioBrute", email = "broodlk@gmail.com"},
 ]
 requires-python = ">=3.10"
 classifiers = [
@@ -37,14 +38,18 @@ dynamic = [
     "version",
 ]
 dependencies = [
-    "allianceauth>=4.3.1",
     "psycopg2-binary>=2.9.9",
-    "allianceauth-corptools>=2.9.3",
     "matplotlib>=3.7.2",
-    "django-esi>=8.0.0",
+    "allianceauth>=4.3.1",
+    "allianceauth-corptools>=2.12.0",
+    "allianceauth-afat >= 4.1.1",
+    "allianceauth-blacklist >= 0.1.1",
+    "allianceauth-discordbot >= 4.1.0",
+    "aa-charlink >= 1.11.1",
+    "django-esi >= 8.2.0"
 ]
-urls.Changelog = "https://github.com/ppfeufer/aa-example-plugin/blob/master/CHANGELOG.md"
-urls."Issue / Bug Reports" = "https://github.com/ppfeufer/aa-example-plugin/issues"
+urls.Changelog = "https://github.com/BroodLK/aa_bb/blob/main/CHANGELOG.md"
+urls."Issue / Bug Reports" = "https://github.com/BroodLK/aa_bb/issues"
 
 [tool.hatch.version]
 path = "aa_bb/__init__.py"
