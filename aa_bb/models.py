@@ -96,7 +96,7 @@ class General(models.Model):
             ("can_manage_loa", "Can manage Leave Of Absence requests"),
             ("can_access_paps", "Can access PAP Stats"),
             ("can_generate_paps", "Can generate PAP Stats"),
-            )
+        )
 
 class UserStatus(models.Model):
     """

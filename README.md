@@ -3,7 +3,8 @@
 > Because this repository is public, anyone can read the detection logic for skills, cyno activity, injected SP, suspicious transactions, hostile assets and clones, and other monitored behaviors. Hostile groups may use this information to avoid detection. Operate with discretion.
 
 # BigBrother
-BigBrother is an Alliance Auth plugin, **_originally written by Andrew Xadi_**, that performs continuous pilot auditing, compliance monitoring, intelligence gathering, and behavioral analysis. It monitors activity such as skills, cyno capabilities, SP injections, corporation movement, assets, clones, and more, then delivers structured leadership-focused reports.
+BigBrother is an Alliance Auth plugin, **_originally written by Andrew Xadi_**, that performs continuous pilot auditing, compliance monitoring, intelligence gathering, and behavioral analysis. It monitors activity such as skills, cyno capabilities, SP injections, corporation movement, assets, clones, and more, then delivers structured leadership-focused reports.\
+All while invisible to the general membership unless you chose to expose it to them. No "adding chars" to it, it pulls relevant information from CorpTools.
 
 > [!WARNING]
 > This is a **beta** release. Please report issues through GitHub.
@@ -20,6 +21,7 @@ BigBrother is an Alliance Auth plugin, **_originally written by Andrew Xadi_**, 
   - [Ticket System](#ticket-system)
   - [Automated Discord Messages](#automated-discord-messages)
   - [Recurring stats](#recurring-stats)
+- [Permissions](#permissions)
 
 ## Core Requirements
 ### The following AllianceAuth plugins are **_required_**:
@@ -290,6 +292,25 @@ Tracked metrics include:
 
 ## Recurring stats
 - Send stats to a webhook that covers interesting statistics from AA
+
+# Permissions
+Below is the full list of permissions exposed by the application:
+
+| Permission                   | Description                                                   |
+|------------------------------| ------------------------------------------------------------- |
+| **basic_access**             | Can access Big Brother                                        |
+| **full_access**              | Can view all main characters in Big Brother                   |
+| **recruiter_access**         | Can view main characters in *Guest* state only in Big Brother |
+| **basic_access_cb**          | Can access Corp Brother                                       |
+| **full_access_cb**           | Can view all corps in Corp Brother                            |
+| **recruiter_access_cb**      | Can view guest’s corps only in Corp Brother                   |
+| **can_blacklist_characters** | Can add characters to blacklist                               |
+| **can_access_loa**           | Can access and submit a Leave Of Absence request              |
+| **can_view_all_loa**         | Can view all Leave Of Absence requests                        |
+| **can_manage_loa**           | Can manage Leave Of Absence requests                          |
+| **can_access_paps**          | Can access PAP Stats                                          |
+| **can_generate_paps**        | Can generate PAP Stats                                        |
+
 
 ![Screenshot of recurring stats](https://i.imgur.com/REGczjZ.png)
 
