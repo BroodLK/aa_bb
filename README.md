@@ -250,9 +250,13 @@ Tracked metrics include:
 ### All outbound Discord notifications are serialized through a dedicated task to ensure messages never overlap and always arrive in chronological order.
 - Get instant notifications about any corp or user changes that have been listed above under their respective categories, each part of a user's discord notification is adjustable in the settings.
 ![Screenshot of Asset Discord Notification](https://i.imgur.com/GzGdMsy.png)
+
 ![Screenshot of Skills Discord Notification](https://i.imgur.com/QMLnjPE.png)
+
 ![Screenshot of Hostile Asset Discord Notification](https://i.imgur.com/fkx20B1.png)
+
 ![Screenshot of Account Status Discord Notification](https://i.imgur.com/DSS5sVW.png)
+
 ![Screenshot of Hostile Clone Discord Notification](https://i.imgur.com/EwAs06t.png)
 
 ## Ticket System
