@@ -290,6 +290,7 @@ Tracked metrics include:
 
 ## Recurring stats
 - Send stats to a webhook that covers interesting statistics from AA
+
 ![Screenshot of recurring stats](https://i.imgur.com/REGczjZ.png)
 
 > [!IMPORTANT]
