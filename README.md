@@ -4,10 +4,6 @@
 
 # BigBrother
 BigBrother is an Alliance Auth plugin, **_originally written by Andrew Xadi_**, that performs continuous pilot auditing, compliance monitoring, intelligence gathering, and behavioral analysis. It monitors activity such as skills, cyno capabilities, SP injections, corporation movement, assets, clones, and more, then delivers structured leadership-focused reports.
-> [!IMPORTANT]
-> Users who used this tool while it was private can safely upgrade but may run into a rare but serious complication where duplicate tasks are generated preventing the auth from starting.
-
-To correct the above, see instructions [here](#fix-duplicated-tasks-error)
 
 > [!WARNING]
 > This is a **beta** release. Please report issues through GitHub.
@@ -54,6 +50,11 @@ add `aa_bb` to installed apps.
 ```bash
 python manage.py migrate && python manage.py collectstatic
 ```
+restart the things
+exit your venv
+```bash
+sudo supervisorctl restart myauth:
+```
 > [!IMPORTANT]
 > It is recommended to use a threaded worker setup with memmon for this application. The following is an example
 
@@ -82,6 +83,26 @@ stdout_logfile=/home/allianceserver/myauth/log/memmon.log
 stderr_logfile=/home/allianceserver/myauth/log/memmon.log
 ```
 
+It is also recommended to disable gunicorn timeout, an example can be seen here:
+
+```bash
+[program:gunicorn]
+user = allianceserver
+directory=/home/allianceserver/myauth
+command=/home/allianceserver/venv/auth/bin/gunicorn myauth.wsgi --workers=3 --timeout 0
+stdout_logfile=/home/allianceserver/myauth/log/gunicorn.log
+stderr_logfile=/home/allianceserver/myauth/log/gunicorn.log
+autostart=true
+autorestart=true
+stopsignal=INT
+```
+
+then reload supervisor and restart auth
+```bash
+sudo supervisorctl reload
+sudo supervisorctl restart myauth:
+```
+
 > [!IMPORTANT]
 > Failure to follow the next steps before running the initial tasks can cause an undesired result
 
@@ -90,10 +111,10 @@ In your AA Admin navigate to AA_BB
   - Under **_Core Activation_**
     - Make sure Warmer Is Active is enabled
     - Enable any features you plan to use
-      - paps,
-      - loa,
-      - daily messages (messages that repeat every 24 hours),
-      - recurring stats,
+      - paps
+      - loa
+      - daily messages (messages that repeat every 24 hours)
+      - recurring stats
       - optional messages 1-5
       - Set the number of days for an LOA
   - Under Notifications
@@ -115,7 +136,7 @@ In your AA Admin navigate to AA_BB
   - Under Schedules
     - Configure specific schedules for daily messages, optional messages, and recurring stats.
   - Under User State and Membership
-  >[!WARNING] Failure to configure this will result in AA_BB not working
+  [!WARNING] Failure to configure this will result in AA_BB not working
     - Configure what states you consider "members" you will receive updates on these in discord
     - Configure what states you consider "guest" these will be preloaded into cache, but not notified in discord.
     - Configure what corporations you consider to be members, these are friendly entities.
@@ -134,8 +155,10 @@ In your AA Admin navigate to AA_BB
 
 Once you are satisfied with the configuration, you may explore the other configurations available, such as ticket tool configuration, recurring stats, and daily and optional messages.
 
-Okay, but now you want it to actually do the things, go to `Periodic Tasks` and **Enable** `BB run regular updates`
-That's it. Let the timer click over, and it will create any missing tasks and start the process.
+Okay, but now you want it to actually do the things, go to `Periodic Tasks` and **Run** `BB run regular updates`
+
+Once the task has run for the first time, it will post in the discord webhook when it has completed (about an hour) and will inform you to go back and enabled the tasks, you must enablkke `BB run regular updates` but the other tasks are based on your needs.
+
 
 # Features
 
@@ -145,6 +168,8 @@ That's it. Let the timer click over, and it will create any missing tasks and st
 > As such, a list of what it does do will not be included in this readme for now.
 
 ## Dashboard
+![Screenshot of Dashboard](https://i.imgur.com/ZmsVjgK.gif)
+![Screenshot of Dashboard2](https://i.imgur.com/4ltbaaq.png)
 
 ### The BigBrother dashboard provides a unified view of any pilot in your organization.
 Selecting a user displays a set of analytical cards that summarize compliance, risk factors, and suspicious activity signals.
@@ -152,57 +177,60 @@ Selecting a user displays a set of analytical cards that summarize compliance, r
 Tracked metrics include:
 
 - **Blacklist Status**
-  - Whether the pilot or any linked character appears on the blacklist.
+  - Whether the pilot or any linked character appears on the blacklist, and you can add the user to blacklist.
+![Screenshot of Add BL](https://i.imgur.com/M5x5H1N.png)
+![Screenshot of Check BL](https://i.imgur.com/7L0bTzz.png)
 
 
 - **Audit Completion**
   - Whether all characters and corporations associated with the user have been fully audited.
+![Screenshot of Audit](https://i.imgur.com/V728lB2.png)
 
 
 - **Corporation Stability**
   - Detection of short or erratic corporation history (“corp hopping”) that may indicate instability or intent to evade tracking.
-
+![Screenshot of Corp History](https://i.imgur.com/x6lY2JC.png)
 
 - **AWOX Activity**
   - Identification of kills against friendly entities that may indicate internal security risks.
-
+![Screenshot of AWOX](https://i.imgur.com/5a4Po8F.png)
 
 - **Account State**
   - Whether individual characters are Omega or Alpha, useful for evaluating cyno capability, skill progression, and account investment.
-
+![Screenshot of Account State](https://i.imgur.com/txFEqnp.png)
 
 - **Hostile Jump Clone Placement**
   - Detection of jump clones located in regions or structures considered hostile.
-
+![Screenshot of Clones](https://i.imgur.com/z0pkQJW.png)
 
 - **Hostile Asset Placement**
   - Identification of assets located in hostile regions, including breakdown by character and location.
-
+![Screenshot of Assets](https://i.imgur.com/zvwFXBY.png)
 
 - **Hostile Contacts**
   - Checks for contacts marked as hostile, which may indicate ties to enemy groups.
-
+![Screenshot of Contacts](https://i.imgur.com/pIu0RVd.png)
 
 - **Hostile Contracts**
   - Detection of contracts sent to or received from hostile entities, helping highlight supply-chain leaks or suspicious ISK movement.
-
+![Screenshot of Contracts](https://i.imgur.com/srkTRPM.png)
 
 - **Suspicious Mails**
-  - Detection of in-game mail to or from entities that we consider hostile.
-
+  - Detection of in-game mail to or from entities that are considered hostile.
+![Screenshot of Mails](https://i.imgur.com/JjZPw3b.png)
 
 - **Suspicious Transactions**
   - Checks for transactions, such as player donations and trades, that may be related to hostile entity activity.
-
+![Screenshot of Transactions](https://i.imgur.com/D3AJQy4.png)
 
 - **Cyno Check**
   - Provides a breakdown of what each character belonging to the user is capable of when it comes to cynos.
   - > This includes owning and being able to fly potentially interesting ships
-
+![Screenshot of Cyno](https://i.imgur.com/kaH8LzQ.png)
 
 - **Skill Check**
   A breakdown of potentially interesting skills
-
+![Screenshot of Skills](https://i.imgur.com/uVxrkSd.png)
 
 ## Corp Dashboard
 > [!WARNING]
@@ -221,6 +249,11 @@ Tracked metrics include:
 ## Discord Notifications
 ### All outbound Discord notifications are serialized through a dedicated task to ensure messages never overlap and always arrive in chronological order.
 - Get instant notifications about any corp or user changes that have been listed above under their respective categories, each part of a user's discord notification is adjustable in the settings.
+![Screenshot of Asset Discord Notification](https://i.imgur.com/GzGdMsy.png)
+![Screenshot of Skills Discord Notification](https://i.imgur.com/QMLnjPE.png)
+![Screenshot of Hostile Asset Discord Notification](https://i.imgur.com/fkx20B1.png)
+![Screenshot of Account Status Discord Notification](https://i.imgur.com/DSS5sVW.png)
+![Screenshot of Hostile Clone Discord Notification](https://i.imgur.com/EwAs06t.png)
 
 ## Ticket System
 ### BigBrother can automatically generate tickets to notify leadership when pilots violate compliance or operational rules.
@@ -253,7 +286,12 @@ Tracked metrics include:
 
 ## Recurring stats
 - Send stats to a webhook that covers interesting statistics from AA
+![Screenshot of recurring stats](https://i.imgur.com/REGczjZ.png)
 
+> [!IMPORTANT]
+> Users who used this tool while it was private can safely upgrade but may run into a rare but serious complication where duplicate tasks are generated preventing the auth from starting.
+
+To correct the above, see instructions [here](#fix-duplicated-tasks-error)
 
 ### Fix Duplicated Tasks error
 Find the duplicate
