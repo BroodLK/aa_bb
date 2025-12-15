@@ -21,7 +21,7 @@
     </thead>
     <tbody>
       {% for module in modules %}
-        <tr class="{% if module.active %}table-success{% else %}table-warning{% endif %}">
+        <tr>
           <td>
             <strong>{{ module.name }}</strong>
             {% if module.summary %}

@@ -111,18 +111,18 @@ sudo supervisorctl restart myauth:
 In your AA Admin navigate to AA_BB
 - Navigate to Big Brother Config
   - Under **_Core Activation_**
-    - Make sure Warmer Is Active is enabled
+    - Make sure Warmer Is Active is enabled, disabling this can dramatically increase load times when using the dashboard.
     - Enable any features you plan to use
-      - paps
-      - loa
-      - daily messages (messages that repeat every 24 hours)
-      - recurring stats
-      - optional messages 1-5
+      - PAPs/AFAT
+      - LOA
+      - Daily Messages (messages that repeat every 24 hours)
+      - Recurring Stats
+      - Optional Messages 1-5
       - Set the number of days for an LOA
   - Under Notifications
     - Select if you would like to opt out of any notifications sent to the main Discord Webhook for user changes
     - By default, the app will not send a notification when a new user adds their audit; however, this can be enabled.
-      - When enabled, it will treat non-existent data as old data and send a notification to discord on all the user's stats, treating them as if they are changes.
+      - When enabled, it will treat non-existent data as old data and send a notification to discord on all the user's stats (assuming you have those stats notifications enabled), treating them as if they are changes.
   - Under Ping / Messaging Rules
     - Enter in your desired role ID that you wish to be pinged and select the conditions under which those roles will be pinged.
     - Select any @here conditions
