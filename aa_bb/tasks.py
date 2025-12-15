@@ -613,16 +613,18 @@ def BB_update_single_user(user_id, char_name):
                             old_val = str(old_entry.get(key, 0))
                             new_val = str(new_entry.get(key, 0))
                             if old_val != new_val:
-                                table_lines.append(f"{display.ljust(21)} | {old_val.ljust(7)} | {new_val.ljust(6)}")
+                                if BigBrotherConfig.cyno_notify:
+                                    table_lines.append(f"{display.ljust(21)} | {old_val.ljust(7)} | {new_val.ljust(6)}")
 
                         # Show can_light as a summary at bottom
                         can_light_old = old_entry.get("can_light", False)
                         can_light_new = new_entry.get("can_light", False)
-                        table_lines.append("")
-                        table_lines.append(
-                            f"{'Can Light'.ljust(21)} | "
-                            f"{('Yes' if can_light_old else 'No').ljust(7)} | "
-                            f"{('Yes' if can_light_new else 'No').ljust(6)}")
+                        if BigBrotherConfig.cyno_notify:
+                            table_lines.append("")
+                            table_lines.append(
+                                f"{'Can Light'.ljust(21)} | "
+                                f"{('Yes' if can_light_old else 'No').ljust(7)} | "
+                                f"{('Yes' if can_light_new else 'No').ljust(6)}")
 
                         try:
                             cid = get_character_id(charname)

@@ -119,21 +119,6 @@ class BB_ConfigAdmin(SingletonModelAdmin):
             },
         ),
         (
-            "DLC Flags",
-            {
-                "classes": ("collapse",),
-                "fields": (
-                    "dlc_corp_brother_active",
-                    "dlc_loa_active",
-                    "dlc_pap_active",
-                    "dlc_tickets_active",
-                    "dlc_reddit_active",
-                    "dlc_daily_messages_active",
-                    "dlc_are_recurring_stats_active",
-                ),
-            },
-        ),
-        (
             "Notifications",
             {
                 "fields": (
