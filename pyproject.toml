@@ -14,8 +14,8 @@ keywords = [
 ]
 license = { file = "LICENSE" }
 authors = [
-    { name = "Andrew Xadi", email = "andrewxadi@gmail.com" },
     { name = "BioBrute", email = "broodlk@gmail.com"},
+    { name = "Andrew Xadi", email = "andrewxadi@gmail.com" },
 ]
 requires-python = ">=3.10"
 classifiers = [

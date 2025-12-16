@@ -1,3 +1,10 @@
+![PyPI - Version](https://img.shields.io/pypi/v/aa-bb?style=for-the-badge)
+![PyPI - Downloads](https://img.shields.io/pypi/dm/aa-bb?style=for-the-badge)
+![PyPI - Format](https://img.shields.io/pypi/format/aa-bb?style=for-the-badge)
+![python versions](https://img.shields.io/pypi/pyversions/aa-bb?style=for-the-badge)
+![django versions](https://img.shields.io/badge/django-3.2%2B-blue?style=for-the-badge)
+![license](https://img.shields.io/badge/license-GPLv3-green?style=for-the-badge)
+
 
 > [!CAUTION]
 > Because this repository is public, anyone can read the detection logic for skills, cyno activity, injected SP, suspicious transactions, hostile assets and clones, and other monitored behaviors. Hostile groups may use this information to avoid detection. Operate with discretion.
@@ -111,7 +118,8 @@ sudo supervisorctl restart myauth:
 In your AA Admin navigate to AA_BB
 - Navigate to Big Brother Config
   - Under **_Core Activation_**
-    - Make sure Warmer Is Active is enabled, disabling this can dramatically increase load times when using the dashboard.
+    - Make sure Warmer Is Active is enabled
+      - Disabling this may decrease server load, however, if you do not disable the gunicorn timeout, the Dashboards may never load.
     - Enable any features you plan to use
       - PAPs/AFAT
       - LOA
@@ -296,20 +304,20 @@ Tracked metrics include:
 # Permissions
 Below is the full list of permissions exposed by the application:
 
-| Permission                   | Description                                                   |
-|------------------------------| ------------------------------------------------------------- |
-| **basic_access**             | Can access Big Brother                                        |
-| **full_access**              | Can view all main characters in Big Brother                   |
-| **recruiter_access**         | Can view main characters in *Guest* state only in Big Brother |
-| **basic_access_cb**          | Can access Corp Brother                                       |
-| **full_access_cb**           | Can view all corps in Corp Brother                            |
-| **recruiter_access_cb**      | Can view guest’s corps only in Corp Brother                   |
-| **can_blacklist_characters** | Can add characters to blacklist                               |
-| **can_access_loa**           | Can access and submit a Leave Of Absence request              |
-| **can_view_all_loa**         | Can view all Leave Of Absence requests                        |
-| **can_manage_loa**           | Can manage Leave Of Absence requests                          |
-| **can_access_paps**          | Can access PAP Stats                                          |
-| **can_generate_paps**        | Can generate PAP Stats                                        |
+| Permission                   | Description                                                            |
+|------------------------------|------------------------------------------------------------------------|
+| **basic_access**             | Can access Big Brother                                                 |
+| **full_access**              | Can view all main characters in Big Brother                            |
+| **recruiter_access**         | Can view main characters in *Guest* state only in Big Brother          |
+| **basic_access_cb**          | Can access Corp Brother                                                |
+| **full_access_cb**           | Can view all corps in Corp Brother                                     |
+| **recruiter_access_cb**      | Can view guest’s corps only in Corp Brother (Guest State Configurable) |
+| **can_blacklist_characters** | Can add characters to blacklist                                        |
+| **can_access_loa**           | Can access and submit a Leave Of Absence request                       |
+| **can_view_all_loa**         | Can view all Leave Of Absence requests                                 |
+| **can_manage_loa**           | Can manage Leave Of Absence requests                                   |
+| **can_access_paps**          | Can access PAP Stats                                                   |
+| **can_generate_paps**        | Can generate PAP Stats                                                 |
 
 
 ![Screenshot of recurring stats](https://i.imgur.com/REGczjZ.png)
