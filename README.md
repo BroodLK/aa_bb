@@ -29,6 +29,7 @@ All while invisible to the general membership unless you chose to expose it to t
   - [Ticket System](#ticket-system)
   - [Automated Discord Messages](#automated-discord-messages)
   - [Recurring stats](#recurring-stats)
+  - [AA-Contacts Integrations](#aa-contacts-integration)
 - [Permissions](#permissions)
 
 ## Core Requirements
@@ -44,6 +45,12 @@ django-esi >= 8.2.0
 ```
 
 You do not have to use afat, but it does need to be installed.
+
+### Optional plugins
+```md
+aa-contacts >= 0.10.2
+```
+As stated, this plugin is optional but is obviously required for using it to sync your hostiles.
 
 ## Install Instructions
 After making sure to add the above prerequisite applications.
@@ -303,6 +310,27 @@ Tracked metrics include:
 - Send stats to a webhook that covers interesting statistics from AA
 
 ![Screenshot of recurring stats](https://i.imgur.com/REGczjZ.png)
+
+## aa-contacts Integration
+
+BigBrother integrates directly with **aa-contacts** to provide continuous hostile contact monitoring.
+
+### What it does
+- Periodically syncs contact data from **aa-contacts**
+  - Contacts below 0 status are added to hostile
+    - Both Corp and Alliances
+  - Contacts above 0 are added to members
+    - Both Corp and ALliances
+  - Contacts at 0 (nuetral)
+    - You are presented with 3 choices
+      - Ignore, do nothing.
+        - Add them to ignore list.
+        - Add them to hostile list.
+
+### What it does NOT do
+- It does **not** delete or create contacts in game
+- It does **not** overwrite manually-added BigBrother contacts
+
 
 # Permissions
 Below is the full list of permissions exposed by the application:
