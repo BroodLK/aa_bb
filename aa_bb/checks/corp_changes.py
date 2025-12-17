@@ -11,7 +11,7 @@ from datetime import timedelta
 from django.utils.html import format_html
 from django.utils.timezone import now, timezone
 from allianceauth.authentication.models import CharacterOwnership
-from ..models import BigBrotherConfig
+from ..models import BigBrotherConfig, FrequentCorpChangesCache, CurrentStintCache
 from ..app_settings import (
     ensure_datetime,
     is_npc_corporation,
@@ -20,7 +20,6 @@ from ..app_settings import (
     get_corporation_info,
     get_character_employment,
 )
-from ..modelss import FrequentCorpChangesCache, CurrentStintCache
 
 logger = logging.getLogger(__name__)
 TTL_SHORT = timedelta(hours=4)

@@ -15,14 +15,15 @@ from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
 from django_celery_beat.models import PeriodicTask
 
-from .models import BigBrotherConfig, PapsConfig
-from .modelss import (
+from .models import (
+    BigBrotherConfig,
+    PapsConfig,
     TicketToolConfig,
     BigBrotherRedditSettings,
-    BigBrotherRedditMessage,
+    BigBrotherRedditMessage
 )
+
 from .reddit import (
-    is_reddit_module_visible,
     reddit_status,
     reddit_app_configured,
 )
@@ -80,7 +81,7 @@ def manual_modules(request: WSGIRequest):
     reddit_cfg_error = None
     reddit_messages_error = None
     reddit_messages_count = 0
-    reddit_entitled = bool(cfg.dlc_reddit_active)  # Only load Reddit info when DLC purchased.
+    reddit_entitled = True
     if reddit_entitled:
         try:
             reddit_cfg = BigBrotherRedditSettings.get_solo()
@@ -112,29 +113,6 @@ def manual_modules(request: WSGIRequest):
             issues.append(issue_text)
             if action_text and action_text not in actions:  # Actions deduped to avoid noise.
                 actions.append(action_text)
-
-    def register_module_guard(
-        issues: list,
-        actions: list,
-        flag: bool,
-        module_label: str,
-        field_label: str,
-    ):
-        """Generic helper to report disabled DLC toggles."""
-        register_issue(
-            issues,
-            actions,
-            not flag,
-            format_html(
-                "{} is disabled; {} features are unavailable.",
-                code(field_label),
-                module_label,
-            ),
-            format_html(
-                "Enable {} in BigBrotherConfig and restart AllianceAuth.",
-                code(field_label),
-            ),
-        )
 
     def make_module(name, summary, issues, actions, info=None, active_override=None, cta=None):
         """Build a dict consumed by the FAQ template."""
@@ -200,40 +178,47 @@ def manual_modules(request: WSGIRequest):
 
     # CorpBrother Dashboard
     corp_issues, corp_actions, corp_info = [], [], []
-    corp_purchase = cfg.dlc_corp_brother_active
-    register_module_guard(
+
+    register_issue(
         corp_issues,
         corp_actions,
-        corp_purchase,
-        _("CorpBrother"),
-        "BigBrotherConfig.dlc_corp_brother_active",
+        not cfg.is_active,
+        format_html("{} must be True for CorpBrother to load.", code("BigBrotherConfig.is_active")),
+        format_html(
+            "Validate the token (check Celery logs) and rerun the updater until {} flips to True.",
+            code("is_active"),
+        ),
     )
-    if corp_purchase:  # Only list corp-specific warnings when DLC is enabled.
-        register_issue(
+    register_issue(
+        corp_issues,
+        corp_actions,
+        not corptools_installed,
+        format_html("{} app is not installed.", code("corptools")),
+        format_html("Install allianceauth-corp-tools and run migrations."),
+    )
+    register_issue(
+        corp_issues,
+        corp_actions,
+        not charlink_installed,
+        format_html("{} app is not installed.", code("charlink")),
+        format_html("Install aa-charlink and run migrations."),
+    )
+
+    if corptools_installed:
+        corp_info.append(format_html("{} detected.", code("corptools")))
+    if charlink_installed:
+        corp_info.append(format_html("{} detected.", code("charlink")))
+
+    modules.append(
+        make_module(
+            _("CorpBrother Dashboard"),
+            _("Corporation-wide audit dashboard for recruiters and directors."),
             corp_issues,
             corp_actions,
-            not cfg.is_active,
-            format_html("{} must be True for CorpBrother to load.", code("BigBrotherConfig.is_active")),
-            format_html("Resolve the core activation issues listed above."),
+            info=corp_info,
         )
-        register_issue(
-            corp_issues,
-            corp_actions,
-            not corptools_installed,
-            format_html("Dependency {} is not installed.", code("corptools")),
-            format_html("Install allianceauth-corptools and add it to {}.", code("INSTALLED_APPS")),
-        )
-        register_issue(
-            corp_issues,
-            corp_actions,
-            not charlink_installed,
-            format_html("Dependency {} is not installed.", code("charlink")),
-            format_html("Install allianceauth-charlink and add it to {}.", code("INSTALLED_APPS")),
-        )
-        if corptools_installed:  # Track positive signals separately for the info list.
-            corp_info.append(format_html("{} detected.", code("corptools")))
-        if charlink_installed:
-            corp_info.append(format_html("{} detected.", code("charlink")))
+    )
+
     modules.append(
         make_module(
             _("CorpBrother Dashboard"),
@@ -246,32 +231,25 @@ def manual_modules(request: WSGIRequest):
 
     # Leave of Absence
     loa_issues, loa_actions, loa_info = [], [], []
-    loa_purchase = cfg.dlc_loa_active
-    register_module_guard(
+
+    register_issue(
         loa_issues,
         loa_actions,
-        loa_purchase,
-        _("Leave of Absence"),
-        "BigBrotherConfig.dlc_loa_active",
+        not cfg.is_loa_active,
+        format_html("{} is disabled.", code("BigBrotherConfig.is_loa_active")),
+        format_html("Enable the toggle in BigBrotherConfig and restart AllianceAuth."),
     )
-    if loa_purchase:  # Only evaluate LoA toggles when DLC active.
+    if not discordbot_installed:
         register_issue(
             loa_issues,
             loa_actions,
-            not cfg.is_loa_active,
-            format_html("{} is disabled.", code("BigBrotherConfig.is_loa_active")),
-            format_html("Enable the toggle in BigBrotherConfig and restart AllianceAuth."),
+            True,
+            format_html("{} app is not installed; Discord notifications will fail.", code("aadiscordbot")),
+            format_html("Install and configure aadiscordbot for ticket and LoA notifications."),
         )
-        if not discordbot_installed:  # Discord alerts depend on aadiscordbot being installed.
-            register_issue(
-                loa_issues,
-                loa_actions,
-                True,
-                format_html("{} app is not installed; Discord notifications will fail.", code("aadiscordbot")),
-                format_html("Install and configure aadiscordbot for ticket and LoA notifications."),
-            )
-        if cfg.loawebhook:  # Show configured webhook for easy verification.
-            loa_info.append(format_html("LoA webhook configured: {}", cfg.loawebhook))
+    if cfg.loawebhook:
+        loa_info.append(format_html("LoA webhook configured: {}", cfg.loawebhook))
+
     modules.append(
         make_module(
             _("Leave of Absence"),
@@ -283,44 +261,33 @@ def manual_modules(request: WSGIRequest):
     )
 
     # PAP Statistics
-    paps_issues, paps_actions, paps_info = [], [], []
-    pap_purchase = cfg.dlc_pap_active
-    register_module_guard(
-        paps_issues,
-        paps_actions,
-        pap_purchase,
-        _("PAP Statistics"),
-        "BigBrotherConfig.dlc_pap_active",
+    pap_issues, pap_actions, pap_info = [], [], []
+
+    register_issue(
+        pap_issues,
+        pap_actions,
+        not cfg.is_paps_active,
+        format_html("{} is disabled.", code("BigBrotherConfig.is_paps_active")),
+        format_html("Enable PAPs in BigBrotherConfig and restart AllianceAuth."),
     )
-    if pap_purchase:  # PAP-specific checks only relevant when DLC enabled.
-        register_issue(
-            paps_issues,
-            paps_actions,
-            not cfg.is_paps_active,
-            format_html("{} is disabled.", code("BigBrotherConfig.is_paps_active")),
-            format_html("Enable PAP stats in BigBrotherConfig and restart AllianceAuth."),
-        )
-        register_issue(
-            paps_issues,
-            paps_actions,
-            not corptools_installed,
-            format_html("Dependency {} is not installed.", code("corptools")),
-            format_html("Install allianceauth-corptools and add it to {}.", code("INSTALLED_APPS")),
-        )
-        if paps_cfg:  # Display configured thresholds when table exists.
-            paps_info.append(
-                format_html("Required PAPs per month: {}", paps_cfg.required_paps)
-            )
-            paps_info.append(
-                format_html("Corp modifier: {} / Alliance modifier: {} / Coalition modifier: {}", paps_cfg.corp_modifier, paps_cfg.alliance_modifier, paps_cfg.coalition_modifier)
-            )
+    register_issue(
+        pap_issues,
+        pap_actions,
+        not django_apps.is_installed("afat"),
+        format_html("{} app is not installed.", code("afat")),
+        format_html("Install allianceauth-afat and run migrations."),
+    )
+
+    if django_apps.is_installed("afat"):
+        pap_info.append(format_html("{} detected.", code("afat")))
+
     modules.append(
         make_module(
             _("PAP Statistics"),
-            _("Monthly PAP entry form and compliance tracker."),
-            paps_issues,
-            paps_actions,
-            info=paps_info,
+            _("Participation statistics integration and summaries."),
+            pap_issues,
+            pap_actions,
+            info=pap_info,
         )
     )
 
@@ -344,50 +311,43 @@ def manual_modules(request: WSGIRequest):
 
     # Daily notifications
     daily_issues, daily_actions, daily_info = [], [], []
-    daily_purchase = cfg.dlc_daily_messages_active
-    register_module_guard(
+
+    register_issue(
         daily_issues,
         daily_actions,
-        daily_purchase,
-        _("Daily Notifications"),
-        "BigBrotherConfig.dlc_daily_messages_active",
+        not cfg.are_daily_messages_active,
+        format_html("{} is disabled.", code("BigBrotherConfig.are_daily_messages_active")),
+        format_html("Enable daily messages in BigBrotherConfig and restart Celery workers."),
     )
-    if daily_purchase:  # Only run daily notification checks when DLC active.
+    register_issue(
+        daily_issues,
+        daily_actions,
+        not cfg.dailywebhook,
+        format_html("{} is empty.", code("BigBrotherConfig.dailywebhook")),
+        format_html("Set a Discord webhook URL in {}.", code("dailywebhook")),
+    )
+    register_issue(
+        daily_issues,
+        daily_actions,
+        cfg.dailyschedule is None,
+        format_html("{} is not linked to a schedule.", code("BigBrotherConfig.dailyschedule")),
+        format_html("Create a crontab/interval schedule and assign it to {}.", code("dailyschedule")),
+    )
+    if not discordbot_installed:
         register_issue(
             daily_issues,
             daily_actions,
-            not cfg.are_daily_messages_active,
-            format_html("{} is disabled.", code("BigBrotherConfig.are_daily_messages_active")),
-            format_html("Enable daily messages in BigBrotherConfig and restart Celery workers."),
+            True,
+            format_html("{} app is not installed; daily Discord posts will fail.", code("aadiscordbot")),
+            format_html("Install and configure aadiscordbot."),
         )
-        register_issue(
-            daily_issues,
-            daily_actions,
-            not cfg.dailywebhook,
-            format_html("{} is empty.", code("BigBrotherConfig.dailywebhook")),
-            format_html("Set a Discord webhook URL in {}.", code("dailywebhook")),
-        )
-        register_issue(
-            daily_issues,
-            daily_actions,
-            cfg.dailyschedule is None,
-            format_html("{} is not linked to a schedule.", code("BigBrotherConfig.dailyschedule")),
-            format_html("Create a crontab/interval schedule and assign it to {}.", code("dailyschedule")),
-        )
-        if not discordbot_installed:
-            register_issue(
-                daily_issues,
-                daily_actions,
-                True,
-                format_html("{} app is not installed; daily Discord posts will fail.", code("aadiscordbot")),
-                format_html("Install and configure aadiscordbot."),
-            )
-        if cfg.dailyschedule:  # Capture schedule detail when present.
-            daily_info.append(format_html("Schedule: {}", cfg.dailyschedule))
+    if cfg.dailyschedule:
+        daily_info.append(format_html("Schedule: {}", cfg.dailyschedule))
+
     modules.append(
         make_module(
             _("Daily Notifications"),
-            _("Scheduled digest sent via Discord webhook."),
+            _("Repeatable daily status messages sent to Discord."),
             daily_issues,
             daily_actions,
             info=daily_info,
@@ -399,54 +359,40 @@ def manual_modules(request: WSGIRequest):
         stream_name = _("Optional Notification Stream %(number)s") % {"number": idx}
         summary = _("Additional Discord webhook stream number %(number)s.") % {"number": idx}
         issues, actions, info = [], [], []
+
         flag = getattr(cfg, f"are_opt_messages{idx}_active")
         webhook = getattr(cfg, f"optwebhook{idx}")
         schedule = getattr(cfg, f"optschedule{idx}")
 
-        register_module_guard(
-            issues,
-            actions,
-            daily_purchase,
-            stream_name,
-            "BigBrotherConfig.dlc_daily_messages_active",
-        )
-        if daily_purchase:  # Additional optional streams share the same DLC entitlement.
-            if not flag:
-                register_issue(
-                    issues,
-                    actions,
-                    True,
-                    format_html("{} is disabled.", code(f"are_opt_messages{idx}_active")),
-                    format_html("Enable the toggle if you want to send this stream."),
-                )
-            if flag and not webhook:  # Enabled stream without webhook is misconfigured.
-                register_issue(
-                    issues,
-                    actions,
-                    True,
-                    format_html("{} is empty.", code(f"optwebhook{idx}")),
-                    format_html("Set a Discord webhook URL in {}.", code(f"optwebhook{idx}")),
-                )
-            if flag and schedule is None:  # Enabled stream without schedule cannot run.
-                register_issue(
-                    issues,
-                    actions,
-                    True,
-                    format_html("{} is not linked to a schedule.", code(f"optschedule{idx}")),
-                    format_html("Assign a crontab/interval schedule to {}.", code(f"optschedule{idx}")),
-                )
-            if flag and not discordbot_installed:  # Discord posts require the bot app.
-                register_issue(
-                    issues,
-                    actions,
-                    True,
-                    format_html("{} app is not installed; Discord posts will fail.", code("aadiscordbot")),
-                    format_html("Install and configure aadiscordbot."),
-                )
-            if flag and webhook:  # Provide quick success info when configured.
-                info.append(format_html("Webhook configured."))
-            if flag and schedule:
-                info.append(format_html("Schedule: {}", schedule))
+        if flag and not webhook:
+            register_issue(
+                issues,
+                actions,
+                True,
+                format_html("{} is empty.", code(f"optwebhook{idx}")),
+                format_html("Set a Discord webhook URL in {}.", code(f"optwebhook{idx}")),
+            )
+        if flag and schedule is None:
+            register_issue(
+                issues,
+                actions,
+                True,
+                format_html("{} is not linked to a schedule.", code(f"optschedule{idx}")),
+                format_html("Assign a crontab/interval schedule to {}.", code(f"optschedule{idx}")),
+            )
+        if flag and not discordbot_installed:
+            register_issue(
+                issues,
+                actions,
+                True,
+                format_html("{} app is not installed; Discord posts will fail.", code("aadiscordbot")),
+                format_html("Install and configure aadiscordbot."),
+            )
+        if schedule:
+            info.append(format_html("Schedule: {}", schedule))
+
+        # active only when toggle + webhook + schedule + bot are all good
+        active_override = bool(flag and webhook and schedule and discordbot_installed)
 
         modules.append(
             make_module(
@@ -455,73 +401,45 @@ def manual_modules(request: WSGIRequest):
                 issues,
                 actions,
                 info=info,
-                active_override=flag and all(cond for cond in [webhook, schedule, discordbot_installed]),
+                active_override=active_override,
             )
         )
 
     # LoA inactivity alerts (AFK tickets)
     afk_issues, afk_actions, afk_info = [], [], []
-    afk_purchase = cfg.dlc_loa_active
-    register_module_guard(
+
+    register_issue(
         afk_issues,
         afk_actions,
-        afk_purchase,
-        _("LoA inactivity alerts"),
-        "BigBrotherConfig.dlc_loa_active",
+        not cfg.is_loa_active,
+        format_html("{} is disabled.", code("BigBrotherConfig.is_loa_active")),
+        format_html("Enable LoA in BigBrotherConfig and restart AllianceAuth."),
     )
-    if afk_purchase:  # Only show AFK ticket guidance when LoA DLC is enabled.
-        tickets_purchase = cfg.dlc_tickets_active
-        register_module_guard(
+
+    if ticket_cfg is None:
+        register_issue(
             afk_issues,
             afk_actions,
-            tickets_purchase,
-            _("Ticket automation"),
-            "BigBrotherConfig.dlc_tickets_active",
+            True,
+            format_html(
+                "TicketToolConfig could not be loaded ({}).",
+                ticket_cfg_error or _("database schema mismatch"),
+            ),
+            format_html("Run {} to apply pending migrations.", format_html("<code>manage.py migrate aa_bb</code>")),
         )
-        if tickets_purchase:  # Ticket automation must also be installed/enabled.
-            register_issue(
-                afk_issues,
-                afk_actions,
-                not cfg.is_loa_active,
-                format_html("{} must be enabled for LoA inactivity monitoring.", code("BigBrotherConfig.is_loa_active")),
-                format_html("Enable the LoA module in BigBrotherConfig."),
-            )
-            if ticket_cfg is None:  # Cannot proceed when TicketToolConfig missing.
-                register_issue(
-                    afk_issues,
-                    afk_actions,
-                    True,
-                    format_html("TicketToolConfig could not be loaded ({}).", ticket_cfg_error or _("database schema mismatch")),
-                    format_html("Run {} to apply pending migrations.", format_html("<code>manage.py migrate aa_bb</code>")),
-                )
-            else:  # Ticket config exists, so validate individual settings.
-                register_issue(
-                    afk_issues,
-                    afk_actions,
-                    not ticket_cfg.afk_check_enabled,
-                    format_html("{} is disabled.", code("TicketToolConfig.afk_check_enabled")),
-                    format_html("Toggle AFK checks on in TicketToolConfig."),
-                )
-                register_issue(
-                    afk_issues,
-                    afk_actions,
-                    ticket_cfg.Max_Afk_Days <= 0,
-                    format_html("{} should be greater than zero.", code("TicketToolConfig.Max_Afk_Days")),
-                    format_html("Set a sensible threshold (e.g. 7) in TicketToolConfig."),
-                )
-                if not discordbot_installed:  # LoA inactivity notices also require Aad Discord bot.
-                    register_issue(
-                        afk_issues,
-                        afk_actions,
-                        True,
-                        format_html("{} app is not installed; ticket notifications will fail.", code("aadiscordbot")),
-                        format_html("Install and configure aadiscordbot."),
-                    )
-                afk_info.append(format_html("Current inactivity threshold: {} day(s).", ticket_cfg.Max_Afk_Days))
+    else:
+        register_issue(
+            afk_issues,
+            afk_actions,
+            not ticket_cfg.afk_check_enabled,
+            format_html("{} is disabled.", code("TicketToolConfig.afk_check_enabled")),
+            format_html("Toggle AFK checks on in TicketToolConfig."),
+        )
+
     modules.append(
         make_module(
             _("LoA inactivity alerts"),
-            _("Ticket automation that warns when users stop logging in without an LoA."),
+            _("Automatic AFK ticketing that warns when users stop logging in without an LoA."),
             afk_issues,
             afk_actions,
             info=afk_info,
@@ -530,55 +448,55 @@ def manual_modules(request: WSGIRequest):
 
     # Ticket automation (general)
     ticket_issues, ticket_actions, ticket_info = [], [], []
-    tickets_purchase = cfg.dlc_tickets_active
-    register_module_guard(
-        ticket_issues,
-        ticket_actions,
-        tickets_purchase,
-        _("Ticket automation"),
-        "BigBrotherConfig.dlc_tickets_active",
-    )
-    if tickets_purchase:
-        if ticket_cfg is None:
-            register_issue(
-                ticket_issues,
-                ticket_actions,
-                True,
-                format_html("TicketToolConfig could not be loaded ({}).", ticket_cfg_error or _("database schema mismatch")),
-                format_html("Run {} to apply pending migrations.", format_html("<code>manage.py migrate aa_bb</code>")),
-            )
+
+    if ticket_cfg is None:
+        register_issue(
+            ticket_issues,
+            ticket_actions,
+            True,
+            format_html(
+                "TicketToolConfig could not be loaded ({}).",
+                ticket_cfg_error or _("database schema mismatch"),
+            ),
+            format_html("Run {} to apply pending migrations.", format_html("<code>manage.py migrate aa_bb</code>")),
+        )
+    else:
+        register_issue(
+            ticket_issues,
+            ticket_actions,
+            not discordbot_installed,
+            format_html("{} app is not installed.", code("aadiscordbot")),
+            format_html("Install aadiscordbot and configure the Discord bot token."),
+        )
+        register_issue(
+            ticket_issues,
+            ticket_actions,
+            ticket_cfg.Category_ID in (None, 0),
+            format_html("{} is not set.", code("TicketToolConfig.Category_ID")),
+            format_html("Provide the Discord category ID where tickets should be created."),
+        )
+        if ticket_cfg.staff_roles:
+            ticket_info.append(format_html("Staff roles: {}", ticket_cfg.staff_roles))
         else:
             register_issue(
                 ticket_issues,
                 ticket_actions,
-                not discordbot_installed,
-                format_html("{} app is not installed.", code("aadiscordbot")),
-                format_html("Install aadiscordbot and configure the Discord bot token."),
+                True,
+                format_html(
+                    "{} has not been defined; only the bot will see tickets.",
+                    code("TicketToolConfig.staff_roles"),
+                ),
+                format_html("Configure staff roles in TicketToolConfig so humans see tickets."),
             )
+        if not charlink_installed:
             register_issue(
                 ticket_issues,
                 ticket_actions,
-                ticket_cfg.Category_ID in (None, 0),
-                format_html("{} is not set.", code("TicketToolConfig.Category_ID")),
-                format_html("Provide the Discord category ID where tickets should be created."),
-            )
-            if ticket_cfg.staff_roles:
-                ticket_info.append(format_html("Staff roles: {}", ticket_cfg.staff_roles))
-            else:
-                register_issue(
-                    ticket_issues,
-                    ticket_actions,
-                    True,
-                    format_html("{} has not been defined; only the bot will see tickets.", code("TicketToolConfig.staff_roles")),
-                    format_html("Add a comma-separated list of Discord role IDs to {}.", code("staff_roles")),
-                )
-            register_issue(
-                ticket_issues,
-                ticket_actions,
-                not charlink_installed,
+                True,
                 format_html("{} is not installed; char → user mapping may be limited.", code("charlink")),
                 format_html("Install allianceauth-charlink to improve ticket context."),
             )
+
     modules.append(
         make_module(
             _("Ticket automation"),
@@ -607,179 +525,20 @@ def manual_modules(request: WSGIRequest):
         )
     )
 
-    reddit_issues, reddit_actions, reddit_info = [], [], []
-    reddit_cta = None
-    reddit_active = False
-    summary = _("Automated posts to r/evejobs plus reply monitoring.")
-    reddit_setup_action = None
-
-    register_module_guard(
-        reddit_issues,
-        reddit_actions,
-        reddit_entitled,
-        _("Reddit recruitment"),
-        "BigBrotherConfig.dlc_reddit_active",
-    )
-
-    if reddit_entitled:
-        if reddit_cfg is None:
-            register_issue(
-                reddit_issues,
-                reddit_actions,
-                True,
-                format_html(
-                    "BigBrotherRedditSettings could not be loaded ({}).",
-                    reddit_cfg_error or _("database schema mismatch"),
-                ),
-                format_html("Run {} to apply pending migrations.", format_html("<code>manage.py migrate aa_bb</code>")),
-            )
-        elif reddit_messages_error:
-            register_issue(
-                reddit_issues,
-                reddit_actions,
-                True,
-                format_html("Reddit message table unavailable ({}).", reddit_messages_error),
-                format_html("Run {} to apply pending migrations.", format_html("<code>manage.py migrate aa_bb</code>")),
-            )
-        else:
-            status = reddit_status(reddit_cfg)
-            if not status.api_credentials_ready:
-                reddit_callback_url = request.build_absolute_uri(
-                    reverse("aa_bb:reddit_oauth_callback")
-                )
-                reddit_apps_link = format_html(
-                    '<a href="https://www.reddit.com/prefs/apps" target="_blank" rel="noopener noreferrer">{}</a>',
-                    _("reddit.com/prefs/apps"),
-                )
-                reddit_setup_action = format_html(
-                    _("Create a Reddit <strong>script</strong> application at {} and set the redirect URI to {}."),
-                    reddit_apps_link,
-                    format_html("<code>{}</code>", reddit_callback_url),
-                )
-            if reddit_messages_count:
-                reddit_info.append(
-                    format_html(_("Messages queued: {}"), reddit_messages_count)
-                )
-            register_issue(
-                reddit_issues,
-                reddit_actions,
-                not status.messages_ready,
-                format_html("{} has no entries.", code("BigBrotherRedditMessage")),
-                format_html("{}", _("Add at least one reddit message in Django admin.")),
-            )
-            register_issue(
-                reddit_issues,
-                reddit_actions,
-                not status.api_credentials_ready,
-                format_html("{}", _("Fill the reddit API credentials in BigBrotherRedditSettings.")),
-                format_html("{}", _("Populate client id, secret and user agent.")),
-            )
-            register_issue(
-                reddit_issues,
-                reddit_actions,
-                not status.praw_ready,
-                format_html("Python package {} is not installed.", code("praw")),
-                format_html("{}", _("Install praw inside your AllianceAuth virtualenv.")),
-            )
-            register_issue(
-                reddit_issues,
-                reddit_actions,
-                not reddit_cfg.reddit_scope,
-                format_html("{}", _("Reddit OAuth scope list is empty.")),
-                format_html("{}", _("Provide the scopes you need (e.g. 'identity submit read').")),
-            )
-            register_issue(
-                reddit_issues,
-                reddit_actions,
-                not reddit_cfg.reddit_webhook,
-                format_html("{} is empty.", code("BigBrotherRedditSettings.reddit_webhook")),
-                format_html("{}", _("Paste the Discord webhook that should receive publication notices.")),
-            )
-            register_issue(
-                reddit_issues,
-                reddit_actions,
-                not reddit_cfg.enabled,
-                format_html("{} is disabled.", code("BigBrotherRedditSettings.enabled")),
-                format_html("{}", _("Flip the enabled toggle once you are ready to post.")),
-            )
-
-            ready_for_oauth = (
-                status.messages_ready
-                and status.api_credentials_ready
-                and status.praw_ready
-            )
-            if ready_for_oauth and not status.token_available:
-                login_url = reverse("aa_bb:reddit_oauth_login")
-                reddit_cta = format_html(
-                    '<a class="btn btn-outline-primary btn-sm" href="{}">{}</a>',
-                    login_url,
-                    _("Authorize Reddit"),
-                )
-                register_issue(
-                    reddit_issues,
-                    reddit_actions,
-                    True,
-                    format_html("{}", _("Reddit OAuth token missing.")),
-                    format_html("{}", _("Use the button below to store the non-expiring token.")),
-                )
-            elif not status.token_available:
-                register_issue(
-                    reddit_issues,
-                    reddit_actions,
-                    True,
-                    format_html("{}", _("Reddit OAuth token is missing but other requirements are incomplete.")),
-                    format_html("{}", _("Complete the other checks, refresh, then authorize Reddit.")),
-                )
-            else:
-                if reddit_cfg.reddit_token_obtained:
-                    token_ts = timezone.localtime(reddit_cfg.reddit_token_obtained)
-                    reddit_info.append(
-                        format_html(
-                            "{} {}",
-                            _("Reddit token stored:"),
-                            token_ts.strftime("%Y-%m-%d %H:%M %Z"),
-                        )
-                    )
-                if reddit_cfg.reddit_account_name:
-                    reddit_info.append(
-                        format_html(
-                            _("Authorized as u/{}."),
-                            reddit_cfg.reddit_account_name,
-                        )
-                    )
-
-            reddit_info.append(
-                format_html(
-                    _("Posting to r/{} every {} day(s) at 13:00 EVE time."),
-                    reddit_cfg.reddit_subreddit,
-                    reddit_cfg.post_interval_days,
-                )
-            )
-            if reddit_cfg.last_submission_at:
-                reddit_info.append(
-                    format_html(
-                        _("Last submission: {} UTC."),
-                        timezone.localtime(reddit_cfg.last_submission_at).strftime("%Y-%m-%d %H:%M"),
-                    )
-                )
-
-            reddit_active = (
-                status.fully_operational
-                and status.token_available
-                and reddit_cfg.enabled
-            )
-
-    modules.append(
-        make_module(
-            _("Reddit recruitment"),
-            summary,
-            reddit_issues,
-            reddit_actions + ([reddit_setup_action] if reddit_setup_action else []),
-            info=reddit_info,
-            active_override=reddit_active,
-            cta=reddit_cta,
-        )
-    )
+    # Reddit
+    reddit_cfg = None
+    reddit_cfg_error = None
+    reddit_messages_error = None
+    reddit_messages_count = 0
+    try:
+        reddit_cfg = BigBrotherRedditSettings.get_solo()
+    except (OperationalError, ProgrammingError) as exc:
+        reddit_cfg_error = str(exc)
+    else:
+        try:
+            reddit_messages_count = BigBrotherRedditMessage.objects.count()
+        except (OperationalError, ProgrammingError) as exc:
+            reddit_messages_error = str(exc)
 
     return render(request, "faq/modules.html", {"modules": modules})
 
@@ -794,9 +553,6 @@ def manual_faq(request: WSGIRequest):
 @login_required
 @permission_required("aa_bb.basic_access")
 def reddit_oauth_login(request: WSGIRequest):
-    if not is_reddit_module_visible():
-        return HttpResponseBadRequest("Reddit module is not available for this corporation.")
-
     try:
         reddit_cfg = BigBrotherRedditSettings.get_solo()
     except (OperationalError, ProgrammingError) as exc:
@@ -829,9 +585,6 @@ def reddit_oauth_login(request: WSGIRequest):
 @login_required
 @permission_required("aa_bb.basic_access")
 def reddit_oauth_callback(request: WSGIRequest):
-    if not is_reddit_module_visible():
-        return HttpResponseBadRequest("Reddit module is not available for this corporation.")
-
     expected_state = request.session.get("bb_reddit_oauth_state")
     returned_state = request.GET.get("state")
     if not expected_state or expected_state != returned_state:

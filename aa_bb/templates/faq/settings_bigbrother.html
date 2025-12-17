@@ -41,7 +41,7 @@
 
 <h2 class="mt-4">{% translate "Access Control" %}</h2>
 <div class="table-responsive">
-  <table class="table table-striped">
+  <table class="table table-striped settings">
     <thead>
       <tr>
         <th>{% translate "Field" %}</th>
@@ -91,6 +91,38 @@
   </table>
 </div>
 
+
+<h2 class="mt-4">{% translate "aa-contacts Integration" %}</h2>
+<div class="table-responsive">
+  <table class="table table-striped">
+    <thead>
+      <tr>
+        <th>{% translate "Field" %}</th>
+        <th>{% translate "Description" %}</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>auto_import_contacts_enabled</code></td>
+        <td>{% translate "When enabled, BigBrother will periodically import standings from aa-contacts and merge them into the member/hostile/whitelist lists." %}</td>
+      </tr>
+      <tr>
+        <td><code>contacts_source_alliances</code></td>
+        <td>{% translate "Alliances whose aa-contacts standings should be imported. Positive standings become members; negative become hostile; neutral handling is controlled below." %}</td>
+      </tr>
+      <tr>
+        <td><code>contacts_handle_neutrals</code></td>
+        <td>{% translate "Controls how neutral (0) standings are treated: handle as hostile, whitelist/ignore, or do nothing." %}</td>
+      </tr>
+      <tr>
+        <td><code>contacts_import_cache</code></td>
+        <td>{% translate "Internal cache of imported IDs so removals from aa-contacts can be pruned without touching manually maintained lists." %}</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+
 <h2 class="mt-4">{% translate "Discord Notifications" %}</h2>
 <div class="table-responsive">
   <table class="table table-striped">
@@ -116,6 +148,10 @@
       <tr>
         <td><code>webhook</code> / <code>loawebhook</code> / <code>dailywebhook</code> / <code>optwebhook1-5</code></td>
         <td>{% translate "Discord webhook destinations for core alerts, LoA notices, daily digests, and up to five optional channels." %}</td>
+      </tr>
+      <tr>
+        <td><code>stats_webhook</code></td>
+        <td>{% translate "Discord webhook used for recurring stats posts (when enabled)." %}</td>
       </tr>
     </tbody>
   </table>
@@ -154,12 +190,20 @@
         <td>{% translate "Celery beat schedules used for daily and optional webhook messages." %}</td>
       </tr>
       <tr>
+        <td><code>stats_schedule</code></td>
+        <td>{% translate "Celery beat schedule used for recurring stats posts." %}</td>
+      </tr>
+      <tr>
+        <td><code>are_recurring_stats_active</code></td>
+        <td>{% translate "Master switch for recurring stats posts." %}</td>
+      </tr>
+      <tr>
         <td><code>is_loa_active</code> / <code>is_paps_active</code></td>
         <td>{% translate "Toggle the integrated LoA and PAP modules. Restart AllianceAuth after changing." %}</td>
       </tr>
       <tr>
         <td><code>is_warmer_active</code></td>
-        <td>{% translate "Enables the cache warmer that preloads contract/mail/transaction streams. Disable only if your gunicorn timeout in supervisor config is set to 0 =." %}</td>
+        <td>{% translate "Enables the cache warmer that preloads contract/mail/transaction streams. Disable only if your gunicorn timeout in supervisor config is set to 0." %}</td>
       </tr>
       <tr>
         <td><code>are_daily_messages_active</code> / <code>are_opt_messages1-5_active</code></td>

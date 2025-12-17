@@ -10,11 +10,10 @@ from celery import shared_task
 from django.db import OperationalError, ProgrammingError
 from django.utils import timezone
 
-from .app_settings_2 import send_message
-from .modelss import BigBrotherRedditSettings
+from .app_settings import send_message
+from .models import BigBrotherRedditSettings
 from .reddit import (
     get_reddit_client,
-    is_reddit_module_visible,
     pick_reddit_message,
     enough_time_since_last_post,
 )
@@ -43,9 +42,6 @@ def _get_settings() -> BigBrotherRedditSettings | None:
 @shared_task
 def post_reddit_recruitment() -> str:
     """Pick a recruitment message and submit it to Reddit if the module allows it."""
-    if not is_reddit_module_visible():  # Hidden module -> skip all posting.
-        return "reddit module hidden"
-
     settings = _get_settings()
     if settings is None or not settings.enabled:  # Missing or disabled configuration.
         return "reddit module disabled"
@@ -118,9 +114,6 @@ def post_reddit_recruitment() -> str:
 @shared_task
 def monitor_reddit_replies() -> str:
     """Poll the last submission for replies and broadcast them via webhook."""
-    if not is_reddit_module_visible():  # Respect feature visibility toggle.
-        return "reddit module hidden"
-
     settings = _get_settings()
     if (
         settings is None

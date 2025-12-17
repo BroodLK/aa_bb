@@ -13,8 +13,7 @@ from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 from allianceauth.authentication.models import CharacterOwnership
 
-from ..models import BigBrotherConfig
-from ..modelss import AwoxKillsCache
+from ..models import BigBrotherConfig,AwoxKillsCache
 from django.utils import timezone
 from esi.exceptions import HTTPNotModified
 from ..esi_client import esi, call_result

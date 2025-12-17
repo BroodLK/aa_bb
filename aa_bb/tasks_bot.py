@@ -19,7 +19,7 @@ try:
 except ImportError:
     logger.error("discord service not installed; compliance checks will not work.")
 
-from .modelss import TicketToolConfig, ComplianceTicket
+from .models import TicketToolConfig, ComplianceTicket
 from .app_settings import get_user_model
 
 try:

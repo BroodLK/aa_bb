@@ -9,8 +9,7 @@ from allianceauth.services.hooks import MenuItemHook, UrlHook
 
 # AA Example App
 from aa_bb import urls, urls_loa, urls_cb, urls_paps
-from .modelss import LeaveRequest
-from .models import BigBrotherConfig
+from .models import BigBrotherConfig, LeaveRequest
 
 
 class CorpBrotherMenuItem(MenuItemHook):
@@ -33,9 +32,6 @@ class CorpBrotherMenuItem(MenuItemHook):
             cfg = BigBrotherConfig.get_solo()
         except BigBrotherConfig.DoesNotExist:
             cfg = None
-
-        if not cfg or not cfg.dlc_corp_brother_active:  # Hide when DLC disabled.
-            return ""
 
         if request.user.has_perm("aa_bb.basic_access_cb"):  # User has access permission.
             return MenuItemHook.render(self, request)
@@ -126,7 +122,7 @@ def register_bigbrother_urls():
 
 
 class LoAMenuItem(MenuItemHook):
-    """Menu entry for Leave of Absence tools, gated by DLC + permissions."""
+    """Menu entry for Leave of Absence tools, gated by permissions."""
     def __init__(self):
         """Initialize the LoA entry and nav state."""
         super().__init__(
@@ -136,18 +132,7 @@ class LoAMenuItem(MenuItemHook):
             navactive=["loa:"],
     )
     def render(self, request):
-        """Show LoA entry when DLC + permission is active."""
-        # Optional permission check:
-        # if not request.user.has_perm("aa_bb.can_access_loa"):
-        #     return ""
-        try:
-            cfg = BigBrotherConfig.get_solo()
-        except BigBrotherConfig.DoesNotExist:
-            cfg = None
-
-        if not cfg or not cfg.dlc_loa_active:  # Skip when LoA DLC disabled.
-            return ""
-
+        """Show LoA entry when permission is active."""
         if request.user.has_perm("aa_bb.can_access_loa"):  # Basic LoA access.
             if request.user.has_perm("aa_bb.can_view_all_loa"):  # Staff can see pending counters.
                 pending_count = LeaveRequest.objects.filter(status="pending").count()
@@ -179,15 +164,7 @@ class PapsMenuItem(MenuItemHook):
             navactive=["paps:"],
     )
     def render(self, request):
-        """Only show when PAP DLC is enabled and user has permission."""
-        try:
-            cfg = BigBrotherConfig.get_solo()
-        except BigBrotherConfig.DoesNotExist:
-            cfg = None
-
-        if not cfg or not cfg.dlc_pap_active:  # Hide when PAP DLC disabled.
-            return ""
-
+        """Only show when users have permission."""
         if request.user.has_perm("aa_bb.can_access_paps"):  # Only show for PAP viewers.
             return super().render(request)
         return ""

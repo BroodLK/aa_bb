@@ -36,8 +36,7 @@ except ImportError:
     def get_alts_queryset(*args, **kwargs):
         return []
 
-from .models import BigBrotherConfig
-from .modelss import TicketToolConfig, PapCompliance, LeaveRequest, ComplianceTicket
+from .models import BigBrotherConfig, TicketToolConfig, PapCompliance, LeaveRequest, ComplianceTicket
 from .app_settings import send_message, get_user_profiles, get_character_id
 
 User = get_user_model()
@@ -164,38 +163,34 @@ def discord_check(user):
 @shared_task
 def hourly_compliance_check():
     """Run the top-of-hour audit that enforces compliance rules and reminders."""
-    cfg = BigBrotherConfig.get_solo()
-    if not cfg.dlc_tickets_active:  # DLC disabled means no background enforcement.
-        logger.info("Ticket DLC disabled; skipping hourly_compliance_check.")
-        return
-    tcfg = TicketToolConfig.get_solo()
+    cfg = TicketToolConfig.get_solo()
     max_days = {
-        "corp_check": tcfg.corp_check,
-        "paps_check": tcfg.paps_check,
-        "afk_check": tcfg.afk_check,
-        "discord_check": tcfg.discord_check,
+        "corp_check": cfg.corp_check,
+        "paps_check": cfg.paps_check,
+        "afk_check": cfg.afk_check,
+        "discord_check": cfg.discord_check,
     }
 
     # Per-reason reminder frequency (in days)
     reminder_frequency = {
-        "corp_check": tcfg.corp_check_frequency,
-        "paps_check": tcfg.paps_check_frequency,
-        "afk_check": tcfg.afk_check_frequency,
-        "discord_check": tcfg.discord_check_frequency,
+        "corp_check": cfg.corp_check_frequency,
+        "paps_check": cfg.paps_check_frequency,
+        "afk_check": cfg.afk_check_frequency,
+        "discord_check": cfg.discord_check_frequency,
     }
 
     reason_checkers = {
-        "corp_check": (corp_check, tcfg.corp_check_reason),
-        "paps_check": (paps_check, tcfg.paps_check_reason),
-        "afk_check": (afk_check, tcfg.afk_check_reason),
-        "discord_check": (discord_check, tcfg.discord_check_reason),
+        "corp_check": (corp_check, cfg.corp_check_reason),
+        "paps_check": (paps_check, cfg.paps_check_reason),
+        "afk_check": (afk_check, cfg.afk_check_reason),
+        "discord_check": (discord_check, cfg.discord_check_reason),
     }
 
     reminder_messages = {
-        "corp_check": tcfg.corp_check_reminder,
-        "paps_check": tcfg.paps_check_reminder,
-        "afk_check": tcfg.afk_check_reminder,
-        "discord_check": tcfg.discord_check_reminder,
+        "corp_check": cfg.corp_check_reminder,
+        "paps_check": cfg.paps_check_reminder,
+        "afk_check": cfg.afk_check_reminder,
+        "discord_check": cfg.discord_check_reminder,
     }
 
     now = timezone.now()
@@ -206,7 +201,7 @@ def hourly_compliance_check():
     # 1. Check compliance reasons
     for UserProfil in get_user_profiles():
         user = UserProfil.user
-        if user in tcfg.excluded_users.all():  # Skip users explicitly excluded from checks.
+        if user in cfg.excluded_users.all():  # Skip users explicitly excluded from checks.
             continue
         for reason, (checker, msg_template) in reason_checkers.items():
             checked = checker(user)
@@ -258,7 +253,7 @@ def hourly_compliance_check():
         max_dayss = max_days.get(reason, 30)
         if days_elapsed > max_dayss:  # Escalate when overdue beyond max window.
             # escalation: ping staff role to kick the user
-            mention = f"<@&{tcfg.Role_ID}>"           # role mention
+            mention = f"<@&{cfg.Role_ID}>"           # role mention
             user_mention = f"<@{ticket.discord_user_id}>"
             msg = (f"⚠️ {mention} please review compliance ticket for {user_mention}. "
                    f"Issue **{reason}** has exceeded {max_dayss} days without resolution. "
@@ -286,7 +281,7 @@ def hourly_compliance_check():
         if reason == "paps_check":  # PAP reminder template only uses {days}.
             msg = template.format(days=days_left)
         else:
-            msg = template.format(namee=mention, role=tcfg.Role_ID, days=days_left)
+            msg = template.format(namee=mention, role=cfg.Role_ID, days=days_left)
 
         # Queue the bot-side reminder (ensure task_kwargs is present)
         run_task_function.apply_async(

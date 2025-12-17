@@ -10,7 +10,8 @@
 > Because this repository is public, anyone can read the detection logic for skills, cyno activity, injected SP, suspicious transactions, hostile assets and clones, and other monitored behaviors. Hostile groups may use this information to avoid detection. Operate with discretion.
 
 # BigBrother
-BigBrother is an Alliance Auth plugin, **_originally written by Andrew Xadi_**, that performs continuous pilot auditing, compliance monitoring, intelligence gathering, and behavioral analysis. It monitors activity such as skills, cyno capabilities, SP injections, corporation movement, assets, clones, and more, then delivers structured leadership-focused reports.\
+BigBrother is an Alliance Auth plugin, **_originally written by Andrew Xadi_**, that performs continuous pilot auditing, compliance monitoring, intelligence gathering, and behavioral analysis. It monitors activity such as skills, cyno capabilities, SP injections, corporation movement, assets, clones, and more, then delivers structured leadership-focused reports.
+
 All while invisible to the general membership unless you chose to expose it to them. No "adding chars" to it, it pulls relevant information from CorpTools.
 
 > [!WARNING]
@@ -57,7 +58,7 @@ vi myauth/settings/local.py
 ```
 add `aa_bb` to installed apps.
 ```bash
-python manage.py migrate && python manage.py collectstatic
+python manage.py migrate && python manage.py collectstatic --noinput
 ```
 restart the things
 exit your venv
@@ -301,6 +302,8 @@ Tracked metrics include:
 ## Recurring stats
 - Send stats to a webhook that covers interesting statistics from AA
 
+![Screenshot of recurring stats](https://i.imgur.com/REGczjZ.png)
+
 # Permissions
 Below is the full list of permissions exposed by the application:
 
@@ -318,9 +321,6 @@ Below is the full list of permissions exposed by the application:
 | **can_manage_loa**           | Can manage Leave Of Absence requests                                   |
 | **can_access_paps**          | Can access PAP Stats                                                   |
 | **can_generate_paps**        | Can generate PAP Stats                                                 |
-
-
-![Screenshot of recurring stats](https://i.imgur.com/REGczjZ.png)
 
 > [!IMPORTANT]
 > Users who used this tool while it was private can safely upgrade but may run into a rare but serious complication where duplicate tasks are generated preventing the auth from starting.

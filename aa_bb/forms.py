@@ -3,7 +3,7 @@
 from django import forms
 from django.core.exceptions import ValidationError
 from django.utils import timezone
-from .modelss import LeaveRequest
+from .models import LeaveRequest
 
 class LeaveRequestForm(forms.ModelForm):
     """LOA submission form with date widgets and cross-field validation."""

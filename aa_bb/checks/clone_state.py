@@ -7,7 +7,7 @@ tasks that persist the findings.
 """
 
 from .skills import get_user_skill_info
-from aa_bb.modelss import CharacterAccountState
+from aa_bb.models import CharacterAccountState
 from aa_bb.app_settings import resolve_character_name, get_user_characters
 from django.db import transaction
 from django.utils.html import format_html, mark_safe

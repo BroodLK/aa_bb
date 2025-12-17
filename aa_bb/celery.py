@@ -5,7 +5,7 @@ Each entry mirrors the tasks created in AppConfig.ready so installations that
 prefer static CELERY_BEAT_SCHEDULE definitions can reuse this module.
 """
 
-from celery.schedules import crontab
+from celery.schedules import crontab, schedule
 
 CELERY_BEAT_SCHEDULE = {
     'BB-run-regular-updates-every-hour': {
@@ -52,4 +52,12 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'aa_bb.tasks_cb.BB_daily_DB_cleanup',
         'schedule': crontab(minute=0, hour=1),  # Every day at 12:00
     },
+    'BB-send-recurring-stats': {
+        'task': 'aa_bb.tasks_other.BB_send_recurring_stats',
+        'schedule': crontab(minute=0, hour=12, day_of_week=0),
+    },
+    'BB-sync-contacts-from-aa-contacts': {
+        'task': 'aa_bb.tasks.BB_sync_contacts_from_aa_contacts',
+        'schedule': crontab(minute=0, hour=1),
+    }
 }

@@ -14,13 +14,11 @@ def BB_send_recurring_stats():
     """
     Build and post recurring stats to the configured webhook.
 
-    - Uses BigBrotherConfig for DLC toggle, webhook, and schedule enable flag.
+    - Uses BigBrotherConfig for a webhook and schedule-enabled flag.
     - Uses RecurringStatsConfig for which states/stats to include and for deltas.
     """
 
     cfg = BigBrotherConfig.get_solo()
-    if not cfg.are_recurring_stats_active:
-        return
 
     webhook = cfg.stats_webhook
     if not webhook:

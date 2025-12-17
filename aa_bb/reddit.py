@@ -12,8 +12,7 @@ from typing import Optional
 from django.db import OperationalError, ProgrammingError
 from django.utils import timezone
 
-from .models import BigBrotherConfig
-from .modelss import BigBrotherRedditMessage, BigBrotherRedditSettings
+from .models import BigBrotherConfig, BigBrotherRedditMessage, BigBrotherRedditSettings
 
 logger = logging.getLogger(__name__)
 
@@ -33,15 +32,6 @@ class RedditModuleStatus:
             and self.api_credentials_ready
             and self.token_available
         )
-
-
-def is_reddit_module_visible() -> bool:
-    """Gate the reddit module to installations that purchased the DLC."""
-    try:
-        cfg = BigBrotherConfig.get_solo()
-    except (BigBrotherConfig.DoesNotExist, OperationalError, ProgrammingError):
-        return False
-    return bool(cfg.dlc_reddit_active)
 
 
 def praw_available() -> bool:
@@ -122,7 +112,6 @@ def enough_time_since_last_post(settings: BigBrotherRedditSettings) -> bool:
 
 __all__ = [
     "RedditModuleStatus",
-    "is_reddit_module_visible",
     "praw_available",
     "reddit_messages_available",
     "reddit_app_configured",

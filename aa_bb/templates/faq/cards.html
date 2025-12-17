@@ -7,7 +7,10 @@
 {% block details %}
 <h1>{% translate "Card Reference" %}</h1>
 <p>
-  {% translate "Use this table to understand what each card loads and why it might flag a red status dot" %}
+  {% blocktrans %}
+  Use this table to understand what each card loads and why it might flag a red status dot.
+  Some cards stream results; the dot may remain green until the first hostile row arrives.
+  {% endblocktrans %}
 </p>
 
 <h2 class="mt-4">{% translate "BigBrother Cards" %}</h2>
@@ -62,7 +65,7 @@
       </tr>
       <tr>
         <td>{% translate "Suspicious Mails" %}</td>
-        <td>{% translate "Pulls eve mails, highlights hostile senders/recipients" %}</td>
+        <td>{% translate "Pulls EVE mails, highlights hostile senders/recipients." %}</td>
       </tr>
       <tr>
         <td>{% translate "Suspicious Transactions" %}</td>

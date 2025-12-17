@@ -27,8 +27,7 @@ from allianceauth.authentication.models import UserProfile, CharacterOwnership
 
 from .forms import LeaveRequestForm
 from .app_settings import get_user_characters, get_entity_info, get_main_character_name, get_character_id, send_message, get_pings
-from .models import BigBrotherConfig, WarmProgress
-from .modelss import LeaveRequest
+from .models import BigBrotherConfig, WarmProgress, LeaveRequest
 
 from aa_bb.checks.awox import render_awox_kills_html
 from aa_bb.checks.corp_changes import get_frequent_corp_changes

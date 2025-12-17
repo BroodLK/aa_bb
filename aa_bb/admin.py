@@ -1,7 +1,7 @@
 """
 Admin registrations for every BigBrother-related model.
 
-Most models are singletons that gate optional DLC modules. The helpers below
+Most models are singletons that gate optional modules. The helpers below
 ensure their admin entries only appear when the relevant feature is enabled
 and prevent accidental multi-row creation of what should be one-off configs.
 """
@@ -22,79 +22,14 @@ from .models import (
     WarmProgress,
     PapsConfig,
     RecurringStatsConfig,
-)
-from .modelss import (
+    AA_CONTACTS_INSTALLED,
     TicketToolConfig,
     PapCompliance,
     LeaveRequest,
     ComplianceTicket,
     BigBrotherRedditSettings,
-    BigBrotherRedditMessage,
+    BigBrotherRedditMessage
 )
-from .reddit import is_reddit_module_visible
-from django.core.exceptions import ObjectDoesNotExist
-
-
-class DLCVisibilityMixin:
-    """Hide admin entries when the related DLC flag is disabled."""
-
-    dlc_attr = None
-
-    def _allowed(self) -> bool:
-        """Return True when the DLC attribute is enabled or not required."""
-        if not self.dlc_attr:  # Always allow when no DLC flag is configured.
-            return True
-        try:
-            cfg = BigBrotherConfig.get_solo()
-        except ObjectDoesNotExist:
-            return False
-        return bool(getattr(cfg, self.dlc_attr, False))
-
-    def has_module_permission(self, request):
-        """Hide the entire admin module when the DLC is disabled."""
-        return self._allowed() and super().has_module_permission(request)
-
-    def has_view_permission(self, request, obj=None):
-        """Disable read access when the DLC is disabled."""
-        return self._allowed() and super().has_view_permission(request, obj)
-
-    def has_add_permission(self, request):
-        """Disable add operations when the DLC is disabled."""
-        return self._allowed() and super().has_add_permission(request)
-
-    def has_change_permission(self, request, obj=None):
-        """Disable edit operations when the DLC is disabled."""
-        return self._allowed() and super().has_change_permission(request, obj)
-
-    def has_delete_permission(self, request, obj=None):
-        """Disable delete operations when the DLC is disabled."""
-        return self._allowed() and super().has_delete_permission(request, obj)
-
-
-class PapModuleVisibilityMixin(DLCVisibilityMixin):
-    """Restrict admin entries to installs with the PAP DLC."""
-    dlc_attr = "dlc_pap_active"
-
-
-class TicketModuleVisibilityMixin(DLCVisibilityMixin):
-    """Restrict admin entries to installs with the ticketing DLC."""
-    dlc_attr = "dlc_tickets_active"
-
-
-class LoaModuleVisibilityMixin(DLCVisibilityMixin):
-    """Show admin pages only when the LoA module is enabled."""
-    dlc_attr = "dlc_loa_active"
-
-
-class DailyMessagesVisibilityMixin(DLCVisibilityMixin):
-    """Hide daily/optional message models when that DLC is off."""
-    dlc_attr = "dlc_daily_messages_active"
-
-
-class RecurringStatsVisibilityMixin(DLCVisibilityMixin):
-    """Hide recurring stats models when that DLC is off."""
-    dlc_attr = "dlc_are_recurring_stats_active"
-
 
 @admin.register(BigBrotherConfig)
 class BB_ConfigAdmin(SingletonModelAdmin):
@@ -205,6 +140,16 @@ class BB_ConfigAdmin(SingletonModelAdmin):
                     "excluded_systems",
                     "excluded_stations",
                     "hostile_assets_ships_only",
+                    # aa-contacts import (conditionally add fields)
+                    *(
+                        (
+                            "auto_import_contacts_enabled",
+                            "contacts_source_alliances",
+                            "contacts_handle_neutrals",
+                        )
+                        if AA_CONTACTS_INSTALLED
+                        else ()
+                    ),
                 )
             },
         ),
@@ -237,13 +182,6 @@ class BB_ConfigAdmin(SingletonModelAdmin):
         "main_corporation_id",
         "main_alliance_id",
         "is_active",
-        "dlc_corp_brother_active",
-        "dlc_loa_active",
-        "dlc_pap_active",
-        "dlc_tickets_active",
-        "dlc_reddit_active",
-        "dlc_daily_messages_active",
-        "dlc_are_recurring_stats_active",
     )
     filter_horizontal = (
         "pingrole1_messages",
@@ -252,6 +190,12 @@ class BB_ConfigAdmin(SingletonModelAdmin):
         "everyone_messages",
         "bb_guest_states",
         "bb_member_states",
+        # aa-contacts M2M (only if installed)
+        *(
+            ("contacts_source_alliances",)
+            if AA_CONTACTS_INSTALLED
+            else ()
+        ),
     )
 
     def has_add_permission(self, request):
@@ -261,13 +205,14 @@ class BB_ConfigAdmin(SingletonModelAdmin):
         return super().has_add_permission(request)
 
     def has_delete_permission(self, request, obj=None):
-        """Always allow delete to keep parity with default behavior."""
+        """Always allow deleting to keep parity with default behavior."""
         return True
 
 
+
 @admin.register(PapsConfig)
-class PapsConfigAdmin(PapModuleVisibilityMixin, SingletonModelAdmin):
-    """Controls PAP multipliers/thresholds; singleton per install."""
+class PapsConfigAdmin(SingletonModelAdmin):
+    """Controls PAP multipliers/thresholds; singleton per installation."""
     filter_horizontal = (
         "group_paps",
         "excluded_groups",
@@ -287,7 +232,7 @@ class PapsConfigAdmin(PapModuleVisibilityMixin, SingletonModelAdmin):
 
 
 @admin.register(TicketToolConfig)
-class TicketToolConfigAdmin(TicketModuleVisibilityMixin, SingletonModelAdmin):
+class TicketToolConfigAdmin(SingletonModelAdmin):
     """Ticket automation thresholds + templates."""
     filter_horizontal = (
         "excluded_users",
@@ -304,17 +249,8 @@ class TicketToolConfigAdmin(TicketModuleVisibilityMixin, SingletonModelAdmin):
         return True
 
 
-class RedditAdminVisibilityMixin(DLCVisibilityMixin):
-    """Hide Reddit admin entries unless DLC + feature flag are active."""
-    dlc_attr = "dlc_reddit_active"
-
-    def _allowed(self) -> bool:
-        """Require both DLC activation and reddit module visibility."""
-        return super()._allowed() and is_reddit_module_visible()
-
-
 @admin.register(BigBrotherRedditSettings)
-class BigBrotherRedditSettingsAdmin(RedditAdminVisibilityMixin, SingletonModelAdmin):
+class BigBrotherRedditSettingsAdmin(SingletonModelAdmin):
     """OAuth tokens + scheduling info for the Reddit autoposter."""
     exclude = (
         "reddit_access_token",
@@ -343,7 +279,7 @@ class BigBrotherRedditSettingsAdmin(RedditAdminVisibilityMixin, SingletonModelAd
 
 
 @admin.register(BigBrotherRedditMessage)
-class BigBrotherRedditMessageAdmin(RedditAdminVisibilityMixin, admin.ModelAdmin):
+class BigBrotherRedditMessageAdmin(admin.ModelAdmin):
     """Manage the pool of canned Reddit ads."""
     list_display = ("title", "used_in_cycle", "created")
     list_filter = ("used_in_cycle",)
@@ -351,42 +287,42 @@ class BigBrotherRedditMessageAdmin(RedditAdminVisibilityMixin, admin.ModelAdmin)
 
 
 @admin.register(Messages)
-class DailyMessageConfig(DailyMessagesVisibilityMixin, admin.ModelAdmin):
+class DailyMessageConfig(admin.ModelAdmin):
     """Standard daily webhook messages rotated each cycle."""
     search_fields = ["text"]
     list_display = ["text", "sent_in_cycle"]
 
 
 @admin.register(OptMessages1)
-class OptMessage1Config(DailyMessagesVisibilityMixin, admin.ModelAdmin):
+class OptMessage1Config(admin.ModelAdmin):
     """Optional webhook stream #1."""
     search_fields = ["text"]
     list_display = ["text", "sent_in_cycle"]
 
 
 @admin.register(OptMessages2)
-class OptMessage2Config(DailyMessagesVisibilityMixin, admin.ModelAdmin):
+class OptMessage2Config(admin.ModelAdmin):
     """Optional webhook stream #2."""
     search_fields = ["text"]
     list_display = ["text", "sent_in_cycle"]
 
 
 @admin.register(OptMessages3)
-class OptMessage3Config(DailyMessagesVisibilityMixin, admin.ModelAdmin):
+class OptMessage3Config(admin.ModelAdmin):
     """Optional webhook stream #3."""
     search_fields = ["text"]
     list_display = ["text", "sent_in_cycle"]
 
 
 @admin.register(OptMessages4)
-class OptMessage4Config(DailyMessagesVisibilityMixin, admin.ModelAdmin):
+class OptMessage4Config(admin.ModelAdmin):
     """Optional webhook stream #4."""
     search_fields = ["text"]
     list_display = ["text", "sent_in_cycle"]
 
 
 @admin.register(OptMessages5)
-class OptMessage5Config(DailyMessagesVisibilityMixin, admin.ModelAdmin):
+class OptMessage5Config(admin.ModelAdmin):
     """Optional webhook stream #5."""
     search_fields = ["text"]
     list_display = ["text", "sent_in_cycle"]
@@ -405,19 +341,19 @@ class UserStatusConfig(admin.ModelAdmin):
 
 
 @admin.register(ComplianceTicket)
-class ComplianceTicketConfig(TicketModuleVisibilityMixin, admin.ModelAdmin):
+class ComplianceTicketConfig(admin.ModelAdmin):
     """History of tickets issued by the automation layer."""
     list_display = ["user", "ticket_id", "reason"]
 
 
 @admin.register(LeaveRequest)
-class LeaveRequestConfig(LoaModuleVisibilityMixin, admin.ModelAdmin):
+class LeaveRequestConfig(admin.ModelAdmin):
     """Expose LeaveRequest records to staff when LoA is enabled."""
     list_display = ["main_character", "start_date", "end_date", "reason", "status"]
 
 
 @admin.register(PapCompliance)
-class PapComplianceConfig(PapModuleVisibilityMixin, admin.ModelAdmin):
+class PapComplianceConfig(admin.ModelAdmin):
     """Shows the most recent PAP compliance calculation per user."""
     search_fields = ["user_profile"]
     list_display = ["user_profile", "pap_compliant"]

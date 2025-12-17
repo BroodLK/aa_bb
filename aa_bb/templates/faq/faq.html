@@ -1,42 +1,497 @@
-<!--
-  FAQ entries for common deployment questions—kept lightweight on purpose.
--->
 {% extends 'faq/base.html' %}
 {% load i18n %}
 
 {% block details %}
-<h1>{% translate "Frequently Asked Questions" %}</h1>
-<p class="lead">
-  {% translate "Highlights from recent support chats with corps deploying BigBrother." %}
-</p>
+<div class="container-fluid">
+  <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+    <div>
+      <h1 class="mb-1">{% translate "BigBrother FAQ" %}</h1>
+      <p class="text-muted mb-0">
+        {% blocktrans %}Common questions about installation, dashboards, Discord notifications, tickets, and configuration.{% endblocktrans %}
+      </p>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary btn-sm" href="#faq-install">{% translate "Install" %}</a>
+      <a class="btn btn-outline-secondary btn-sm" href="#faq-dashboards">{% translate "Dashboards" %}</a>
+      <a class="btn btn-outline-secondary btn-sm" href="#faq-discord">{% translate "Discord" %}</a>
+      <a class="btn btn-outline-secondary btn-sm" href="#faq-troubleshooting">{% translate "Troubleshooting" %}</a>
+    </div>
+  </div>
 
-<h2>{% translate "Data Loading & Performance" %}</h2>
-<dl>
-  <dt>{% translate "Does the cache warmer run for every single user?" %}</dt>
-  <dd>
-    {% blocktrans %}The first time you load a pilot it gathers contracts, mails, and transactions and stores the results for about two months. Subsequent visits are instant until the cache expires. Large corps should still set gunicorn timeouts to 0; the warmer is a best-effort helper but heavy streams can still be killed by strict timeouts.{% endblocktrans %}
-  </dd>
+  <div class="row g-3">
+    <div class="col-lg-4">
+      <div class="card">
+        <div class="card-body">
+          <h5 class="card-title mb-2">{% translate "Quick Notes" %}</h5>
+          <ul class="list-unstyled mb-0">
+            <li class="mb-2">
+              <span class="badge text-bg-warning me-1">{% translate "Beta" %}</span>
+              <span class="text-muted">{% translate "Expect changes; report issues via GitHub." %}</span>
+            </li>
+            <li class="mb-2">
+              <span class="badge text-bg-danger me-1">{% translate "Caution" %}</span>
+              <span class="text-muted">{% translate "Detection logic is in a public repo—operate with discretion." %}</span>
+            </li>
+            <li class="mb-0">
+              <span class="badge text-bg-info me-1">{% translate "Tip" %}</span>
+              <span class="text-muted">{% translate "Threaded Celery workers + disabled gunicorn timeout is strongly recommended." %}</span>
+            </li>
+          </ul>
+        </div>
+      </div>
 
-  <dt>{% translate "We still see cards stalling after warming. Any tips?" %}</dt>
-  <dd>
-    {% blocktrans %}Double-check that <code>is_warmer_active</code> is true and Celery workers are running. Some pilots simply have a lot of data—when that happens, keeping timeouts relaxed is the safest fix.{% endblocktrans %}
-  </dd>
-</dl>
+      <div class="card mt-3">
+        <div class="card-body">
+          <h5 class="card-title mb-2">{% translate "Search" %}</h5>
+          <input id="faqSearch" type="search" class="form-control" placeholder="{% translate 'Type to filter questions…' %}">
+          <div class="form-text">{% translate "Filters questions on this page (client-side)." %}</div>
+        </div>
+      </div>
+    </div>
 
-<h2>{% translate "PAP Workflow" %}</h2>
-<dl>
-  <dt>{% translate "Does the PAP page pull alliance fleets automatically?" %}</dt>
-  <dd>
-    {% blocktrans %}Not yet. For now you paste exported PAP numbers into the form; once alliance APIs are available the import will be automatic.{% endblocktrans %}
-  </dd>
+    <div class="col-lg-8">
+      <div class="accordion" id="bbFaq">
 
-  <dt>{% translate "What happens if someone rejoins after being removed for low PAPs?" %}</dt>
-  <dd>
-    {% blocktrans %}Rejoining members start over with the configured baseline. If you removed them at zero points, they return with the initial value you set in the configuration.{% endblocktrans %}
-  </dd>
-</dl>
+        <!-- GENERAL -->
+        <div class="mb-2" id="faq-general"></div>
+        <h4 class="mb-2">{% translate "General" %}</h4>
 
-<p class="text-muted small">
-  {% translate "Still stuck? Contact support so this list can grow." %}
-</p>
+        <div class="accordion-item" data-faq-item>
+          <h2 class="accordion-header" id="h-general-what">
+            <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#c-general-what" aria-expanded="true" aria-controls="c-general-what">
+              {% translate "What is BigBrother?" %}
+            </button>
+          </h2>
+          <div id="c-general-what" class="accordion-collapse collapse show" aria-labelledby="h-general-what" data-bs-parent="#bbFaq">
+            <div class="accordion-body">
+              <p class="mb-0">
+                {% blocktrans %}
+                BigBrother is an AllianceAuth plugin that performs continuous pilot auditing, compliance monitoring, intelligence gathering,
+                and behavioral analysis. It summarizes risk signals (skills, cyno capability, corp movement, assets, clones, transactions, etc.)
+                in dashboards and structured leadership-focused reports.
+                {% endblocktrans %}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="accordion-item" data-faq-item>
+          <h2 class="accordion-header" id="h-general-visible">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#c-general-visible" aria-expanded="false" aria-controls="c-general-visible">
+              {% translate "Is BigBrother visible to regular members?" %}
+            </button>
+          </h2>
+          <div id="c-general-visible" class="accordion-collapse collapse" aria-labelledby="h-general-visible" data-bs-parent="#bbFaq">
+            <div class="accordion-body">
+              <p class="mb-0">
+                {% blocktrans %}
+                By default, BigBrother is designed for leadership/recruiters and is not visible to general members unless you intentionally expose it.
+                Access is controlled by AllianceAuth permissions.
+                {% endblocktrans %}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="accordion-item" data-faq-item>
+          <h2 class="accordion-header" id="h-general-addchars">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#c-general-addchars" aria-expanded="false" aria-controls="c-general-addchars">
+              {% translate "Do users need to add characters to BigBrother?" %}
+            </button>
+          </h2>
+          <div id="c-general-addchars" class="accordion-collapse collapse" aria-labelledby="h-general-addchars" data-bs-parent="#bbFaq">
+            <div class="accordion-body">
+              <p class="mb-0">
+                {% blocktrans %}
+                No. BigBrother pulls relevant information from CorpTools and AllianceAuth data. There is no BigBrother-specific manual “add character” flow.
+                {% endblocktrans %}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- SECURITY -->
+        <div class="mt-4" id="faq-security"></div>
+        <h4 class="mb-2">{% translate "Security & Privacy" %}</h4>
+
+        <div class="accordion-item" data-faq-item>
+          <h2 class="accordion-header" id="h-sec-public">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#c-sec-public" aria-expanded="false" aria-controls="c-sec-public">
+              {% translate "Can hostiles read detection logic?" %}
+            </button>
+          </h2>
+          <div id="c-sec-public" class="accordion-collapse collapse" aria-labelledby="h-sec-public" data-bs-parent="#bbFaq">
+            <div class="accordion-body">
+              <p>
+                {% blocktrans %}
+                Because the repository is public, anyone can read the detection logic. Hostiles may adapt behavior to reduce visibility.
+                Treat the output as risk signals and operate with discretion.
+                {% endblocktrans %}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="accordion-item" data-faq-item>
+          <h2 class="accordion-header" id="h-sec-spy">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#c-sec-spy" aria-expanded="false" aria-controls="c-sec-spy">
+              {% translate "Does BigBrother bypass permissions or 'spy' on users?" %}
+            </button>
+          </h2>
+          <div id="c-sec-spy" class="accordion-collapse collapse" aria-labelledby="h-sec-spy" data-bs-parent="#bbFaq">
+            <div class="accordion-body">
+              <p class="mb-0">
+                {% blocktrans %}
+                BigBrother consumes data available through AllianceAuth/ESI integrations you already run. It is a leadership auditing and compliance tool;
+                it does not bypass Auth permissions.
+                {% endblocktrans %}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- INSTALL & PERFORMANCE -->
+        <div class="mt-4" id="faq-install"></div>
+        <h4 class="mb-2">{% translate "Install & Performance" %}</h4>
+
+        <div class="accordion-item" data-faq-item>
+          <h2 class="accordion-header" id="h-inst-workers">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#c-inst-workers" aria-expanded="false" aria-controls="c-inst-workers">
+              {% translate "Why do you recommend threaded Celery workers and memmon?" %}
+            </button>
+          </h2>
+          <div id="c-inst-workers" class="accordion-collapse collapse" aria-labelledby="h-inst-workers" data-bs-parent="#bbFaq">
+            <div class="accordion-body">
+              <p class="mb-0">
+                {% blocktrans %}
+                BigBrother runs heavy data pulls, cache warming, and streaming dashboard work. Threaded workers and memmon help maintain throughput while controlling memory usage.
+                {% endblocktrans %}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="accordion-item" data-faq-item>
+          <h2 class="accordion-header" id="h-inst-timeout">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#c-inst-timeout" aria-expanded="false" aria-controls="c-inst-timeout">
+              {% translate "Do I really need to disable the gunicorn timeout?" %}
+            </button>
+          </h2>
+          <div id="c-inst-timeout" class="accordion-collapse collapse" aria-labelledby="h-inst-timeout" data-bs-parent="#bbFaq">
+            <div class="accordion-body">
+              <p>
+                {% blocktrans %}
+                Strongly recommended. Dashboards can rely on long-running streaming requests; gunicorn timeouts can kill streams early and cards may never finish loading.
+                {% endblocktrans %}
+              </p>
+              <div class="alert alert-info mb-0">
+                <strong>{% translate "If you can't disable timeout:" %}</strong>
+                {% translate "You should keep the cache warmer enabled and expect some streams to fail on first load." %}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="accordion-item" data-faq-item>
+          <h2 class="accordion-header" id="h-inst-states">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#c-inst-states" aria-expanded="false" aria-controls="c-inst-states">
+              {% translate "Why must I configure Member / Guest states?" %}
+            </button>
+          </h2>
+          <div id="c-inst-states" class="accordion-collapse collapse" aria-labelledby="h-inst-states" data-bs-parent="#bbFaq">
+            <div class="accordion-body">
+              <p class="mb-0">
+                {% blocktrans %}
+                BigBrother needs your state definitions to know who counts as a member (notify and track), who counts as a guest (preload but don’t notify),
+                and who should be ignored. Missing this configuration will break expected behavior.
+                {% endblocktrans %}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- DASHBOARDS -->
+        <div class="mt-4" id="faq-dashboards"></div>
+        <h4 class="mb-2">{% translate "Dashboards" %}</h4>
+
+        <div class="accordion-item" data-faq-item>
+          <h2 class="accordion-header" id="h-dash-what">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#c-dash-what" aria-expanded="false" aria-controls="c-dash-what">
+              {% translate "What does the BigBrother pilot dashboard show?" %}
+            </button>
+          </h2>
+          <div id="c-dash-what" class="accordion-collapse collapse" aria-labelledby="h-dash-what" data-bs-parent="#bbFaq">
+            <div class="accordion-body">
+              <p class="mb-2">
+                {% blocktrans %}
+                Selecting a user displays multiple analytical cards (blacklist status, audit completion, corp history, AWOX signals, account state,
+                hostile clones/assets/contacts/contracts, suspicious mails/transactions, cyno and skill checks).
+                {% endblocktrans %}
+              </p>
+              <p class="mb-0 text-muted">
+                {% translate "These are risk signals meant to guide review—use judgment and context." %}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="accordion-item" data-faq-item>
+          <h2 class="accordion-header" id="h-dash-slow">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#c-dash-slow" aria-expanded="false" aria-controls="c-dash-slow">
+              {% translate "Why do some cards load slowly?" %}
+            </button>
+          </h2>
+          <div id="c-dash-slow" class="accordion-collapse collapse" aria-labelledby="h-dash-slow" data-bs-parent="#bbFaq">
+            <div class="accordion-body">
+              <p class="mb-0">
+                {% blocktrans %}
+                Some cards stream results and/or depend on warmed caches and larger datasets. This is expected. The first run for a user can take longer.
+                {% endblocktrans %}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="accordion-item" data-faq-item>
+          <h2 class="accordion-header" id="h-dash-greenred">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#c-dash-greenred" aria-expanded="false" aria-controls="c-dash-greenred">
+              {% translate "Why does a card stay green and then flip to red?" %}
+            </button>
+          </h2>
+          <div id="c-dash-greenred" class="accordion-collapse collapse" aria-labelledby="h-dash-greenred" data-bs-parent="#bbFaq">
+            <div class="accordion-body">
+              <p class="mb-0">
+                {% blocktrans %}
+                Streaming cards may remain green until the first hostile/suspicious row is detected. Once the first flagged entry arrives, the card status updates immediately.
+                {% endblocktrans %}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="accordion-item" data-faq-item>
+          <h2 class="accordion-header" id="h-dash-corp">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#c-dash-corp" aria-expanded="false" aria-controls="c-dash-corp">
+              {% translate "What is the Corp Dashboard?" %}
+            </button>
+          </h2>
+          <div id="c-dash-corp" class="accordion-collapse collapse" aria-labelledby="h-dash-corp" data-bs-parent="#bbFaq">
+            <div class="accordion-body">
+              <p class="mb-0">
+                {% blocktrans %}
+                The Corp Dashboard applies the same hostile logic to corporation-level audits (transactions, contracts, hostile asset placement). It’s functional but receives less focus than the pilot dashboard.
+                {% endblocktrans %}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- DISCORD -->
+        <div class="mt-4" id="faq-discord"></div>
+        <h4 class="mb-2">{% translate "Discord & Messaging" %}</h4>
+
+        <div class="accordion-item" data-faq-item>
+          <h2 class="accordion-header" id="h-discord-serialized">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#c-discord-serialized" aria-expanded="false" aria-controls="c-discord-serialized">
+              {% translate "How are Discord notifications handled?" %}
+            </button>
+          </h2>
+          <div id="c-discord-serialized" class="accordion-collapse collapse" aria-labelledby="h-discord-serialized" data-bs-parent="#bbFaq">
+            <div class="accordion-body">
+              <p class="mb-0">
+                {% blocktrans %}
+                Outbound Discord notifications are serialized through a dedicated task to prevent overlap and ensure messages arrive in chronological order.
+                {% endblocktrans %}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="accordion-item" data-faq-item>
+          <h2 class="accordion-header" id="h-discord-control">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#c-discord-control" aria-expanded="false" aria-controls="c-discord-control">
+              {% translate "Can I control what gets posted to Discord and who gets pinged?" %}
+            </button>
+          </h2>
+          <div id="c-discord-control" class="accordion-collapse collapse" aria-labelledby="h-discord-control" data-bs-parent="#bbFaq">
+            <div class="accordion-body">
+              <p class="mb-0">
+                {% blocktrans %}
+                Yes. You can configure notification types, which states trigger updates, role pings, @here/@everyone rules, and webhooks for main, LOA, daily, optional, and recurring messages.
+                {% endblocktrans %}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="accordion-item" data-faq-item>
+          <h2 class="accordion-header" id="h-discord-threads">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#c-discord-threads" aria-expanded="false" aria-controls="c-discord-threads">
+              {% translate "Can I send BigBrother notifications to a Discord thread?" %}
+            </button>
+          </h2>
+          <div id="c-discord-threads" class="accordion-collapse collapse" aria-labelledby="h-discord-threads" data-bs-parent="#bbFaq">
+            <div class="accordion-body">
+              <p class="mb-2">{% translate "Yes. Append a thread_id query string to the webhook URL." %}</p>
+              <pre class="mb-0"><code>https://discordapp.com/api/webhooks/&lt;id&gt;/&lt;token&gt;?thread_id=&lt;threadid&gt;</code></pre>
+              <div class="form-text">{% translate "The thread must be in the same channel as the webhook." %}</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- TICKETS -->
+        <div class="mt-4" id="faq-tickets"></div>
+        <h4 class="mb-2">{% translate "Tickets" %}</h4>
+
+        <div class="accordion-item" data-faq-item>
+          <h2 class="accordion-header" id="h-tickets-what">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#c-tickets-what" aria-expanded="false" aria-controls="c-tickets-what">
+              {% translate "What is the ticket system for?" %}
+            </button>
+          </h2>
+          <div id="c-tickets-what" class="accordion-collapse collapse" aria-labelledby="h-tickets-what" data-bs-parent="#bbFaq">
+            <div class="accordion-body">
+              <p class="mb-2">
+                {% blocktrans %}
+                BigBrother can automatically generate tickets to notify leadership when pilots violate configured compliance or operational rules.
+                {% endblocktrans %}
+              </p>
+              <ul class="mb-0">
+                <li>{% translate "PAP compliance and activity thresholds" %}</li>
+                <li>{% translate "Charlink compliance filters" %}</li>
+                <li>{% translate "Character removal from Auth" %}</li>
+                <li>{% translate "AWOX activity" %}</li>
+                <li>{% translate "Missing corp audits (director role)" %}</li>
+                <li>{% translate "AFK detection without LOA" %}</li>
+                <li>{% translate "Missing Discord link" %}</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <div class="accordion-item" data-faq-item>
+          <h2 class="accordion-header" id="h-tickets-close">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#c-tickets-close" aria-expanded="false" aria-controls="c-tickets-close">
+              {% translate "How are tickets closed?" %}
+            </button>
+          </h2>
+          <div id="c-tickets-close" class="accordion-collapse collapse" aria-labelledby="h-tickets-close" data-bs-parent="#bbFaq">
+            <div class="accordion-body">
+              <p class="mb-0">
+                {% blocktrans %}
+                Tickets are created as channels under a category. Deleting the channel closes the ticket.
+                {% endblocktrans %}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="accordion-item" data-faq-item>
+          <h2 class="accordion-header" id="h-tickets-exempt">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#c-tickets-exempt" aria-expanded="false" aria-controls="c-tickets-exempt">
+              {% translate "Can users be exempted from tickets?" %}
+            </button>
+          </h2>
+          <div id="c-tickets-exempt" class="accordion-collapse collapse" aria-labelledby="h-tickets-exempt" data-bs-parent="#bbFaq">
+            <div class="accordion-body">
+              <p class="mb-0">
+                {% blocktrans %}
+                Yes. Users can be marked exempt from specific checks to avoid unnecessary ticket spam.
+                {% endblocktrans %}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- RECURRING STATS -->
+        <div class="mt-4" id="faq-stats"></div>
+        <h4 class="mb-2">{% translate "Recurring Stats" %}</h4>
+
+        <div class="accordion-item" data-faq-item>
+          <h2 class="accordion-header" id="h-stats-what">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#c-stats-what" aria-expanded="false" aria-controls="c-stats-what">
+              {% translate "What are recurring stats?" %}
+            </button>
+          </h2>
+          <div id="c-stats-what" class="accordion-collapse collapse" aria-labelledby="h-stats-what" data-bs-parent="#bbFaq">
+            <div class="accordion-body">
+              <p class="mb-0">
+                {% blocktrans %}
+                Recurring stats send periodic AllianceAuth statistics to a webhook on a schedule you control.
+                {% endblocktrans %}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- TROUBLESHOOTING -->
+        <div class="mt-4" id="faq-troubleshooting"></div>
+        <h4 class="mb-2">{% translate "Troubleshooting" %}</h4>
+
+        <div class="accordion-item" data-faq-item>
+          <h2 class="accordion-header" id="h-trouble-duplicate">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#c-trouble-duplicate" aria-expanded="false" aria-controls="c-trouble-duplicate">
+              {% translate "Auth won't start after upgrading (duplicate tasks)" %}
+            </button>
+          </h2>
+          <div id="c-trouble-duplicate" class="accordion-collapse collapse" aria-labelledby="h-trouble-duplicate" data-bs-parent="#bbFaq">
+            <div class="accordion-body">
+              <p class="mb-0">
+                {% blocktrans %}
+                A rare but serious issue can occur where duplicate Celery Beat schedules are created. Use the README “Fix duplicated tasks error” SQL steps
+                to identify duplicates, reassign tasks, and remove the extra schedule.
+                {% endblocktrans %}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="accordion-item" data-faq-item>
+          <h2 class="accordion-header" id="h-trouble-streams">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#c-trouble-streams" aria-expanded="false" aria-controls="c-trouble-streams">
+              {% translate "Dashboards never finish loading / streams fail" %}
+            </button>
+          </h2>
+          <div id="c-trouble-streams" class="accordion-collapse collapse" aria-labelledby="h-trouble-streams" data-bs-parent="#bbFaq">
+            <div class="accordion-body">
+              <ul class="mb-0">
+                <li>{% translate "Disable gunicorn timeout (or expect streams to be killed)." %}</li>
+                <li>{% translate "Keep cache warmer enabled for first-time loads." %}</li>
+                <li>{% translate "Use threaded Celery workers and memmon to control memory pressure." %}</li>
+                <li>{% translate "Confirm required prerequisite apps are installed and configured." %}</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="text-muted small mt-3">
+        {% blocktrans %}This FAQ is generated from the project README and is intended for operators/admins.{% endblocktrans %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const input = document.getElementById('faqSearch');
+  if (!input) return;
+
+  const items = Array.from(document.querySelectorAll('[data-faq-item]'));
+  function normalize(s) { return (s || '').toLowerCase(); }
+
+  input.addEventListener('input', () => {
+    const q = normalize(input.value).trim();
+    if (!q) {
+      items.forEach(el => el.classList.remove('d-none'));
+      return;
+    }
+    items.forEach(el => {
+      const text = normalize(el.innerText);
+      el.classList.toggle('d-none', !text.includes(q));
+    });
+  });
+})();
+</script>
 {% endblock %}

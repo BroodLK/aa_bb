@@ -6,9 +6,11 @@ from celery import shared_task
 
 from .models import (
     UserStatus,
-    BigBrotherConfig
+    BigBrotherConfig,
+    NeutralHandling,
+    TicketToolConfig,
+    AA_CONTACTS_INSTALLED
 )
-from .modelss import TicketToolConfig
 
 from .app_settings import (
     resolve_character_name,
@@ -50,6 +52,7 @@ from allianceauth.services.hooks import get_extension_logger
 
 logger = get_extension_logger(__name__)
 VERBOSE_WEBHOOK_LOGGING = True
+
 def send_status_embed(
     subject: str,
     lines: list[str],
@@ -1099,7 +1102,7 @@ def BB_run_regular_updates():
 
     Workflow:
       1. Ensure the singleton config exists and derive the primary corp/alliance
-         from a superuser alt (also toggling DLC flags when applicable).
+         from a superuser alt.
       2. Iterate through every user returned by `get_users()`.
       3. For each user, recalculates every signal (awox, cyno, skills, hostiles,
          etc.), compares against the previous snapshot, and appends human-readable
@@ -1109,8 +1112,7 @@ def BB_run_regular_updates():
       5. Persist the updated `UserStatus` row so the dashboard stays in sync.
 
     Section overview:
-      • Config bootstrap: lines 22–58 – ensure `BigBrotherConfig` is populated and
-        that DLC flags mirror the currently discovered corp/alliance.
+      • Config bootstrap: lines 22–58 – ensure `BigBrotherConfig` is populated.
       • User iteration: lines 60–138 – loop through every member returned by
         `get_users`, fetch all relevant check data, and compute summary flags.
       • Change detection: lines 140 onwards – compare each check’s result with the
@@ -1146,9 +1148,6 @@ def BB_run_regular_updates():
             instance.main_corporation = corp_name
             instance.main_alliance_id = alliance_id
             instance.main_alliance = alliance_name
-
-            for field_name in BigBrotherConfig.DLC_FLAG_MAP.values():
-                setattr(instance, field_name, True)
 
         instance.save()
 
@@ -1267,3 +1266,265 @@ def BB_send_discord_notifications(subject: str, chunks: list[list[str]]) -> None
             override_title="",  # keep titles minimal; content is in the body
         )
         time.sleep(0.25)  # tiny delay to be nice to the webhook
+def _merge_id_text(existing_text: str | None, new_ids: set[int]) -> str:
+    existing_ids: set[int] = set()
+
+    if existing_text:
+        for part in existing_text.split(","):
+            part = part.strip()
+            if part.isdigit():
+                existing_ids.add(int(part))
+
+    combined = existing_ids | set(new_ids)
+    if not combined:
+        return ""
+
+    return ",".join(str(i) for i in sorted(combined))
+
+
+def _parse_id_text(existing_text: str | None) -> set[int]:
+    ids: set[int] = set()
+    if not existing_text:
+        return ids
+
+    for part in str(existing_text).split(","):
+        part = part.strip()
+        if part.isdigit():
+            ids.add(int(part))
+    return ids
+
+
+def _get_id_set(cfg, field_name: str, id_attr: str) -> set[int]:
+    """
+    Supports BOTH:
+      - ManyToMany manager (has .values_list)
+      - TextField CSV of IDs
+    """
+    val = getattr(cfg, field_name, None)
+    if val is None:
+        return set()
+
+    if hasattr(val, "values_list"):
+        return set(val.values_list(id_attr, flat=True))
+
+    # TextField CSV path
+    return _parse_id_text(val)
+
+
+def _add_ids(cfg, field_name: str, ids: set[int]) -> bool:
+    """
+    Supports BOTH:
+      - ManyToMany manager (has .add)
+      - TextField CSV of IDs
+    Returns True if it changed something.
+    """
+    if not ids:
+        return False
+
+    val = getattr(cfg, field_name, None)
+    if val is None:
+        return False
+
+    if hasattr(val, "add"):
+        val.add(*list(ids))
+        return True
+
+    # TextField CSV path
+    current = getattr(cfg, field_name)
+    merged = _merge_id_text(current, ids)
+    if (current or "") != (merged or ""):
+        setattr(cfg, field_name, merged)
+        return True
+
+    return False
+
+
+def _remove_ids(cfg, field_name: str, ids: set[int]) -> bool:
+    """
+    Remove a set of IDs from a config field that may be:
+      - A ManyToMany manager, or
+      - A CSV TextField of IDs.
+
+    Only removes the given IDs; anything else (e.g. manually
+    added values that were never imported) is preserved.
+    """
+    if not ids:
+        return False
+
+    val = getattr(cfg, field_name, None)
+    if val is None:
+        return False
+
+    if hasattr(val, "remove"):
+        # ManyToMany path: remove by ID
+        val.remove(*list(ids))
+        return True
+
+    # TextField CSV path
+    current_ids = _parse_id_text(getattr(cfg, field_name))
+    new_ids = current_ids - set(ids)
+    new_text = ",".join(str(i) for i in sorted(new_ids)) if new_ids else ""
+
+    if (getattr(cfg, field_name) or "") != (new_text or ""):
+        setattr(cfg, field_name, new_text)
+        return True
+
+    return False
+
+
+@shared_task(bind=True, name="aa_bb.tasks.BB_sync_contacts_from_aa_contacts")
+def BB_sync_contacts_from_aa_contacts(self):
+    """
+    Sync standings from aa-contacts into BigBrother hostiles/members/whitelists.
+
+    Behaviour:
+      - No-ops if aa_contacts is not installed or contacts_source_alliances
+        is empty / missing.
+      - Adds NEW contacts from aa-contacts into the correct sets.
+      - Removes contacts that were previously imported from aa-contacts but
+        no longer appear there.
+      - Never touches IDs that were manually added directly in BigBrother.
+    """
+    if not AA_CONTACTS_INSTALLED:
+        return
+
+    from .models import BigBrotherConfig
+
+    try:
+        cfg = BigBrotherConfig.get_solo()
+    except Exception:
+        return
+
+    source_alliances_field = getattr(cfg, "contacts_source_alliances", None)
+    if source_alliances_field is None or not source_alliances_field.exists():
+        return
+
+    try:
+        from aa_contacts.models import AllianceContact
+    except Exception:
+        return
+
+    # Existing config sets (works for M2M or CSV TextFields)
+    hostile_alliances   = _get_id_set(cfg, "hostile_alliances", "alliance_id")
+    hostile_corps       = _get_id_set(cfg, "hostile_corporations", "corporation_id")
+    member_alliances    = _get_id_set(cfg, "member_alliances", "alliance_id")
+    member_corps        = _get_id_set(cfg, "member_corporations", "corporation_id")
+    whitelist_alliances = _get_id_set(cfg, "whitelist_alliances", "alliance_id")
+    whitelist_corps     = _get_id_set(cfg, "whitelist_corporations", "corporation_id")
+
+    neutral_mode = getattr(cfg, "contacts_handle_neutrals", "ignore")
+
+    # What aa-contacts says *now*
+    new_hostile_alliances: set[int] = set()
+    new_hostile_corps: set[int] = set()
+    new_member_alliances: set[int] = set()
+    new_member_corps: set[int] = set()
+    new_whitelist_alliances: set[int] = set()
+    new_whitelist_corps: set[int] = set()
+
+    for src_alliance in source_alliances_field.all():
+        contacts_qs = AllianceContact.objects.filter(alliance=src_alliance)
+        for c in contacts_qs.iterator():
+            target_id = int(c.contact_id)
+
+            if c.contact_type == c.ContactTypeOptions.ALLIANCE:
+                if c.standing > 0:
+                    new_member_alliances.add(target_id)
+                elif c.standing < 0:
+                    new_hostile_alliances.add(target_id)
+                else:
+                    if neutral_mode == "hostile":
+                        new_hostile_alliances.add(target_id)
+                    elif neutral_mode == "whitelist":
+                        new_whitelist_alliances.add(target_id)
+
+            elif c.contact_type == c.ContactTypeOptions.CORPORATION:
+                if c.standing > 0:
+                    new_member_corps.add(target_id)
+                elif c.standing < 0:
+                    new_hostile_corps.add(target_id)
+                else:
+                    if neutral_mode == "hostile":
+                        new_hostile_corps.add(target_id)
+                    elif neutral_mode == "whitelist":
+                        new_whitelist_corps.add(target_id)
+
+    # Previous import snapshot (what we imported last time)
+    cache = getattr(cfg, "contacts_import_cache", {}) or {}
+    old_member_alliances    = set(cache.get("member_alliances", []))
+    old_member_corps        = set(cache.get("member_corps", []))
+    old_hostile_alliances   = set(cache.get("hostile_alliances", []))
+    old_hostile_corps       = set(cache.get("hostile_corps", []))
+    old_whitelist_alliances = set(cache.get("whitelist_alliances", []))
+    old_whitelist_corps     = set(cache.get("whitelist_corps", []))
+
+    changed = False
+
+    # ---------- ADDITIONS ----------
+    add_member_alliances = {
+        a for a in new_member_alliances
+        if a not in member_alliances and a not in whitelist_alliances
+    }
+    changed |= _add_ids(cfg, "member_alliances", add_member_alliances)
+
+    add_member_corps = {
+        c for c in new_member_corps
+        if c not in member_corps and c not in whitelist_corps
+    }
+    changed |= _add_ids(cfg, "member_corporations", add_member_corps)
+
+    add_hostile_alliances = {
+        a for a in new_hostile_alliances
+        if a not in hostile_alliances and a not in whitelist_alliances
+    }
+    changed |= _add_ids(cfg, "hostile_alliances", add_hostile_alliances)
+
+    add_hostile_corps = {
+        c for c in new_hostile_corps
+        if c not in hostile_corps and c not in whitelist_corps
+    }
+    changed |= _add_ids(cfg, "hostile_corporations", add_hostile_corps)
+
+    add_whitelist_alliances = {
+        a for a in new_whitelist_alliances
+        if a not in whitelist_alliances
+    }
+    changed |= _add_ids(cfg, "whitelist_alliances", add_whitelist_alliances)
+
+    add_whitelist_corps = {
+        c for c in new_whitelist_corps
+        if c not in whitelist_corps
+    }
+    changed |= _add_ids(cfg, "whitelist_corporations", add_whitelist_corps)
+
+    # ---------- REMOVALS (ONLY IDs WE PREVIOUSLY IMPORTED) ----------
+    remove_member_alliances = old_member_alliances - new_member_alliances
+    remove_member_corps     = old_member_corps - new_member_corps
+    remove_hostile_alliances = old_hostile_alliances - new_hostile_alliances
+    remove_hostile_corps     = old_hostile_corps - new_hostile_corps
+    remove_whitelist_alliances = old_whitelist_alliances - new_whitelist_alliances
+    remove_whitelist_corps     = old_whitelist_corps - new_whitelist_corps
+
+    changed |= _remove_ids(cfg, "member_alliances", remove_member_alliances)
+    changed |= _remove_ids(cfg, "member_corporations", remove_member_corps)
+    changed |= _remove_ids(cfg, "hostile_alliances", remove_hostile_alliances)
+    changed |= _remove_ids(cfg, "hostile_corporations", remove_hostile_corps)
+    changed |= _remove_ids(cfg, "whitelist_alliances", remove_whitelist_alliances)
+    changed |= _remove_ids(cfg, "whitelist_corporations", remove_whitelist_corps)
+
+    # ---------- UPDATE IMPORT CACHE ----------
+    new_cache = {
+        "member_alliances": sorted(new_member_alliances),
+        "member_corps": sorted(new_member_corps),
+        "hostile_alliances": sorted(new_hostile_alliances),
+        "hostile_corps": sorted(new_hostile_corps),
+        "whitelist_alliances": sorted(new_whitelist_alliances),
+        "whitelist_corps": sorted(new_whitelist_corps),
+    }
+
+    if cache != new_cache:
+        cfg.contacts_import_cache = new_cache
+        changed = True
+
+    if changed:
+        cfg.save()

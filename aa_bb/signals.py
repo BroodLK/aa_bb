@@ -11,9 +11,8 @@ from django.db.models.signals import post_save, pre_delete
 
 from allianceauth.authentication.models import CharacterOwnership
 
-from .models import BigBrotherConfig
+from .models import BigBrotherConfig, TicketToolConfig
 from .tasks import BB_register_message_tasks
-from .modelss import TicketToolConfig
 from .app_settings import send_message
 
 import logging

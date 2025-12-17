@@ -28,9 +28,14 @@ from .models import (
     OptMessages4, OptMessages5
 )
 from .models import (
-    ProcessedContract, SusContractNote,
-    ProcessedMail, SusMailNote,
-    ProcessedTransaction, SusTransactionNote,
+    ProcessedContract,
+    SusContractNote,
+    ProcessedMail,
+    SusMailNote,
+    ProcessedTransaction,
+    SusTransactionNote,
+    PapCompliance,
+    LeaveRequest
 )
 from .app_settings import (
     send_message,
@@ -57,7 +62,6 @@ try:
     )
 except ImportError:
     logger.error("corptools not installed, CB tasks will not be available.")
-from .modelss import PapCompliance, LeaveRequest
 
 from django.db import transaction
 
@@ -228,19 +232,8 @@ def _chunk_embed_lines(lines: list[str], max_chars: int = 1900) -> list[list[str
 def CB_run_regular_updates():
     """
     Update CorpBrother caches: hostile assets, contracts, transactions, LoA, and PAPs.
-
-    Steps:
-      1. Abort immediately if the DLC is not enabled.
-      2. Fetch corporation ids with an audit record, skipping ignored corpids.
-      3. Refresh or create `CorpStatus` rows and emit Discord messages when new
-         hostile signals are detected.
-      4. Catch errors, disable the task, and stream the traceback to Discord.
     """
     instance = BigBrotherConfig.get_solo()
-
-    if not instance.dlc_corp_brother_active:  # DLC not purchased → skip entirely
-        logger.info("Corp Brother DLC disabled; skipping CB_run_regular_updates.")
-        return
 
     try:
         if instance.is_active:  # only run when the install is active/licensed
@@ -587,8 +580,6 @@ def get_ali_character_names(ali_id: int) -> str:
 def BB_send_daily_messages():
     """Send one random daily message to the configured webhook each run."""
     config = BigBrotherConfig.get_solo()
-    if not config.dlc_daily_messages_active:  # DLC disabled → skip entirely
-        return
     webhook = config.dailywebhook
     enabled = config.are_daily_messages_active
 
@@ -615,10 +606,8 @@ def BB_send_daily_messages():
 
 @shared_task
 def BB_send_opt_message1():
-    """Send one optional message #1 if enabled and DLC active."""
+    """Send one optional message #1 if enabled"""
     config = BigBrotherConfig.get_solo()
-    if not config.dlc_daily_messages_active:  # Skip entirely when DLC disabled.
-        return
     webhook = config.optwebhook1
     enabled = config.are_opt_messages1_active
 
@@ -647,8 +636,6 @@ def BB_send_opt_message1():
 def BB_send_opt_message2():
     """Optional message stream #2."""
     config = BigBrotherConfig.get_solo()
-    if not config.dlc_daily_messages_active:  # DLC off → never send.
-        return
     webhook = config.optwebhook2
     enabled = config.are_opt_messages2_active
 
@@ -677,8 +664,6 @@ def BB_send_opt_message2():
 def BB_send_opt_message3():
     """Optional message stream #3."""
     config = BigBrotherConfig.get_solo()
-    if not config.dlc_daily_messages_active:  # Skip when DLC disabled.
-        return
     webhook = config.optwebhook3
     enabled = config.are_opt_messages3_active
 
@@ -707,8 +692,6 @@ def BB_send_opt_message3():
 def BB_send_opt_message4():
     """Optional message stream #4."""
     config = BigBrotherConfig.get_solo()
-    if not config.dlc_daily_messages_active:  # DLC off → skip.
-        return
     webhook = config.optwebhook4
     enabled = config.are_opt_messages4_active
 
@@ -737,8 +720,6 @@ def BB_send_opt_message4():
 def BB_send_opt_message5():
     """Optional message stream #5."""
     config = BigBrotherConfig.get_solo()
-    if not config.dlc_daily_messages_active:  # DLC off → skip entire task.
-        return
     webhook = config.optwebhook5
     enabled = config.are_opt_messages5_active
 
@@ -768,24 +749,8 @@ def BB_send_opt_message5():
 def BB_register_message_tasks():
     """
     Ensure the celery-beat entries exist for the daily/optional message streams.
-    Deletes tasks outright when the DLC is disabled.
     """
     logger.info("🔄 Running BB_register_message_tasks...")
-
-    config = BigBrotherConfig.get_solo()
-    if not config.dlc_daily_messages_active:  # remove scheduled tasks when DLC off
-        PeriodicTask.objects.filter(
-            name__in=[
-                "BB send daily message",
-                "BB send optional message 1",
-                "BB send optional message 2",
-                "BB send optional message 3",
-                "BB send optional message 4",
-                "BB send optional message 5",
-            ]
-        ).delete()
-        logger.info("Daily message DLC disabled; skipping task registration.")
-        return
 
     # Default fallback schedule (12:00 UTC daily)
     default_schedule, _ = CrontabSchedule.objects.get_or_create(
@@ -846,6 +811,7 @@ def BB_register_message_tasks():
     for task_info in tasks:
         name = task_info["name"]
         task_path = task_info["task_path"]
+        config = BigBrotherConfig.get_solo()
         schedule = getattr(config, task_info["schedule_attr"], None) or default_schedule
         is_active = getattr(config, task_info["active_attr"], False)
 
@@ -888,18 +854,11 @@ def BB_run_regular_loa_updates():
     """
     Scan every member main and update LoA statuses / inactivity flags.
 
-    - Skips entirely when the LoA DLC or feature toggle is off.
     - Marks approved requests as in-progress/finished based on dates.
     - Sends LoA inactivity warnings when a pilot exceeds the allowed logoff days
       without an LoA in progress.
     """
     cfg = BigBrotherConfig.get_solo()
-    if not cfg.dlc_loa_active:  # Bail out when LoA DLC is not purchased.
-        logger.info("LoA DLC disabled; skipping BB_run_regular_loa_updates.")
-        return
-    if not cfg.is_loa_active:  # Admin turned off the LoA feature.
-        logger.info("LoA feature disabled; skipping updates.")
-        return
     member_states = BigBrotherConfig.get_solo().bb_member_states.all()
     qs_profiles = (
         UserProfile.objects
@@ -977,12 +936,10 @@ def BB_daily_DB_cleanup():
     """
     from .models import (
         Alliance_names, Character_names, Corporation_names, UserStatus, EntityInfoCache,
-        id_types,
+        id_types, CharacterEmploymentCache, FrequentCorpChangesCache, CurrentStintCache, AwoxKillsCache,
+        CorporationInfoCache, AllianceHistoryCache, SovereigntyMapCache
     )
-    from .modelss import (
-        CharacterEmploymentCache, FrequentCorpChangesCache, CurrentStintCache, AwoxKillsCache,
-        CorporationInfoCache, AllianceHistoryCache, SovereigntyMapCache,
-    )
+
     two_months_ago = timezone.now() - timedelta(days=60)
     flags = []
     #Delete old model entries

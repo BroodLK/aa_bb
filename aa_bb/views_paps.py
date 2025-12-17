@@ -13,8 +13,7 @@ from django.conf import settings
 from django.utils.timezone import now
 from django.urls import reverse
 
-from .models import BigBrotherConfig, PapsConfig
-from .modelss import PapCompliance, TicketToolConfig, LeaveRequest
+from .models import BigBrotherConfig, PapsConfig, PapCompliance, TicketToolConfig, LeaveRequest
 from .app_settings import get_user_profiles, get_user_characters, afat_active
 
 try:

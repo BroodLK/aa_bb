@@ -1,4 +1,24 @@
 {% load i18n %}
+<head>
+    <style>
+        /* Force 2-column settings tables to align */
+        .table.settings,
+        .table.settings thead th,
+        .table.settings tbody td {
+            width: 50%;
+        }
+
+        /* Ensure fixed layout so widths are respected */
+        .table.settings {
+            table-layout: fixed;
+        }
+
+        /* Optional: prevent long text from breaking layout */
+        .table.settings td {
+            word-wrap: break-word;
+        }
+    </style>
+</head>
 <ul class="nav nav-pills mb-4">
   <li class="nav-item">
     <a
