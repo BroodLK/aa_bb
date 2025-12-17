@@ -356,7 +356,7 @@ def BB_update_single_user(user_id, char_name):
             status, created = UserStatus.objects.get_or_create(user_id=user_id)
 
             # On the very first run for this user, silently create a baseline
-            if not BigBrotherConfig.new_user_notify:
+            if not instance.new_user_notify:
                 send_notifications = not created
             else:
                 send_notifications = True
@@ -397,7 +397,7 @@ def BB_update_single_user(user_id, char_name):
 
                 # final summary message
                 if flagggs:  # only when changes are detected should notifications and saves occur
-                    if BigBrotherConfig.clone_notify:
+                    if instance.clone_notify:
                         changes.append(f"###{pinggg} Clone state change detected:{''.join(flagggs)}")
                     status.clone_status = state_result
                     status.save()
@@ -444,7 +444,7 @@ def BB_update_single_user(user_id, char_name):
 
                 if flaggs:  # only send notification when at least one character’s ratio increased
                     sp_list = "".join(flaggs)
-                    if BigBrotherConfig.sp_inject_notify:
+                    if instance.sp_inject_notify:
                         changes.append(f"## {get_pings('SP Injected')} Skill Injection detected:\n{sp_list}")
 
             status.sp_age_ratio_result = sp_age_ratio_result
@@ -473,12 +473,12 @@ def BB_update_single_user(user_id, char_name):
                 logger.info(f"{char_name} old links {link_list2}")
                 if status.has_awox_kills != has_awox and has_awox:  # first time awox kills were spotted for this user
                     if not has_awox:
-                        if BigBrotherConfig.awox_notify:
+                        if instance.awox_notify:
                             changes.append(f"### AWOX Kill Status: 🟢")
                     status.has_awox_kills = has_awox
                     logger.info(f"{char_name} changed")
                 if new_links:  # send notifications only for links not yet alerted on
-                    if BigBrotherConfig.awox_notify:
+                    if instance.awox_notify:
                         changes.append(f"###{get_pings('AwoX')} New AWOX Kill(s):\n{link_list}")
                     logger.info(f"{char_name} new links")
                     tcfg = TicketToolConfig.get_solo()
@@ -518,7 +518,7 @@ def BB_update_single_user(user_id, char_name):
                 # 1) Flag change for top-level boolean
                 if status.has_cyno != has_cyno:  # flip the top-level boolean when overall readiness changes
                     if not has_cyno:
-                        if BigBrotherConfig.cyno_notify:
+                        if instance.cyno_notify:
                             changes.append(f"### Cyno Status: 🟢")
                     status.has_cyno = has_cyno
 
@@ -587,7 +587,7 @@ def BB_update_single_user(user_id, char_name):
                     ]
 
                     if changed_chars:  # only build table output when specific characters changed
-                        if BigBrotherConfig.cyno_notify:
+                        if instance.cyno_notify:
                             changes.append(f"###{get_pings('All Cyno Changes')} Changes in cyno capabilities detected:")
 
                     for charname in changed_chars:
@@ -603,7 +603,7 @@ def BB_update_single_user(user_id, char_name):
                             pingrole = get_pings('Can Light Cyno')
                         else:
                             pingrole = get_pings('Cyno Update')
-                        if BigBrotherConfig.cyno_notify:
+                        if instance.cyno_notify:
                             changes.append(f"- **{charname}**{pingrole}:")
                         table_lines = [
                             "(1 = trained but alpha, 2 = active)",
@@ -616,13 +616,13 @@ def BB_update_single_user(user_id, char_name):
                             old_val = str(old_entry.get(key, 0))
                             new_val = str(new_entry.get(key, 0))
                             if old_val != new_val:
-                                if BigBrotherConfig.cyno_notify:
+                                if instance.cyno_notify:
                                     table_lines.append(f"{display.ljust(21)} | {old_val.ljust(7)} | {new_val.ljust(6)}")
 
                         # Show can_light as a summary at bottom
                         can_light_old = old_entry.get("can_light", False)
                         can_light_new = new_entry.get("can_light", False)
-                        if BigBrotherConfig.cyno_notify:
+                        if instance.cyno_notify:
                             table_lines.append("")
                             table_lines.append(
                                 f"{'Can Light'.ljust(21)} | "
@@ -647,7 +647,7 @@ def BB_update_single_user(user_id, char_name):
 
 
                         table_block = "```\n" + "\n".join(table_lines) + "\n```"
-                        if BigBrotherConfig.cyno_notify:
+                        if instance.cyno_notify:
                             changes.append(table_block)
 
                 # 4) Save new blob
@@ -658,7 +658,7 @@ def BB_update_single_user(user_id, char_name):
                 # 1) If the boolean flag flipped, append the 🔴 / 🟢 as before
                 if status.has_skills != has_skills:  # emit a coarse-grained flag when the threshold crosses zero/any skills
                     if not has_skills:
-                        if BigBrotherConfig.cyno_notify:
+                        if instance.cyno_notify:
                             changes.append(f"### Skill Status: 🟢")
                     status.has_skills = has_skills
 
@@ -718,7 +718,7 @@ def BB_update_single_user(user_id, char_name):
                     ]
 
                     if changed_chars:  # preface the per-character tables with a summary line
-                        if BigBrotherConfig.cyno_notify:
+                        if instance.cyno_notify:
                             changes.append(f"##{get_pings('skills')} Changes in skills detected:")
 
                     for charname in changed_chars:
@@ -739,7 +739,7 @@ def BB_update_single_user(user_id, char_name):
                             continue
                         logger.info(new_entry.values())
 
-                        if BigBrotherConfig.cyno_notify:
+                        if instance.cyno_notify:
                             changes.append(f"- **{charname}**:")
                         table_lines = [
                             "Skill              | Old       | New",
@@ -775,7 +775,7 @@ def BB_update_single_user(user_id, char_name):
 
                         if len(table_lines) > 2:
                             table_block = "```\n" + "\n".join(table_lines) + "\n```"
-                            if BigBrotherConfig.cyno_notify:
+                            if instance.cyno_notify:
                                 changes.append(table_block)
 
                 status.skills = new_skills
@@ -816,13 +816,13 @@ def BB_update_single_user(user_id, char_name):
                 # Overall boolean flip
                 if status.has_hostile_assets != has_hostile_assets:
                     if not has_hostile_assets:
-                        if BigBrotherConfig.asset_notify:
+                        if instance.asset_notify:
                             changes.append("### Hostile Asset Status: 🟢")
                     logger.info(f"{char_name} hostile asset status changed")
 
                 # Only add a "New Hostile Assets" section when there are actually new systems
                 if new_systems and lines:
-                    if BigBrotherConfig.asset_notify:
+                    if instance.asset_notify:
                         changes.append(f"###{get_pings('New Hostile Assets')} New Hostile Assets:\n{link_list}")
                     logger.info(f"{char_name} new hostile asset systems: {', '.join(sorted(new_systems))}")
 
@@ -863,12 +863,12 @@ def BB_update_single_user(user_id, char_name):
                 # Overall boolean flip
                 if status.has_hostile_clones != has_hostile_clones:
                     if not has_hostile_clones:
-                        if BigBrotherConfig.clone_notify:
+                        if instance.clone_notify:
                             changes.append("### Hostile Clone Status: 🟢")
                     logger.info(f"{char_name} hostile clone status changed")
 
                 if new_systems and lines:
-                    if BigBrotherConfig.clone_notify:
+                    if instance.clone_notify:
                         changes.append(f"###{get_pings('New Hostile Clones')} New Hostile Clone(s):\n{link_list}")
                     logger.info(f"{char_name} new hostile clone systems: {', '.join(sorted(new_systems))}")
 
@@ -898,12 +898,12 @@ def BB_update_single_user(user_id, char_name):
 
                 if status.has_sus_contacts != has_sus_contacts:  # flag boolean flip
                     if not has_sus_contacts:
-                        if BigBrotherConfig.contact_notify:
+                        if instance.contact_notify:
                             changes.append(f"### Suspicious Contact Status: 🟢")
                 logger.info(f"{char_name} status changed")
 
                 if new_links:  # include the new contact entries in the summary
-                    if BigBrotherConfig.contact_notify:
+                    if instance.contact_notify:
                         changes.append(f"### New Suspicious Contacts:")
                         for cid in new_links:
                             res = sus_contacts_result[cid]
@@ -938,12 +938,12 @@ def BB_update_single_user(user_id, char_name):
 
                 if status.has_sus_contracts != has_sus_contracts:  # summarize boolean change
                     if not has_sus_contracts:
-                        if BigBrotherConfig.contract_notify:
+                        if instance.contract_notify:
                             changes.append(f"## Suspicious Contract Status: 🟢")
                 logger.info(f"{char_name} status changed")
 
                 if new_links:  # write each new contract entry to the report
-                    if BigBrotherConfig.contract_notify:
+                    if instance.contract_notify:
                         changes.append(f"## New Suspicious Contracts:")
                         for issuer_id in new_links:
                             res = sus_contracts_result[issuer_id]
@@ -978,12 +978,12 @@ def BB_update_single_user(user_id, char_name):
 
                 if status.has_sus_mails != has_sus_mails:  # summarize boolean change
                     if not has_sus_mails:
-                        if BigBrotherConfig.mail_notify:
+                        if instance.mail_notify:
                             changes.append(f"### Suspicious Mail Status: 🟢")
                 logger.info(f"{char_name} status changed")
 
                 if new_links:  # enumerate the new mail entries for the report
-                    if BigBrotherConfig.mail_notify:
+                    if instance.mail_notify:
                         changes.append(f"### New Suspicious Mails:")
                         for issuer_id in new_links:
                             res = sus_mails_result[issuer_id]
@@ -1018,11 +1018,11 @@ def BB_update_single_user(user_id, char_name):
 
                 if status.has_sus_trans != has_sus_trans:
                     if not has_sus_trans:
-                        if BigBrotherConfig.transaction_notify:
+                        if instance.transaction_notify:
                             changes.append(f"## Suspicious Transactions Status: 🟢")
                 logger.info(f"{char_name} status changed")
                 if new_links:
-                    if BigBrotherConfig.transaction_notify:
+                    if instance.transaction_notify:
                         changes.append(f"### New Suspicious Transactions{get_pings('New Suspicious Transactions')}:\n{link_list}")
                 status.has_sus_trans = has_sus_trans
                 status.sus_trans = sus_trans_result
