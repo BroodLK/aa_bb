@@ -51,7 +51,7 @@ After making sure to add the above prerequisite applications.
 source /home/allianceserver/venv/auth/bin/activate && cd /home/allianceserver/myauth/
 ```
 ```bash
-pip install aa-bb==3.1.0b1
+pip install aa-bb==3.1.0b2
 ```
 ```bash
 vi myauth/settings/local.py
