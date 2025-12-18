@@ -9,6 +9,8 @@ and prevent accidental multi-row creation of what should be one-off configs.
 from solo.admin import SingletonModelAdmin
 
 from django.contrib import admin
+from .app_settings import afat_active
+from django.contrib.admin.sites import NotRegistered
 
 from .models import (
     BigBrotherConfig,
@@ -209,7 +211,6 @@ class BB_ConfigAdmin(SingletonModelAdmin):
         return True
 
 
-
 @admin.register(PapsConfig)
 class PapsConfigAdmin(SingletonModelAdmin):
     """Controls PAP multipliers/thresholds; singleton per installation."""
@@ -403,3 +404,41 @@ class RecurringStatsConfigAdmin(SingletonModelAdmin):
 
     filter_horizontal = ("states",)
     readonly_fields = ("last_run_at", "last_snapshot")
+
+if not afat_active():
+    for _m in (PapsConfig, PapCompliance):
+        try:
+            admin.site.unregister(_m)
+        except NotRegistered:
+            pass
+
+_PAP_OBJECT_NAMES = {"PapsConfig", "PapCompliance"}
+_ORIG_GET_APP_LIST = admin.site.get_app_list
+
+
+def _filtered_get_app_list(request, app_label=None):
+    app_list = _ORIG_GET_APP_LIST(request, app_label)
+
+    if afat_active():
+        return app_list
+
+    filtered = []
+    for app in app_list:
+        # If AFAT itself has an admin section, drop it.
+        if app.get("app_label") == "afat":
+            continue
+
+        # PAP models (in this project) show under aa_bb, so remove them there.
+        if app.get("app_label") == "aa_bb":
+            models = app.get("models", [])
+            models = [m for m in models if m.get("object_name") not in _PAP_OBJECT_NAMES]
+            app = {**app, "models": models}
+
+        # Drop empty app groups so the menu section disappears entirely.
+        if app.get("models"):
+            filtered.append(app)
+
+    return filtered
+
+
+admin.site.get_app_list = _filtered_get_app_list

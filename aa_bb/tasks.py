@@ -355,11 +355,14 @@ def BB_update_single_user(user_id, char_name):
             # load (or create) cached status so diffs apply correctly
             status, created = UserStatus.objects.get_or_create(user_id=user_id)
 
-            # On the very first run for this user, silently create a baseline
-            if not instance.new_user_notify:
-                send_notifications = not created
-            else:
-                send_notifications = True
+            is_base_est = not status.baseline_initialized
+
+            if is_base_est:
+                if not instance.new_user_notify:
+                    send_notifications = False
+                else:
+                    send_notifications = True
+
             logger.info(f"[{char_name}] Status loaded (created={created}). Calculating changes...")
 
             changes = []
@@ -1066,7 +1069,7 @@ def BB_update_single_user(user_id, char_name):
                     )
                     BB_send_discord_notifications.delay(char_name, all_chunks)
 
-
+            status.baseline_initialized = True
             status.updated = timezone.now()
             status.save()
 

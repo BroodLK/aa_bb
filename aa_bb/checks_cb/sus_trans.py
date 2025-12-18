@@ -16,9 +16,11 @@ logger.setLevel(logging.DEBUG)
 from ..app_settings import (
     get_eve_entity_type,
     get_entity_info,
+    aablacklist_active
 )
 
-from aa_bb.checks.corp_blacklist import check_char_corp_bl
+if aablacklist_active():
+    from aa_bb.checks.corp_blacklist import check_char_corp_bl
 
 try:
     from corptools.models import CorporationAudit, CorporationWalletJournalEntry
@@ -137,8 +139,9 @@ def is_transaction_hostile(tx: dict) -> bool:
     Mark transaction as hostile if first_party or second_party or corps/alliances are blacklisted
     """
     cfg = BigBrotherConfig.get_solo()
-    if check_char_corp_bl(tx.get('first_party_id')) or check_char_corp_bl(tx.get('second_party_id')):  # Either party is on the blacklist.
-        return True
+    if aablacklist_active():
+        if check_char_corp_bl(tx.get('first_party_id')) or check_char_corp_bl(tx.get('second_party_id')):  # Either party is on the blacklist.
+            return True
     wlcorp = set((cfg.whitelist_corporations or "").split(','))
     wlali = set((cfg.whitelist_alliances or "").split(','))
     fpcorp = str(tx.get('first_party_corporation_id') or '')
@@ -208,8 +211,9 @@ def render_transactions(corp_id: int) -> str:
                 for key in SUS_TYPES:
                     if key in t['type']:  # Suspect ref-type.
                         style = 'color: red;'
-            if col in ('first_party_name', 'second_party_name') and check_char_corp_bl(t.get(col + '_id', -1)):  # Parties on blacklist.
-                style = 'color: red;'
+            if aablacklist_active():
+                if col in ('first_party_name', 'second_party_name') and check_char_corp_bl(t.get(col + '_id', -1)):  # Parties on blacklist.
+                    style = 'color: red;'
             if col.endswith('corporation') and t.get(col + '_id') and str(t[col + '_id']) in BigBrotherConfig.get_solo().hostile_corporations:  # Hostile corps.
                 style = 'color: red;'
             if col.endswith('alliance') and t.get(col + '_id') and str(t[col + '_id']) in BigBrotherConfig.get_solo().hostile_alliances:  # Hostile alliances.
@@ -259,14 +263,16 @@ def get_corp_hostile_transactions(corp_id: int) -> Dict[int, str]:
                 for key in SUS_TYPES:
                     if key in tx['type']:  # Tag suspicious ref types for operators.
                         flags.append(f"Transaction type is **{tx['type']}**")
-            if tx['first_party_id'] and check_char_corp_bl(tx['first_party_id']):  # First party on blacklist.
-                flags.append(f"first_party **{tx['first_party_name']}** is on blacklist")
+            if aablacklist_active():
+                if tx['first_party_id'] and check_char_corp_bl(tx['first_party_id']):  # First party on blacklist.
+                    flags.append(f"first_party **{tx['first_party_name']}** is on blacklist")
             if str(tx['first_party_corporation_id']) in BigBrotherConfig.get_solo().hostile_corporations:  # First-party corporation is flagged hostile.
                 flags.append(f"first_party corp **{tx['first_party_corporation']}** is hostile")
             if str(tx['first_party_alliance_id']) in BigBrotherConfig.get_solo().hostile_alliances:  # First-party alliance is flagged hostile.
                 flags.append(f"first_party alliance **{tx['first_party_alliance']}** is hostile")
-            if tx['second_party_id'] and check_char_corp_bl(tx['second_party_id']):  # Counterparty character is hostile.
-                flags.append(f"second_party **{tx['second_party_name']}** is on blacklist")
+            if aablacklist_active():
+                if tx['second_party_id'] and check_char_corp_bl(tx['second_party_id']):  # Counterparty character is hostile.
+                    flags.append(f"second_party **{tx['second_party_name']}** is on blacklist")
             if str(tx['second_party_corporation_id']) in BigBrotherConfig.get_solo().hostile_corporations:  # Counterparty corporation is hostile.
                 flags.append(f"second_party corp **{tx['second_party_corporation']}** is hostile")
             if str(tx['second_party_alliance_id']) in BigBrotherConfig.get_solo().hostile_alliances:  # Counterparty alliance is hostile.

@@ -26,7 +26,7 @@ from celery.exceptions import Ignore
 from allianceauth.authentication.models import UserProfile, CharacterOwnership
 
 from .forms import LeaveRequestForm
-from .app_settings import get_user_characters, get_entity_info, get_main_character_name, get_character_id, send_message, get_pings
+from .app_settings import get_user_characters, get_entity_info, get_main_character_name, get_character_id, send_message, get_pings, aablacklist_active
 from .models import BigBrotherConfig, WarmProgress, LeaveRequest
 
 from aa_bb.checks.awox import render_awox_kills_html
@@ -34,8 +34,8 @@ from aa_bb.checks.corp_changes import get_frequent_corp_changes
 from aa_bb.checks.cyno import render_user_cyno_info_html
 from aa_bb.checks.hostile_assets import render_assets
 from aa_bb.checks.hostile_clones import render_clones
-from aa_bb.checks.coalition_blacklist import generate_blacklist_links
-from aa_bb.checks.alliance_blacklist import get_user_character_names_alliance
+# from aa_bb.checks.coalition_blacklist import generate_blacklist_links
+# from aa_bb.checks.alliance_blacklist import get_user_character_names_alliance
 from aa_bb.checks.sus_contacts import render_contacts
 from aa_bb.checks.sus_mails import (
     is_mail_row_hostile,
@@ -50,11 +50,15 @@ from aa_bb.checks.sus_trans import (
     render_transactions,
     SUS_TYPES,
 )
-from aa_bb.checks.corp_blacklist import (
-    get_corp_blacklist_html,
-    add_user_characters_to_blacklist,
-    check_char_corp_bl,
-)
+from .views_cb import CARD_DEFINITIONS
+
+if aablacklist_active():
+    from aa_bb.checks.corp_blacklist import (
+        get_corp_blacklist_html,
+        add_user_characters_to_blacklist,
+        check_char_corp_bl,
+    )
+
 from aa_bb.checks.sus_contracts import (
     get_user_contracts,
     is_contract_row_hostile,
@@ -97,11 +101,15 @@ try:
 except (OperationalError, ProgrammingError):
     ALLOWED_ALLIANCE_ID = None
 
-CARD_DEFINITIONS = [
-    {"title": 'Add User to Blacklist', "key": "corp_bl"},
+CARD_DEFINITIONS = []
+
+if aablacklist_active():
+    CARD_DEFINITIONS.append(
+        {"title": 'Add User to Blacklist', "key": "corp_bl"}
+    )
+
+CARD_DEFINITIONS += [
     {"title": 'Audit Compliance', "key": "compliance"},
-    # {"title": 'Blacklist', "key": "coalition_bl"},
-    {"title": 'Blacklist', "key": "alliance_bl"},
     {"title": 'Player Corp History', "key": "freq_corp"},
     {"title": 'AWOX Kills', "key": "awox"},
     {"title": 'Omega State', "key": "clone_states"},
@@ -116,6 +124,7 @@ CARD_DEFINITIONS = [
 ]
 
 
+
 def get_available_cards():
     """Return card configurations filtered by alliance permissions."""
     cards = CARD_DEFINITIONS
@@ -124,11 +133,15 @@ def get_available_cards():
     except BigBrotherConfig.DoesNotExist:
         return cards
 
-    if cfg.main_alliance_id != ALLOWED_ALLIANCE_ID:
-        cards = [card for card in cards if card["key"] != "alliance_bl"]
+    # if cfg.main_alliance_id != ALLOWED_ALLIANCE_ID:
+    #     cards = [card for card in cards if card["key"] != "alliance_bl"]
 
-    if cfg.main_alliance_id not in ALLOWED_COALITION_ALLIANCE_IDS:  # Restrict IMP blacklist to IMP alliances.
-        cards = [card for card in cards if card["key"] != "coalition_bl"]
+    # if cfg.main_alliance_id not in ALLOWED_COALITION_ALLIANCE_IDS:
+    #     cards = [card for card in cards if card["key"] != "coalition_bl"]
+
+    if not aablacklist_active():
+        cards = [card for card in cards if card["key"] != "corp_bl"]
+
     return cards
 
 
@@ -622,8 +635,9 @@ def _render_mail_row_html(row: dict) -> str:
                 style = ""
                 if col == "recipient_names":  # Hostile recipients get red styling.
                     rid = row["recipient_ids"][i]
-                    if check_char_corp_bl(rid):
-                        style = "color:red;"
+                    if aablacklist_active():
+                        if check_char_corp_bl(rid):
+                            style = "color:red;"
                 elif col == "recipient_corps":  # Hostile corps -> red label.
                     cid = row["recipient_corp_ids"][i]
                     if cid and str(cid) in cfg.hostile_corporations:
@@ -831,11 +845,12 @@ def stream_transactions_sse(request):
                     if col == 'type' and any(st in row['type'] for st in SUS_TYPES):
                         style = 'color:red;'
                     # first/second party name
-                    if col in ('first_party_name','second_party_name'):
-                        id_col = col.replace("_name", "_id")
-                        pid = row[id_col]
-                        if check_char_corp_bl(pid):
-                            style = 'color:red;'
+                    if aablacklist_active():
+                        if col in ('first_party_name','second_party_name'):
+                            id_col = col.replace("_name", "_id")
+                            pid = row[id_col]
+                            if check_char_corp_bl(pid):
+                                style = 'color:red;'
                     # corps & alliances
                     if col.endswith('corporation'):
                         cid = row[f"{col}_id"]
@@ -872,13 +887,70 @@ def stream_transactions_sse(request):
 
 def get_card_data(request, target_user_id: int, key: str):
     """Return card HTML and status tuple for the specified key."""
-    if key == "awox":  # Highlight kills where corp mates attacked each other.
-        content = render_awox_kills_html(target_user_id)
-        status  = content is None
+
+    if key == "compliance":  # Role/token compliance overview.
+        content = render_user_roles_tokens_html(target_user_id)
+        status = not (content and "danger" in content)
+
+    elif key == "corp_bl":  # Inline corp blacklist check (with add links).
+        issuer_id = request.user.id
+        content   = get_corp_blacklist_html(request, issuer_id, target_user_id) or "a"
+        status    = not (content and "danger" in content)
+
+    # elif key == "alliance_bl":
+    #     from django.contrib.auth.models import User
+    #     try:
+    #         from blacklist.models import BlacklistFilter
+    #         try:
+    #             url = getattr(settings, "SITE_URL", "").rstrip("/")
+    #
+    #             # Use the Smart Filter to see if this user hits the blacklist
+    #             bf = BlacklistFilter()
+    #             results = bf.audit_filter(User.objects.filter(pk=target_user_id))
+    #             data = results.get(target_user_id, {"message": "", "check": True})
+    #             if not data:
+    #                 content = "No Data"
+    #                 status = True
+    #                 return content, status
+    #
+    #             is_clean = data.get("check", True)
+    #
+    #             names = data.get("message", "")
+    #
+    #             if is_clean:
+    #                 # No blacklisted hits for this user
+    #                 content = (
+    #                     "No blacklisted characters found for this user."
+    #                 )
+    #                 status = True
+    #             else:
+    #                 # User has blacklist hits; show them and link to the blacklist app
+    #                 names_html = names.replace(",", "<br>")
+    #                 content = (
+    #                     "The following characters (or their corps/alliances) are on the "
+    #                     "blacklist:<br><br>"
+    #                     f"{names_html}<br><br>"
+    #                     f"Go <a href='{url}/blacklist/blacklist/'>here</a> for full details."
+    #                 )
+    #                 status = False
+    #         except Exception as e:
+    #             content = (e)
+    #             status = False
+    #     except ImportError:
+    #         content = ('blacklist is not installed')
+    #         status  = True
 
     elif key == "freq_corp":  # Show frequent corporation changes timeline.
         content = get_frequent_corp_changes(target_user_id)
         status  = "danger" not in content
+
+    elif key == "awox":  # Highlight kills where corp mates attacked each other.
+        content = render_awox_kills_html(target_user_id)
+        status  = content is None
+
+    elif key == "clone_states":  # Clone state availability (alpha/omega).
+        content = render_character_states_html(target_user_id)
+        status = not (content and "danger" in content)
 
     elif key == "sus_clones":  # Flag clones located in hostile space.
         content = render_clones(target_user_id)
@@ -887,51 +959,6 @@ def get_card_data(request, target_user_id: int, key: str):
     elif key == "sus_asset":  # Summarize assets currently stranded in hostile systems.
         content = render_assets(target_user_id)
         status  = not (content and "danger" in content)
-
-    elif key == "coalition_bl":
-        links   = generate_blacklist_links(target_user_id)
-        content = "<br>".join(links)
-        status  = False
-
-    elif key == "alliance_bl":
-        from django.contrib.auth.models import User
-        try:
-            from blacklist.models import BlacklistFilter
-
-            url = getattr(settings, "SITE_URL", "").rstrip("/")
-
-            # Use the Smart Filter to see if this user hits the blacklist
-            bf = BlacklistFilter()
-            results = bf.audit_filter(User.objects.filter(pk=target_user_id))
-            data = results.get(target_user_id, {"message": "", "check": True})
-
-            names = data.get("message", "")
-            is_clean = data.get("check", True)
-
-            if is_clean:
-                # No blacklisted hits for this user
-                content = (
-                    "No blacklisted characters found for this user."
-                )
-                status = True
-            else:
-                # User has blacklist hits; show them and link to the blacklist app
-                names_html = names.replace(",", "<br>")
-                content = (
-                    "The following characters (or their corps/alliances) are on the "
-                    "blacklist:<br><br>"
-                    f"{names_html}<br><br>"
-                    f"Go <a href='{url}/blacklist/blacklist/'>here</a> for full details."
-                )
-                status = False
-        except ImportError:
-            content = ('blacklist is not installed')
-            status  = True
-
-    elif key == "corp_bl":  # Inline corp blacklist check (with add links).
-        issuer_id = request.user.id
-        content   = get_corp_blacklist_html(request, issuer_id, target_user_id)
-        status    = not (content and "danger" in content)
 
     elif key == "sus_conta":  # Suspicious contact list card.
         content = render_contacts(target_user_id)
@@ -951,14 +978,6 @@ def get_card_data(request, target_user_id: int, key: str):
 
     elif key == "skills":  # Training gaps summary.
         content = render_user_skills_html(target_user_id)
-        status  = not (content and "danger" in content)
-
-    elif key == "compliance":  # Role/token compliance overview.
-        content = render_user_roles_tokens_html(target_user_id)
-        status  = not (content and "danger" in content)
-
-    elif key == "clone_states":  # Clone state availability (alpha/omega).
-        content = render_character_states_html(target_user_id)
         status  = not (content and "danger" in content)
 
     else:

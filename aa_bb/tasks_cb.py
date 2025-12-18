@@ -921,7 +921,7 @@ def BB_run_regular_loa_updates():
         ).exists()
         if days_since > cfg.loa_max_logoff_days and not has_active_loa:  # Flag members inactive beyond policy without LoA.
             flags.append(f"- **{ec}** was last seen online on {latest_logoff} (**{days_since}** days ago where maximum w/o a LoA request is **{cfg.loa_max_logoff_days}**)")
-    if flags:  # Notify staff when inactivity breaches are detected.
+    if flags and cfg.is_loa_active:  # Notify staff when inactivity breaches are detected. but also don't send unless LOA is actually on
         flags_text = "\n".join(flags)
         send_message(f"##{get_pings('LoA Inactivity')} Inactive Members Found:\n{flags_text}")
 

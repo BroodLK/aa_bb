@@ -20,9 +20,11 @@ from ..app_settings import (
     get_character_id,
     get_eve_entity_type,
     get_entity_info,
-
+    aablacklist_active
 )
-from aa_bb.checks.corp_blacklist import check_char_corp_bl
+
+if aablacklist_active():
+    from aa_bb.checks.corp_blacklist import check_char_corp_bl
 try:
     from corptools.models import CorporateContract, CorporationAudit
 except ImportError:
@@ -120,19 +122,20 @@ def get_user_contracts(qs) -> Dict[int, Dict]:
 
 def get_cell_style_for_contract_row(column: str, row: dict) -> str:
     """Return inline CSS so tables/exports highlight blacklist/hostile hits."""
-    if column == 'issuer_name':  # Color issuer names if the character is suspect.
-        cid = row.get("issuer_id")
-        if check_char_corp_bl(cid):  # Issuer is on the blacklist.
-            return 'color: red;'
-        else:
-            return ''
+    if aablacklist_active():
+        if column == 'issuer_name':  # Color issuer names if the character is suspect.
+            cid = row.get("issuer_id")
+            if check_char_corp_bl(cid):  # Issuer is on the blacklist.
+                return 'color: red;'
+            else:
+                return ''
 
-    if column == 'assignee_name':  # Color assignee names when suspect.
-        cid = row.get("assignee_id")
-        if check_char_corp_bl(cid):  # Assignee is on the blacklist.
-            return 'color: red;'
-        else:
-            return ''
+        if column == 'assignee_name':  # Color assignee names when suspect.
+            cid = row.get("assignee_id")
+            if check_char_corp_bl(cid):  # Assignee is on the blacklist.
+                return 'color: red;'
+            else:
+                return ''
 
     if column == 'issuer_corporation':  # Apply styles for hostile issuer corps.
         aid = row.get("issuer_corporation_id")
@@ -166,10 +169,11 @@ def get_cell_style_for_contract_row(column: str, row: dict) -> str:
 
 def is_contract_row_hostile(row: dict) -> bool:
     """Returns True if the row matches hostile corp/char/alliance criteria."""
-    if check_char_corp_bl(row.get("issuer_id")):  # Issuer character/alt is blacklisted.
-        return True
-    if check_char_corp_bl(row.get("assignee_id")):  # Assignee/acceptor is blacklisted.
-        return True
+    if aablacklist_active():
+        if check_char_corp_bl(row.get("issuer_id")):  # Issuer character/alt is blacklisted.
+            return True
+        if check_char_corp_bl(row.get("assignee_id")):  # Assignee/acceptor is blacklisted.
+            return True
 
     solo = BigBrotherConfig.get_solo()
 
@@ -233,15 +237,17 @@ def get_corp_hostile_contracts(corp_id: int) -> Dict[int, str]:
 
             flags: List[str] = []
             # issuer
-            if c['issuer_name'] != '-' and check_char_corp_bl(c['issuer_id']):  # Issuer is blacklisted.
-                flags.append(f"Issuer **{c['issuer_name']}** is on blacklist")
+            if aablacklist_active():
+                if c['issuer_name'] != '-' and check_char_corp_bl(c['issuer_id']):  # Issuer is blacklisted.
+                    flags.append(f"Issuer **{c['issuer_name']}** is on blacklist")
             if str(c['issuer_corporation_id']) in hostile_corps:  # Issuer corp matches hostile list.
                 flags.append(f"Issuer corp **{c['issuer_corporation']}** is hostile")
             if str(c['issuer_alliance_id']) in hostile_allis:  # Issuer alliance matches hostile list.
                 flags.append(f"Issuer alliance **{c['issuer_alliance']}** is hostile")
             # assignee
-            if c['assignee_name'] != '-' and check_char_corp_bl(c['assignee_id']):  # Assignee is blacklisted.
-                flags.append(f"Assignee **{c['assignee_name']}** is on blacklist")
+            if aablacklist_active():
+                if c['assignee_name'] != '-' and check_char_corp_bl(c['assignee_id']):  # Assignee is blacklisted.
+                    flags.append(f"Assignee **{c['assignee_name']}** is on blacklist")
             if str(c['assignee_corporation_id']) in hostile_corps:  # Assignee corp matches hostile list.
                 flags.append(f"Assignee corp **{c['assignee_corporation']}** is hostile")
             if str(c['assignee_alliance_id']) in hostile_allis:  # Assignee alliance matches hostile list.

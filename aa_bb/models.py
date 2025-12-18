@@ -124,6 +124,7 @@ class UserStatus(models.Model):
     - clone_status: cached alpha/omega detection results.
     - updated: Django-managed timestamp for when this row last changed.
     """
+    baseline_initialized = models.BooleanField(default=False)
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     has_awox_kills = models.BooleanField(default=False)
     awox_kill_links = JSONField(default=dict, blank=True)
@@ -1931,7 +1932,8 @@ class CharacterAccountState(models.Model):
     char_id = models.BigIntegerField(primary_key=True)
     skill_used = models.BigIntegerField(blank=True, null=True)
     state = models.CharField(max_length=10, choices=STATE_CHOICES)
-
+    last_total_sp = models.BigIntegerField(null=True, blank=True)
+    last_checked_at = models.DateTimeField(null=True, blank=True)
     def __str__(self):
         return f"{self.char_id} - {self.state}"
 

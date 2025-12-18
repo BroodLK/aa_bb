@@ -1,5 +1,20 @@
 # Change Log
 
+## [3.1.2 Beta 2] - 2025-12-18
+
+### Changed
+- Attempt to optimize clone state, transactions, mails, contacts and contracts to reduce load times on users that have many characters.
+- Fixed issue where notifications were still being sent for users who did not have previous data (new installs or new audits)
+- Fixed LOA notifications of users outside LOA maximum without LOA, despite LOA being turned off.
+- Hid "is user on blacklist" as this is redundant as we do not currently check any external sources (this is in development)
+- Removed blacklist as a requirement, options will auto hide.
+- Removed AFAT as a requirement, options will auto hide.
+
+## [3.1.1 Beta 2] - 2025-12-17
+
+### Changed
+- Fix Notifications
+
 ## [3.1.0 Beta 2] - 2025-12-17
 
 ### Added

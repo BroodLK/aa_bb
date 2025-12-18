@@ -36,8 +36,6 @@ All while invisible to the general membership unless you chose to expose it to t
 ### The following AllianceAuth plugins are **_required_**:
 
 ```md
-allianceauth-afat >= 4.1.1
-allianceauth-blacklist >= 0.1.1
 allianceauth-corptools >= 2.12.0 (this app will adopt 3.0.0 as soon as version 3 is out of beta)
 allianceauth-discordbot >= 4.1.0
 aa-charlink >= 1.11.1
@@ -48,6 +46,8 @@ You do not have to use afat, but it does need to be installed.
 
 ### Optional plugins
 ```md
+allianceauth-afat >= 4.1.1
+allianceauth-blacklist >= 0.1.1
 aa-contacts >= 0.10.2
 ```
 As stated, this plugin is optional but is obviously required for using it to sync your hostiles.

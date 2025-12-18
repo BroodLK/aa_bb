@@ -6,124 +6,168 @@ the same logic can be reused both in HTML renderings and in background
 tasks that persist the findings.
 """
 
-from .skills import get_user_skill_info
 from aa_bb.models import CharacterAccountState
 from aa_bb.app_settings import resolve_character_name, get_user_characters
 from django.db import transaction
 from django.utils.html import format_html, mark_safe
+from django.utils import timezone
 import json
 import os
 import logging
 
-logger = logging.getLogger(__name__)
+try:
+    from corptools.models import CharacterAudit, Skill
+except Exception:
+    CharacterAudit = None
+    Skill = None
 
+logger = logging.getLogger(__name__)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 
 def determine_character_state(user_id, save: bool = False):
     """
     Inspect every owned character's skill levels and infer Alpha/Omega status.
-
-    The flow respects the user's previous manual override (CharacterAccountState),
-    then progressively evaluates alpha-locked skills, and finally falls back to
-    a brute-force scan of all known skills. Passing `save=True` persists
-    the findings so that later runs can reuse the stored state immediately.
     """
     alpha_skills_file = os.path.join(BASE_DIR, "alpha_skills.json")
-    all_skills_file = os.path.join(BASE_DIR, "skills.json")
 
     # Load alpha skill caps
     with open(alpha_skills_file, "r") as f:
         alpha_skills = json.load(f)
     alpha_caps = {skill["id"]: skill["cap"] for skill in alpha_skills}
+    alpha_skill_ids = [skill["id"] for skill in alpha_skills]
 
-    # Load all skills
-    with open(all_skills_file, "r") as f:
-        all_skills_data = json.load(f)
-    all_skill_ids = set()
-    for category, entries in all_skills_data.items():
-        if len(entries) < 2:  # Expect two-value tuples (metadata, skill map); skip malformed categories.
-            continue
-        skill_map = entries[1]
-        for skill_id_str in skill_map:
-            all_skill_ids.add(int(skill_id_str))
-
-    # Load DB records first
     char_db_records = {
         rec.char_id: rec for rec in CharacterAccountState.objects.all()
     }
-    #logger.info(f"char_db_records: {str(char_db_records)}")
-    all_char_ids = get_user_characters(user_id)
-    #logger.info(f"all_char_ids: {str(all_char_ids)}")
 
+    all_char_ids = get_user_characters(user_id)  # iterates keys if dict
     result = {}
-    skill_cache = {}  # skill_id -> {char_id: skill_data}
 
-    # Helper to get skill info and cache it
-    def get_skill_info_cached(skill_id):
-        """Cached wrapper around get_user_skill_info to avoid repeated ESI hits."""
-        if skill_id not in skill_cache:  # Populate cache lazily per skill ID.
-            skill_cache[skill_id] = get_user_skill_info(user_id, skill_id)
-        return skill_cache[skill_id]
+    # If corptools isn't available, mark unknown quickly
+    if CharacterAudit is None or Skill is None:
+        for char_id in all_char_ids:
+            db_record = char_db_records.get(char_id)
+            result[char_id] = {
+                "state": (db_record.state if db_record else "unknown") or "unknown",
+                "skill_used": (db_record.skill_used if db_record else None),
+                "last_state": (db_record.state if db_record else None),
+            }
+        return result
 
-    for char_id in all_char_ids:
-        char_name = resolve_character_name(char_id)
-        #logger.info(f"char_id: {str(char_id)}")
+    char_ids = list(all_char_ids)
+
+    # Build total_sp map (FAST: select_related only, no skill prefetch)
+    audits = (
+        CharacterAudit.objects
+        .filter(character__character_id__in=char_ids)
+        .select_related("skilltotals")
+        .only("id", "character__character_id", "skilltotals__total_sp")
+    )
+    total_sp_by_char = {}
+    for a in audits:
+        cid = a.character.character_id
+        try:
+            total_sp_by_char[cid] = a.skilltotals.total_sp
+        except Exception:
+            total_sp_by_char[cid] = None
+
+    # Decide which characters need checking (SP gate)
+    chars_to_check = []
+    for char_id in char_ids:
+        db_record = char_db_records.get(char_id)
+        total_sp = total_sp_by_char.get(char_id)
+
+        # If we have a previous SP and it's unchanged, reuse cached state
+        if db_record and total_sp is not None and db_record.last_total_sp is not None:
+            if int(db_record.last_total_sp) == int(total_sp) and db_record.state in ("alpha", "omega", "unknown"):
+                result[char_id] = {
+                    "state": db_record.state,
+                    "skill_used": db_record.skill_used,
+                    "last_state": db_record.state,
+                }
+                continue
+
+        chars_to_check.append(char_id)
+
+    # Nothing to do
+    if not chars_to_check:
+        return result
+
+    # Build the minimal set of skill IDs to fetch:
+    #   - all alpha-locked skills
+    #   - plus any cached skill_used for chars needing check (so we keep the fast shortcut idea)
+    extra_skill_ids = set()
+    for char_id in chars_to_check:
+        db_record = char_db_records.get(char_id)
+        if db_record and db_record.skill_used:
+            extra_skill_ids.add(int(db_record.skill_used))
+
+    skill_ids_to_fetch = sorted(set(alpha_skill_ids) | extra_skill_ids)
+
+    # Single query: pull only the relevant Skill rows for just these characters
+    skill_rows = (
+        Skill.objects
+        .filter(character__character__character_id__in=chars_to_check, skill_id__in=skill_ids_to_fetch)
+        .values(
+            "character__character__character_id",
+            "skill_id",
+            "trained_skill_level",
+            "active_skill_level",
+        )
+    )
+
+    per_char = {cid: {} for cid in chars_to_check}
+    for row in skill_rows:
+        cid = row["character__character__character_id"]
+        sid = int(row["skill_id"])
+        per_char[cid][sid] = {
+            "trained": int(row["trained_skill_level"]),
+            "active": int(row["active_skill_level"]),
+        }
+
+    now = timezone.now()
+
+    for char_id in chars_to_check:
+        db_record = char_db_records.get(char_id)
+        total_sp = total_sp_by_char.get(char_id)
+
         state = None
         skill_used = None
 
-        db_record = char_db_records.get(char_id)
+        # 1) Re-check cached skill_used first
+        if db_record and db_record.skill_used:
+            sid = int(db_record.skill_used)
+            levels = per_char.get(char_id, {}).get(sid, {"trained": 0, "active": 0})
+            trained = levels["trained"]
+            active = levels["active"]
+            cap = alpha_caps.get(sid, 5)
 
-        # 1. Check DB skill first
-        if db_record and db_record.skill_used:  # Reuse previously saved skill to shortcut classification.
-            skill_id = db_record.skill_used
-            skill_data_all_chars = get_skill_info_cached(skill_id)
-            skill_data = skill_data_all_chars.get(char_id, {})
-            trained = skill_data.get("trained_skill_level", 0)
-            active = skill_data.get("active_skill_level", 0)
-
-            if active > alpha_caps.get(skill_id, 5):  # Active level beyond alpha cap implies Omega.
+            if active > cap:
                 state = "omega"
-            elif trained > active:  # Trained but inactive levels indicate Alpha clone restrictions.
+                skill_used = sid
+            elif trained > active:
                 state = "alpha"
+                skill_used = sid
 
-            if state:  # Track which skill led to the decision for future reuse.
-                skill_used = skill_id
+        # 2) Check alpha-locked skills
+        if state is None:
+            for sid in alpha_skill_ids:
+                levels = per_char.get(char_id, {}).get(sid, {"trained": 0, "active": 0})
+                trained = levels["trained"]
+                active = levels["active"]
+                cap = alpha_caps.get(sid, 5)
 
-        # 2. Check alpha skills if state still unknown
-        if state is None:  # Fallback to checking known alpha-limited skills.
-            for skill in alpha_skills:
-                skill_id = skill["id"]
-                cap = skill["cap"]
-                skill_data_all_chars = get_skill_info_cached(skill_id)
-                skill_data = skill_data_all_chars.get(char_name, {})
-                trained = skill_data.get("trained_skill_level", 0)
-                active = skill_data.get("active_skill_level", 0)
-
-                if active > cap:  # Exceeding alpha cap => Omega.
+                if active > cap:
                     state = "omega"
-                    skill_used = skill_id
+                    skill_used = sid
                     break
-                elif trained > active:  # Having trained but inactive levels => Alpha.
+                elif trained > active:
                     state = "alpha"
-                    skill_used = skill_id
+                    skill_used = sid
                     break
 
-        # 3. Check remaining skills only if still unknown
-        if state is None:  # As a last resort, brute-force check all remaining skills.
-            remaining_skill_ids = all_skill_ids - set(alpha_caps.keys())
-            for skill_id in remaining_skill_ids:
-                skill_data_all_chars = get_skill_info_cached(skill_id)
-                skill_data = skill_data_all_chars.get(char_name, {})
-                trained = skill_data.get("trained_skill_level", 0)
-                active = skill_data.get("active_skill_level", 0)
-
-                if trained > active:  # Alpha clones cannot train beyond active level.
-                    state = "alpha"
-                    skill_used = skill_id
-                    break
-
-
-        if state is None:  # Some characters may lack data entirely—mark as unknown.
+        if state is None:
             state = "unknown"
             skill_used = None
 
@@ -134,15 +178,20 @@ def determine_character_state(user_id, save: bool = False):
             "last_state": last_state,
         }
 
-        # Save or update DB record
-        if save:  # Persist the derived state for future fast lookup (inside transaction for safety).
+        if save:
             with transaction.atomic():
                 CharacterAccountState.objects.update_or_create(
                     char_id=char_id,
-                    defaults={"state": state, "skill_used": skill_used}
+                    defaults={
+                        "state": state,
+                        "skill_used": skill_used,
+                        "last_total_sp": total_sp,
+                        "sp_last_checked": now,
+                    },
                 )
-    del skill_cache
+
     return result
+
 
 def render_character_states_html(user_id: int) -> str:
     """
@@ -151,7 +200,6 @@ def render_character_states_html(user_id: int) -> str:
     as a single table with columns Character | State
     """
     data = determine_character_state(user_id)
-    #logger.info(f"data: {str(data)}")
 
     html = """
     <table class="table table-striped table-hover stats">
@@ -167,11 +215,10 @@ def render_character_states_html(user_id: int) -> str:
     for char_id, info in data.items():
         char_name = resolve_character_name(char_id)
 
-        # state formatting
         state_val = info.get("state", "unknown")
-        if state_val == "omega":  # Style Omega entries in green.
+        if state_val == "omega":
             state_val_html = mark_safe('<span class="text-success">Omega</span>')
-        elif state_val == "alpha":  # Style Alpha entries in red.
+        elif state_val == "alpha":
             state_val_html = mark_safe('<span class="text-danger">Alpha</span>')
         else:
             state_val_html = "Unknown"

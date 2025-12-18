@@ -34,17 +34,22 @@ from aa_bb.checks_cb.sus_trans import (
     gather_user_transactions,
     SUS_TYPES,
 )
-from aa_bb.checks.corp_blacklist import (
-    check_char_corp_bl,
-)
+
 from aa_bb.checks_cb.sus_contracts import (
     get_user_contracts,
     is_contract_row_hostile,
     get_cell_style_for_contract_row,
     gather_user_contracts,
 )
-from .app_settings import get_user_characters, get_entity_info, get_character_id, resolve_corporation_name
+
+from .app_settings import get_user_characters, get_entity_info, get_character_id, resolve_corporation_name, aablacklist_active
 from .models import BigBrotherConfig, WarmProgress
+
+if aablacklist_active():
+    from aa_bb.checks.corp_blacklist import (
+        check_char_corp_bl,
+)
+
 try:
     from corptools.models import Contract
 except ImportError:
@@ -667,11 +672,12 @@ def stream_transactions_sse(request):
                     if col == 'type' and any(st in row['type'] for st in SUS_TYPES):
                         style = 'color:red;'
                     # first/second party name
-                    if col in ('first_party_name','second_party_name'):
-                        id_col = col.replace("_name", "_id")
-                        pid = row[id_col]
-                        if check_char_corp_bl(pid):
-                            style = 'color:red;'
+                    if aablacklist_active():
+                        if col in ('first_party_name','second_party_name'):
+                            id_col = col.replace("_name", "_id")
+                            pid = row[id_col]
+                            if check_char_corp_bl(pid):
+                                style = 'color:red;'
                     # corps & alliances
                     if col.endswith('corporation'):
                         cid = row[f"{col}_id"]

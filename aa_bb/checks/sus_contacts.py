@@ -18,9 +18,12 @@ from ..app_settings import (
     get_user_characters,
     is_npc_character,
     get_entity_info,
+    aablacklist_active
 )
 from django.utils import timezone
-from .corp_blacklist import check_char_corp_bl
+
+if aablacklist_active():
+    from .corp_blacklist import check_char_corp_bl
 
 try:
     from corptools.models import CharacterContact
@@ -143,10 +146,11 @@ def get_cell_style_for_row(cid: int, column: str, row: dict) -> str:
             return 'color: #FF0000;'
 
     # New fixed columns
-    if column == 'character':  # Character column only highlights hostile chars.
-        if row.get('contact_type') == 'character' and check_char_corp_bl(cid):  # Highlight hostile character contacts.
-            return 'color: red;'
-        return ''
+    if aablacklist_active():
+        if column == 'character':  # Character column only highlights hostile chars.
+            if row.get('contact_type') == 'character' and check_char_corp_bl(cid):  # Highlight hostile character contacts.
+                return 'color: red;'
+            return ''
 
     if column == 'corporation':  # Corp column highlights hostile corporations.
         coid = row.get("coid")
@@ -264,8 +268,9 @@ def get_user_hostile_notifications(user_id: int) -> dict[int, str]:
         logger.info(f"{cname},{aid},{alli_name}")
 
         # 1) Character-specific blacklist check
-        if ctype == 'character' and check_char_corp_bl(cid):  # Character is on blacklist.
-            alerts.append(f"**{cname}** is on blacklist")
+        if aablacklist_active():
+            if ctype == 'character' and check_char_corp_bl(cid):  # Character is on blacklist.
+                alerts.append(f"**{cname}** is on blacklist")
 
         # 2) Hostile corporation check (characters & corporations)
         if ctype in ('character', 'corporation') and coid != 0:  # Evaluate corp affiliation when present.

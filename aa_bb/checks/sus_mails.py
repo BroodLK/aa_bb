@@ -7,7 +7,6 @@ recipients, and persist short notes for repeated reporting.
 
 import html
 import logging
-
 from typing import Dict, Optional, List
 from datetime import datetime
 from django.utils import timezone
@@ -15,8 +14,15 @@ from django.utils import timezone
 from ..app_settings import (
     get_user_characters,
     get_entity_info,
+    aablacklist_active,
 )
-from .corp_blacklist import check_char_corp_bl
+
+if aablacklist_active():
+    from .corp_blacklist import check_char_corp_bl
+else:
+    def check_char_corp_bl(_cid: int) -> bool:
+        return False
+
 from ..models import BigBrotherConfig, ProcessedMail, SusMailNote
 
 logger = logging.getLogger(__name__)
@@ -29,65 +35,61 @@ except ImportError:
 
 
 def _find_employment_at(employment: List[dict], date: datetime) -> Optional[dict]:
-    """Helper retained for compatibility: find corp at given timestamp."""
     for rec in employment:
-        start = rec.get('start_date')
-        end = rec.get('end_date')
-        if start and start <= date and (end is None or date < end):  # Match mails when employment exists during timestamp.
+        start = rec.get("start_date")
+        end = rec.get("end_date")
+        if start and start <= date and (end is None or date < end):
             return rec
     return None
 
 
 def _find_alliance_at(history: List[dict], date: datetime) -> Optional[int]:
-    """Return the alliance id a corp belonged to at the given time."""
     for i, rec in enumerate(history):
-        start = rec.get('start_date')
-        next_start = history[i+1]['start_date'] if i+1 < len(history) else None
-        if start and start <= date and (next_start is None or date < next_start):  # Same overlap logic for alliance history.
-            return rec.get('alliance_id')
+        start = rec.get("start_date")
+        next_start = history[i + 1]["start_date"] if i + 1 < len(history) else None
+        if start and start <= date and (next_start is None or date < next_start):
+            return rec.get("alliance_id")
     return None
 
 
 def gather_user_mails(user_id: int):
-    """
-    Return all MailMessage objects where the user is a recipient.
-    """
     user_chars = get_user_characters(user_id)
     user_ids = set(user_chars.keys())
-    qs = MailMessage.objects.filter(
+    return MailMessage.objects.filter(
         recipients__recipient_id__in=user_ids
-    ).prefetch_related('recipients', 'recipients__recipient_name')
-    #logger.debug(f"Found {qs.count()} mails for user {user_id}")
-    return qs
+    ).prefetch_related("recipients", "recipients__recipient_name")
 
 
 def get_user_mails(qs) -> Dict[int, Dict]:
-    """
-    Extract mails for a user, including sender details at send time.
-    Returns dict keyed by message id.
-    """
     result: Dict[int, Dict] = {}
+    _info_cache: dict[tuple[int, int], dict] = {}
+
+    def _cached_info(eid: int, when: datetime) -> dict:
+        key = (int(eid or 0), int(when.date().toordinal()))
+        if key in _info_cache:
+            return _info_cache[key]
+        info = get_entity_info(eid, when)
+        _info_cache[key] = info
+        return info
+
     for m in qs:
         mid = m.id_key
         sent = m.timestamp
-
-
-        # -- sender details --
-        sender_id = m.from_id
         timeee = getattr(m, "timestamp", timezone.now())
-        sinfo = get_entity_info(sender_id, timeee)
 
-        # -- recipients list --
+        sender_id = m.from_id
+        sinfo = _cached_info(sender_id, timeee)
+
         recipient_names = []
         recipient_ids = []
         recipient_corps = []
         recipient_corp_ids = []
         recipient_alliances = []
         recipient_alliance_ids = []
+
         for mr in m.recipients.all():
-            rid   = mr.recipient_id
-            #logger.info(f"getting info for {rid}")
-            rinfo = get_entity_info(rid, timeee)
+            rid = mr.recipient_id
+            rinfo = _cached_info(rid, timeee)
             recipient_ids.append(rid)
             recipient_names.append(rinfo["name"])
             recipient_corps.append(rinfo["corp_name"])
@@ -96,25 +98,25 @@ def get_user_mails(qs) -> Dict[int, Dict]:
             recipient_alliance_ids.append(rinfo["alli_id"])
 
         result[mid] = {
-            'message_id':               mid,
-            'sent_date':                sent,
-            'subject':                  m.subject or '',
-            'sender_name':              sinfo["name"],
-            'sender_id':                sender_id,
-            'sender_corporation':       sinfo["corp_name"],
-            'sender_corporation_id':    sinfo["corp_id"],
-            'sender_alliance':          sinfo["alli_name"],
-            'sender_alliance_id':       sinfo["alli_id"],
-            'recipient_names':          recipient_names,
-            'recipient_ids':            recipient_ids,
-            'recipient_corps':          recipient_corps,
-            'recipient_corp_ids':       recipient_corp_ids,
-            'recipient_alliances':      recipient_alliances,
-            'recipient_alliance_ids':   recipient_alliance_ids,
-            'status':                   m.is_read and 'Read' or 'Unread',
+            "message_id": mid,
+            "sent_date": sent,
+            "subject": m.subject or "",
+            "sender_name": sinfo["name"],
+            "sender_id": sender_id,
+            "sender_corporation": sinfo["corp_name"],
+            "sender_corporation_id": sinfo["corp_id"],
+            "sender_alliance": sinfo["alli_name"],
+            "sender_alliance_id": sinfo["alli_id"],
+            "recipient_names": recipient_names,
+            "recipient_ids": recipient_ids,
+            "recipient_corps": recipient_corps,
+            "recipient_corp_ids": recipient_corp_ids,
+            "recipient_alliances": recipient_alliances,
+            "recipient_alliance_ids": recipient_alliance_ids,
+            "status": "Read" if m.is_read else "Unread",
         }
-        logger.debug(f"Processed mail {mid}")
-    logger.info(f"Extracted {len(result)} mails")
+
+    logger.debug("Extracted %d mails", len(result))
     return result
 
 
@@ -123,18 +125,20 @@ def get_cell_style_for_mail_cell(column: str, row: dict, index: Optional[int] = 
     solo = BigBrotherConfig.get_solo()
     # sender cell
     if column.startswith('sender_'):  # Apply consistent styling to all sender-related columns.
-        if column == 'sender_name' and check_char_corp_bl(row.get('sender_id')):  # Highlight hostile/blacklisted senders.
-            return 'color: red;'
+        if aablacklist_active():
+            if column == 'sender_name' and check_char_corp_bl(row.get('sender_id')):  # Highlight hostile/blacklisted senders.
+                return 'color: red;'
         if column == 'sender_corporation' and str(row.get('sender_corporation_id')) in solo.hostile_corporations:  # Hostile corp.
             return 'color: red;'
         if column == 'sender_alliance' and str(row.get('sender_alliance_id')) in solo.hostile_alliances:  # Hostile alliance.
             return 'color: red;'
     # recipient cell
     if column.startswith('recipient_') and index is not None:  # Recipient columns use parallel arrays, keep indexes in sync.
-        # blacklist check
-        rid = row['recipient_ids'][index]
-        if check_char_corp_bl(rid):  # Individual recipient appears on blacklist.
-            return 'color: red;'
+        if aablacklist_active():
+            # blacklist check
+            rid = row['recipient_ids'][index]
+            if check_char_corp_bl(rid):  # Individual recipient appears on blacklist.
+                return 'color: red;'
         # corp/alliance hostility
         cid = row['recipient_corps'][index] if column == 'recipient_corps' else None
         aid = row['recipient_alliance_ids'][index] if column == 'recipient_alliance_ids' else None
@@ -146,27 +150,29 @@ def get_cell_style_for_mail_cell(column: str, row: dict, index: Optional[int] = 
 
 
 def is_mail_row_hostile(row: dict) -> bool:
-    """Return True when the mail row touches hostiles/blacklists."""
     solo = BigBrotherConfig.get_solo()
-    # sender hostility
-    if row.get('sender_name'):  # Check for CCP/GM system mails (often suspicious).
-        for key in ["GM ","CCP "]:
-            if key in str(row["sender_name"]):  # Built-in CCP/GM notifications get flagged automatically.
+
+    if row.get("sender_name"):
+        for key in ["GM ", "CCP "]:
+            if key in str(row["sender_name"]):
                 return True
-    if check_char_corp_bl(row.get('sender_id')):  # Sender is explicitly blacklisted.
+
+    if aablacklist_active() and check_char_corp_bl(row.get("sender_id")):
         return True
-    if str(row.get('sender_corporation_id')) in solo.hostile_corporations:  # Sender corporation flagged hostile.
+
+    if str(row.get("sender_corporation_id")) in solo.hostile_corporations:
         return True
-    if str(row.get('sender_alliance_id')) in solo.hostile_alliances:  # Sender alliance flagged hostile.
+    if str(row.get("sender_alliance_id")) in solo.hostile_alliances:
         return True
-    # any recipient hostility
-    for idx, rid in enumerate(row['recipient_ids']):  # Any recipient trigger qualifies the mail as hostile.
-        if check_char_corp_bl(rid):  # Recipient on blacklist.
+
+    for idx, rid in enumerate(row["recipient_ids"]):
+        if aablacklist_active() and check_char_corp_bl(rid):
             return True
-        if str(row['recipient_corps'][idx]) in solo.hostile_corporations:  # Recipient corp flagged hostile.
+        if str(row["recipient_corp_ids"][idx]) in solo.hostile_corporations:
             return True
-        if str(row['recipient_alliance_ids'][idx]) in solo.hostile_alliances:  # Recipient alliance flagged hostile.
+        if str(row["recipient_alliance_ids"][idx]) in solo.hostile_alliances:
             return True
+
     return False
 
 
@@ -214,8 +220,9 @@ def render_mails(user_id: int) -> str:
                     # map list-column back to its id-array sibling:
                     if col == 'recipient_names':  # Names column uses multiple hostile checks.
                         rid = row['recipient_ids'][idx]
-                        if check_char_corp_bl(rid):  # Highlight individual recipients on the blacklist.
-                            style = 'color:red;'
+                        if aablacklist_active():
+                            if check_char_corp_bl(rid):  # Highlight individual recipients on the blacklist.
+                                style = 'color:red;'
                         elif str(row['recipient_corp_ids'][idx]) in BigBrotherConfig.get_solo().hostile_corporations:  # Recipient corp flagged hostile.
                             style = 'color:red;'
                         elif str(row['recipient_alliance_ids'][idx]) in BigBrotherConfig.get_solo().hostile_alliances:  # Recipient alliance flagged hostile.
@@ -240,12 +247,18 @@ def render_mails(user_id: int) -> str:
                 # single-value columns
                 style = ''
                 if col.startswith('sender_'):  # Sender cells reuse the same hostile checks as the list-based helper.
-                    if col == 'sender_name' and check_char_corp_bl(row['sender_id']):  # Sender is blacklisted.
-                        style = 'color:red;'
-                    elif col == 'sender_corporation' and str(row['sender_corporation_id']) in BigBrotherConfig.get_solo().hostile_corporations:  # Sender corp hostility.
-                        style = 'color:red;'
-                    elif col == 'sender_alliance' and str(row['sender_alliance_id']) in BigBrotherConfig.get_solo().hostile_alliances:  # Sender alliance hostility.
-                        style = 'color:red;'
+                    if aablacklist_active():
+                        if col == 'sender_name' and check_char_corp_bl(row['sender_id']):  # Sender is blacklisted.
+                            style = 'color:red;'
+                        elif col == 'sender_corporation' and str(row['sender_corporation_id']) in BigBrotherConfig.get_solo().hostile_corporations:  # Sender corp hostility.
+                            style = 'color:red;'
+                        elif col == 'sender_alliance' and str(row['sender_alliance_id']) in BigBrotherConfig.get_solo().hostile_alliances:  # Sender alliance hostility.
+                            style = 'color:red;'
+                    else:
+                        if col == 'sender_corporation' and str(row['sender_corporation_id']) in BigBrotherConfig.get_solo().hostile_corporations:  # Sender corp hostility.
+                            style = 'color:red;'
+                        elif col == 'sender_alliance' and str(row['sender_alliance_id']) in BigBrotherConfig.get_solo().hostile_alliances:  # Sender alliance hostility.
+                            style = 'color:red;'
                 # subject/content keyword highlighting can be done client-side
                 if style:  # Only emit style attribute when a highlight is needed.
                     style_attr = f" style='{style}'"
@@ -265,73 +278,75 @@ def render_mails(user_id: int) -> str:
 
 
 def get_user_hostile_mails(user_id: int) -> Dict[int, str]:
-    """
-    Persist and return hostile mail note strings keyed by the message id.
-    """
     cfg = BigBrotherConfig.get_solo()
 
-    # 1) Gather all raw MailMessage IDs cheaply
     all_qs = gather_user_mails(user_id)
-    all_ids = list(all_qs.values_list('id_key', flat=True))
+    all_ids = list(all_qs.values_list("id_key", flat=True))
 
-    # 2) Find which IDs are already processed
-    seen_ids = set(ProcessedMail.objects.filter(mail_id__in=all_ids)
-                                  .values_list('mail_id', flat=True))
+    seen_ids = set(
+        ProcessedMail.objects.filter(mail_id__in=all_ids).values_list("mail_id", flat=True)
+    )
 
-    # 3) Determine the new ones
     new_ids = [mid for mid in all_ids if mid not in seen_ids]
     notes: Dict[int, str] = {}
 
-    if new_ids:  # Nothing to do when all mail IDs already processed.
-        # 4) Hydrate only the new mails
+    if new_ids:
         new_qs = all_qs.filter(id_key__in=new_ids)
         new_rows = get_user_mails(new_qs)
 
-        for mid, m in new_rows.items():
-            # mark processed, skip if already exists
-            pm, created = ProcessedMail.objects.get_or_create(mail_id=mid)
-            if not created:  # Another worker may have processed it already.
-                continue
+        hostile_rows: dict[int, dict] = {mid: m for mid, m in new_rows.items() if is_mail_row_hostile(m)}
 
-            # only create a note if it's hostile
-            if not is_mail_row_hostile(m):  # Ignore benign mail threads.
+        pms: dict[int, ProcessedMail] = {}
+        if hostile_rows:
+            ProcessedMail.objects.bulk_create(
+                [ProcessedMail(mail_id=mid) for mid in hostile_rows.keys()],
+                ignore_conflicts=True,
+            )
+            pms = {
+                pm.mail_id: pm
+                for pm in ProcessedMail.objects.filter(mail_id__in=hostile_rows.keys())
+            }
+
+        for mid, m in hostile_rows.items():
+            pm = pms.get(mid)
+            if not pm:
                 continue
 
             flags: List[str] = []
-            # sender
-            if check_char_corp_bl(m['sender_id']):  # Sender blacklisted.
+            if aablacklist_active() and check_char_corp_bl(m["sender_id"]):
                 flags.append(f"Sender **{m['sender_name']}** is on blacklist")
-            if str(m['sender_corporation_id']) in cfg.hostile_corporations:  # Sender corp is hostile.
+            if str(m["sender_corporation_id"]) in cfg.hostile_corporations:
                 flags.append(f"Sender corp **{m['sender_corporation']}** is hostile")
-            if str(m['sender_alliance_id']) in cfg.hostile_alliances:  # Sender alliance is hostile.
+            if str(m["sender_alliance_id"]) in cfg.hostile_alliances:
                 flags.append(f"Sender alliance **{m['sender_alliance']}** is hostile")
-            # recipients
-            for idx, rid in enumerate(m.get('recipient_ids', [])):
-                name = m['recipient_names'][idx]
-                if check_char_corp_bl(rid):  # Recipient blacklisted.
+
+            for idx, rid in enumerate(m.get("recipient_ids", [])):
+                name = m["recipient_names"][idx]
+                if aablacklist_active() and check_char_corp_bl(rid):
                     flags.append(f"Recipient **{name}** is on blacklist")
-                cid = m['recipient_corp_ids'][idx]
-                if cid and str(cid) in cfg.hostile_corporations:  # Recipient corp is hostile.
+                cid = m["recipient_corp_ids"][idx]
+                if cid and str(cid) in cfg.hostile_corporations:
                     flags.append(f"Recipient corp **{m['recipient_corps'][idx]}** is hostile")
-                aid = m['recipient_alliance_ids'][idx]
-                if aid and str(aid) in cfg.hostile_alliances:  # Recipient alliance is hostile.
+                aid = m["recipient_alliance_ids"][idx]
+                if aid and str(aid) in cfg.hostile_alliances:
                     flags.append(f"Recipient alliance **{m['recipient_alliances'][idx]}** is hostile")
-            flags_text = "\n    - ".join(flags)
+
+            flags_text = "\n    - ".join(flags) if flags else "(no flags)"
 
             note_text = (
                 f"- **'{m['subject']}'**: "
                 f"\n  - sent {m['sent_date']}; "
                 f"\n  - from **{m['sender_name']}**(**{m['sender_corporation']}**/"
-                  f"**{m['sender_alliance']}**), "
+                f"**{m['sender_alliance']}**), "
                 f"\n  - flags:\n    - {flags_text}"
             )
+
             SusMailNote.objects.update_or_create(
                 mail=pm,
-                defaults={"user_id": user_id, "note": note_text}
+                defaults={"user_id": user_id, "note": note_text},
             )
             notes[mid] = note_text
 
-    # 5) Fetch *all* notes for this user (new + old)
     for note in SusMailNote.objects.filter(user_id=user_id):
         notes[note.mail.mail_id] = note.note
 
