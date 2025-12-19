@@ -47,8 +47,8 @@ VERBOSE_WEBHOOK_LOGGING = True
 
 def esi_tenant_kwargs(datasource: str | None):
     """
-    Translate the legacy datasource argument into the new X-Tenant header expected by
-    the aiopenapi3-powered ESI client.
+    Translates the datasource argument into the X-Tenant header required by
+    the ESI client.
     """
     tenant = datasource or DATASOURCE
     return {"X_Tenant": tenant} if tenant else {}
@@ -192,7 +192,6 @@ def get_eve_entity_type(
     # 1. Cache lookup
     try:
         record = id_types.objects.get(pk=eve_id)
-        # mark last access time without touching freshness timestamp
         try:
             record.last_accessed = timezone.now()
             record.save(update_fields=["last_accessed"])
@@ -329,7 +328,8 @@ def get_entity_info(entity_id: int, as_of: timezone.datetime) -> Dict:
       }
     Caches the result in the DB for 2 hours.
     """
-    if entity_id is None:  # Replace missing IDs with placeholder to avoid crashing downstream.
+    if entity_id is None:
+        # Default placeholder ID if input is missing.
         entity_id = 342545170
         errent = True
     else:
@@ -406,7 +406,8 @@ def get_entity_info(entity_id: int, as_of: timezone.datetime) -> Dict:
                 continue
             raise
 
-    if errent:  # Flag placeholder lookups so downstream consumers know input was missing.
+    if errent:
+        # Indicate lookup error for missing ID.
         errmsg = "Error: entity id provided is None "
         info = {
             "name":      errmsg,
@@ -1030,7 +1031,8 @@ def is_player_structure(location_id):
     return location_id >= 1_000_000_000_000
 
 def is_ship(type_id):
-    return False # Placeholder logic will be inline or enhanced if needed.
+    """Checks if a type_id belongs to a ship."""
+    return False
 
 def get_safe_entities():
     """

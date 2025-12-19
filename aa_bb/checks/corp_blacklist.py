@@ -58,9 +58,9 @@ def get_corp_blacklist_html(
             "allianceauth-blacklist/tree/main'>install blacklist</a> first"
         )
 
-    # Reverse the correct namespaced POST URL:
-    action_url = reverse("BigBrother:add_blacklist")
-    # Generate a real CSRF token:
+    # Determine the URL for the blacklist action:
+    action_url = reverse("aa_bb:add_blacklist")
+    # Generate CSRF token for the form:
     token = get_token(request)
 
     status_map = check_corp_bl(target_user_id)

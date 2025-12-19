@@ -165,15 +165,19 @@ class PapsMenuItem(MenuItemHook):
             navactive=["paps:"],
     )
     def render(self, request):
-        """Only show when users have permission."""
+        """Only show when users have permission and AFAT is active."""
+        if not afat_active():
+            return ""
         if request.user.has_perm("aa_bb.can_access_paps"):  # Only show for PAP viewers.
             return super().render(request)
         return ""
 
 @hooks.register("menu_item_hook")
 def register_paps_menu():
-    """Register the PAP stats sidebar entry."""
-    return PapsMenuItem()
+    """Register the PAP stats sidebar entry if AFAT is active."""
+    if afat_active():
+        return PapsMenuItem()
+    return None
 
 if afat_active():
     @hooks.register("url_hook")

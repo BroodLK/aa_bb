@@ -424,11 +424,11 @@ def _filtered_get_app_list(request, app_label=None):
 
     filtered = []
     for app in app_list:
-        # If AFAT itself has an admin section, drop it.
+        # Exclude AFAT's own admin section if present.
         if app.get("app_label") == "afat":
             continue
 
-        # PAP models (in this project) show under aa_bb, so remove them there.
+        # PAP models (in this project) are under aa_bb, so remove them when AFAT is not active.
         if app.get("app_label") == "aa_bb":
             models = app.get("models", [])
             models = [m for m in models if m.get("object_name") not in _PAP_OBJECT_NAMES]

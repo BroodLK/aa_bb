@@ -227,20 +227,21 @@ def warm_entity_cache_task(self, user_id):
     except WarmProgress.DoesNotExist:
         progress = None
 
-    if progress and progress.total > 0:  # Another warm job is in-flight for this pilot.
+    # Determine if an existing warm job is currently making progress.
+    if progress and progress.total > 0:
         first_current = progress.current
         logger.info(f"[{user_main}] detected in-progress run (current={first_current}); probing…")
         time.sleep(20)
 
-        # re-fetch to see if it's moved
+        # Re-fetch progress record to see if current count has increased.
         try:
             progress = WarmProgress.objects.get(user_main=user_main)
             second_current = progress.current
         except WarmProgress.DoesNotExist:
             second_current = None
 
-        # Now *abort* if there *was* progress; otherwise continue
-        if second_current != first_current:  # Existing job advanced, so bail out to avoid duplicate work.
+        # Abort if progress was detected; otherwise continue with the new task.
+        if second_current != first_current:
             logger.info(
                 f"[{user_main}] progress advanced from {first_current} to {second_current}; aborting new task."
             )

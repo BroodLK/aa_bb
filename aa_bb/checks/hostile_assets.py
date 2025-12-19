@@ -68,13 +68,9 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
             key = getattr(system_obj, "pk", None)
             sys_name = system_obj.name
         elif location_id:
-            # Fallback if system object isn't available but we have a location ID
-            # For now, assuming we only care if we can map to a system,
-            # but to support "Unknown Location" groups properly we can use negative ID or similar if needed.
-            # Current logic requires key to be set.
-            # Use location_id as key if system unavailable?
-            # But return type says Dict[int, dict] where int is system ID.
-            # If we have no system, we can't check sovereignty easily.
+            # If the system ID is not available, we can't accurately check sovereignty
+            # or determine if the location is hostile based on system-level rules.
+            # We skip these records for now.
             pass
 
         if not key:

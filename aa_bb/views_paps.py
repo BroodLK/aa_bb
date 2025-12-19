@@ -167,6 +167,8 @@ def index(request):
 @permission_required("aa_bb.can_access_paps")
 def history(request):
     """Show previously generated PAP charts (if they exist)."""
+    if not afat_active():
+        return render(request, "paps/disabled.html")
     cfg = BigBrotherConfig.get_solo()
     if not cfg.is_paps_active:  # Respect module toggle.
         return render(request, "paps/disabled.html")
@@ -197,6 +199,8 @@ def history(request):
 @permission_required("aa_bb.can_generate_paps")
 def generate_pap_chart(request):
     """Process the submitted PAP form and produce a stacked contribution chart."""
+    if not afat_active():
+        return render(request, "paps/disabled.html")
     month = int(request.POST.get("month"))
     year = int(request.POST.get("year"))
 

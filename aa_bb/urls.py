@@ -35,8 +35,8 @@ urlpatterns = [
     ),  # Handle the Reddit OAuth callback and persist tokens.
     path("manual/faq/", views_faq.manual_faq, name="manual_faq"),  # General FAQ/guide landing page.
 
-    # Bulk loader (not used by paginated SUS_CONTR but retained)
-    path("load_cards/", views.load_cards, name="load_cards"),  # Legacy endpoint to generate all SUS cards at once.
+    # Bulk loader
+    path("load_cards/", views.load_cards, name="load_cards"),  # Legacy endpoint.
 
     # Single card AJAX fetch (all cards except paging for SUS_CONTR)
     path("load_card/", views.load_card, name="load_card"),  # Fetch one card’s HTML payload on-demand.

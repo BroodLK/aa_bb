@@ -84,7 +84,7 @@ def determine_character_state(user_id, save: bool = False):
     all_char_ids = get_user_characters(user_id)  # iterates keys if dict
     result = {}
 
-    # If corptools isn't available, mark unknown quickly
+    # If corptools is not available, default to unknown status.
     if CharacterAudit is None or Skill is None:
         for char_id in all_char_ids:
             db_record = char_db_records.get(char_id)
@@ -115,7 +115,7 @@ def determine_character_state(user_id, save: bool = False):
     for char_id in char_ids:
         db_record = char_db_records.get(char_id)
 
-        # Reuse cached state unless it's been 24 hours since last
+        # Use cached state if it's within 24 hours and inside the update window.
         now = timezone.now()
         if db_record and db_record.last_checked_at and (now - db_record.last_checked_at) < MAX_CACHE_AGE and in_utc_update_window(now):
             result[char_id] = {

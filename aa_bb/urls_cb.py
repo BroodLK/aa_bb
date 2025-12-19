@@ -9,7 +9,7 @@ urlpatterns = [
     # Main index view
     path("",                 views.index,                  name="index"),  # CorpBrother dashboard root.
 
-    # Bulk loader (not used by paginated SUS_CONTR but retained)
+    # Bulk loader
     path("load_cards/",      views.load_cards,             name="load_cards"),  # Legacy full-card refresh endpoint.
 
     # Single card AJAX fetch (all cards except paging for SUS_CONTR)
