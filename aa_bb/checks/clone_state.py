@@ -14,6 +14,7 @@ from django.utils import timezone
 import json
 import os
 import logging
+from datetime import timedelta, time
 
 try:
     from corptools.models import CharacterAudit, Skill
@@ -23,6 +24,41 @@ except Exception:
 
 logger = logging.getLogger(__name__)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MAX_CACHE_AGE = timedelta(hours=24)
+UTC_WINDOW_START = time(6, 0)   # 06:00 UTC
+UTC_WINDOW_END   = time(10, 0)  # 10:00 UTC
+
+
+def _load_fallback_skill_ids():
+    """
+    Load skills.json and return a sorted list of all skill IDs contained.
+    skills.json is a mapping of category name -> list[dict], where the 2nd dict
+    contains skill_id(str) -> skill_name.
+    """
+    skills_json_file = os.path.join(BASE_DIR, "skills.json")
+    try:
+        with open(skills_json_file, "r") as f:
+            skills_by_cat = json.load(f)
+    except Exception:
+        logger.exception("Failed to load skills.json fallback list.")
+        return []
+
+    ids = set()
+    for _cat, blocks in skills_by_cat.items():
+        for block in blocks:
+            for k in block.keys():
+                if k == "Category ID":
+                    continue
+                try:
+                    ids.add(int(k))
+                except Exception:
+                    continue
+
+    return sorted(ids)
+
+def in_utc_update_window(now):
+    utc_time = now.time()
+    return UTC_WINDOW_START <= utc_time < UTC_WINDOW_END
 
 
 def determine_character_state(user_id, save: bool = False):
@@ -31,11 +67,15 @@ def determine_character_state(user_id, save: bool = False):
     """
     alpha_skills_file = os.path.join(BASE_DIR, "alpha_skills.json")
 
-    # Load alpha skill caps
+    # Load skill
     with open(alpha_skills_file, "r") as f:
         alpha_skills = json.load(f)
     alpha_caps = {skill["id"]: skill["cap"] for skill in alpha_skills}
     alpha_skill_ids = [skill["id"] for skill in alpha_skills]
+
+    skills_json_file = os.path.join(BASE_DIR, "skills.json")
+    with open(skills_json_file, "r") as f:
+        skills = json.load(f)
 
     char_db_records = {
         rec.char_id: rec for rec in CharacterAccountState.objects.all()
@@ -57,7 +97,6 @@ def determine_character_state(user_id, save: bool = False):
 
     char_ids = list(all_char_ids)
 
-    # Build total_sp map (FAST: select_related only, no skill prefetch)
     audits = (
         CharacterAudit.objects
         .filter(character__character_id__in=char_ids)
@@ -72,31 +111,27 @@ def determine_character_state(user_id, save: bool = False):
         except Exception:
             total_sp_by_char[cid] = None
 
-    # Decide which characters need checking (SP gate)
     chars_to_check = []
     for char_id in char_ids:
         db_record = char_db_records.get(char_id)
-        total_sp = total_sp_by_char.get(char_id)
 
-        # If we have a previous SP and it's unchanged, reuse cached state
-        if db_record and total_sp is not None and db_record.last_total_sp is not None:
-            if int(db_record.last_total_sp) == int(total_sp) and db_record.state in ("alpha", "omega", "unknown"):
-                result[char_id] = {
-                    "state": db_record.state,
-                    "skill_used": db_record.skill_used,
-                    "last_state": db_record.state,
-                }
-                continue
-
-        chars_to_check.append(char_id)
+        # Reuse cached state unless it's been 24 hours since last
+        now = timezone.now()
+        if db_record and db_record.last_checked_at and (now - db_record.last_checked_at) < MAX_CACHE_AGE and in_utc_update_window(now):
+            result[char_id] = {
+                "state": db_record.state if db_record.state else "unknown",
+                "skill_used": db_record.skill_used,
+                "last_state": db_record.state,
+                "last_checked_at": db_record.last_checked_at,
+            }
+            continue
+        else:
+            chars_to_check.append(char_id)
 
     # Nothing to do
     if not chars_to_check:
         return result
 
-    # Build the minimal set of skill IDs to fetch:
-    #   - all alpha-locked skills
-    #   - plus any cached skill_used for chars needing check (so we keep the fast shortcut idea)
     extra_skill_ids = set()
     for char_id in chars_to_check:
         db_record = char_db_records.get(char_id)
@@ -105,7 +140,6 @@ def determine_character_state(user_id, save: bool = False):
 
     skill_ids_to_fetch = sorted(set(alpha_skill_ids) | extra_skill_ids)
 
-    # Single query: pull only the relevant Skill rows for just these characters
     skill_rows = (
         Skill.objects
         .filter(character__character__character_id__in=chars_to_check, skill_id__in=skill_ids_to_fetch)
@@ -126,8 +160,7 @@ def determine_character_state(user_id, save: bool = False):
             "active": int(row["active_skill_level"]),
         }
 
-    now = timezone.now()
-
+    fallback_skill_ids = _load_fallback_skill_ids()
     for char_id in chars_to_check:
         db_record = char_db_records.get(char_id)
         total_sp = total_sp_by_char.get(char_id)
@@ -167,6 +200,32 @@ def determine_character_state(user_id, save: bool = False):
                     skill_used = sid
                     break
 
+        # 3) Fallback: if still unknown, check skills.json list
+        if state is None and fallback_skill_ids:
+            fb_rows = (
+                Skill.objects
+                .filter(
+                    character__character__character_id=char_id,
+                    skill_id__in=fallback_skill_ids
+                )
+                .values("skill_id", "trained_skill_level", "active_skill_level")
+            )
+
+            for row in fb_rows:
+                sid = int(row["skill_id"])
+                trained = int(row["trained_skill_level"])
+                active = int(row["active_skill_level"])
+                cap = alpha_caps.get(sid, 5)
+
+                if active > cap:
+                    state = "omega"
+                    skill_used = sid
+                    break
+                elif trained > active:
+                    state = "alpha"
+                    skill_used = sid
+                    break
+
         if state is None:
             state = "unknown"
             skill_used = None
@@ -179,6 +238,7 @@ def determine_character_state(user_id, save: bool = False):
         }
 
         if save:
+            now = timezone.now()
             with transaction.atomic():
                 CharacterAccountState.objects.update_or_create(
                     char_id=char_id,
@@ -186,7 +246,7 @@ def determine_character_state(user_id, save: bool = False):
                         "state": state,
                         "skill_used": skill_used,
                         "last_total_sp": total_sp,
-                        "sp_last_checked": now,
+                        "last_checked_at": now,
                     },
                 )
 

@@ -355,14 +355,6 @@ def BB_update_single_user(user_id, char_name):
             # load (or create) cached status so diffs apply correctly
             status, created = UserStatus.objects.get_or_create(user_id=user_id)
 
-            is_base_est = not status.baseline_initialized
-
-            if is_base_est:
-                if not instance.new_user_notify:
-                    send_notifications = False
-                else:
-                    send_notifications = True
-
             logger.info(f"[{char_name}] Status loaded (created={created}). Calculating changes...")
 
             changes = []
@@ -1029,6 +1021,16 @@ def BB_update_single_user(user_id, char_name):
                         changes.append(f"### New Suspicious Transactions{get_pings('New Suspicious Transactions')}:\n{link_list}")
                 status.has_sus_trans = has_sus_trans
                 status.sus_trans = sus_trans_result
+
+            is_base_est = not status.baseline_initialized
+
+            if not is_base_est:
+                if not instance.new_user_notify:
+                    send_notifications = False
+                else:
+                    send_notifications = True
+            else:
+                send_notifications = True
 
             if send_notifications and changes:
                 """

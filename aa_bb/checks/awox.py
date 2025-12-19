@@ -6,30 +6,33 @@ cache management, and rendering helpers so the calling views do not have to
 care about throttling or HTML generation.
 """
 
-import requests
 import time
-import logging
+from functools import lru_cache
+
+import requests
+from allianceauth.authentication.models import CharacterOwnership
+from django.utils import timezone
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
-from allianceauth.authentication.models import CharacterOwnership
-
-from ..models import BigBrotherConfig,AwoxKillsCache
-from django.utils import timezone
 from esi.exceptions import HTTPNotModified
-from ..esi_client import esi, call_result
-from ..app_settings import (
-    DATASOURCE,
-    esi_tenant_kwargs,
-    get_site_url,
-    get_contact_email,
-    get_owner_name,
-    send_message,
-    resolve_alliance_name,
-)
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-logger = logging.getLogger(__name__)
+from ..app_settings import (
+    DATASOURCE,
+    esi_tenant_kwargs,
+    get_contact_email,
+    get_owner_name,
+    get_site_url,
+    resolve_alliance_name,
+    send_message,
+)
+
+from ..esi_client import call_result, esi
+from ..models import AwoxKillsCache, BigBrotherConfig
+
+from allianceauth.services.hooks import get_extension_logger
+logger = get_extension_logger(__name__)
 
 USER_AGENT = f"{get_site_url()} Maintainer: {get_owner_name()} {get_contact_email()}"
 HEADERS = {
@@ -38,6 +41,17 @@ HEADERS = {
     "Accept": "application/json",
 }
 
+# How long we consider the cached awox data "fresh"
+AWOX_CACHE_TTL_SECONDS = 60 * 60  # 60 minutes
+
+# How many recent zKill entries we will hydrate per character (prevents runaway ESI calls)
+MAX_KILLS_PER_CHARACTER = 25
+
+# Limit zKill "down" notifications to once every 2 hours
+_last_zkill_down_notice_monotonic = 0.0
+
+
+@lru_cache(maxsize=512)
 def _get_corp_name(corp_id):
     if not corp_id:
         return "None"
@@ -48,21 +62,21 @@ def _get_corp_name(corp_id):
     except Exception:
         return f"Unknown ({corp_id})"
 
-# Limit zKill "down" notifications to once every 2 hours
-_last_zkill_down_notice_monotonic = 0.0
+
+@lru_cache(maxsize=512)
+def _get_alliance_name(alliance_id):
+    if not alliance_id:
+        return None
+    try:
+        return resolve_alliance_name(alliance_id)
+    except Exception:
+        return None
 
 
 def _notify_zkill_down_once(preview: str, status: int | None, content_type: str | None):
-    """
-    Fire a single Discord notification when zKill returns junk.
-
-    An in-memory timestamp prevents duplicate warnings within the last
-    ~hour so alerts do not spam when zKill is flaking.
-    """
     global _last_zkill_down_notice_monotonic
     now = time.monotonic()
-    # 2 hours = 7200 seconds
-    if now - _last_zkill_down_notice_monotonic < 3500:  # Skip notification if a warning was sent recently.
+    if now - _last_zkill_down_notice_monotonic < 2 * 60 * 60:
         return
     _last_zkill_down_notice_monotonic = now
     msg = (
@@ -71,11 +85,21 @@ def _notify_zkill_down_once(preview: str, status: int | None, content_type: str 
         f"body preview: ```{preview}```"
     )
     try:
-        awox_notify = BigBrotherConfig.awox_notify
+        awox_notify = BigBrotherConfig.get_solo().awox_notify
         if awox_notify:
             send_message(msg)
     except Exception as e:
         logger.warning(f"Failed to send zKill down notification: {e}")
+
+
+def _get_requests_session() -> requests.Session:
+    session = requests.Session()
+    session.headers.update(HEADERS)
+    retries = Retry(total=3, backoff_factor=0.2, status_forcelist=[500, 502, 503, 504])
+    adapter = HTTPAdapter(max_retries=retries)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
 
 
 def fetch_awox_kills(user_id, delay=0.2):
@@ -86,48 +110,64 @@ def fetch_awox_kills(user_id, delay=0.2):
     recent awox activity is pulled from zKill, the full mail is hydrated
     via ESI, and the resulting summary is cached for future calls.
     """
-    # Indefinite DB cache: return cached kills if present
+    now = timezone.now()
+
+    # DB cache with TTL: return cached kills if present & fresh
     try:
         cache = AwoxKillsCache.objects.get(pk=user_id)
         try:
-            cache.last_accessed = timezone.now()
-            cache.save(update_fields=["last_accessed"])
+            last_accessed = cache.last_accessed
         except Exception:
-            cache.save()
-        return cache.data or []
-    except AwoxKillsCache.DoesNotExist:
-        pass
-    characters = CharacterOwnership.objects.filter(user__id=user_id)
-    char_ids = [c.character.character_id for c in characters]
-    char_id_map = {c.character.character_id: c.character.character_name for c in characters}
+            last_accessed = None
 
+        if last_accessed and (now - last_accessed).total_seconds() < AWOX_CACHE_TTL_SECONDS:
+            try:
+                cache.last_accessed = now
+                cache.save(update_fields=["last_accessed"])
+            except Exception:
+                try:
+                    cache.save()
+                except Exception:
+                    pass
+            return cache.data or None
+    except AwoxKillsCache.DoesNotExist:
+        cache = None
+    except Exception:
+        cache = None
+
+    characters = CharacterOwnership.objects.filter(user__id=user_id).select_related("character")
+    char_ids_list = [c.character.character_id for c in characters if getattr(c, "character", None)]
+    char_ids = set(char_ids_list)
+    if not char_ids_list:
+        return None
 
     kills_by_id = {}
+    session = _get_requests_session()
 
-    session = requests.Session()
-    session.headers.update(HEADERS)
-    session.headers.update({"Connection": "close"})
-    retries = Retry(total=3, backoff_factor=0.2, status_forcelist=[500, 502, 503, 504])
-    session.mount("https://", HTTPAdapter(max_retries=retries))
-
-    for char_id in char_ids:
+    for char_id in char_ids_list:
         zkill_url = f"https://zkillboard.com/api/characterID/{char_id}/awox/1/"
+        start_ts = time.monotonic()
         try:
             response = session.get(zkill_url, timeout=(3, 10))
             response.raise_for_status()
-        except requests.exceptions.RequestException as e:
-            logger.warning(f"Error fetching awox for {char_id}: {e}")
-            continue
+        finally:
+            elapsed = time.monotonic() - start_ts
+            logger.info(
+                "[AWOX][zKill] char_id=%s elapsed=%.3fs status=%s",
+                char_id,
+                elapsed,
+                getattr(response, "status_code", "ERR"),
+            )
 
-        # zKill may return HTML/Cloudflare challenge or a custom error page
         content_type = response.headers.get("Content-Type", "")
-        text_preview = (response.text or "").strip()[:200]
         text_lower = (response.text or "").lower()
+        text_preview = (response.text or "").strip()[:200]
+
         if (
             not content_type.startswith("application/json")
             or "so a big oops happened" in text_lower
             or "cdn-cgi/challenge-platform" in text_lower
-        ):  # Bail out when zKill returns HTML (Cloudflare/error) instead of JSON payloads.
+        ):
             logger.warning(
                 "Non-JSON response from zKillboard for %s: status=%s content_type=%s body='%s'",
                 char_id,
@@ -150,14 +190,19 @@ def fetch_awox_kills(user_id, delay=0.2):
             _notify_zkill_down_once(text_preview, response.status_code, content_type)
             continue
 
+        if isinstance(killmails, list):
+            killmails = killmails[:MAX_KILLS_PER_CHARACTER]
+        else:
+            continue
+
         for kill in killmails:
             kill_id = kill.get("killmail_id")
             hash_ = kill.get("zkb", {}).get("hash")
             value = kill.get("zkb", {}).get("totalValue", 0)
 
-            if not kill_id or not hash_:  # Ignore malformed entries that lack identifiers.
+            if not kill_id or not hash_:
                 continue
-            if kill_id in kills_by_id:  # Skip duplicates pulled from multiple characters.
+            if kill_id in kills_by_id:
                 continue
 
             operation = esi.client.Killmails.GetKillmailsKillmailIdKillmailHash(
@@ -165,45 +210,50 @@ def fetch_awox_kills(user_id, delay=0.2):
                 killmail_hash=hash_,
                 **esi_tenant_kwargs(DATASOURCE),
             )
+
             try:
                 full_kill, _ = call_result(operation)
             except HTTPNotModified:
-                full_kill, _ = call_result(operation, use_etag=False)
+                continue
             except Exception as e:
-                logger.warning("Failed to fetch ESI killmail %s: %s", kill_id, e)
+                logger.warning(f"Error fetching killmail from ESI for kill_id={kill_id}: {e}")
                 continue
 
-            attackers = full_kill.get("attackers", [])
             victim = full_kill.get("victim", {})
             victim_id = victim.get("character_id")
+            if not victim_id or victim_id not in char_ids:
+                continue
 
-            attacker_names = set()
+            attackers = full_kill.get("attackers", []) or []
             attacker_affiliations = []
+            attacker_names = []
 
-            for attacker in attackers:
-                a_id = attacker.get("character_id")
-                if a_id in char_ids and a_id != victim_id:  # Friendly fire only counts when attacker differs from victim.
-                    attacker_names.add(char_id_map.get(a_id))
+            for a in attackers:
+                a_id = a.get("character_id")
+                if not a_id:
+                    continue
+                if a_id in char_ids:
+                    attacker_names.append(a_id)
                     attacker_affiliations.append({
-                        "corp_id": attacker.get("corporation_id"),
-                        "alliance_id": attacker.get("alliance_id")
+                        "corp_id": a.get("corporation_id"),
+                        "alliance_id": a.get("alliance_id"),
                     })
 
-            if not attacker_names:  # No awox behaviour detected for this killmail.
+            if not attacker_names:
                 continue
 
             # Resolve names
-            att_info = attacker_affiliations[0]
-            att_corp = _get_corp_name(att_info["corp_id"])
-            att_alli = resolve_alliance_name(att_info["alliance_id"]) if att_info["alliance_id"] else None
+            att_info = attacker_affiliations[0] if attacker_affiliations else {}
+            att_corp = _get_corp_name(att_info.get("corp_id"))
+            att_alli = _get_alliance_name(att_info.get("alliance_id"))
 
             vic_corp_id = victim.get("corporation_id")
             vic_alli_id = victim.get("alliance_id")
             vic_corp = _get_corp_name(vic_corp_id)
-            vic_alli = resolve_alliance_name(vic_alli_id) if vic_alli_id else None
+            vic_alli = _get_alliance_name(vic_alli_id)
 
             kills_by_id[kill_id] = {
-                "value": int(value),
+                "value": int(value) if value is not None else 0,
                 "link": f"https://zkillboard.com/kill/{kill_id}/",
                 "chars": attacker_names,
                 "att_corp": att_corp,
@@ -213,16 +263,24 @@ def fetch_awox_kills(user_id, delay=0.2):
                 "date": full_kill.get("killmail_time"),
             }
 
+        time.sleep(delay)
+
     data_list = list(kills_by_id.values()) if kills_by_id else []
     try:
         AwoxKillsCache.objects.update_or_create(
             user_id=user_id,
-            defaults={"data": data_list, "last_accessed": timezone.now()},
+            defaults={"data": data_list, "last_accessed": now},
         )
     except Exception:
-        pass
-    return data_list if data_list else None
+        try:
+            if cache:
+                cache.data = data_list
+                cache.last_accessed = now
+                cache.save()
+        except Exception:
+            pass
 
+    return data_list if data_list else None
 
 def render_awox_kills_html(userID):
     """
@@ -269,7 +327,7 @@ def get_awox_kill_links(user_id):
     without having to duplicate the fetch/cache logic.
     """
     kills = fetch_awox_kills(user_id)
-    if not kills:  # No cached kills yet; callers expect empty list.
+    if not kills:  # No cached kills yet
         return []
 
     results = []

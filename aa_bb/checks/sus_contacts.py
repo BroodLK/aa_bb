@@ -38,11 +38,9 @@ def get_user_contacts(user_id: int) -> dict[int, dict]:
     Fetch and filter contacts for a user, excluding NPCs and self-contacts,
     and annotate each with standing, grouping support.
     """
-    # 1. Build a dict of the user's characters { character_id: character_name }
     user_chars = get_user_characters(user_id)
     user_char_ids = set(user_chars.keys())
 
-    # 2. Pull in all CharacterContact rows for those character IDs
     qs = CharacterContact.objects.filter(
         character__character__character_id__in=user_char_ids
     ).select_related('contact_name', 'character__character')
@@ -131,7 +129,6 @@ def get_cell_style_for_row(cid: int, column: str, row: dict) -> str:
     Determine inline CSS used when rendering the contact tables so that
     hostiles/blacklist hits pop out immediately.
     """
-    # standing color (not shown in the 3-col table but kept for compatibility)
     if column == 'standing':  # Legacy standing column retains rainbow colors.
         s = row.get('standing', 0)
         if s >= 6:  # High positive standings.
@@ -204,7 +201,6 @@ def render_contacts(user_id: int) -> str:
             html_parts.append('<p>No contacts in this category.</p>')
             continue
 
-        # Fixed 3-column table per requirements
         headers = ['character', 'corporation', 'alliance']
         html_parts.append('<table class="table table-striped table-hover stats">')
         html_parts.append('  <thead>')
@@ -240,7 +236,6 @@ def get_user_hostile_notifications(user_id: int) -> dict[int, str]:
     contacts = get_user_contacts(user_id)
     notifications: dict[int, str] = {}
 
-    # Shortcut to the current hostile lists
     cfg = BigBrotherConfig.get_solo()
     hostile_corps = cfg.hostile_corporations
     hostile_allis = cfg.hostile_alliances
@@ -248,7 +243,6 @@ def get_user_hostile_notifications(user_id: int) -> dict[int, str]:
 
     for cid, info in contacts.items():
         ctype     = info['contact_type']      # 'character' | 'corporation' | 'alliance'
-        # derive a display name based on the type
         if ctype == 'character':  # Display actual character name for hostile characters.
             cname = info.get('character') or ''
         elif ctype == 'corporation':  # Corporations show corp display name.
@@ -267,23 +261,19 @@ def get_user_hostile_notifications(user_id: int) -> dict[int, str]:
         alerts: list[str] = []
         logger.info(f"{cname},{aid},{alli_name}")
 
-        # 1) Character-specific blacklist check
         if aablacklist_active():
             if ctype == 'character' and check_char_corp_bl(cid):  # Character is on blacklist.
                 alerts.append(f"**{cname}** is on blacklist")
 
-        # 2) Hostile corporation check (characters & corporations)
         if ctype in ('character', 'corporation') and coid != 0:  # Evaluate corp affiliation when present.
             if str(coid) in hostile_corps:  # Corp matches hostile list.
                 alerts.append(f"corporation **{corp_name}** is on hostile list")
 
-        # 3) Hostile alliance check (characters, corporations & alliances)
         if aid != 0 and str(aid) in hostile_allis:  # Alliance belongs to hostile list.
             alerts.append(f"alliance **{alli_name}** is on hostile list")
 
         if alerts:  # Build notification only when this contact triggered alerts.
             char_list = ', '.join(sorted(chars)) if chars else 'no characters'
-            # Build a single notification string
             message = (
                 f"- A {s} **{ctype}** type contact **{cname}** found on **{char_list}**, flags: "
                 + "; ".join(alerts)

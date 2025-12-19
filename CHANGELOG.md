@@ -1,6 +1,11 @@
 # Change Log
 
-## [3.1.2 Beta 2] - 2025-12-18
+## [3.2.1] - 2025-12-18
+
+### Changed
+- Awox improvements and logs
+
+## [3.2.0] - 2025-12-18
 
 ### Changed
 - Attempt to optimize clone state, transactions, mails, contacts and contracts to reduce load times on users that have many characters.
