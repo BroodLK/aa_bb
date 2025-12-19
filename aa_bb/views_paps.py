@@ -16,15 +16,20 @@ from django.urls import reverse
 from .models import BigBrotherConfig, PapsConfig, PapCompliance, TicketToolConfig, LeaveRequest
 from .app_settings import get_user_profiles, get_user_characters, afat_active
 
-try:
-    from afat.models import Fat
-except ImportError:
-    logger.error("afat not installed; PAP generation will not work.")
+AFAT_INSTALLED = False
+if afat_active():
+    try:
+        from afat.models import Fat
+        AFAT_INSTALLED = True
+    except ImportError:
+        logger.error("afat not installed; PAP generation will not work.")
 
 @login_required
 @permission_required("aa_bb.can_generate_paps")
 def index(request):
     """Render the PAP entry form allowing recruiters to input monthly stats."""
+    if not afat_active():
+        return render(request, "paps/disabled.html")
     cfg = BigBrotherConfig.get_solo()
     if not cfg.is_paps_active:  # Disable UI when PAP module turned off.
         return render(request, "paps/disabled.html")
@@ -123,7 +128,7 @@ def index(request):
                 corp_paps += paps_to_add
 
 
-        if afat_active():  # Count Alliance FATs per character for corp PAP totals.
+        if AFAT_INSTALLED:  # Count Alliance FATs per character for corp PAP totals.
             for char in characters:
                 fats = Fat.objects.filter(
                     character__character_id=char,

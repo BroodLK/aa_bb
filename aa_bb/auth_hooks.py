@@ -11,6 +11,7 @@ from allianceauth.services.hooks import MenuItemHook, UrlHook
 from aa_bb import urls, urls_loa, urls_cb, urls_paps
 from .models import BigBrotherConfig, LeaveRequest
 
+from .app_settings import afat_active
 
 class CorpBrotherMenuItem(MenuItemHook):
     """This class ensures only authorized users will see the menu entry"""
@@ -174,10 +175,11 @@ def register_paps_menu():
     """Register the PAP stats sidebar entry."""
     return PapsMenuItem()
 
-@hooks.register("url_hook")
-def register_paps_urls():
-    """Wire the PAP URLconf into AllianceAuth."""
-    return UrlHook(urls_paps, "paps", r"^paps/")
+if afat_active():
+    @hooks.register("url_hook")
+    def register_paps_urls():
+        """Wire the PAP URLconf into AllianceAuth."""
+        return UrlHook(urls_paps, "paps", r"^paps/")
 
 
 @hooks.register('discord_cogs_hook')
