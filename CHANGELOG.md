@@ -1,19 +1,14 @@
-# Change Log
 
-## [3.2.1] - 2025-12-18
-
-### Changed
-- Awox improvements and logs
-
-## [3.2.0] - 2025-12-18
+## [3.2.3] - 2025-12-19
 
 ### Changed
-- Attempt to optimize clone state, transactions, mails, contacts and contracts to reduce load times on users that have many characters.
+- Optimize clone state, transactions, mails, contacts and contracts to reduce load times on users that have many characters.
 - Fixed issue where notifications were still being sent for users who did not have previous data (new installs or new audits)
 - Fixed LOA notifications of users outside LOA maximum without LOA, despite LOA being turned off.
 - Hid "is user on blacklist" as this is redundant as we do not currently check any external sources (this is in development)
 - Removed blacklist as a requirement, options will auto hide.
 - Removed AFAT as a requirement, options will auto hide.
+- AWOX performance improvements and logs
 
 ## [3.1.1 Beta 2] - 2025-12-17
 
