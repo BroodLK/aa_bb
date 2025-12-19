@@ -172,12 +172,11 @@ class PapsMenuItem(MenuItemHook):
             return super().render(request)
         return ""
 
-@hooks.register("menu_item_hook")
-def register_paps_menu():
-    """Register the PAP stats sidebar entry if AFAT is active."""
-    if afat_active():
+if afat_active():
+    @hooks.register("menu_item_hook")
+    def register_paps_menu():
+        """Register the PAP stats sidebar entry if AFAT is active."""
         return PapsMenuItem()
-    return None
 
 if afat_active():
     @hooks.register("url_hook")
