@@ -30,7 +30,8 @@ from .models import (
     LeaveRequest,
     ComplianceTicket,
     BigBrotherRedditSettings,
-    BigBrotherRedditMessage
+    BigBrotherRedditMessage,
+    EveItemPrice
 )
 
 @admin.register(BigBrotherConfig)
@@ -69,6 +70,16 @@ class BB_ConfigAdmin(SingletonModelAdmin):
                     "contract_notify",
                     "mail_notify",
                     "transaction_notify",
+                    "show_market_transactions",
+                    "market_transactions_show_major_hubs",
+                    "market_transactions_show_secondary_hubs",
+                    "market_transactions_excluded_systems",
+                    "market_transactions_threshold_alert",
+                    "market_transactions_threshold_percent",
+                    "market_transactions_price_method",
+                    "market_transactions_janice_api_key",
+                    "market_transactions_fuzzwork_station_id",
+                    "market_transactions_price_instant",
                     "new_user_notify",
                 ),
             },
@@ -285,6 +296,12 @@ class BigBrotherRedditMessageAdmin(admin.ModelAdmin):
     list_display = ("title", "used_in_cycle", "created")
     list_filter = ("used_in_cycle",)
     search_fields = ("title", "content")
+
+
+@admin.register(EveItemPrice)
+class EveItemPriceAdmin(admin.ModelAdmin):
+    list_display = ('eve_type_id', 'buy', 'sell', 'updated')
+    search_fields = ('eve_type_id',)
 
 
 @admin.register(Messages)

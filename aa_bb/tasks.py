@@ -1022,9 +1022,7 @@ def BB_update_single_user(user_id, char_name):
                 status.has_sus_trans = has_sus_trans
                 status.sus_trans = sus_trans_result
 
-            is_base_est = not status.baseline_initialized
-
-            if not is_base_est:
+            if not status.baseline_initialized:
                 if not instance.new_user_notify:
                     send_notifications = False
                 else:

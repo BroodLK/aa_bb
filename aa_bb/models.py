@@ -172,6 +172,7 @@ class CorpStatus(models.Model):
     - has_sus_trans / sus_trans: suspicious corp wallet transactions.
     - updated: when the cache row last changed.
     """
+    baseline_initialized = models.BooleanField(default=False)
     corp_id = models.PositiveIntegerField(default=1)
     corp_name = models.TextField(max_length=50)
     has_hostile_assets = models.BooleanField(default=False)
@@ -403,6 +404,20 @@ class PapsConfig(SingletonModel):
         verbose_name_plural = "PAPs/AFAT Configuration"
 
 
+class EveItemPrice(models.Model):
+    eve_type_id = models.IntegerField(primary_key=True)
+    buy = models.FloatField()
+    sell = models.FloatField()
+    updated = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Item Price"
+        verbose_name_plural = "Item Prices"
+
+    def __str__(self):
+        return f"Type {self.eve_type_id}: Buy {self.buy} / Sell {self.sell}"
+
+
 class BigBrotherConfig(SingletonModel):
     """
     Master configuration for every BigBrother/CorpBrother feature.
@@ -480,6 +495,68 @@ class BigBrotherConfig(SingletonModel):
         default=True,
         help_text="Whether to send Suspicious Transaction notifications to discord",
         verbose_name="Suspicious Transaction Notifications"
+    )
+
+    show_market_transactions = models.BooleanField(
+        default=False,
+        help_text="Show transactions with a reference type of market_escrow and market_transaction",
+        verbose_name="Show Market Transactions"
+    )
+
+    market_transactions_show_major_hubs = models.BooleanField(
+        default=False,
+        help_text="Show Transactions that take place in the major market hubs (Jita, Amarr, Dodixie, Rens, Hek)",
+        verbose_name="Show Major Hub Transactions"
+    )
+
+    market_transactions_show_secondary_hubs = models.BooleanField(
+        default=True,
+        help_text="Show Transactions that take place in secondary market hubs (Oursulaert, Tash-Murkon Prime, Agil, Perimeter)",
+        verbose_name="Show Secondary Hub Transactions"
+    )
+
+    market_transactions_excluded_systems = models.TextField(
+        blank=True,
+        help_text="System IDs separated by commas to be excluded from market transactions",
+        verbose_name="Excluded Market Systems"
+    )
+
+    market_transactions_threshold_alert = models.BooleanField(
+        default=False,
+        help_text="Trigger alerts only when the purchased or sold price is more than the custom percentage threshold",
+        verbose_name="Enable Market Price Threshold Alert"
+    )
+
+    market_transactions_threshold_percent = models.FloatField(
+        default=0,
+        help_text="Custom percentage for market transaction alerts (e.g., 10.5 for 10.5%)",
+        verbose_name="Market Price Threshold Percentage"
+    )
+
+    market_transactions_price_method = models.CharField(
+        max_length=20,
+        choices=[('Fuzzwork', 'Fuzzwork'), ('Janice', 'Janice')],
+        default='Fuzzwork',
+        verbose_name="Primary Price Method"
+    )
+
+    market_transactions_janice_api_key = models.TextField(
+        blank=True,
+        null=True,
+        verbose_name="Janice API Key"
+    )
+
+    market_transactions_fuzzwork_station_id = models.IntegerField(
+        default=60003760,
+        verbose_name="Fuzzwork Station ID",
+        help_text="Default is 60003760 (Jita IV-4)"
+    )
+
+    market_transactions_price_instant = models.BooleanField(
+        default=True,
+        verbose_name="Use Instant Prices",
+        help_text="If enabled, uses immediate/instant prices. If disabled, uses average/percentile prices. "
+                  "Only works for Fuzzworks"
     )
 
     new_user_notify = models.BooleanField(

@@ -63,8 +63,10 @@ try:
 except ImportError:
     logger.error("corptools not installed, CB tasks will not be available.")
 
-from django.db import transaction
+from django.db import transaction, OperationalError
+from allianceauth.services.hooks import get_extension_logger
 
+logger = get_extension_logger(__name__)
 VERBOSE_WEBHOOK_LOGGING = True
 
 
@@ -150,6 +152,36 @@ def send_status_embed(
         logger.debug("[EMBED] sending embed payload")
 
     send_message(embed)
+
+
+@shared_task()
+def CB_send_discord_notifications(subject: str, chunks: list[list[str]]) -> None:
+    """
+    Dedicated task to send Discord embeds for CorpBrother.
+
+    - subject: usually the corp name
+    - chunks: list of "lines lists" – each inner list becomes one embed body
+    """
+    logger.info(
+        "[CB_SEND] Dispatching %d embed chunks for %s",
+        len(chunks),
+        subject,
+    )
+
+    for idx, lines in enumerate(chunks):
+        logger.debug(
+            "[CB_SEND] Sending chunk %d/%d for %s (lines=%d)",
+            idx + 1,
+            len(chunks),
+            subject,
+            len(lines),
+        )
+        send_status_embed(
+            subject=subject,
+            lines=lines,
+            override_title="",  # keep titles minimal; content is in the body
+        )
+        time.sleep(0.25)  # tiny delay to be nice to the webhook
 
 
 def _chunk_embed_lines(lines: list[str], max_chars: int = 1900) -> list[list[str]]:
@@ -250,165 +282,172 @@ def CB_run_regular_updates():
 
 
             for corp_id in corps:
-                ignored_str = BigBrotherConfig.get_solo().ignored_corporations or ""
-                ignored_ids = {int(s) for s in ignored_str.split(",") if s.strip().isdigit()}
-                if corp_id in ignored_ids:  # allow admins to hide certain corps entirely
-                    continue
-                hostile_assets_result = get_corp_hostile_asset_locations(corp_id)
-                sus_contracts_result = { str(issuer_id): v for issuer_id, v in get_corp_hostile_contracts(corp_id).items() }
-                sus_trans_result = { str(issuer_id): v for issuer_id, v in get_corp_hostile_transactions(corp_id).items() }
+                for attempt in range(3):
+                    try:
+                        ignored_str = BigBrotherConfig.get_solo().ignored_corporations or ""
+                        ignored_ids = {int(s) for s in ignored_str.split(",") if s.strip().isdigit()}
+                        if corp_id in ignored_ids:  # allow admins to hide certain corps entirely
+                            break
+                        hostile_assets_result = get_corp_hostile_asset_locations(corp_id)
+                        sus_contracts_result = { str(issuer_id): v for issuer_id, v in get_corp_hostile_contracts(corp_id).items() }
+                        sus_trans_result = { str(issuer_id): v for issuer_id, v in get_corp_hostile_transactions(corp_id).items() }
 
-                has_hostile_assets = bool(hostile_assets_result)
-                has_sus_contracts = bool(sus_contracts_result)
-                has_sus_trans = bool(sus_trans_result)
+                        has_hostile_assets = bool(hostile_assets_result)
+                        has_sus_contracts = bool(sus_contracts_result)
+                        has_sus_trans = bool(sus_trans_result)
 
-                # Load or create existing record
-                corpstatus, created = CorpStatus.objects.get_or_create(corp_id=corp_id)
+                        # Load or create existing record
+                        corpstatus, created = CorpStatus.objects.get_or_create(corp_id=corp_id)
 
-                corp_changes = []
+                        corp_changes = []
 
-                #corpstatus.hostile_assets = []
-                #corpstatus.sus_contracts = {}
-                #corpstatus.sus_trans = {}
-                def as_dict(x):
-                    """Return dicts for JSON fields while tolerating None/strings."""
-                    return x if isinstance(x, dict) else {}
+                        def as_dict(x):
+                            """Return dicts for JSON fields while tolerating None/strings."""
+                            return x if isinstance(x, dict) else {}
 
-                if not corpstatus.corp_name:  # Resolve names on first run to avoid API hits later.
-                    corpstatus.corp_name = resolve_corporation_name(corp_id)
+                        if not corpstatus.corp_name:  # Resolve names on first run to avoid API hits later.
+                            corpstatus.corp_name = resolve_corporation_name(corp_id)
 
-                corp_name = corpstatus.corp_name
+                        corp_name = corpstatus.corp_name
 
-                if corpstatus.has_hostile_assets != has_hostile_assets or set(hostile_assets_result) != set(corpstatus.hostile_assets or []):  # hostile asset list changed?
-                    # Compare and find new links
-                    old_links = set(corpstatus.hostile_assets or [])
-                    new_links = set(hostile_assets_result) - old_links
-                    link_list = "\n".join(
-                        f"- {system} owned by {hostile_assets_result[system]}"
-                        for system in (set(hostile_assets_result) - set(corpstatus.hostile_assets or []))
-                    )
-                    logger.info(f"{corp_name} new assets {link_list}")
-                    link_list2 = "\n- ".join(f"🔗 {link}" for link in old_links)
-                    logger.info(f"{corp_name} old assets {link_list2}")
-                    if corpstatus.has_hostile_assets != has_hostile_assets:  # summarize boolean change
-                        corp_changes.append(f"## Hostile Assets: {'🚩' if has_hostile_assets else '✖'}")
-                        logger.info(f"{corp_name} changed")
-                    if new_links:  # announce newly detected systems
-                        corp_changes.append(f"##{get_pings('New Hostile Assets')} New Hostile Assets:\n{link_list}")
-                        logger.info(f"{corp_name} new assets")
-                    corpstatus.has_hostile_assets = has_hostile_assets
-                    corpstatus.hostile_assets = hostile_assets_result
-
-                if corpstatus.has_sus_contracts != has_sus_contracts or set(sus_contracts_result) != set(as_dict(corpstatus.sus_contracts) or {}):  # Rebuild block when contract list changed.
-                    old_contracts = as_dict(corpstatus.sus_contracts) or {}
-                    #normalized_old = { str(cid): v for cid, v in status.sus_contacts.items() }
-                    #normalized_new = { str(cid): v for cid, v in sus_contacts_result.items() }
-
-                    old_ids   = set(as_dict(corpstatus.sus_contracts).keys())
-                    new_ids   = set(sus_contracts_result.keys())
-                    logger.info(f"old {len(old_ids)}, new {len(new_ids)}")
-                    new_links = new_ids - old_ids
-                    if new_links:  # Announce newly detected hostile contracts.
-                        link_list = "\n".join(
-                            f"🔗 {sus_contracts_result[issuer_id]}" for issuer_id in new_links
-                        )
-                        logger.info(f"{corp_name} new assets:\n{link_list}")
-
-                    if old_ids:  # Provide historical comparison for visibility.
-                        old_link_list = "\n".join(
-                            f"🔗 {old_contracts[issuer_id]}" for issuer_id in old_ids if issuer_id in old_contracts
-                        )
-                        logger.info(f"{corp_name} old assets:\n{old_link_list}")
-
-                    if corpstatus.has_sus_contracts != has_sus_contracts:  # Flag boolean change in summary.
-                        corp_changes.append(f"## Sus Contracts: {'🚩' if has_sus_contracts else '✖'}")
-                    logger.info(f"{corp_name} status changed")
-
-                    if new_links:  # Detail new contract notes per issuer.
-                        corp_changes.append(f"## New Sus Contracts:")
-                        for issuer_id in new_links:
-                            res = sus_contracts_result[issuer_id]
-                            ping = get_pings('New Sus Contracts')
-                            if res.startswith("- A -"):  # Suppress pings for informational entries.
-                                ping = ""
-                            corp_changes.append(f"{res} {ping}")
-
-                    corpstatus.has_sus_contracts = has_sus_contracts
-                    corpstatus.sus_contracts = sus_contracts_result
-
-                if corpstatus.has_sus_trans != has_sus_trans or set(sus_trans_result) != set(as_dict(corpstatus.sus_trans) or {}):  # Track transactional deltas as well.
-                    old_trans = as_dict(corpstatus.sus_trans) or {}
-                    #normalized_old = { str(cid): v for cid, v in status.sus_contacts.items() }
-                    #normalized_new = { str(cid): v for cid, v in sus_contacts_result.items() }
-
-                    old_ids   = set(as_dict(corpstatus.sus_trans).keys())
-                    new_ids   = set(sus_trans_result.keys())
-                    new_links = new_ids - old_ids
-                    if new_links:  # Highlight new suspicious transactions.
-                        link_list = "\n".join(
-                            f"{sus_trans_result[issuer_id]}" for issuer_id in new_links
-                        )
-                        logger.info(f"{corp_name} new trans:\n{link_list}")
-
-                    if old_ids:  # Keep log of previously known records for diff context.
-                        old_link_list = "\n".join(
-                            f"{old_trans[issuer_id]}" for issuer_id in old_ids if issuer_id in old_trans
-                        )
-                        logger.info(f"{corp_name} old trans:\n{old_link_list}")
-
-                    if corpstatus.has_sus_trans != has_sus_trans:  # Change summary for top-level state.
-                        corp_changes.append(f"## Sus Transactions: {'🚩' if has_sus_trans else '✖'}")
-                    logger.info(f"{corp_name} status changed")
-                    if new_links:
-                        corp_changes.append(f"## New Sus Transactions{get_pings('New Sus Transactions')}:\n{link_list}")
-                    #if new_links:
-                    #    changes.append(f"## New Sus Transactions @here:")
-                    #    for issuer_id in new_links:
-                    #        res = sus_trans_result[issuer_id]
-                    #        ping = f""
-                    #        if res.startswith("- A -"):
-                    #            ping = ""
-                    #        changes.append(f"{res} {ping}")
-
-                    corpstatus.has_sus_trans = has_sus_trans
-                    corpstatus.sus_trans = sus_trans_result
-
-                if corp_changes:
-                    # Flatten blocks into individual lines
-                    all_lines: list[str] = []
-                    for block in corp_changes:
-                        # each block may already contain newlines; preserve them
-                        all_lines.extend(str(block).split("\n"))
-
-                    chunks = _chunk_embed_lines(all_lines, max_chars=1900)
-                    for idx, chunk in enumerate(chunks):
-                        title = (
-                            f"🛑 Status change detected for {corp_name}"
-                            if idx == 0
-                            else f"Status change (cont.) for {corp_name}"
-                        )
-
-                        if VERBOSE_WEBHOOK_LOGGING:
-                            logger.debug(
-                                "[CB_EMBED] sending chunk %d/%d for corp %s | lines=%d",
-                                idx + 1,
-                                len(chunks),
-                                corp_name,
-                                len(chunk),
+                        if corpstatus.has_hostile_assets != has_hostile_assets or set(hostile_assets_result) != set(corpstatus.hostile_assets or []):  # hostile asset list changed?
+                            # Compare and find new links
+                            old_links = set(corpstatus.hostile_assets or [])
+                            new_links = set(hostile_assets_result) - old_links
+                            link_list = "\n".join(
+                                f"- {system} owned by {hostile_assets_result[system]}"
+                                for system in (set(hostile_assets_result) - set(corpstatus.hostile_assets or []))
                             )
+                            logger.info(f"{corp_name} new assets {link_list}")
+                            link_list2 = "\n- ".join(f"🔗 {link}" for link in old_links)
+                            logger.info(f"{corp_name} old assets {link_list2}")
+                            if corpstatus.has_hostile_assets != has_hostile_assets:  # summarize boolean change
+                                corp_changes.append(f"## Hostile Assets: {'🚩' if has_hostile_assets else '✖'}")
+                                logger.info(f"{corp_name} changed")
+                            if new_links:  # announce newly detected systems
+                                corp_changes.append(f"##{get_pings('New Hostile Assets')} New Hostile Assets:\n{link_list}")
+                                logger.info(f"{corp_name} new assets")
+                            corpstatus.has_hostile_assets = has_hostile_assets
+                            corpstatus.hostile_assets = hostile_assets_result
 
-                        send_status_embed(
-                            subject=corp_name,
-                            lines=chunk,
-                            override_title=title,
-                            color=0xED4245,
-                        )
+                        if corpstatus.has_sus_contracts != has_sus_contracts or set(sus_contracts_result) != set(as_dict(corpstatus.sus_contracts) or {}):  # Rebuild block when contract list changed.
+                            old_contracts = as_dict(corpstatus.sus_contracts) or {}
 
-                        # tiny delay between messages to avoid hammering the webhook
-                        time.sleep(0.05)
+                            old_ids   = set(as_dict(corpstatus.sus_contracts).keys())
+                            new_ids   = set(sus_contracts_result.keys())
+                            logger.info(f"old {len(old_ids)}, new {len(new_ids)}")
+                            new_links = new_ids - old_ids
+                            if new_links:  # Announce newly detected hostile contracts.
+                                link_list = "\n".join(
+                                    f"🔗 {sus_contracts_result[issuer_id]}" for issuer_id in new_links
+                                )
+                                logger.info(f"{corp_name} new assets:\n{link_list}")
 
-                corpstatus.updated = timezone.now()
-                corpstatus.save()
+                            if old_ids:  # Provide historical comparison for visibility.
+                                old_link_list = "\n".join(
+                                    f"🔗 {old_contracts[issuer_id]}" for issuer_id in old_ids if issuer_id in old_contracts
+                                )
+                                logger.info(f"{corp_name} old assets:\n{old_link_list}")
+
+                            if corpstatus.has_sus_contracts != has_sus_contracts:  # Flag boolean change in summary.
+                                corp_changes.append(f"## Sus Contracts: {'🚩' if has_sus_contracts else '✖'}")
+                            logger.info(f"{corp_name} status changed")
+
+                            if new_links:  # Detail new contract notes per issuer.
+                                corp_changes.append(f"## New Sus Contracts:")
+                                for issuer_id in new_links:
+                                    res = sus_contracts_result[issuer_id]
+                                    ping = get_pings('New Sus Contracts')
+                                    if res.startswith("- A -"):  # Suppress pings for informational entries.
+                                        ping = ""
+                                    corp_changes.append(f"{res} {ping}")
+
+                            corpstatus.has_sus_contracts = has_sus_contracts
+                            corpstatus.sus_contracts = sus_contracts_result
+
+                        if corpstatus.has_sus_trans != has_sus_trans or set(sus_trans_result) != set(as_dict(corpstatus.sus_trans) or {}):  # Track transactional deltas as well.
+                            old_trans = as_dict(corpstatus.sus_trans) or {}
+
+                            old_ids   = set(as_dict(corpstatus.sus_trans).keys())
+                            new_ids   = set(sus_trans_result.keys())
+                            new_links = new_ids - old_ids
+                            if new_links:  # Highlight new suspicious transactions.
+                                link_list = "\n".join(
+                                    f"{sus_trans_result[issuer_id]}" for issuer_id in new_links
+                                )
+                                logger.info(f"{corp_name} new trans:\n{link_list}")
+
+                            if old_ids:  # Keep log of previously known records for diff context.
+                                old_link_list = "\n".join(
+                                    f"{old_trans[issuer_id]}" for issuer_id in old_ids if issuer_id in old_trans
+                                )
+                                logger.info(f"{corp_name} old trans:\n{old_link_list}")
+
+                            if corpstatus.has_sus_trans != has_sus_trans:  # Change summary for top-level state.
+                                corp_changes.append(f"## Sus Transactions: {'🚩' if has_sus_trans else '✖'}")
+                            logger.info(f"{corp_name} status changed")
+                            if new_links:
+                                corp_changes.append(f"## New Sus Transactions{get_pings('New Sus Transactions')}:\n{link_list}")
+
+                            corpstatus.has_sus_trans = has_sus_trans
+                            corpstatus.sus_trans = sus_trans_result
+
+                        if not corpstatus.baseline_initialized:
+                            if not instance.new_user_notify:
+                                send_notifications = False
+                            else:
+                                send_notifications = True
+                        else:
+                            send_notifications = True
+
+                        if send_notifications and corp_changes:
+                            # Flatten blocks into individual lines
+                            all_lines: list[str] = []
+                            for block in corp_changes:
+                                # each block may already contain newlines; preserve them
+                                all_lines.extend(str(block).split("\n"))
+
+                            chunks = _chunk_embed_lines(all_lines, max_chars=1900)
+                            all_chunks = []
+
+                            # Overall header
+                            header_lines = [f"‼️ Status change detected for {corp_name}"]
+                            for header_chunk in _chunk_embed_lines(header_lines, max_chars=1900):
+                                all_chunks.append(header_chunk)
+
+                            # body chunks
+                            for chunk in chunks:
+                                all_chunks.append(chunk)
+
+                            if all_chunks:
+                                logger.info(
+                                    "[%s] Enqueuing %d embed chunks to CB_send_discord_notifications",
+                                    corp_name,
+                                    len(all_chunks),
+                                )
+                                CB_send_discord_notifications.delay(corp_name, all_chunks)
+
+                        corpstatus.baseline_initialized = True
+                        corpstatus.updated = timezone.now()
+                        corpstatus.save()
+                        break
+
+                    except OperationalError as e:
+                        code = e.args[0] if e.args else None
+                        if code == 1213 or "deadlock" in str(e).lower():
+                            delay = 0.5 * (attempt + 1)
+                            logger.warning(
+                                f"Deadlock while processing {corp_id} "
+                                f"(attempt {attempt + 1}/3); sleeping {delay:.1f}s before retry."
+                            )
+                            time.sleep(delay)
+                            if attempt == 2:
+                                logger.error(f"Skipping {corp_id} after repeated deadlocks.")
+                            continue
+                        raise
+                    except Exception as e:
+                        logger.error(f"Failed to update corp {corp_id}: {e}", exc_info=True)
+                        raise
 
     except Exception as e:
         logger.error("Task failed", exc_info=True)

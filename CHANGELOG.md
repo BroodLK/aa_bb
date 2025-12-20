@@ -1,4 +1,13 @@
 
+## [3.2.4] - 2025-12-19
+
+### Changed
+- Fixed issue where notifications were still being sent for users who did not have previous data (new installs or new audits)...again
+- Added a button to include or disclude market transactions in the notifications
+  - Added ability to filter major hubs, secondary hubs, and excluded systems
+  - Added ability to set a market price threshold for transactions before they are included in notifications
+- Refactored CorpBrother code, added silent processing of first load.
+
 ## [3.2.3] - 2025-12-19
 
 ### Changed

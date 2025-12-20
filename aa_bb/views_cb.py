@@ -669,8 +669,12 @@ def stream_transactions_sse(request):
                     text = html.escape(str(val))
                     style = ""
                     # type‐based red
-                    if col == 'type' and any(st in row['type'] for st in SUS_TYPES):
-                        style = 'color:red;'
+                    if col == 'type':
+                        if any(st in row['type'] for st in SUS_TYPES):
+                            style = 'color:red;'
+                        if cfg.show_market_transactions:
+                            if "market_escrow" in row['type'] or "market_transaction" in row['type']:
+                                style = 'color:red;'
                     # first/second party name
                     if aablacklist_active():
                         if col in ('first_party_name','second_party_name'):
