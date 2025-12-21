@@ -2,7 +2,7 @@ from django.db.utils import OperationalError
 import time
 import traceback
 from django.utils import timezone
-from celery import shared_task
+from celery import shared_task, current_app
 
 from .models import (
     UserStatus,
@@ -1162,14 +1162,57 @@ def BB_run_regular_updates():
                 f"BB_run_regular_updates: Dispatching updates for {total_users} users (staggered)."
             )
 
+            # Backlog check
+            if instance.update_last_dispatch_count > 0:
+                try:
+                    inspector = current_app.control.inspect()
+                    if inspector:
+                        active = inspector.active() or {}
+                        reserved = inspector.reserved() or {}
+
+                        task_name = BB_update_single_user.name
+                        remaining_count = 0
+
+                        for worker_tasks in active.values():
+                            if worker_tasks:
+                                for t in worker_tasks:
+                                    if t.get('name') == task_name:
+                                        remaining_count += 1
+
+                        for worker_tasks in reserved.values():
+                            if worker_tasks:
+                                for t in worker_tasks:
+                                    if t.get('name') == task_name:
+                                        remaining_count += 1
+
+                        if remaining_count > 0 and instance.update_backlog_notify:
+                            threshold = instance.update_backlog_threshold
+                            percent = (remaining_count / instance.update_last_dispatch_count) * 100
+                            if percent > threshold:
+                                logger.warning(
+                                    f"Update backlog detected: {remaining_count} tasks remaining "
+                                    f"({percent:.1f}% of last run count {instance.update_last_dispatch_count})"
+                                )
+                                send_message(
+                                    f"#{get_pings('Error')} **Update Backlog Alert**: {remaining_count} users are still "
+                                    f"being processed from the previous update run ({percent:.1f}% of "
+                                    f"{instance.update_last_dispatch_count} users). "
+                                    "This may indicate that the update stagger window is too short or workers are overloaded."
+                                )
+                except Exception as e:
+                    logger.error(f"Failed to check for update backlog: {e}", exc_info=True)
+
+            instance.update_last_dispatch_count = total_users
+            instance.save()
+
             if total_users == 0:
                 return
 
-            # We want to spread the work roughly across 1 hour (3600s)
+            # We want to spread the work roughly across the configured stagger window
             # so we don't spike CPU at the top of the hour.
             from datetime import timedelta
 
-            window_seconds = 3600
+            window_seconds = instance.update_stagger_seconds
             # minimum spacing between users, so tasks don't all land at the same second
             if total_users < 720:
                 min_spacing = 5

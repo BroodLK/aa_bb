@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import timedelta, time
 
 from django.db import models
 from django.core.exceptions import ValidationError
@@ -564,6 +564,48 @@ class BigBrotherConfig(SingletonModel):
         help_text="Whether to send notifications of all previous user history when a user first gets audited, "
                   "this can be VERY spammy on a first time load of the tool",
         verbose_name="New User Notifications"
+    )
+
+    update_stagger_seconds = models.IntegerField(
+        default=3600,
+        verbose_name="Update Stagger Window (seconds)",
+        help_text="The total time window across which user updates are performed."
+    )
+
+    update_cache_ttl_hours = models.IntegerField(
+        default=24,
+        verbose_name="Update Cache TTL (hours)",
+        help_text="How long certain check results are cached before being refreshed. Such as Clone States"
+    )
+
+    update_maintenance_window_start = models.TimeField(
+        default=time(6, 0),
+        verbose_name="Maintenance Window Start (UTC)",
+        help_text="Start time for the maintenance window where updating cached data is preferred."
+    )
+
+    update_maintenance_window_end = models.TimeField(
+        default=time(10, 0),
+        verbose_name="Maintenance Window End (UTC)",
+        help_text="End time for the maintenance window where caching is preferred."
+    )
+
+    update_backlog_threshold = models.PositiveIntegerField(
+        default=10,
+        verbose_name="Update Backlog Threshold (%)",
+        help_text="Alert if more than this percentage of tasks from the previous run are still active."
+    )
+
+    update_backlog_notify = models.BooleanField(
+        default=True,
+        verbose_name="Update Backlog Alert",
+        help_text="Whether to send an alert when a task backlog is detected."
+    )
+
+    update_last_dispatch_count = models.IntegerField(
+        default=0,
+        editable=False,
+        verbose_name="Last Dispatch Count"
     )
 
     ticket_notify_man = models.BooleanField(
@@ -1952,8 +1994,13 @@ class CorporationInfoCache(models.Model):
 
     @property
     def is_fresh(self):
-        """Check if cache entry is still valid (24h TTL)."""
-        return timezone.now() - self.updated < timedelta(hours=24)
+        """Check if cache entry is still valid."""
+        try:
+            cfg = BigBrotherConfig.get_solo()
+            ttl = cfg.update_cache_ttl_hours
+        except Exception:
+            ttl = 24
+        return timezone.now() - self.updated < timedelta(hours=ttl)
 
 
 class AllianceHistoryCache(models.Model):
@@ -1978,7 +2025,12 @@ class AllianceHistoryCache(models.Model):
     @property
     def is_fresh(self):
         """Check if data is still within TTL."""
-        return timezone.now() - self.updated < timedelta(hours=24)
+        try:
+            cfg = BigBrotherConfig.get_solo()
+            ttl = cfg.update_cache_ttl_hours
+        except Exception:
+            ttl = 24
+        return timezone.now() - self.updated < timedelta(hours=ttl)
 
 
 class SovereigntyMapCache(models.Model):
@@ -1992,7 +2044,12 @@ class SovereigntyMapCache(models.Model):
 
     @property
     def is_fresh(self):
-        return timezone.now() - self.updated < timedelta(hours=24)
+        try:
+            cfg = BigBrotherConfig.get_solo()
+            ttl = cfg.update_cache_ttl_hours
+        except Exception:
+            ttl = 24
+        return timezone.now() - self.updated < timedelta(hours=ttl)
 
 class CharacterAccountState(models.Model):
     """Persistent record of whether a character is Alpha, Omega, or Unknown."""
