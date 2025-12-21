@@ -20,7 +20,7 @@ try:
     from aadiscordbot.cogs.utils.exceptions import NotAuthenticated
     from aadiscordbot.app_settings import get_admins
 except ImportError:
-    logger.error("aadiscordbot not installed; compliance checks will not work.")
+    logger.error("✅  [AA-BB] - [Tasks_Tickets] - aadiscordbot not installed; compliance checks will not work.")
     run_task_function = None
     get_discord_user_id = None
 
@@ -31,7 +31,7 @@ except ImportError:
 try:
     from corptools.api.helpers import get_alts_queryset
 except ImportError:
-    logger.error("corptools not installed; compliance checks will not work.")
+    logger.error("✅  [AA-BB] - [Tasks_Tickets] - corptools not installed; compliance checks will not work.")
 
     def get_alts_queryset(*args, **kwargs):
         return []
@@ -55,7 +55,7 @@ def corp_check(user) -> bool:
         cfg: Optional[TicketToolConfig] = TicketToolConfig.get_solo()
     except Exception:
         # If the singleton isn't set up yet, be lenient.
-        logger.warning("TicketToolConfig.get_solo() failed; treating user as compliant.")
+        logger.warning("✅  [AA-BB] - [corp_check] - TicketToolConfig.get_solo() failed; treating user as compliant.")
         return True
 
     if not cfg or not cfg.compliance_filter:  # Missing configuration leaves everyone compliant.
@@ -67,7 +67,7 @@ def corp_check(user) -> bool:
         return bool(cfg.compliance_filter.process_filter(user))
     except Exception:
         # Misconfiguration or unexpected error: log and be lenient.
-        logger.exception("Error while running compliance filter for user id=%s", user.id)
+        logger.exception("✅  [AA-BB] - [corp_check] - Error while running compliance filter for user id=%s", user.id)
         return True
 
 
@@ -206,7 +206,7 @@ def hourly_compliance_check():
         for reason, (checker, msg_template) in reason_checkers.items():
             checked = checker(user)
             if not checked:  # Non-compliant result requires a ticket/ensuring existing one.
-                logger.info(f"user{user},reason{reason},checked{checked}")
+                logger.info(f"✅  [AA-BB] - [hourly_compliance_check] - user{user},reason{reason},checked{checked}")
                 ensure_ticket(user, reason)
 
     # 2. Process existing tickets
@@ -216,9 +216,9 @@ def hourly_compliance_check():
         reason = ticket.reason
 
         if reason == "char_removed" or reason == "awox_kill":  # These rely on manual resolution flow.
-            logger.info(f"reason:{reason}, resolved:{ticket.is_resolved}")
+            logger.info(f"✅  [AA-BB] - [hourly_compliance_check] - reason:{reason}, resolved:{ticket.is_resolved}")
             if ticket.is_resolved:  # Completed ticket can be closed out and announced.
-                logger.info(f"reason:{reason}")
+                logger.info(f"✅  [AA-BB] - [hourly_compliance_check] - reason:{reason}")
                 close_ticket(ticket)
                 if ticket_resolved_manually_notify:
                     send_message(f"ticket for <@{ticket.discord_user_id}> resolved")
@@ -360,7 +360,7 @@ def ensure_ticket(user, reason):
 
         # If still nothing, log and notify, then stop
         if not discord_user:  # There is no reasonable recipient—alert staff and bail.
-            logger.error(f"Failed to create a {reason} ticket for {username}. No eligible fallback found: no superuser or Discord admin with Discord linked.")
+            logger.error(f"✅  [AA-BB] - [ensure_ticket] - Failed to create a {reason} ticket for {username}. No eligible fallback found: no superuser or Discord admin with Discord linked.")
             send_message(f"Failed to create a {reason} ticket for {username}. No eligible fallback found: no superuser or Discord admin with Discord linked.")
             return
 

@@ -27,12 +27,6 @@ urlpatterns = [
         name="manual_settings_tickets",
     ),  # Ticket module documentation.
     path("manual/modules/", views_faq.manual_modules, name="manual_modules"),  # Landing page for module-specific docs.
-    path("manual/modules/reddit/login/", views_faq.reddit_oauth_login, name="reddit_oauth_login"),  # Initiate Reddit OAuth.
-    path(
-        "manual/modules/reddit/oauth/callback/",
-        views_faq.reddit_oauth_callback,
-        name="reddit_oauth_callback",
-    ),  # Handle the Reddit OAuth callback and persist tokens.
     path("manual/faq/", views_faq.manual_faq, name="manual_faq"),  # General FAQ/guide landing page.
 
     # Bulk loader

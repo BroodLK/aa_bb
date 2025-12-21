@@ -49,7 +49,7 @@ try:
         update_char_location,
     )
 except ImportError:
-    logger.error("Corptools not installed, CT tasks will not be available.")
+    logger.error("✅  [AA-BB] - [Tasks_CT] - Corptools not installed, CT tasks will not be available.")
 
 
 @dataclass(frozen=True)
@@ -70,7 +70,7 @@ def _safe_identity_refresh(char_id: int):
     try:
         EveCharacter.objects.update_character(char_id)
     except Exception as e:
-        logger.warning(f"Identity refresh failed for {char_id}: {e}", exc_info=True)
+        logger.warning(f"✅  [AA-BB] - [_safe_identity_refresh] - Identity refresh failed for {char_id}: {e}", exc_info=True)
 
 
 def _is_enabled(flag_name: Optional[str]) -> bool:
@@ -115,10 +115,10 @@ def _has_valid_token_with_scopes(char_id: int, scopes: Sequence[str]) -> bool:
     try:
         return bool(token.valid_access_token())
     except (TokenExpiredError, TokenInvalidError) as e:
-        logger.info(f"Skipping char {char_id}: unusable token for scopes {scopes} ({e.__class__.__name__})")
+        logger.info(f"✅  [AA-BB] - [_has_valid_token_with_scopes] - Skipping char {char_id}: unusable token for scopes {scopes} ({e.__class__.__name__})")
         return False
     except Exception as e:
-        logger.warning(f"Unexpected token error for char {char_id} (scopes {scopes}): {e}", exc_info=True)
+        logger.warning(f"✅  [AA-BB] - [_has_valid_token_with_scopes] - Unexpected token error for char {char_id} (scopes {scopes}): {e}", exc_info=True)
         return False
 
 
@@ -307,7 +307,7 @@ def kickstart_stale_ct_modules(days_stale: int = 2, limit: Optional[int] = None,
 
             if dry_run:  # Only log the plan—do not enqueue tasks in dry-run mode.
                 logger.info(
-                    f"[DRY-RUN] Would submit chain of {len(que)} task(s) "
+                    f"✅  [AA-BB] - [kickstart_stale_ct_modules] - [DRY-RUN] Would submit chain of {len(que)} task(s) "
                     f"for {audit.character.character_name} ({char_id})"
                 )
             else:
@@ -316,14 +316,14 @@ def kickstart_stale_ct_modules(days_stale: int = 2, limit: Optional[int] = None,
                     chain(*que).apply_async(priority=6, countdown=max(0, int(delay)))
                     submitted_chars += 1
                     logger.info(
-                        "Queued chain of %d task(s) for %s (%s) with delay=%s",
+                        "✅  [AA-BB] - [kickstart_stale_ct_modules] - Queued chain of %d task(s) for %s (%s) with delay=%s",
                         len(que),
                         audit.character.character_name,
                         char_id,
                         int(delay),
                     )
                 except AlreadyQueued as e:
-                    logger.info("Skipped chain for %s (%s): first task already queued (ttl≈%s)",
+                    logger.info("✅  [AA-BB] - [kickstart_stale_ct_modules] - Skipped chain for %s (%s): first task already queued (ttl≈%s)",
                                 audit.character.character_name, char_id, getattr(e, 'args', [None])[0])
 
     # Build summary + optional message

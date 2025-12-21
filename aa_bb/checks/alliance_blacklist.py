@@ -3,17 +3,19 @@ alliance blacklist helper utilities. All rendering happens elsewhere, but
 collecting the character names in one helper makes templating easier.
 """
 
-from allianceauth.authentication.models import CharacterOwnership
+from ..models import BigBrotherConfig
+from django.utils.html import format_html
 
-def get_user_character_names_alliance(user_id):
+def get_alliance_blacklist_link():
     """
-    Given an Alliance Auth User ID, returns a comma-separated string
-    of all character names linked to that user.
+    Returns an HTML link to the configured Alliance Blacklist URL.
     """
-    characters = CharacterOwnership.objects.filter(user__id=user_id)
-    names =[]
-    for char in characters:
-        char_name = str(char.character)
-        names.append(char_name)
-    return "<br>".join(names)
+    cfg = BigBrotherConfig.get_solo()
+    url = cfg.alliance_blacklist_url
+    if not url:
+        return "Alliance Blacklist URL not configured."
+    return format_html(
+        '<a href="{}" target="_blank" class="btn btn-primary btn-block">Go to Alliance Blacklist</a>',
+        url
+    )
 

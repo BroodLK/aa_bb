@@ -2,6 +2,7 @@ from datetime import timedelta, time
 
 from django.db import models
 from django.core.exceptions import ValidationError
+from django.core.validators import MinValueValidator
 from solo.models import SingletonModel
 from django.contrib.auth.models import User
 from django.db.models import JSONField
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 try:
     from charlink.models import ComplianceFilter
 except ImportError:
-    logger.warning("charlink not installed")
+    logger.warning("✅  [AA-BB] - [Models] - charlink not installed")
 
 from django.apps import apps
 AA_CONTACTS_INSTALLED = apps.is_installed("aa_contacts")
@@ -559,6 +560,12 @@ class BigBrotherConfig(SingletonModel):
                   "Only works for Fuzzworks"
     )
 
+    market_transactions_price_max_age = models.PositiveIntegerField(
+        default=7,
+        help_text="Maximum age of cached prices in days before refreshing from API.",
+        verbose_name="Market Price Max Age (Days)"
+    )
+
     new_user_notify = models.BooleanField(
         default=False,
         help_text="Whether to send notifications of all previous user history when a user first gets audited, "
@@ -568,6 +575,7 @@ class BigBrotherConfig(SingletonModel):
 
     update_stagger_seconds = models.IntegerField(
         default=3600,
+        validators=[MinValueValidator(3600)],
         verbose_name="Update Stagger Window (seconds)",
         help_text="The total time window across which user updates are performed."
     )
@@ -796,6 +804,20 @@ class BigBrotherConfig(SingletonModel):
         null=True,
         help_text="List of corporation IDs considered whitelisted, separated by ','",
         verbose_name="Whitelisted Corporations"
+    )
+
+    alliance_blacklist_url = models.URLField(
+        blank=True,
+        null=True,
+        help_text="URL for the Alliance Blacklist",
+        verbose_name="Alliance Blacklist URL"
+    )
+
+    external_blacklist_url = models.URLField(
+        blank=True,
+        null=True,
+        help_text="URL for the External/Coalition Blacklist",
+        verbose_name="External Blacklist URL"
     )
 
     ignored_corporations = models.TextField(
@@ -1489,150 +1511,6 @@ class Meta:
     verbose_name = "Big Brother Configuration"
     verbose_name_plural = "Big Brother Configuration"
 
-class BigBrotherRedditSettings(SingletonModel):
-    """
-    Stores OAuth credentials, scheduling, and webhook templates for the Reddit
-    recruitment publisher. The numerous fields map directly to the admin UI
-    (client id/secret, scopes, target subreddit, cadence, Discord notifications,
-    and the stored tokens/permalinks fetched during runtime).
-    """
-    enabled = models.BooleanField(
-        default=False,
-        help_text="Toggle after configuration to allow reddit automation to run."
-    )
-    reddit_client_id = models.CharField(
-        max_length=128,
-        blank=True,
-        help_text="Application client ID from reddit."
-    )
-    reddit_client_secret = models.CharField(
-        max_length=255,
-        blank=True,
-        help_text="Application secret from reddit."
-    )
-    reddit_user_agent = models.CharField(
-        max_length=255,
-        blank=True,
-        default="aa-bb-scheduler/1.0",
-        help_text="Custom user agent that will appear in reddit API calls."
-    )
-    reddit_scope = models.CharField(
-        max_length=255,
-        default="identity submit read",
-        help_text="Space separated scopes requested during Reddit OAuth."
-    )
-    reddit_redirect_override = models.URLField(
-        blank=True,
-        null=True,
-        help_text="Optional custom redirect URI if auto-detected URI is unsuitable."
-    )
-    reddit_subreddit = models.CharField(
-        max_length=64,
-        default="evejobs",
-        help_text="Name of the subreddit to post to."
-    )
-    post_interval_days = models.PositiveIntegerField(
-        default=8,
-        help_text="Minimum delay in days between reddit posts."
-    )
-    reddit_webhook = models.URLField(
-        blank=True,
-        null=True,
-        help_text="Discord webhook where post confirmations should be sent."
-    )
-    reddit_webhook_message = models.TextField(
-        blank=True,
-        default="New reddit post published: {title}\n{url}",
-        help_text="Template for Discord notifications. Supports {title}, {url}, {subreddit}."
-    )
-    reply_message_template = models.TextField(
-        blank=True,
-        default="New reply by {author}: {url}",
-        help_text="Template used when alerting about new replies on reddit."
-    )
-    reddit_access_token = models.TextField(
-        blank=True,
-        editable=False,
-        help_text="Stored Reddit OAuth access token (hidden in admin)."
-    )
-    reddit_refresh_token = models.TextField(
-        blank=True,
-        editable=False,
-        help_text="Stored Reddit OAuth refresh token (hidden in admin)."
-    )
-    reddit_token_type = models.CharField(
-        max_length=32,
-        blank=True,
-        editable=False,
-        help_text="Token type returned by Reddit OAuth (hidden in admin)."
-    )
-    reddit_token_obtained = models.DateTimeField(
-        null=True,
-        blank=True,
-        editable=False,
-        help_text="Timestamp when the Reddit token was stored."
-    )
-    reddit_account_name = models.CharField(
-        max_length=64,
-        blank=True,
-        editable=False,
-        help_text="Reddit account authorized via OAuth (hidden in admin)."
-    )
-    last_submission_id = models.CharField(
-        max_length=32,
-        blank=True,
-        editable=False,
-        help_text="Most recent reddit submission id (hidden in admin)."
-    )
-    last_submission_permalink = models.URLField(
-        blank=True,
-        null=True,
-        editable=False,
-        help_text="Link to the most recent reddit submission (hidden in admin)."
-    )
-    last_submission_at = models.DateTimeField(
-        null=True,
-        blank=True,
-        editable=False,
-        help_text="When the most recent post was created."
-    )
-    last_reply_checked_at = models.DateTimeField(
-        null=True,
-        blank=True,
-        editable=False,
-        help_text="When reddit replies were last scanned."
-    )
-
-    class Meta:
-        verbose_name = "BigBrother Reddit Settings"
-
-    def __str__(self):
-        return "BigBrother Reddit Settings"
-
-
-class BigBrotherRedditMessage(models.Model):
-    """Queue of Markdown job ads reused by the Reddit autoposter."""
-    used_in_cycle = models.BooleanField(
-        default=False,
-        help_text="Automatically toggled once the message is used in a cycle."
-    )
-    title = models.CharField(
-        max_length=300,
-        help_text="Title that will be used for the reddit submission."
-    )
-    content = models.TextField(
-        help_text="Markdown body shared to reddit."
-    )
-    created = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        ordering = ["-created"]
-        verbose_name = "Reddit Recruitment Message"
-        verbose_name_plural = "Reddit Recruitment Messages"
-
-    def __str__(self):
-        status = "used" if self.used_in_cycle else "pending"
-        return f"{self.title} ({status})"
 
 
 class PapCompliance(models.Model):

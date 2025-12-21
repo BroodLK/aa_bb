@@ -120,9 +120,17 @@ def determine_character_state(user_id, save: bool = False):
     for char_id in char_ids:
         db_record = char_db_records.get(char_id)
 
-        # Use cached state if it's within TTL and inside the update window.
+        # Use cached state if we're outside the update window, or if it's within TTL inside the window.
         now = timezone.now()
-        if db_record and db_record.last_checked_at and (now - db_record.last_checked_at) < max_cache_age and in_utc_update_window(now, window_start, window_end):
+        is_in_window = in_utc_update_window(now, window_start, window_end)
+        use_cache = False
+        if db_record and db_record.last_checked_at:
+            if not is_in_window:
+                use_cache = True
+            elif (now - db_record.last_checked_at) < max_cache_age:
+                use_cache = True
+
+        if use_cache:
             result[char_id] = {
                 "state": db_record.state if db_record.state else "unknown",
                 "skill_used": db_record.skill_used,
@@ -179,7 +187,7 @@ def determine_character_state(user_id, save: bool = False):
             levels = per_char.get(char_id, {}).get(sid, {"trained": 0, "active": 0})
             trained = levels["trained"]
             active = levels["active"]
-            cap = alpha_caps.get(sid, 5)
+            cap = alpha_caps.get(sid, 0)
 
             if active > cap:
                 state = "omega"
@@ -194,7 +202,7 @@ def determine_character_state(user_id, save: bool = False):
                 levels = per_char.get(char_id, {}).get(sid, {"trained": 0, "active": 0})
                 trained = levels["trained"]
                 active = levels["active"]
-                cap = alpha_caps.get(sid, 5)
+                cap = alpha_caps.get(sid, 0)
 
                 if active > cap:
                     state = "omega"
@@ -220,7 +228,7 @@ def determine_character_state(user_id, save: bool = False):
                 sid = int(row["skill_id"])
                 trained = int(row["trained_skill_level"])
                 active = int(row["active_skill_level"])
-                cap = alpha_caps.get(sid, 5)
+                cap = alpha_caps.get(sid, 0)
 
                 if active > cap:
                     state = "omega"

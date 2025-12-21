@@ -23,7 +23,7 @@ from ..app_settings import (
 from django.utils import timezone
 
 if aablacklist_active():
-    from .corp_blacklist import check_char_corp_bl
+    from .add_to_blacklist import check_char_add_to_bl
 
 try:
     from corptools.models import CharacterContact
@@ -145,7 +145,7 @@ def get_cell_style_for_row(cid: int, column: str, row: dict) -> str:
     # New fixed columns
     if aablacklist_active():
         if column == 'character':  # Character column only highlights hostile chars.
-            if row.get('contact_type') == 'character' and check_char_corp_bl(cid):  # Highlight hostile character contacts.
+            if row.get('contact_type') == 'character' and check_char_add_to_bl(cid):  # Highlight hostile character contacts.
                 return 'color: red;'
             return ''
 
@@ -262,7 +262,7 @@ def get_user_hostile_notifications(user_id: int) -> dict[int, str]:
         logger.info(f"{cname},{aid},{alli_name}")
 
         if aablacklist_active():
-            if ctype == 'character' and check_char_corp_bl(cid):  # Character is on blacklist.
+            if ctype == 'character' and check_char_add_to_bl(cid):  # Character is on blacklist.
                 alerts.append(f"**{cname}** is on blacklist")
 
         if ctype in ('character', 'corporation') and coid != 0:  # Evaluate corp affiliation when present.

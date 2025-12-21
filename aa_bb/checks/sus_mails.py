@@ -18,7 +18,7 @@ from ..app_settings import (
 )
 
 if aablacklist_active():
-    from .corp_blacklist import check_char_corp_bl
+    from .add_to_blacklist import check_char_add_to_bl
 else:
     def check_char_corp_bl(_cid: int) -> bool:
         return False
@@ -126,7 +126,7 @@ def get_cell_style_for_mail_cell(column: str, row: dict, index: Optional[int] = 
     # sender cell
     if column.startswith('sender_'):  # Apply consistent styling to all sender-related columns.
         if aablacklist_active():
-            if column == 'sender_name' and check_char_corp_bl(row.get('sender_id')):  # Highlight hostile/blacklisted senders.
+            if column == 'sender_name' and check_char_add_to_bl(row.get('sender_id')):  # Highlight hostile/blacklisted senders.
                 return 'color: red;'
         if column == 'sender_corporation' and str(row.get('sender_corporation_id')) in solo.hostile_corporations:  # Hostile corp.
             return 'color: red;'
@@ -137,7 +137,7 @@ def get_cell_style_for_mail_cell(column: str, row: dict, index: Optional[int] = 
         if aablacklist_active():
             # blacklist check
             rid = row['recipient_ids'][index]
-            if check_char_corp_bl(rid):  # Individual recipient appears on blacklist.
+            if check_char_add_to_bl(rid):  # Individual recipient appears on blacklist.
                 return 'color: red;'
         # corp/alliance hostility
         cid = row['recipient_corps'][index] if column == 'recipient_corps' else None
@@ -157,7 +157,7 @@ def is_mail_row_hostile(row: dict) -> bool:
             if key in str(row["sender_name"]):
                 return True
 
-    if aablacklist_active() and check_char_corp_bl(row.get("sender_id")):
+    if aablacklist_active() and check_char_add_to_bl(row.get("sender_id")):
         return True
 
     if str(row.get("sender_corporation_id")) in solo.hostile_corporations:
@@ -166,7 +166,7 @@ def is_mail_row_hostile(row: dict) -> bool:
         return True
 
     for idx, rid in enumerate(row["recipient_ids"]):
-        if aablacklist_active() and check_char_corp_bl(rid):
+        if aablacklist_active() and check_char_add_to_bl(rid):
             return True
         if str(row["recipient_corp_ids"][idx]) in solo.hostile_corporations:
             return True
@@ -221,7 +221,7 @@ def render_mails(user_id: int) -> str:
                     if col == 'recipient_names':  # Names column uses multiple hostile checks.
                         rid = row['recipient_ids'][idx]
                         if aablacklist_active():
-                            if check_char_corp_bl(rid):  # Highlight individual recipients on the blacklist.
+                            if check_char_add_to_bl(rid):  # Highlight individual recipients on the blacklist.
                                 style = 'color:red;'
                         elif str(row['recipient_corp_ids'][idx]) in BigBrotherConfig.get_solo().hostile_corporations:  # Recipient corp flagged hostile.
                             style = 'color:red;'
@@ -248,7 +248,7 @@ def render_mails(user_id: int) -> str:
                 style = ''
                 if col.startswith('sender_'):  # Sender cells reuse the same hostile checks as the list-based helper.
                     if aablacklist_active():
-                        if col == 'sender_name' and check_char_corp_bl(row['sender_id']):  # Sender is blacklisted.
+                        if col == 'sender_name' and check_char_add_to_bl(row['sender_id']):  # Sender is blacklisted.
                             style = 'color:red;'
                         elif col == 'sender_corporation' and str(row['sender_corporation_id']) in BigBrotherConfig.get_solo().hostile_corporations:  # Sender corp hostility.
                             style = 'color:red;'
@@ -313,7 +313,7 @@ def get_user_hostile_mails(user_id: int) -> Dict[int, str]:
                 continue
 
             flags: List[str] = []
-            if aablacklist_active() and check_char_corp_bl(m["sender_id"]):
+            if aablacklist_active() and check_char_add_to_bl(m["sender_id"]):
                 flags.append(f"Sender **{m['sender_name']}** is on blacklist")
             if str(m["sender_corporation_id"]) in cfg.hostile_corporations:
                 flags.append(f"Sender corp **{m['sender_corporation']}** is hostile")
@@ -322,7 +322,7 @@ def get_user_hostile_mails(user_id: int) -> Dict[int, str]:
 
             for idx, rid in enumerate(m.get("recipient_ids", [])):
                 name = m["recipient_names"][idx]
-                if aablacklist_active() and check_char_corp_bl(rid):
+                if aablacklist_active() and check_char_add_to_bl(rid):
                     flags.append(f"Recipient **{name}** is on blacklist")
                 cid = m["recipient_corp_ids"][idx]
                 if cid and str(cid) in cfg.hostile_corporations:

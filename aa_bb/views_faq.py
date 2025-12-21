@@ -19,13 +19,6 @@ from .models import (
     BigBrotherConfig,
     PapsConfig,
     TicketToolConfig,
-    BigBrotherRedditSettings,
-    BigBrotherRedditMessage
-)
-
-from .reddit import (
-    reddit_status,
-    reddit_app_configured,
 )
 
 
@@ -77,23 +70,9 @@ def manual_modules(request: WSGIRequest):
         ticket_cfg = None
         ticket_cfg_error = str(exc)
 
-    reddit_cfg = None
-    reddit_cfg_error = None
-    reddit_messages_error = None
-    reddit_messages_count = 0
-    reddit_entitled = True
-    if reddit_entitled:
-        try:
-            reddit_cfg = BigBrotherRedditSettings.get_solo()
-        except (OperationalError, ProgrammingError) as exc:
-            reddit_cfg_error = str(exc)
-        else:  # Config exists, so count available recruitment messages.
-            try:
-                reddit_messages_count = BigBrotherRedditMessage.objects.count()
-            except (OperationalError, ProgrammingError) as exc:
-                reddit_messages_error = str(exc)
 
-    task_name = "BB run regular updates"
+    from .tasks_utils import format_task_name
+    task_name = format_task_name("BB run regular updates")
     periodic_task = PeriodicTask.objects.filter(name=task_name).first()
 
     corptools_installed = django_apps.is_installed("corptools")
@@ -525,21 +504,6 @@ def manual_modules(request: WSGIRequest):
         )
     )
 
-    # Reddit
-    reddit_cfg = None
-    reddit_cfg_error = None
-    reddit_messages_error = None
-    reddit_messages_count = 0
-    try:
-        reddit_cfg = BigBrotherRedditSettings.get_solo()
-    except (OperationalError, ProgrammingError) as exc:
-        reddit_cfg_error = str(exc)
-    else:
-        try:
-            reddit_messages_count = BigBrotherRedditMessage.objects.count()
-        except (OperationalError, ProgrammingError) as exc:
-            reddit_messages_error = str(exc)
-
     return render(request, "faq/modules.html", {"modules": modules})
 
 
@@ -550,122 +514,3 @@ def manual_faq(request: WSGIRequest):
     return render(request, "faq/faq.html")
 
 
-@login_required
-@permission_required("aa_bb.basic_access")
-def reddit_oauth_login(request: WSGIRequest):
-    try:
-        reddit_cfg = BigBrotherRedditSettings.get_solo()
-    except (OperationalError, ProgrammingError) as exc:
-        messages.error(request, _("Could not load reddit settings: {}.").format(exc))
-        return redirect("aa_bb:manual_modules")
-
-    if not reddit_app_configured(reddit_cfg):
-        messages.error(request, _("Reddit OAuth client id/secret must be configured first."))
-        return redirect("aa_bb:manual_modules")
-
-    state = secrets.token_urlsafe(32)
-    request.session["bb_reddit_oauth_state"] = state
-
-    redirect_uri = reddit_cfg.reddit_redirect_override or request.build_absolute_uri(
-        reverse("aa_bb:reddit_oauth_callback")
-    )
-    scope = reddit_cfg.reddit_scope or "identity submit read"
-    auth_url = (
-        "https://www.reddit.com/api/v1/authorize"
-        f"?client_id={reddit_cfg.reddit_client_id}"
-        "&response_type=code"
-        f"&redirect_uri={quote_plus(redirect_uri)}"
-        "&duration=permanent"
-        f"&scope={quote_plus(scope)}"
-        f"&state={quote_plus(state)}"
-    )
-    return redirect(auth_url)
-
-
-@login_required
-@permission_required("aa_bb.basic_access")
-def reddit_oauth_callback(request: WSGIRequest):
-    expected_state = request.session.get("bb_reddit_oauth_state")
-    returned_state = request.GET.get("state")
-    if not expected_state or expected_state != returned_state:
-        return HttpResponseBadRequest("Invalid OAuth state.")
-
-    error = request.GET.get("error")
-    if error:
-        messages.error(request, _("Reddit authorization failed: {}.").format(error))
-        return redirect("aa_bb:manual_modules")
-
-    code_value = request.GET.get("code")
-    if not code_value:
-        messages.error(request, _("Reddit did not return an authorization code."))
-        return redirect("aa_bb:manual_modules")
-
-    try:
-        reddit_cfg = BigBrotherRedditSettings.get_solo()
-    except (OperationalError, ProgrammingError) as exc:
-        messages.error(request, _("Could not load reddit settings: {}.").format(exc))
-        return redirect("aa_bb:manual_modules")
-
-    if not reddit_app_configured(reddit_cfg):
-        messages.error(request, _("Reddit OAuth client id/secret must be configured first."))
-        return redirect("aa_bb:manual_modules")
-
-    redirect_uri = reddit_cfg.reddit_redirect_override or request.build_absolute_uri(
-        reverse("aa_bb:reddit_oauth_callback")
-    )
-
-    data = {
-        "grant_type": "authorization_code",
-        "code": code_value,
-        "redirect_uri": redirect_uri,
-    }
-
-    headers = {
-        "User-Agent": reddit_cfg.reddit_user_agent or "aa-bb-reddit-oauth/1.0",
-    }
-
-    try:
-        response = requests.post(
-            "https://www.reddit.com/api/v1/access_token",
-            data=data,
-            headers=headers,
-            auth=(reddit_cfg.reddit_client_id, reddit_cfg.reddit_client_secret),
-            timeout=15,
-        )
-        response.raise_for_status()
-        payload = response.json()
-    except requests.RequestException as exc:
-        messages.error(request, _("Reddit token exchange failed: {}.").format(exc))
-        return redirect("aa_bb:manual_modules")
-    except ValueError:
-        messages.error(request, _("Reddit token exchange returned an unexpected payload."))
-        return redirect("aa_bb:manual_modules")
-
-    reddit_cfg.reddit_access_token = payload.get("access_token", "")
-    refresh_token = payload.get("refresh_token")
-    if refresh_token:
-        reddit_cfg.reddit_refresh_token = refresh_token
-    reddit_cfg.reddit_token_type = payload.get("token_type", "")
-    reddit_cfg.reddit_token_obtained = timezone.now()
-    reddit_cfg.save()
-
-    if reddit_cfg.reddit_access_token:
-        me_headers = {
-            "Authorization": f"bearer {reddit_cfg.reddit_access_token}",
-            "User-Agent": headers["User-Agent"],
-        }
-        try:
-            me_resp = requests.get(
-                "https://oauth.reddit.com/api/v1/me",
-                headers=me_headers,
-                timeout=15,
-            )
-            if me_resp.ok:
-                reddit_cfg.reddit_account_name = me_resp.json().get("name", "")
-                reddit_cfg.save(update_fields=["reddit_account_name"])
-        except requests.RequestException:
-            pass
-
-    request.session.pop("bb_reddit_oauth_state", None)
-    messages.success(request, _("Reddit token stored successfully for the reddit module."))
-    return redirect("aa_bb:manual_modules")

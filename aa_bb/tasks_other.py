@@ -22,13 +22,13 @@ def BB_send_recurring_stats():
 
     webhook = cfg.stats_webhook
     if not webhook:
-        logger.info("Recurring stats enabled but no stats_webhook configured; skipping.")
+        logger.info("✅  [AA-BB] - [BB_send_recurring_stats] - Recurring stats enabled but no stats_webhook configured; skipping.")
         return
 
     try:
         stats_cfg = RecurringStatsConfig.get_solo()
     except Exception:
-        logger.warning("RecurringStatsConfig missing; cannot send recurring stats.")
+        logger.warning("✅  [AA-BB] - [BB_send_recurring_stats] - RecurringStatsConfig missing; cannot send recurring stats.")
         return
 
     if not stats_cfg.enabled:

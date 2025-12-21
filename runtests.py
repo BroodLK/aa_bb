@@ -20,4 +20,5 @@ if __name__ == "__main__":
                 "forget to activate a virtual environment?"
             )
         raise
-    execute_from_command_line(sys.argv.insert(1, "test"))
+    sys.argv.insert(1, "test")
+    execute_from_command_line(sys.argv)

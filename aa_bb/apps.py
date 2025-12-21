@@ -18,7 +18,6 @@ class AaBbConfig(AppConfig):
     def ready(self):
         """Register signals and ensure Celery beat tasks/message types exist."""
         import aa_bb.signals
-        import aa_bb.tasks_reddit  # noqa: F401  # ensure Celery auto-discovery
         import logging
         from django.db.utils import OperationalError, ProgrammingError
         logger = logging.getLogger(__name__)
@@ -48,19 +47,32 @@ class AaBbConfig(AppConfig):
             "Omega Detected",
         ]
 
-        state_names = list(State.objects.values_list("name", flat=True))
-
         try:
             for msg_name in PREDEFINED_MESSAGE_TYPES:
                 obj, created = MessageType.objects.get_or_create(name=msg_name)
                 if created:  # Log whenever a predefined message type is inserted.
-                    logger.info(f"✅ Added predefined MessageType: {msg_name}")
+                    logger.info(f"✅  [AA-BB] - [Apps] - Added predefined MessageType: {msg_name}")
         except (OperationalError, ProgrammingError):
-            # Database not ready (e.g., during migrate)
+            # Database isn't ready (e.g., before migrations)
+            logger.info(f"ℹ️  [AA-BB] - [Apps] - Database not ready yet, skipping MessageType registration.")
             pass
 
         try:
+            from django.db import connection
+            if "aa_bb_bigbrotherconfig" not in connection.introspection.table_names():
+                return
+
             from django_celery_beat.models import PeriodicTask, IntervalSchedule, CrontabSchedule
+            from .tasks_utils import setup_periodic_task
+            from .models import BigBrotherConfig
+
+            config = BigBrotherConfig.get_solo()
+            stagger = max(getattr(config, "update_stagger_seconds", 3600), 3600)
+
+            interval, _ = IntervalSchedule.objects.get_or_create(
+                every=stagger,
+                period=IntervalSchedule.SECONDS,
+            )
 
             schedule, _ = CrontabSchedule.objects.get_or_create(
                 minute='25',
@@ -71,144 +83,44 @@ class AaBbConfig(AppConfig):
                 timezone='UTC',
             )
 
-            task, created = PeriodicTask.objects.get_or_create(
+            setup_periodic_task(
                 name="BB run regular updates",
-                defaults={
-                    "crontab": schedule,
-                    "task": "aa_bb.tasks.BB_run_regular_updates",
-                    "enabled": False,  # only on creation
-                },
+                task_path="aa_bb.tasks.BB_run_regular_updates",
+                schedule=interval,
+                enabled=config.is_active
             )
 
-            if not created:  # Existing record found; ensure configuration matches expectations.
-                updated = False
-                if task.interval:
-                    task.interval = None
-                    updated = True
-                if task.crontab != schedule or task.task != "aa_bb.tasks.BB_run_regular_updates":  # Ensure interval/task stay canonical.
-                    # Realign interval/task bindings to the expected values.
-                    task.crontab = schedule
-                    task.task = "aa_bb.tasks.BB_run_regular_updates"
-                    updated = True
-                if updated:  # Surface when the periodic task required modification.
-                    task.save()
-                    logger.info("✅ Updated ‘BB run regular updates’ periodic task")
-                else:
-                    logger.info("ℹ️ ‘BB run regular updates’ periodic task already exists and is up to date")
-            else:
-                logger.info("✅ Created ‘BB run regular updates’ periodic task with enabled=False")
-
-            task_cb, created_cb = PeriodicTask.objects.get_or_create(
+            setup_periodic_task(
                 name="CB run regular updates",
-                defaults={
-                    "crontab": schedule,
-                    "task": "aa_bb.tasks_cb.CB_run_regular_updates",
-                    "enabled": False,  # only on creation
-                },
+                task_path="aa_bb.tasks_cb.CB_run_regular_updates",
+                schedule=schedule,
+                enabled=config.is_active
             )
+
             # Optional: Sync standings from aa-contacts into BigBrother hostiles/members
             if apps.is_installed("aa_contacts"):
-                contacts_task, created_contacts = PeriodicTask.objects.get_or_create(
+                setup_periodic_task(
                     name="BB sync contacts from aa-contacts",
-                    defaults={
-                        "crontab": schedule,
-                        "task": "aa_bb.tasks.BB_sync_contacts_from_aa_contacts",
-                        "enabled": False,  # only on creation; enable via Django admin if desired
-                    },
+                    task_path="aa_bb.tasks.BB_sync_contacts_from_aa_contacts",
+                    schedule=schedule,
+                    enabled=config.is_active
                 )
-
-                if not created_contacts:  # Task already exists; keep it aligned with the canonical schedule and path.
-                    updated_contacts = False
-                    if contacts_task.interval:
-                        contacts_task.interval = None
-                        updated_contacts = True
-                    if (
-                        contacts_task.crontab != schedule
-                        or contacts_task.task != "aa_bb.tasks.BB_sync_contacts_from_aa_contacts"
-                    ):
-                        contacts_task.crontab = schedule
-                        contacts_task.task = "aa_bb.tasks.BB_sync_contacts_from_aa_contacts"
-                        updated_contacts = True
-                    if updated_contacts:
-                        contacts_task.save()
-                        logger.info("✅ Updated 'BB sync contacts from aa-contacts' periodic task")
-                    else:
-                        logger.info("ℹ️ 'BB sync contacts from aa-contacts' periodic task already exists and is up to date")
-                else:
-                    logger.info("✅ Created 'BB sync contacts from aa-contacts' periodic task with enabled=False")
             else:
-                logger.info("ℹ️ aa_contacts not installed; skipping 'BB sync contacts from aa-contacts' beat task registration")
+                logger.info("ℹ️  [AA-BB] - [Apps] - aa_contacts not installed; skipping 'BB sync contacts from aa-contacts' beat task registration")
 
-            if not created_cb:  # Existing CorpBrother task detected.
-                updated_cb = False
-                if task_cb.interval:
-                    task_cb.interval = None
-                    updated_cb = True
-                if task_cb.crontab != schedule or task_cb.task != "aa_bb.tasks_cb.CB_run_regular_updates":  # Keep CB task mapping aligned.
-                    # Bring the CB task settings back to the canonical values.
-                    task_cb.crontab = schedule
-                    task_cb.task = "aa_bb.tasks_cb.CB_run_regular_updates"
-                    updated_cb = True
-                if updated_cb:  # Only log when changes were saved.
-                    task_cb.save()
-                    logger.info("✅ Updated ‘CB run regular updates’ periodic task")
-                else:
-                    logger.info("ℹ️ ‘CB run regular updates’ periodic task already exists and is up to date")
-            else:
-                logger.info("✅ Created ‘CB run regular updates’ periodic task with enabled=False")
-
-            task_ct, created_ct = PeriodicTask.objects.get_or_create(
+            setup_periodic_task(
                 name="BB kickstart stale CT modules",
-                defaults={
-                    "crontab": schedule,
-                    "task": "aa_bb.tasks_ct.kickstart_stale_ct_modules",
-                    "enabled": False,  # only on creation
-                },
+                task_path="aa_bb.tasks_ct.kickstart_stale_ct_modules",
+                schedule=schedule,
+                enabled=config.is_active
             )
 
-            if not created_ct:  # Existing kickstart task found; ensure it matches defaults.
-                updated_ct = False
-                # Clear interval if set
-                if task_ct.interval is not None:  # Force crontab mode by clearing stale interval assignments.
-                    task_ct.interval = None
-                    updated_ct = True
-                if task_ct.crontab != schedule or task_ct.task != "aa_bb.tasks_ct.kickstart_stale_ct_modules":  # Align interval/task fields.
-                    task_ct.crontab = schedule
-                    task_ct.task = "aa_bb.tasks_ct.kickstart_stale_ct_modules"
-                    updated_ct = True
-                if updated_ct:  # Report when the stored task required tweaks.
-                    task_ct.save()
-                    logger.info("✅ Updated ‘BB kickstart stale CT modules’ periodic task")
-                else:
-                    logger.info("ℹ️ ‘BB kickstart stale CT modules’ periodic task already exists and is up to date")
-            else:
-                logger.info("✅ Created ‘BB kickstart stale CT modules’ periodic task with enabled=False")
-
-            task_tickets, created_tickets = PeriodicTask.objects.get_or_create(
+            setup_periodic_task(
                 name="tickets run regular updates",
-                defaults={
-                    "crontab": schedule,
-                    "task": "aa_bb.tasks_tickets.hourly_compliance_check",
-                    "enabled": False,  # only on creation
-                },
+                task_path="aa_bb.tasks_tickets.hourly_compliance_check",
+                schedule=schedule,
+                enabled=config.is_active
             )
-
-            if not created_tickets:  # Tickets beat already exists; keep it in sync.
-                updated_tickets = False
-                if task_tickets.interval:
-                    task_tickets.interval = None
-                    updated_tickets = True
-                if task_tickets.crontab != schedule or task_tickets.task != "aa_bb.tasks_tickets.hourly_compliance_check":  # Align interval/task fields.
-                    task_tickets.crontab = schedule
-                    task_tickets.task = "aa_bb.tasks_tickets.hourly_compliance_check"
-                    updated_tickets = True
-                if updated_tickets:  # Log when configuration drift was corrected.
-                    task_tickets.save()
-                    logger.info("✅ Updated 'tickets run regular updates’ periodic task")
-                else:
-                    logger.info("ℹ️ ‘tickets run regular updates’ periodic task already exists and is up to date")
-            else:
-                logger.info("✅ Created ‘tickets run regular updates’ periodic task with enabled=False")
 
             scheduleloa, _ = CrontabSchedule.objects.get_or_create(
                 minute="0",
@@ -219,59 +131,19 @@ class AaBbConfig(AppConfig):
                 timezone="UTC",
             )
 
-            task_loa, created_loa = PeriodicTask.objects.get_or_create(
+            setup_periodic_task(
                 name="BB run regular LoA updates",
-                defaults={
-                    "crontab": scheduleloa,
-                    "task": "aa_bb.tasks_cb.BB_run_regular_loa_updates",
-                    "enabled": True,  # only on creation
-                },
+                task_path="aa_bb.tasks_cb.BB_run_regular_loa_updates",
+                schedule=scheduleloa,
+                enabled=config.is_loa_active
             )
 
-            if not created_loa:  # Existing LoA beat entry; validate scheduling.
-                updated_loa = False
-                # Clear interval if set
-                if task_loa.interval is not None:  # LoA task should rely on crontab, so clear intervals.
-                    task_loa.interval = None
-                    updated_loa = True
-                if task_loa.crontab != scheduleloa or task_loa.task != "aa_bb.tasks_cb.BB_run_regular_loa_updates":  # Enforce canonical LoA schedule/task.
-                    task_loa.crontab = scheduleloa
-                    task_loa.task = "aa_bb.tasks_cb.BB_run_regular_loa_updates"
-                    task_loa.save()
-                    updated_loa = True
-                if updated_loa:  # Emit when LoA settings were adjusted.
-                    logger.info("✅ Updated ‘BB run regular LoA updates’ periodic task")
-                else:
-                    logger.info("ℹ️ ‘BB run regular LoA updates’ periodic task already exists and is up to date")
-            else:
-                logger.info("✅ Created ‘BB run regular LoA updates’ periodic task with enabled=False")
-
-            task_comp, created_comp = PeriodicTask.objects.get_or_create(
+            setup_periodic_task(
                 name="BB check member compliance",
-                defaults={
-                    "crontab": scheduleloa,
-                    "task": "aa_bb.tasks_cb.check_member_compliance",
-                    "enabled": False,  # only on creation
-                },
+                task_path="aa_bb.tasks_cb.check_member_compliance",
+                schedule=scheduleloa,
+                enabled=config.is_paps_active
             )
-
-            if not created_comp:  # Found existing compliance beat entry; align it.
-                updated_comp = False
-                # Clear interval if set
-                if task_comp.interval is not None:  # Compliance task should be crontab-driven.
-                    task_comp.interval = None
-                    updated_comp = True
-                if task_comp.crontab != scheduleloa or task_comp.task != "aa_bb.tasks_cb.check_member_compliance":  # Ensure scheduling matches configuration.
-                    task_comp.crontab = scheduleloa
-                    task_comp.task = "aa_bb.tasks_cb.check_member_compliance"
-                    task_comp.save()
-                    updated_comp = True
-                if updated_comp:  # Notify when compliance beat was updated.
-                    logger.info("✅ Updated ‘BB check member compliance’ periodic task")
-                else:
-                    logger.info("ℹ️ ‘BB check member compliance’ periodic task already exists and is up to date")
-            else:
-                logger.info("✅ Created ‘BB check member compliance’ periodic task with enabled=False")
 
             schedule_stats, _ = CrontabSchedule.objects.get_or_create(
                 minute="0",
@@ -282,33 +154,12 @@ class AaBbConfig(AppConfig):
                 timezone="UTC",
             )
 
-            task_stats, created_stats = PeriodicTask.objects.get_or_create(
+            setup_periodic_task(
                 name="BB send recurring stats",
-                defaults={
-                    "crontab": schedule_stats,
-                    "task": "aa_bb.tasks_other.BB_send_recurring_stats",
-                    "enabled": False,  # only on creation
-                },
+                task_path="aa_bb.tasks_other.BB_send_recurring_stats",
+                schedule=schedule_stats,
+                enabled=config.are_recurring_stats_active
             )
-
-            if not created_stats:
-                updated_stats = False
-                if task_stats.interval is not None:
-                    task_stats.interval = None
-                    updated_stats = True
-                if task_stats.crontab != schedule_stats or task_stats.task != "aa_bb.tasks_other.BB_send_recurring_stats":
-                    task_stats.crontab = schedule_stats
-                    task_stats.task = "aa_bb.tasks_other.BB_send_recurring_stats"
-                    task_stats.save()
-                    updated_stats = True
-                if updated_stats:
-                    logger.info("✅ Updated ‘BB send recurring stats’ periodic task")
-                else:
-                    logger.info("ℹ️ ‘BB send recurring stats’ periodic task already exists and is up to date")
-            else:
-                    logger.info("✅ Created ‘BB send recurring stats’ periodic task with enabled=False")
-
-
 
             scheduleDB, _ = CrontabSchedule.objects.get_or_create(
                 minute="0",
@@ -319,36 +170,15 @@ class AaBbConfig(AppConfig):
                 timezone="UTC",
             )
 
-            task_DB, created_DB = PeriodicTask.objects.get_or_create(
+            setup_periodic_task(
                 name="BB run regular DB cleanup",
-                defaults={
-                    "crontab": scheduleDB,
-                    "task": "aa_bb.tasks_cb.BB_daily_DB_cleanup",
-                    "enabled": True,  # only on creation
-                },
+                task_path="aa_bb.tasks_cb.BB_daily_DB_cleanup",
+                schedule=scheduleDB,
+                enabled=config.is_active
             )
-
-            if not created_DB:  # Existing DB cleanup task, so reconcile settings.
-                updated_DB = False
-                # Clear interval if set
-                if task_DB.interval is not None:  # Cleanup task must be crontab-driven.
-                    task_DB.interval = None
-                    updated_DB = True
-                if task_DB.crontab != scheduleDB or task_DB.task != "aa_bb.tasks_cb.BB_daily_DB_cleanup":  # Keep task schedule consistent.
-                    task_DB.crontab = scheduleDB
-                    task_DB.task = "aa_bb.tasks_cb.BB_daily_DB_cleanup"
-                    task_DB.save()
-                    updated_DB = True
-                if updated_DB:  # Provide feedback when the DB task was changed.
-                    logger.info("✅ Updated ‘BB run regular DB cleanup’ periodic task")
-                else:
-                    logger.info("ℹ️ ‘BB run regular DB cleanup’ periodic task already exists and is up to date")
-            else:
-                logger.info("✅ Created ‘BB run regular DB cleanup’ periodic task with enabled=False")
 
 
             # Daily messages
-            from .models import BigBrotherConfig
             config = BigBrotherConfig.get_solo()
 
             # Default fallback schedule (12:00 UTC daily)
@@ -361,169 +191,53 @@ class AaBbConfig(AppConfig):
                 timezone='UTC',
             )
 
-            # Tasks info: name, task path, config schedule attr, active flag attr
             tasks = [
                 {
                     "name": "BB send daily message",
                     "task_path": "aa_bb.tasks_cb.BB_send_daily_messages",
-                    "schedule_attr": "dailyschedule",
-                    "active_attr": "are_daily_messages_active",
+                    "schedule": getattr(config, "dailyschedule", None) or default_schedule,
+                    "enabled": config.are_daily_messages_active,
                 },
                 {
                     "name": "BB send optional message 1",
                     "task_path": "aa_bb.tasks_cb.BB_send_opt_message1",
-                    "schedule_attr": "optschedule1",
-                    "active_attr": "are_opt_messages1_active",
+                    "schedule": getattr(config, "optschedule1", None) or default_schedule,
+                    "enabled": config.are_opt_messages1_active,
                 },
                 {
                     "name": "BB send optional message 2",
                     "task_path": "aa_bb.tasks_cb.BB_send_opt_message2",
-                    "schedule_attr": "optschedule2",
-                    "active_attr": "are_opt_messages2_active",
+                    "schedule": getattr(config, "optschedule2", None) or default_schedule,
+                    "enabled": config.are_opt_messages2_active,
                 },
                 {
                     "name": "BB send optional message 3",
                     "task_path": "aa_bb.tasks_cb.BB_send_opt_message3",
-                    "schedule_attr": "optschedule3",
-                    "active_attr": "are_opt_messages3_active",
+                    "schedule": getattr(config, "optschedule3", None) or default_schedule,
+                    "enabled": config.are_opt_messages3_active,
                 },
                 {
                     "name": "BB send optional message 4",
                     "task_path": "aa_bb.tasks_cb.BB_send_opt_message4",
-                    "schedule_attr": "optschedule4",
-                    "active_attr": "are_opt_messages4_active",
+                    "schedule": getattr(config, "optschedule4", None) or default_schedule,
+                    "enabled": config.are_opt_messages4_active,
                 },
                 {
                     "name": "BB send optional message 5",
                     "task_path": "aa_bb.tasks_cb.BB_send_opt_message5",
-                    "schedule_attr": "optschedule5",
-                    "active_attr": "are_opt_messages5_active",
+                    "schedule": getattr(config, "optschedule5", None) or default_schedule,
+                    "enabled": config.are_opt_messages5_active,
                 },
             ]
 
             for task_info in tasks:
-                name = task_info["name"]
-                task_path = task_info["task_path"]
-                schedule = getattr(config, task_info["schedule_attr"], None) or default_schedule
-                is_active = bool(getattr(config, task_info["active_attr"], False))
+                setup_periodic_task(
+                    name=task_info["name"],
+                    task_path=task_info["task_path"],
+                    schedule=task_info["schedule"],
+                    enabled=task_info["enabled"]
+                )
 
-                existing_task = PeriodicTask.objects.filter(name=name).first()
 
-                if existing_task is None:
-                    # Only create the beat task when the feature is enabled.
-                    if not is_active:
-                        logger.info(f"ℹ️ Skipping create for '{name}' (disabled in config)")
-                        continue
-
-                    # Race-safe create (multiple processes can hit ready() at once)
-                    try:
-                        with transaction.atomic():
-                            existing_task, created = PeriodicTask.objects.get_or_create(
-                                name=name,
-                                defaults={
-                                    "task": task_path,
-                                    "crontab": schedule,
-                                    "enabled": True,
-                                },
-                            )
-                        if created:
-                            logger.info(f"✅ Created '{name}' periodic task with enabled=True")
-                    except IntegrityError:
-                        # Another process created it between our .first() and create
-                        existing_task = PeriodicTask.objects.filter(name=name).first()
-
-                # From here down: task exists -> align it, and set enabled based on config (never delete)
-                if existing_task is None:
-                    continue
-
-                updated = False
-
-                if existing_task.interval is not None:
-                    existing_task.interval = None
-                    updated = True
-
-                if existing_task.crontab != schedule:
-                    existing_task.crontab = schedule
-                    updated = True
-
-                if existing_task.task != task_path:
-                    existing_task.task = task_path
-                    updated = True
-
-                # Critical behavior: if config disables it, disable the task (do not delete)
-                if existing_task.enabled != is_active:
-                    existing_task.enabled = is_active
-                    updated = True
-
-                if updated:
-                    existing_task.save()
-                    logger.info(f"Updated '{name}' periodic task (enabled={is_active})")
-                else:
-                    logger.info(f"'{name}' periodic task already exists and is up to date")
-
-            reddit_task_names = [
-                "BB reddit evejobs post",
-                "BB reddit reply watcher",
-            ]
-
-            reddit_post_schedule, _ = CrontabSchedule.objects.get_or_create(
-                minute="0",
-                hour="13",
-                day_of_week="*",
-                day_of_month="*",
-                month_of_year="*",
-                timezone="UTC",
-            )
-
-            reddit_post_task, created_reddit_post = PeriodicTask.objects.get_or_create(
-                name="BB reddit evejobs post",
-                defaults={
-                    "crontab": reddit_post_schedule,
-                    "task": "aa_bb.tasks_reddit.post_reddit_recruitment",
-                    "enabled": False,
-                },
-            )
-            if not created_reddit_post:  # Task exists; keep schedule and callable synced.
-                updated = False
-                if reddit_post_task.crontab != reddit_post_schedule:  # Update schedule when configuration changed.
-                    reddit_post_task.crontab = reddit_post_schedule
-                    updated = True
-                if reddit_post_task.task != "aa_bb.tasks_reddit.post_reddit_recruitment":  # Ensure task path is up to date.
-                    reddit_post_task.task = "aa_bb.tasks_reddit.post_reddit_recruitment"
-                    updated = True
-                if updated:  # Save/log only if adjustments happened.
-                    reddit_post_task.save()
-                    logger.info("✅ Updated 'BB reddit evejobs post' periodic task")
-
-            reddit_reply_schedule, _ = CrontabSchedule.objects.get_or_create(
-                minute="0",
-                hour="*",
-                day_of_week="*",
-                day_of_month="*",
-                month_of_year="*",
-                timezone="UTC",
-            )
-
-            reddit_reply_task, created_reddit_reply = PeriodicTask.objects.get_or_create(
-                name="BB reddit reply watcher",
-                defaults={
-                    "crontab": reddit_reply_schedule,
-                    "task": "aa_bb.tasks_reddit.monitor_reddit_replies",
-                    "enabled": False,
-                },
-            )
-
-            if not created_reddit_reply:  # Task already existed; resync internals if needed.
-                updated = False
-                if reddit_reply_task.crontab != reddit_reply_schedule:  # Ensure cron schedule matches settings.
-                    reddit_reply_task.crontab = reddit_reply_schedule
-                    updated = True
-                if reddit_reply_task.task != "aa_bb.tasks_reddit.monitor_reddit_replies":  # Keep task path current.
-                    reddit_reply_task.task = "aa_bb.tasks_reddit.monitor_reddit_replies"
-                    updated = True
-                if updated:  # Save/log only when the record changed.
-                    reddit_reply_task.save()
-                    logger.info("✅ Updated 'BB reddit reply watcher' periodic task")
-
-        except (OperationalError, ProgrammingError) as e:
-            logger.warning(f"Could not register periodic task yet: {e}")
+        except (OperationalError, ProgrammingError, ImportError):
+            pass

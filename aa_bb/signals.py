@@ -23,7 +23,7 @@ try:
     from aadiscordbot.tasks import run_task_function
     from aadiscordbot.utils.auth import get_discord_user_id
 except ImportError:
-    logger.error("aadiscordbot not installed, signaling won't work.")
+    logger.error("✅  [AA-BB] - [Signals] - aadiscordbot not installed, signaling won't work.")
 
 @receiver(post_save, sender=BigBrotherConfig)
 def trigger_task_sync(sender, instance, **kwargs):
@@ -62,4 +62,4 @@ def removed_character(sender, instance, **kwargs):
         )
 
     except Exception as e:
-        logger.error("Failed to create character-removed ticket: %s", e)
+        logger.error("✅  [AA-BB] - [Signals] - Failed to create character-removed ticket: %s", e)

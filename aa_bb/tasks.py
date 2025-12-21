@@ -66,14 +66,14 @@ def send_status_embed(
 
     if VERBOSE_WEBHOOK_LOGGING:
         logger.debug(
-            "[EMBED] send_status_embed called | subject=%r | lines=%d",
+            "✅  [AA-BB] - [Embed] - send_status_embed called | subject=%r | lines=%d",
             subject,
             len(lines) if lines else 0,
         )
 
     # Defensive: never send empty embeds
     if not lines:
-        logger.debug("[EMBED] aborted: no lines supplied")
+        logger.debug("ℹ️  [AA-BB] - [Embed] - aborted: no lines supplied")
         return
 
     # Discord limits
@@ -84,7 +84,7 @@ def send_status_embed(
 
     if VERBOSE_WEBHOOK_LOGGING:
         logger.debug(
-            "[EMBED] title resolved | title=%r | color=%#x",
+            "✅  [AA-BB] - [Embed] - title resolved | title=%r | color=%#x",
             title,
             color,
         )
@@ -94,7 +94,7 @@ def send_status_embed(
 
     if len(lines) > MAX_LINES:
         logger.warning(
-            "[EMBED] line cap exceeded | original=%d | capped=%d",
+            "✅  [AA-BB] - [Embed] - line cap exceeded | original=%d | capped=%d",
             len(lines),
             MAX_LINES,
         )
@@ -104,14 +104,14 @@ def send_status_embed(
     # Hard truncate if someone messed up
     if len(description) > MAX_DESC:
         logger.error(
-            "[EMBED] description overflow | chars=%d | truncating",
+            "✅  [AA-BB] - [Embed] - description overflow | chars=%d | truncating",
             len(description),
         )
         description = description[: MAX_DESC - 3] + "..."
 
     if VERBOSE_WEBHOOK_LOGGING:
         logger.debug(
-            "[EMBED] payload ready | lines=%d | chars=%d",
+            "✅  [AA-BB] - [Embed] - payload ready | lines=%d | chars=%d",
             len(safe_lines),
             len(description),
         )
@@ -127,7 +127,7 @@ def send_status_embed(
     }
 
     if VERBOSE_WEBHOOK_LOGGING:
-        logger.debug("[EMBED] sending embed payload")
+        logger.debug("✅  [AA-BB] - [Embed] - sending embed payload")
     time.sleep(0.25)
     send_message(embed)
 
@@ -253,11 +253,11 @@ def BB_update_single_user(user_id, char_name):
     Process updates for a single user.
     Broken out from BB_run_regular_updates for scalability.
     """
-    logger.info(f"START Update for user: {char_name} (ID: {user_id})")
+    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - START Update for user: {char_name} (ID: {user_id})")
 
     instance = BigBrotherConfig.get_solo()
     if not instance.is_active:
-        logger.info(f"BigBrother inactive. Skipping update for {char_name}.")
+        logger.info(f"ℹ️  [AA-BB] - [BB_update_single_user] - BigBrother inactive. Skipping update for {char_name}.")
         return
 
     User = get_user_model()
@@ -267,28 +267,28 @@ def BB_update_single_user(user_id, char_name):
         try:
             # pingroleID = instance.pingroleID # Unused variable?
 
-            logger.info(f"[{char_name}] Fetching Cyno Info...")
+            logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Fetching Cyno Info...")
             cyno_result = get_user_cyno_info(user_id)
 
-            logger.info(f"[{char_name}] Fetching Skill Info...")
+            logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Fetching Skill Info...")
             skills_result = get_multiple_user_skill_info(user_id, skill_ids)
 
-            logger.info(f"[{char_name}] Determining Character State...")
+            logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Determining Character State...")
             state_result = determine_character_state(user_id, True)
 
-            logger.info(f"[{char_name}] Fetching AWOX Links...")
+            logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Fetching AWOX Links...")
             awox_data = get_awox_kill_links(user_id)
             awox_links = [x["link"] for x in awox_data]
             awox_map = {x["link"]: x for x in awox_data}
 
-            logger.info(f"[{char_name}] Fetching Hostile Clones...")
+            logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Fetching Hostile Clones...")
             hostile_clones_result = get_hostile_clone_locations(user_id)
 
-            logger.info(f"[{char_name}] Fetching Hostile Assets...")
+            logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Fetching Hostile Assets...")
 
             hostile_assets_result = get_hostile_asset_locations(user_id)
 
-            logger.info(f"[{char_name}] Fetching Sus Contacts/Contracts/Mails/Trans...")
+            logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Fetching Sus Contacts/Contracts/Mails/Trans...")
             sus_contacts_result = {str(cid): v for cid, v in get_user_hostile_notifications(user_id).items()}
             sus_contracts_result = {str(issuer_id): v for issuer_id, v in get_user_hostile_contracts(user_id).items()}
             sus_mails_result = {str(issuer_id): v for issuer_id, v in get_user_hostile_mails(user_id).items()}
@@ -322,7 +322,7 @@ def BB_update_single_user(user_id, char_name):
                     out[name] = filtered
                 return out
 
-            logger.info(f"[{char_name}] Processing SP Ratios...")
+            logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Processing SP Ratios...")
             for char_nameeee, data in skills_result.items():
                 char_id = get_character_id(char_nameeee)
                 char_age = get_char_age(char_id)
@@ -340,7 +340,7 @@ def BB_update_single_user(user_id, char_name):
                 for char_dic in (cyno_result or {}).values()
             )
             has_skills = any(
-                entry[sid]["trained"] > 0 or entry[sid]["active"] > 0
+                entry.get(sid, {}).get("trained", 0) > 0 or entry.get(sid, {}).get("active", 0) > 0
                 for entry in skills_result.values()
                 for sid in skill_ids
             )
@@ -355,7 +355,7 @@ def BB_update_single_user(user_id, char_name):
             # load (or create) cached status so diffs apply correctly
             status, created = UserStatus.objects.get_or_create(user_id=user_id)
 
-            logger.info(f"[{char_name}] Status loaded (created={created}). Calculating changes...")
+            logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Status loaded (created={created}). Calculating changes...")
 
             changes = []
 
@@ -461,21 +461,21 @@ def BB_update_single_user(user_id, char_name):
                     return f"- {link}"
 
                 link_list = "\n".join(format_awox_line(link) for link in new_links)
-                logger.info(f"{char_name} new links {link_list}")
+                logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} new links {link_list}")
                 link_list3 = "\n".join(f"- {link}" for link in awox_links)
-                logger.info(f"{char_name} new links {link_list3}")
+                logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} new links {link_list3}")
                 link_list2 = "\n".join(f"- {link}" for link in old_links)
-                logger.info(f"{char_name} old links {link_list2}")
+                logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} old links {link_list2}")
                 if status.has_awox_kills != has_awox and has_awox:  # first time awox kills were spotted for this user
                     if not has_awox:
                         if instance.awox_notify:
                             changes.append(f"### AWOX Kill Status: 🟢")
                     status.has_awox_kills = has_awox
-                    logger.info(f"{char_name} changed")
+                    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} changed")
                 if new_links:  # send notifications only for links not yet alerted on
                     if instance.awox_notify:
                         changes.append(f"###{get_pings('AwoX')} New AWOX Kill(s):\n{link_list}")
-                    logger.info(f"{char_name} new links")
+                    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} new links")
                     tcfg = TicketToolConfig.get_solo()
                     if tcfg.awox_monitor_enabled and time_in_corp(
                         user_id) >= 1:  # guardrail: only fire tickets for monitored corps
@@ -494,11 +494,11 @@ def BB_update_single_user(user_id, char_name):
                                     }
                                 )
                             except Exception as e:
-                                logger.error(e)
+                                logger.error(f"ℹ️  [AA-BB] - [BB_update_single_user] - {e}")
                                 pass
 
                         except Exception as e:
-                            logger.error(e)
+                            logger.error(f"ℹ️  [AA-BB] - [BB_update_single_user] - {e}")
                             pass
                 old = set(status.awox_kill_links or [])
                 new = set(awox_links) - old
@@ -636,9 +636,9 @@ def BB_update_single_user(user_id, char_name):
 
                             table_lines.append(f"{corp_label:<21} | {corp_days} days")
                         except EveCharacter.DoesNotExist:
-                            logger.warning(f"EveCharacter not found for {charname} (id={cid}), skipping corp time.")
+                            logger.warning(f"ℹ️  [AA-BB] - [BB_update_single_user] - EveCharacter not found for {charname} (id={cid}), skipping corp time.")
                         except Exception as e:
-                            logger.warning(f"Could not fetch corp time for {charname}: {e}")
+                            logger.warning(f"ℹ️  [AA-BB] - [BB_update_single_user] - Could not fetch corp time for {charname}: {e}")
 
 
                         table_block = "```\n" + "\n".join(table_lines) + "\n```"
@@ -732,7 +732,7 @@ def BB_update_single_user(user_id, char_name):
                         )
                         if anything == False:  # skip characters with zero relevant skills (just noise)
                             continue
-                        logger.info(new_entry.values())
+                        logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {new_entry.values()}")
 
                         if instance.cyno_notify:
                             changes.append(f"- **{charname}**:")
@@ -806,20 +806,20 @@ def BB_update_single_user(user_id, char_name):
 
                 if lines:
                     link_list = "\n".join(lines)
-                    logger.info(f"{char_name} new hostile assets:\n{link_list}")
+                    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} new hostile assets:\n{link_list}")
 
                 # Overall boolean flip
                 if status.has_hostile_assets != has_hostile_assets:
                     if not has_hostile_assets:
                         if instance.asset_notify:
                             changes.append("### Hostile Asset Status: 🟢")
-                    logger.info(f"{char_name} hostile asset status changed")
+                    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} hostile asset status changed")
 
                 # Only add a "New Hostile Assets" section when there are actually new systems
                 if new_systems and lines:
                     if instance.asset_notify:
                         changes.append(f"###{get_pings('New Hostile Assets')} New Hostile Assets:\n{link_list}")
-                    logger.info(f"{char_name} new hostile asset systems: {', '.join(sorted(new_systems))}")
+                    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} new hostile asset systems: {', '.join(sorted(new_systems))}")
 
                 status.has_hostile_assets = has_hostile_assets
                 status.hostile_assets = hostile_assets_result
@@ -853,19 +853,19 @@ def BB_update_single_user(user_id, char_name):
 
                 if lines:
                     link_list = "\n".join(lines)
-                    logger.info(f"{char_name} new hostile clones:\n{link_list}")
+                    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} new hostile clones:\n{link_list}")
 
                 # Overall boolean flip
                 if status.has_hostile_clones != has_hostile_clones:
                     if not has_hostile_clones:
                         if instance.clone_notify:
                             changes.append("### Hostile Clone Status: 🟢")
-                    logger.info(f"{char_name} hostile clone status changed")
+                    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} hostile clone status changed")
 
                 if new_systems and lines:
                     if instance.clone_notify:
                         changes.append(f"###{get_pings('New Hostile Clones')} New Hostile Clone(s):\n{link_list}")
-                    logger.info(f"{char_name} new hostile clone systems: {', '.join(sorted(new_systems))}")
+                    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} new hostile clone systems: {', '.join(sorted(new_systems))}")
 
                 status.has_hostile_clones = has_hostile_clones
                 status.hostile_clones = hostile_clones_result
@@ -883,19 +883,19 @@ def BB_update_single_user(user_id, char_name):
                     link_list = "\n".join(
                         f"🔗 {sus_contacts_result[cid]}" for cid in new_links
                     )
-                    logger.info(f"{char_name} new assets:\n{link_list}")
+                    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} new assets:\n{link_list}")
 
                 if old_ids:  # optional debug log for existing entries
                     old_link_list = "\n".join(
                         f"🔗 {old_contacts[cid]}" for cid in old_ids if cid in old_contacts
                     )
-                    logger.info(f"{char_name} old assets:\n{old_link_list}")
+                    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} old assets:\n{old_link_list}")
 
                 if status.has_sus_contacts != has_sus_contacts:  # flag boolean flip
                     if not has_sus_contacts:
                         if instance.contact_notify:
                             changes.append(f"### Suspicious Contact Status: 🟢")
-                logger.info(f"{char_name} status changed")
+                logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} status changed")
 
                 if new_links:  # include the new contact entries in the summary
                     if instance.contact_notify:
@@ -923,19 +923,19 @@ def BB_update_single_user(user_id, char_name):
                     link_list = "\n".join(
                         f"🔗 {sus_contracts_result[issuer_id]}" for issuer_id in new_links
                     )
-                    logger.info(f"{char_name} new assets:\n{link_list}")
+                    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} new assets:\n{link_list}")
 
                 if old_ids:  # optional logging for previous entries
                     old_link_list = "\n".join(
                         f"🔗 {old_contracts[issuer_id]}" for issuer_id in old_ids if issuer_id in old_contracts
                     )
-                    logger.info(f"{char_name} old assets:\n{old_link_list}")
+                    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} old assets:\n{old_link_list}")
 
                 if status.has_sus_contracts != has_sus_contracts:  # summarize boolean change
                     if not has_sus_contracts:
                         if instance.contract_notify:
                             changes.append(f"## Suspicious Contract Status: 🟢")
-                logger.info(f"{char_name} status changed")
+                logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} status changed")
 
                 if new_links:  # write each new contract entry to the report
                     if instance.contract_notify:
@@ -963,19 +963,19 @@ def BB_update_single_user(user_id, char_name):
                     link_list = "\n".join(
                         f"🔗 {sus_mails_result[issuer_id]}" for issuer_id in new_links
                     )
-                    logger.info(f"{char_name} new assets:\n{link_list}")
+                    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} new assets:\n{link_list}")
 
                 if old_ids:  # optional logging for previous entries
                     old_link_list = "\n".join(
                         f"🔗 {old_mails[issuer_id]}" for issuer_id in old_ids if issuer_id in old_mails
                     )
-                    logger.info(f"{char_name} old assets:\n{old_link_list}")
+                    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} old assets:\n{old_link_list}")
 
                 if status.has_sus_mails != has_sus_mails:  # summarize boolean change
                     if not has_sus_mails:
                         if instance.mail_notify:
                             changes.append(f"### Suspicious Mail Status: 🟢")
-                logger.info(f"{char_name} status changed")
+                logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} status changed")
 
                 if new_links:  # enumerate the new mail entries for the report
                     if instance.mail_notify:
@@ -1003,19 +1003,19 @@ def BB_update_single_user(user_id, char_name):
                     link_list = "\n".join(
                         f"{sus_trans_result[issuer_id]}" for issuer_id in new_links
                     )
-                    logger.info(f"{char_name} new trans:\n{link_list}")
+                    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} new trans:\n{link_list}")
 
                 if old_ids:
                     old_link_list = "\n".join(
                         f"{old_trans[issuer_id]}" for issuer_id in old_ids if issuer_id in old_trans
                     )
-                    logger.info(f"{char_name} old trans:\n{old_link_list}")
+                    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} old trans:\n{old_link_list}")
 
                 if status.has_sus_trans != has_sus_trans:
                     if not has_sus_trans:
                         if instance.transaction_notify:
                             changes.append(f"## Suspicious Transactions Status: 🟢")
-                logger.info(f"{char_name} status changed")
+                logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} status changed")
                 if new_links:
                     if instance.transaction_notify:
                         changes.append(f"### New Suspicious Transactions{get_pings('New Suspicious Transactions')}:\n{link_list}")
@@ -1037,7 +1037,7 @@ def BB_update_single_user(user_id, char_name):
                 interleave between users.
                 """
                 logger.info(
-                    "[%s] Preparing %d change blocks for Discord...",
+                    "✅  [AA-BB] - [BB_update_single_user] - [%s] baseline data exists. Calculating changes across %d blocks...",
                     char_name,
                     len(changes),
                 )
@@ -1055,7 +1055,7 @@ def BB_update_single_user(user_id, char_name):
 
                     for body_chunk in _chunk_embed_lines(raw_lines, max_chars=1900):
                         logger.info(
-                            "[%s] Prepared embed chunk with %d lines",
+                            "✅  [AA-BB] - [BB_update_single_user] - [%s] Prepared embed chunk with %d lines",
                             char_name,
                             len(body_chunk),
                         )
@@ -1063,7 +1063,7 @@ def BB_update_single_user(user_id, char_name):
 
                 if all_chunks:
                     logger.info(
-                        "[%s] Enqueuing %d embed chunks to BB_send_discord_notifications",
+                        "✅  [AA-BB] - [BB_update_single_user] - [%s] Enqueuing %d embed chunks to BB_send_discord_notifications",
                         char_name,
                         len(all_chunks),
                     )
@@ -1073,7 +1073,7 @@ def BB_update_single_user(user_id, char_name):
             status.updated = timezone.now()
             status.save()
 
-            logger.info(f"END Update for user: {char_name} (ID: {user_id}) - Success")
+            logger.info(f"✅  [AA-BB] - [BB_update_single_user] - END Update for user: {char_name} (ID: {user_id}) - Success")
             break
 
         except OperationalError as e:
@@ -1081,20 +1081,20 @@ def BB_update_single_user(user_id, char_name):
             if code == 1213 or "deadlock" in str(e).lower():
                 delay = 0.5 * (attempt + 1)
                 logger.warning(
-                    f"Deadlock while processing {char_name} "
+                    f"ℹ️  [AA-BB] - [BB_update_single_user] - Deadlock while processing {char_name} "
                     f"(attempt {attempt + 1}/3); sleeping {delay:.1f}s before retry."
                 )
                 time.sleep(delay)
                 # after last attempt, give up on this user but keep the overall stream alive
                 if attempt == 2:
                     logger.error(
-                        f"Skipping {char_name} after repeated deadlocks."
+                        f"ℹ️  [AA-BB] - [BB_update_single_user] - Skipping {char_name} after repeated deadlocks."
                     )
                 continue
             # not a deadlock → re-raise and let outer handler deal with it
             raise
         except Exception as e:
-            logger.error(f"Failed to update user {char_name}: {e}", exc_info=True)
+            logger.error(f"ℹ️  [AA-BB] - [BB_update_single_user] - Failed to update user {char_name}: {e}", exc_info=True)
             raise
 
 
@@ -1159,7 +1159,7 @@ def BB_run_regular_updates():
             users = list(get_users())
             total_users = len(users)
             logger.info(
-                f"BB_run_regular_updates: Dispatching updates for {total_users} users (staggered)."
+                f"✅  [AA-BB] - [BB_run_regular_updates] - Dispatching updates for {total_users} users (staggered)."
             )
 
             # Backlog check
@@ -1190,7 +1190,7 @@ def BB_run_regular_updates():
                             percent = (remaining_count / instance.update_last_dispatch_count) * 100
                             if percent > threshold:
                                 logger.warning(
-                                    f"Update backlog detected: {remaining_count} tasks remaining "
+                                    f"ℹ️  [AA-BB] - [BB_run_regular_updates] - Update backlog detected: {remaining_count} tasks remaining "
                                     f"({percent:.1f}% of last run count {instance.update_last_dispatch_count})"
                                 )
                                 send_message(
@@ -1200,7 +1200,7 @@ def BB_run_regular_updates():
                                     "This may indicate that the update stagger window is too short or workers are overloaded."
                                 )
                 except Exception as e:
-                    logger.error(f"Failed to check for update backlog: {e}", exc_info=True)
+                    logger.error(f"ℹ️  [AA-BB] - [BB_run_regular_updates] - Failed to check for update backlog: {e}", exc_info=True)
 
             instance.update_last_dispatch_count = total_users
             instance.save()
@@ -1240,7 +1240,7 @@ def BB_run_regular_updates():
                 eta = now + timedelta(seconds=offset)
 
                 logger.info(
-                    f"Scheduling BB_update_single_user for {char_name} (id={user_id}) "
+                    f"✅  [AA-BB] - [BB_run_regular_updates] - Scheduling BB_update_single_user for {char_name} (id={user_id}) "
                     f"in {offset}s at {eta.isoformat()}."
                 )
 
@@ -1250,7 +1250,7 @@ def BB_run_regular_updates():
                 )
 
     except Exception as e:
-        logger.error("Task failed", exc_info=True)
+        logger.error("ℹ️  [AA-BB] - [BB_run_regular_updates] - Task failed", exc_info=True)
         instance.is_active = True
         instance.save()
         send_message(
@@ -1275,8 +1275,8 @@ def BB_run_regular_updates():
             send_message(f"```{chunk}```")
             start = end
 
-    from django_celery_beat.models import PeriodicTask
-    task_name = 'BB run regular updates'
+    from .tasks_utils import format_task_name
+    task_name = format_task_name('BB run regular updates')
     task = PeriodicTask.objects.filter(name=task_name).first()
     if not task.enabled:  # inform admins when the periodic task finished its initial run
         send_message("initial run of the Big Brother task has finished, you can now enable the task")
@@ -1293,14 +1293,14 @@ def BB_send_discord_notifications(subject: str, chunks: list[list[str]]) -> None
     interleave between users or checks.
     """
     logger.info(
-        "[BB_SEND] Dispatching %d embed chunks for %s",
+        "✅  [AA-BB] - [BB_send_discord_notifications] - Dispatching %d embed chunks for %s",
         len(chunks),
         subject,
     )
 
     for idx, lines in enumerate(chunks):
         logger.debug(
-            "[BB_SEND] Sending chunk %d/%d for %s (lines=%d)",
+            "✅  [AA-BB] - [BB_send_discord_notifications] - Sending chunk %d/%d for %s (lines=%d)",
             idx + 1,
             len(chunks),
             subject,
@@ -1446,8 +1446,10 @@ def BB_sync_contacts_from_aa_contacts(self):
         return
 
     try:
-        from aa_contacts.models import AllianceContact
-    except Exception:
+        from importlib import import_module
+        aa_contacts_models = import_module("aa_contacts.models")
+        AllianceContact = aa_contacts_models.AllianceContact
+    except (ImportError, ModuleNotFoundError):
         return
 
     # Existing config sets (works for M2M or CSV TextFields)

@@ -21,7 +21,7 @@ from ..app_settings import (
 )
 
 if aablacklist_active():
-    from aa_bb.checks.corp_blacklist import check_char_corp_bl
+    from aa_bb.checks.add_to_blacklist import check_char_add_to_bl
 
 try:
     from corptools.models import (
@@ -75,8 +75,8 @@ def get_or_create_prices(item_id):
     # Check local cache first
     try:
         price_obj = EveItemPrice.objects.get(eve_type_id=item_id)
-        # If it's fresh (less than 7 days), return it
-        if price_obj.updated > timezone.now() - timedelta(days=7):
+        # If it's fresh (less than configured days), return it
+        if price_obj.updated > timezone.now() - timedelta(days=cfg.market_transactions_price_max_age):
             return price_obj
     except EveItemPrice.DoesNotExist:
         price_obj = None
@@ -170,11 +170,12 @@ def is_above_threshold(tx: dict, threshold_percent: float) -> bool:
     avg_price = None
 
     if EVEUNIVERSE_INSTALLED:
+        cfg = BigBrotherConfig.get_solo()
         try:
             price_obj = EveMarketPrice.objects.filter(type_id=type_id).first()
             if price_obj and price_obj.average_price and price_obj.average_price > 0:
                 # Check age
-                if hasattr(price_obj, 'updated_at') and price_obj.updated_at > timezone.now() - timedelta(days=7):
+                if hasattr(price_obj, 'updated_at') and price_obj.updated_at > timezone.now() - timedelta(days=cfg.market_transactions_price_max_age):
                     avg_price = float(price_obj.average_price)
         except Exception:
             logger.exception("Error checking EveUniverse price")
@@ -327,7 +328,7 @@ def is_transaction_hostile(tx: dict) -> bool:
     """
     cfg = BigBrotherConfig.get_solo()
     if aablacklist_active():
-        if check_char_corp_bl(tx.get('first_party_id')) or check_char_corp_bl(tx.get('second_party_id')):  # Either party is on the blacklist.
+        if check_char_add_to_bl(tx.get('first_party_id')) or check_char_add_to_bl(tx.get('second_party_id')):  # Either party is on the blacklist.
             return True
     wlcorp = set((cfg.whitelist_corporations or "").split(','))
     wlali = set((cfg.whitelist_alliances or "").split(','))
@@ -415,7 +416,7 @@ def render_transactions(corp_id: int) -> str:
                     if "market_escrow" in t['type'] or "market_transaction" in t['type']:
                         style = 'color: red;'
             if aablacklist_active():
-                if col in ('first_party_name', 'second_party_name') and check_char_corp_bl(t.get(col + '_id', -1)):  # Parties on blacklist.
+                if col in ('first_party_name', 'second_party_name') and check_char_add_to_bl(t.get(col + '_id', -1)):  # Parties on blacklist.
                     style = 'color: red;'
             if col.endswith('corporation') and t.get(col + '_id') and str(t[col + '_id']) in BigBrotherConfig.get_solo().hostile_corporations:  # Hostile corps.
                 style = 'color: red;'
@@ -470,14 +471,14 @@ def get_corp_hostile_transactions(corp_id: int) -> Dict[int, str]:
                     if "market_escrow" in tx['type'] or "market_transaction" in tx['type']:
                         flags.append(f"Transaction type is **{tx['type']}**")
             if aablacklist_active():
-                if tx['first_party_id'] and check_char_corp_bl(tx['first_party_id']):  # First party on blacklist.
+                if tx['first_party_id'] and check_char_add_to_bl(tx['first_party_id']):  # First party on blacklist.
                     flags.append(f"first_party **{tx['first_party_name']}** is on blacklist")
             if str(tx['first_party_corporation_id']) in BigBrotherConfig.get_solo().hostile_corporations:  # First-party corporation is flagged hostile.
                 flags.append(f"first_party corp **{tx['first_party_corporation']}** is hostile")
             if str(tx['first_party_alliance_id']) in BigBrotherConfig.get_solo().hostile_alliances:  # First-party alliance is flagged hostile.
                 flags.append(f"first_party alliance **{tx['first_party_alliance']}** is hostile")
             if aablacklist_active():
-                if tx['second_party_id'] and check_char_corp_bl(tx['second_party_id']):  # Counterparty character is hostile.
+                if tx['second_party_id'] and check_char_add_to_bl(tx['second_party_id']):  # Counterparty character is hostile.
                     flags.append(f"second_party **{tx['second_party_name']}** is on blacklist")
             if str(tx['second_party_corporation_id']) in BigBrotherConfig.get_solo().hostile_corporations:  # Counterparty corporation is hostile.
                 flags.append(f"second_party corp **{tx['second_party_corporation']}** is hostile")

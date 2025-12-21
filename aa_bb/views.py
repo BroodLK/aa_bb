@@ -34,8 +34,8 @@ from aa_bb.checks.corp_changes import get_frequent_corp_changes
 from aa_bb.checks.cyno import render_user_cyno_info_html
 from aa_bb.checks.hostile_assets import render_assets
 from aa_bb.checks.hostile_clones import render_clones
-# from aa_bb.checks.coalition_blacklist import generate_blacklist_links
-# from aa_bb.checks.alliance_blacklist import get_user_character_names_alliance
+from aa_bb.checks.coalition_blacklist import get_external_blacklist_link
+from aa_bb.checks.alliance_blacklist import get_alliance_blacklist_link
 from aa_bb.checks.sus_contacts import render_contacts
 from aa_bb.checks.sus_mails import (
     is_mail_row_hostile,
@@ -53,10 +53,10 @@ from aa_bb.checks.sus_trans import (
 from .views_cb import CARD_DEFINITIONS
 
 if aablacklist_active():
-    from aa_bb.checks.corp_blacklist import (
-        get_corp_blacklist_html,
+    from aa_bb.checks.add_to_blacklist import (
+        get_add_to_blacklist_html,
         add_user_characters_to_blacklist,
-        check_char_corp_bl,
+        check_char_add_to_bl,
     )
 
 from aa_bb.checks.sus_contracts import (
@@ -109,6 +109,8 @@ if aablacklist_active():
     )
 
 CARD_DEFINITIONS += [
+    {"title": 'Alliance Blacklist', "key": "alliance_bl"},
+    {"title": 'Coalition Blacklist', "key": "external_bl"},
     {"title": 'Audit Compliance', "key": "compliance"},
     {"title": 'Player Corp History', "key": "freq_corp"},
     {"title": 'AWOX Kills', "key": "awox"},
@@ -126,18 +128,18 @@ CARD_DEFINITIONS += [
 
 
 def get_available_cards():
-    """Return card configurations filtered by alliance permissions."""
-    cards = CARD_DEFINITIONS
+    """Return card configurations filtered by settings and permissions."""
+    cards = list(CARD_DEFINITIONS)
     try:
         cfg = BigBrotherConfig.get_solo()
-    except BigBrotherConfig.DoesNotExist:
+    except (BigBrotherConfig.DoesNotExist, OperationalError, ProgrammingError):
         return cards
 
-    # if cfg.main_alliance_id != ALLOWED_ALLIANCE_ID:
-    #     cards = [card for card in cards if card["key"] != "alliance_bl"]
+    if not cfg.alliance_blacklist_url:
+        cards = [card for card in cards if card["key"] != "alliance_bl"]
 
-    # if cfg.main_alliance_id not in ALLOWED_COALITION_ALLIANCE_IDS:
-    #     cards = [card for card in cards if card["key"] != "coalition_bl"]
+    if not cfg.external_blacklist_url:
+        cards = [card for card in cards if card["key"] != "external_bl"]
 
     if not aablacklist_active():
         cards = [card for card in cards if card["key"] != "corp_bl"]
@@ -364,7 +366,8 @@ def get_warm_progress(request):
 def index(request: WSGIRequest):
     """Render the dashboard shell plus dropdown options for authorized recruiters."""
     dropdown_options = []
-    task_name = 'BB run regular updates'
+    from .tasks_utils import format_task_name
+    task_name = format_task_name('BB run regular updates')
     task = PeriodicTask.objects.filter(name=task_name).first()
     BigBrotherConfig.get_solo().is_active = True
     if not BigBrotherConfig.get_solo().is_active:  # Guard against misconfigured BB.
@@ -637,7 +640,7 @@ def _render_mail_row_html(row: dict) -> str:
                 if col == "recipient_names":  # Hostile recipients get red styling.
                     rid = row["recipient_ids"][i]
                     if aablacklist_active():
-                        if check_char_corp_bl(rid):
+                        if check_char_add_to_bl(rid):
                             style = "color:red;"
                 elif col == "recipient_corps":  # Hostile corps -> red label.
                     cid = row["recipient_corp_ids"][i]
@@ -854,7 +857,7 @@ def stream_transactions_sse(request):
                         if col in ('first_party_name','second_party_name'):
                             id_col = col.replace("_name", "_id")
                             pid = row[id_col]
-                            if check_char_corp_bl(pid):
+                            if check_char_add_to_bl(pid):
                                 style = 'color:red;'
                     # corps & alliances
                     if col.endswith('corporation'):
@@ -899,51 +902,16 @@ def get_card_data(request, target_user_id: int, key: str):
 
     elif key == "corp_bl":  # Inline corp blacklist check (with add links).
         issuer_id = request.user.id
-        content   = get_corp_blacklist_html(request, issuer_id, target_user_id) or "a"
+        content   = get_add_to_blacklist_html(request, issuer_id, target_user_id) or "a"
         status    = not (content and "danger" in content)
 
-    # elif key == "alliance_bl":
-    #     from django.contrib.auth.models import User
-    #     try:
-    #         from blacklist.models import BlacklistFilter
-    #         try:
-    #             url = getattr(settings, "SITE_URL", "").rstrip("/")
-    #
-    #             # Use the Smart Filter to see if this user hits the blacklist
-    #             bf = BlacklistFilter()
-    #             results = bf.audit_filter(User.objects.filter(pk=target_user_id))
-    #             data = results.get(target_user_id, {"message": "", "check": True})
-    #             if not data:
-    #                 content = "No Data"
-    #                 status = True
-    #                 return content, status
-    #
-    #             is_clean = data.get("check", True)
-    #
-    #             names = data.get("message", "")
-    #
-    #             if is_clean:
-    #                 # No blacklisted hits for this user
-    #                 content = (
-    #                     "No blacklisted characters found for this user."
-    #                 )
-    #                 status = True
-    #             else:
-    #                 # User has blacklist hits; show them and link to the blacklist app
-    #                 names_html = names.replace(",", "<br>")
-    #                 content = (
-    #                     "The following characters (or their corps/alliances) are on the "
-    #                     "blacklist:<br><br>"
-    #                     f"{names_html}<br><br>"
-    #                     f"Go <a href='{url}/blacklist/blacklist/'>here</a> for full details."
-    #                 )
-    #                 status = False
-    #         except Exception as e:
-    #             content = (e)
-    #             status = False
-    #     except ImportError:
-    #         content = ('blacklist is not installed')
-    #         status  = True
+    elif key == "alliance_bl":
+        content = get_alliance_blacklist_link()
+        status = True
+
+    elif key == "external_bl":
+        content = get_external_blacklist_link()
+        status = True
 
     elif key == "freq_corp":  # Show frequent corporation changes timeline.
         content = get_frequent_corp_changes(target_user_id)

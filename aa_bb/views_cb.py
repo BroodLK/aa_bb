@@ -46,8 +46,8 @@ from .app_settings import get_user_characters, get_entity_info, get_character_id
 from .models import BigBrotherConfig, WarmProgress
 
 if aablacklist_active():
-    from aa_bb.checks.corp_blacklist import (
-        check_char_corp_bl,
+    from aa_bb.checks.add_to_blacklist import (
+        check_char_add_to_bl,
 )
 
 try:
@@ -73,7 +73,8 @@ from allianceauth.eveonline.models import EveCorporationInfo
 def index(request: WSGIRequest):
     """Render the CorpBrother dashboard with corp dropdown options."""
     dropdown_options = []
-    task_name = 'BB run regular updates'
+    from .tasks_utils import format_task_name
+    task_name = format_task_name('BB run regular updates')
     task = PeriodicTask.objects.filter(name=task_name).first()
     BigBrotherConfig.get_solo().is_active = True
     if not BigBrotherConfig.get_solo().is_active:  # Inactive BB -> show disabled page.
@@ -680,7 +681,7 @@ def stream_transactions_sse(request):
                         if col in ('first_party_name','second_party_name'):
                             id_col = col.replace("_name", "_id")
                             pid = row[id_col]
-                            if check_char_corp_bl(pid):
+                            if check_char_add_to_bl(pid):
                                 style = 'color:red;'
                     # corps & alliances
                     if col.endswith('corporation'):

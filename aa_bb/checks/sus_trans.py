@@ -20,7 +20,7 @@ from ..app_settings import (
 )
 
 if aablacklist_active():
-    from .corp_blacklist import check_char_corp_bl
+    from .add_to_blacklist import check_char_add_to_bl
 else:
     def check_char_corp_bl(_cid: int) -> bool:
         return False
@@ -70,17 +70,20 @@ def is_excluded_system(tx: dict, excluded_str: str) -> bool:
     return system_id in excluded_ids
 
 
-def get_or_create_prices(item_id):
+def get_or_create_prices(item_id, force_refresh=True):
     cfg = BigBrotherConfig.get_solo()
 
     # Check local cache first
     try:
         price_obj = EveItemPrice.objects.get(eve_type_id=item_id)
-        # If it's fresh (less than 7 days), return it
-        if price_obj.updated > timezone.now() - timedelta(days=7):
+        # If it's fresh (less than configured days), return it
+        if not force_refresh or price_obj.updated > timezone.now() - timedelta(days=cfg.market_transactions_price_max_age):
             return price_obj
     except EveItemPrice.DoesNotExist:
         price_obj = None
+
+    if not force_refresh and price_obj:
+        return price_obj
 
     # Need to fetch/refresh
     primary = cfg.market_transactions_price_method
@@ -171,21 +174,41 @@ def is_above_threshold(tx: dict, threshold_percent: float) -> bool:
     avg_price = None
 
     if EVEUNIVERSE_INSTALLED:
+        cfg = BigBrotherConfig.get_solo()
         try:
             price_obj = EveMarketPrice.objects.filter(type_id=type_id).first()
             if price_obj and price_obj.average_price and price_obj.average_price > 0:
                 # Check age
-                if hasattr(price_obj, 'updated_at') and price_obj.updated_at > timezone.now() - timedelta(days=7):
+                if hasattr(price_obj, 'updated_at') and price_obj.updated_at > timezone.now() - timedelta(days=cfg.market_transactions_price_max_age):
                     avg_price = float(price_obj.average_price)
         except Exception:
             logger.exception("Error checking EveUniverse price")
 
     if avg_price is None:
         # Fallback to local cache / Janice / Fuzzwork
+        # First attempt with force_refresh=False to avoid API hit if possible
         try:
-            local_price = get_or_create_prices(type_id)
+            local_price = get_or_create_prices(type_id, force_refresh=False)
             if local_price:
                 avg_price = (local_price.buy + local_price.sell) / 2
+
+                # If we have an old price, check if it's suspicious
+                if avg_price > 0:
+                    quantity = tx.get("quantity", 1) or 1
+                    unit_price = abs(amount) / quantity
+                    diff_percent = (abs(unit_price - avg_price) / avg_price) * 100
+
+                    # If NOT suspicious even with old price, we can skip refresh
+                    # If it IS suspicious, we FORCE refresh to be sure
+                    if diff_percent > threshold_percent:
+                        local_price = get_or_create_prices(type_id, force_refresh=True)
+                        if local_price:
+                            avg_price = (local_price.buy + local_price.sell) / 2
+            else:
+                # No price at all, must fetch
+                local_price = get_or_create_prices(type_id, force_refresh=True)
+                if local_price:
+                    avg_price = (local_price.buy + local_price.sell) / 2
         except Exception:
             logger.exception("Error checking fallback prices")
 
@@ -327,7 +350,7 @@ def is_transaction_hostile(tx: dict, user_ids: set = None) -> bool:
     cfg = BigBrotherConfig.get_solo()
 
     if aablacklist_active():
-        if check_char_corp_bl(tx.get("first_party_id")) or check_char_corp_bl(tx.get("second_party_id")):
+        if check_char_add_to_bl(tx.get("first_party_id")) or check_char_add_to_bl(tx.get("second_party_id")):
             return True
 
     wlcorp = set((cfg.whitelist_corporations or "").split(","))
@@ -429,7 +452,7 @@ def render_transactions(user_id: int) -> str:
                     if "market_escrow" in t['type'] or "market_transaction" in t['type']:
                         style = 'color: red;'
             if aablacklist_active():
-                if col in ('first_party_name', 'second_party_name') and check_char_corp_bl(t.get(col + '_id', -1)):  # Parties on blacklist.
+                if col in ('first_party_name', 'second_party_name') and check_char_add_to_bl(t.get(col + '_id', -1)):  # Parties on blacklist.
                     style = 'color: red;'
             if col.endswith('corporation') and t.get(col + '_id') and str(t[col + '_id']) in BigBrotherConfig.get_solo().hostile_corporations:  # Hostile corps.
                 style = 'color: red;'
@@ -493,9 +516,9 @@ def get_user_hostile_transactions(user_id: int) -> Dict[int, str]:
                         flags.append(f"Transaction type is **{ttype}**")
 
                 if aablacklist_active():
-                    if tx.get("first_party_id") and check_char_corp_bl(tx["first_party_id"]):
+                    if tx.get("first_party_id") and check_char_add_to_bl(tx["first_party_id"]):
                         flags.append(f"first_party **{tx['first_party_name']}** is on blacklist")
-                    if tx.get("second_party_id") and check_char_corp_bl(tx["second_party_id"]):
+                    if tx.get("second_party_id") and check_char_add_to_bl(tx["second_party_id"]):
                         flags.append(f"second_party **{tx['second_party_name']}** is on blacklist")
 
                 if str(tx.get("first_party_corporation_id")) in BigBrotherConfig.get_solo().hostile_corporations:

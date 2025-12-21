@@ -29,9 +29,7 @@ from .models import (
     PapCompliance,
     LeaveRequest,
     ComplianceTicket,
-    BigBrotherRedditSettings,
-    BigBrotherRedditMessage,
-    EveItemPrice
+    EveItemPrice,
 )
 
 @admin.register(BigBrotherConfig)
@@ -71,6 +69,21 @@ class BB_ConfigAdmin(SingletonModelAdmin):
                     "mail_notify",
                     "transaction_notify",
                     "show_market_transactions",
+                    "new_user_notify",
+                    "update_stagger_seconds",
+                    "update_cache_ttl_hours",
+                    "update_maintenance_window_start",
+                    "update_maintenance_window_end",
+                    "update_backlog_threshold",
+                    "update_backlog_notify",
+                ),
+            },
+        ),
+        (
+            "Market Transaction Settings",
+            {
+                "classes": ("market-transaction-settings-fieldset",),
+                "fields": (
                     "market_transactions_show_major_hubs",
                     "market_transactions_show_secondary_hubs",
                     "market_transactions_excluded_systems",
@@ -80,14 +93,17 @@ class BB_ConfigAdmin(SingletonModelAdmin):
                     "market_transactions_janice_api_key",
                     "market_transactions_fuzzwork_station_id",
                     "market_transactions_price_instant",
-                    "new_user_notify",
-                    "update_stagger_seconds",
-                    "update_cache_ttl_hours",
-                    "update_maintenance_window_start",
-                    "update_maintenance_window_end",
-                    "update_backlog_threshold",
-                    "update_backlog_notify",
-                ),
+                    "market_transactions_price_max_age",
+                )
+            },
+        ),
+        (
+            "Blacklist Settings",
+            {
+                "fields": (
+                    "alliance_blacklist_url",
+                    "external_blacklist_url",
+                )
             },
         ),
         (
@@ -217,6 +233,9 @@ class BB_ConfigAdmin(SingletonModelAdmin):
         ),
     )
 
+    class Media:
+        js = ("aa_bb/js/admin_market_toggle.js",)
+
     def has_add_permission(self, request):
         """Prevent duplicate singleton rows."""
         if BigBrotherConfig.objects.exists():  # Disallow when a config already exists.
@@ -267,47 +286,12 @@ class TicketToolConfigAdmin(SingletonModelAdmin):
         return True
 
 
-@admin.register(BigBrotherRedditSettings)
-class BigBrotherRedditSettingsAdmin(SingletonModelAdmin):
-    """OAuth tokens + scheduling info for the Reddit autoposter."""
-    exclude = (
-        "reddit_access_token",
-        "reddit_refresh_token",
-        "reddit_token_type",
-        "last_submission_id",
-        "last_submission_permalink",
-        "reddit_account_name",
-    )
-    readonly_fields = (
-        "reddit_token_obtained",
-        "last_submission_at",
-        "last_reply_checked_at",
-        "reddit_account_name",
-    )
-
-    def has_add_permission(self, request):
-        """Limit the settings model to a single row."""
-        if BigBrotherRedditSettings.objects.exists():  # Disallow duplicate settings.
-            return False
-        return super().has_add_permission(request)
-
-    def has_delete_permission(self, request, obj=None):
-        """Never allow deleting the Reddit credentials row."""
-        return False
-
-
-@admin.register(BigBrotherRedditMessage)
-class BigBrotherRedditMessageAdmin(admin.ModelAdmin):
-    """Manage the pool of canned Reddit ads."""
-    list_display = ("title", "used_in_cycle", "created")
-    list_filter = ("used_in_cycle",)
-    search_fields = ("title", "content")
 
 
 @admin.register(EveItemPrice)
 class EveItemPriceAdmin(admin.ModelAdmin):
-    list_display = ('eve_type_id', 'buy', 'sell', 'updated')
-    search_fields = ('eve_type_id',)
+    list_display = ("eve_type_id", "buy", "sell", "updated")
+    search_fields = ("eve_type_id",)
 
 
 @admin.register(Messages)
@@ -436,28 +420,39 @@ if not afat_active():
             pass
 
 _PAP_OBJECT_NAMES = {"PapsConfig", "PapCompliance"}
+_MARKET_OBJECT_NAMES = {"EveItemPrice", "ProcessedTransaction", "SusTransactionNote"}
 _ORIG_GET_APP_LIST = admin.site.get_app_list
 
 
 def _filtered_get_app_list(request, app_label=None):
     app_list = _ORIG_GET_APP_LIST(request, app_label)
 
-    if afat_active():
-        return app_list
+    is_afat = afat_active()
+    config = BigBrotherConfig.get_solo()
+    show_market = getattr(config, "show_market_transactions", False)
 
     filtered = []
     for app in app_list:
+        label = app.get("app_label")
+
         # Exclude AFAT's own admin section if present.
-        if app.get("app_label") == "afat":
+        if not is_afat and label == "afat":
             continue
 
-        # PAP models (in this project) are under aa_bb, so remove them when AFAT is not active.
-        if app.get("app_label") == "aa_bb":
+        # Filter models within our app
+        if label == "aa_bb":
             models = app.get("models", [])
-            models = [m for m in models if m.get("object_name") not in _PAP_OBJECT_NAMES]
+            if not is_afat:
+                models = [
+                    m for m in models if m.get("object_name") not in _PAP_OBJECT_NAMES
+                ]
+            if not show_market:
+                models = [
+                    m for m in models if m.get("object_name") not in _MARKET_OBJECT_NAMES
+                ]
             app = {**app, "models": models}
 
-        # Drop empty app groups so the menu section disappears entirely.
+        # Drop empty app groups
         if app.get("models"):
             filtered.append(app)
 

@@ -24,7 +24,7 @@ from ..app_settings import (
 )
 
 if aablacklist_active():
-    from aa_bb.checks.corp_blacklist import check_char_corp_bl
+    from aa_bb.checks.add_to_blacklist import check_char_add_to_bl
 try:
     from corptools.models import CorporateContract, CorporationAudit
 except ImportError:
@@ -125,14 +125,14 @@ def get_cell_style_for_contract_row(column: str, row: dict) -> str:
     if aablacklist_active():
         if column == 'issuer_name':  # Color issuer names if the character is suspect.
             cid = row.get("issuer_id")
-            if check_char_corp_bl(cid):  # Issuer is on the blacklist.
+            if check_char_add_to_bl(cid):  # Issuer is on the blacklist.
                 return 'color: red;'
             else:
                 return ''
 
         if column == 'assignee_name':  # Color assignee names when suspect.
             cid = row.get("assignee_id")
-            if check_char_corp_bl(cid):  # Assignee is on the blacklist.
+            if check_char_add_to_bl(cid):  # Assignee is on the blacklist.
                 return 'color: red;'
             else:
                 return ''
@@ -170,9 +170,9 @@ def get_cell_style_for_contract_row(column: str, row: dict) -> str:
 def is_contract_row_hostile(row: dict) -> bool:
     """Returns True if the row matches hostile corp/char/alliance criteria."""
     if aablacklist_active():
-        if check_char_corp_bl(row.get("issuer_id")):  # Issuer character/alt is blacklisted.
+        if check_char_add_to_bl(row.get("issuer_id")):  # Issuer character/alt is blacklisted.
             return True
-        if check_char_corp_bl(row.get("assignee_id")):  # Assignee/acceptor is blacklisted.
+        if check_char_add_to_bl(row.get("assignee_id")):  # Assignee/acceptor is blacklisted.
             return True
 
     solo = BigBrotherConfig.get_solo()
@@ -238,7 +238,7 @@ def get_corp_hostile_contracts(corp_id: int) -> Dict[int, str]:
             flags: List[str] = []
             # issuer
             if aablacklist_active():
-                if c['issuer_name'] != '-' and check_char_corp_bl(c['issuer_id']):  # Issuer is blacklisted.
+                if c['issuer_name'] != '-' and check_char_add_to_bl(c['issuer_id']):  # Issuer is blacklisted.
                     flags.append(f"Issuer **{c['issuer_name']}** is on blacklist")
             if str(c['issuer_corporation_id']) in hostile_corps:  # Issuer corp matches hostile list.
                 flags.append(f"Issuer corp **{c['issuer_corporation']}** is hostile")
@@ -246,7 +246,7 @@ def get_corp_hostile_contracts(corp_id: int) -> Dict[int, str]:
                 flags.append(f"Issuer alliance **{c['issuer_alliance']}** is hostile")
             # assignee
             if aablacklist_active():
-                if c['assignee_name'] != '-' and check_char_corp_bl(c['assignee_id']):  # Assignee is blacklisted.
+                if c['assignee_name'] != '-' and check_char_add_to_bl(c['assignee_id']):  # Assignee is blacklisted.
                     flags.append(f"Assignee **{c['assignee_name']}** is on blacklist")
             if str(c['assignee_corporation_id']) in hostile_corps:  # Assignee corp matches hostile list.
                 flags.append(f"Assignee corp **{c['assignee_corporation']}** is hostile")
