@@ -25,6 +25,7 @@ from ..app_settings import (
     get_owner_name,
     get_site_url,
     resolve_alliance_name,
+    resolve_character_name,
     send_message,
 )
 
@@ -115,20 +116,12 @@ def fetch_awox_kills(user_id, delay=0.2):
     # DB cache with TTL: return cached kills if present & fresh
     try:
         cache = AwoxKillsCache.objects.get(pk=user_id)
-        try:
-            last_accessed = cache.last_accessed
-        except Exception:
-            last_accessed = None
-
-        if last_accessed and (now - last_accessed).total_seconds() < AWOX_CACHE_TTL_SECONDS:
+        if cache.updated and (now - cache.updated).total_seconds() < AWOX_CACHE_TTL_SECONDS:
             try:
                 cache.last_accessed = now
                 cache.save(update_fields=["last_accessed"])
             except Exception:
-                try:
-                    cache.save()
-                except Exception:
-                    pass
+                pass
             return cache.data or None
     except AwoxKillsCache.DoesNotExist:
         cache = None
@@ -136,15 +129,18 @@ def fetch_awox_kills(user_id, delay=0.2):
         cache = None
 
     characters = CharacterOwnership.objects.filter(user__id=user_id).select_related("character")
-    char_ids_list = [c.character.character_id for c in characters if getattr(c, "character", None)]
-    char_ids = set(char_ids_list)
-    if not char_ids_list:
+    char_id_to_name = {
+        c.character.character_id: c.character.character_name
+        for c in characters if getattr(c, "character", None)
+    }
+    char_ids = set(char_id_to_name.keys())
+    if not char_ids:
         return None
 
     kills_by_id = {}
     session = _get_requests_session()
 
-    for char_id in char_ids_list:
+    for char_id in char_id_to_name.keys():
         zkill_url = f"https://zkillboard.com/api/characterID/{char_id}/awox/1/"
         start_ts = time.monotonic()
         try:
@@ -221,43 +217,45 @@ def fetch_awox_kills(user_id, delay=0.2):
 
             victim = full_kill.get("victim", {})
             victim_id = victim.get("character_id")
-            if not victim_id or victim_id not in char_ids:
-                continue
 
             attackers = full_kill.get("attackers", []) or []
-            attacker_affiliations = []
-            attacker_names = []
+            involved_user_char_names = []
+
+            if victim_id in char_ids:
+                involved_user_char_names.append(char_id_to_name[victim_id])
 
             for a in attackers:
                 a_id = a.get("character_id")
-                if not a_id:
-                    continue
-                if a_id in char_ids:
-                    attacker_names.append(a_id)
-                    attacker_affiliations.append({
-                        "corp_id": a.get("corporation_id"),
-                        "alliance_id": a.get("alliance_id"),
-                    })
+                if a_id and a_id in char_ids:
+                    name = char_id_to_name[a_id]
+                    if name not in involved_user_char_names:
+                        involved_user_char_names.append(name)
 
-            if not attacker_names:
+            if not involved_user_char_names:
                 continue
 
-            # Resolve names
-            att_info = attacker_affiliations[0] if attacker_affiliations else {}
-            att_corp = _get_corp_name(att_info.get("corp_id"))
-            att_alli = _get_alliance_name(att_info.get("alliance_id"))
+            # Resolve names for display
+            vic_name = resolve_character_name(victim_id) if victim_id else "Unknown"
 
-            vic_corp_id = victim.get("corporation_id")
-            vic_alli_id = victim.get("alliance_id")
-            vic_corp = _get_corp_name(vic_corp_id)
-            vic_alli = _get_alliance_name(vic_alli_id)
+            # Find final blow attacker for display
+            final_blow_attacker = next((a for a in attackers if a.get("final_blow")), attackers[0] if attackers else {})
+            att_id = final_blow_attacker.get("character_id")
+            att_name = resolve_character_name(att_id) if att_id else "Unknown"
+
+            att_corp = _get_corp_name(final_blow_attacker.get("corporation_id"))
+            att_alli = _get_alliance_name(final_blow_attacker.get("alliance_id"))
+
+            vic_corp = _get_corp_name(victim.get("corporation_id"))
+            vic_alli = _get_alliance_name(victim.get("alliance_id"))
 
             kills_by_id[kill_id] = {
                 "value": int(value) if value is not None else 0,
                 "link": f"https://zkillboard.com/kill/{kill_id}/",
-                "chars": attacker_names,
+                "chars": involved_user_char_names,
+                "att_name": att_name,
                 "att_corp": att_corp,
                 "att_alli": att_alli,
+                "vic_name": vic_name,
                 "vic_corp": vic_corp,
                 "vic_alli": vic_alli,
                 "date": full_kill.get("killmail_time"),
@@ -307,11 +305,13 @@ def render_awox_kills_html(userID):
         else:
             date_str = str(date_val).replace("T", " ").replace("Z", "")
 
-        att_html = kill.get("att_corp", "")
+        att_name = kill.get("att_name", "Unknown")
+        att_html = f"<b>{att_name}</b><br>{kill.get('att_corp', '')}"
         if kill.get("att_alli"):
             att_html += f"<br><small>({kill.get('att_alli')})</small>"
 
-        vic_html = kill.get("vic_corp", "")
+        vic_name = kill.get("vic_name", "Unknown")
+        vic_html = f"<b>{vic_name}</b><br>{kill.get('vic_corp', '')}"
         if kill.get("vic_alli"):
             vic_html += f"<br><small>({kill.get('vic_alli')})</small>"
 
