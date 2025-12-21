@@ -392,7 +392,7 @@ def index(request: WSGIRequest):
 
     context = {
         "dropdown_options": dropdown_options,
-        "CARD_DEFINITIONS": CARD_DEFINITIONS,
+        "CARD_DEFINITIONS": get_available_cards(),
     }
     return render(request, "aa_bb/index.html", context)
 
