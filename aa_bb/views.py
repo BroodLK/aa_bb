@@ -828,6 +828,10 @@ def stream_transactions_sse(request):
         )
         yield f"event: header\ndata:{json.dumps(header_html)}\n\n"
 
+        cfg = BigBrotherConfig.get_solo()
+        hostile_corps = set((cfg.hostile_corporations or "").split(","))
+        hostile_allis = set((cfg.hostile_alliances or "").split(","))
+
         for entry in qs:
             processed += 1
             yield ": ping\n\n"         # keep‐alive
@@ -840,7 +844,6 @@ def stream_transactions_sse(request):
 
                 # build the <tr> using same style logic as render_transactions()
                 cells = []
-                cfg = BigBrotherConfig.get_solo()
                 for col in headers:
                     val = row.get(col, "")
                     text = html.escape(str(val))
@@ -862,11 +865,11 @@ def stream_transactions_sse(request):
                     # corps & alliances
                     if col.endswith('corporation'):
                         cid = row[f"{col}_id"]
-                        if cid and str(cid) in cfg.hostile_corporations:
+                        if cid and str(cid) in hostile_corps:
                             style = 'color:red;'
                     if col.endswith('alliance'):
                         aid = row[f"{col}_id"]
-                        if aid and str(aid) in cfg.hostile_alliances:
+                        if aid and str(aid) in hostile_allis:
                             style = 'color:red;'
                     def make_td(text, style=""):
                         style_attr = f' style="{style}"' if style else ""

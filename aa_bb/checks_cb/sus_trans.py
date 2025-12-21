@@ -45,7 +45,7 @@ from ..models import BigBrotherConfig, ProcessedTransaction, SusTransactionNote,
 
 SUS_TYPES = ("player_trading", "corporation_account_withdrawal", "player_donation")
 
-MAJOR_HUBS = {30000142, 30002187, 30002659, 30002510, 30002057}
+MAJOR_HUBS = {30000142, 30002187, 30002659, 30002510, 30002053}
 SECONDARY_HUBS = {30002661, 30003733, 30001389, 30000144}
 
 
@@ -276,6 +276,7 @@ def get_user_transactions(qs) -> Dict[int, Dict]:
             context = f"Character: {get_entity_info(context_id, tx_date)['name']}"
         elif context_type == "eve_system":  # System-level context from journal entry.
             context = "EVE System"
+            system_id = context_id
         elif context_type is None:  # No extra context provided.
             context = "None"
         elif context_type == "market_transaction_id":  # Reference to market transaction.
@@ -358,12 +359,17 @@ def is_transaction_hostile(tx: dict) -> bool:
             if cfg.market_transactions_threshold_alert and cfg.market_transactions_threshold_percent > 0:
                 if not is_above_threshold(tx, cfg.market_transactions_threshold_percent):
                     return False
-            return True
+            # Fall through to hostile entity checks instead of returning True immediately
+            # return True
+
+    hostile_corps = {s.strip() for s in (cfg.hostile_corporations or "").split(",") if s.strip()}
+    hostile_allis = {s.strip() for s in (cfg.hostile_alliances or "").split(",") if s.strip()}
+
     for key in ('first_party_corporation_id', 'second_party_corporation_id'):
-        if tx.get(key) and str(tx[key]) in cfg.hostile_corporations:  # Hostile corp on either side.
+        if tx.get(key) and str(tx[key]) in hostile_corps:  # Hostile corp on either side.
             return True
     for key in ('first_party_alliance_id', 'second_party_alliance_id'):
-        if tx.get(key) and str(tx[key]) in cfg.hostile_alliances:  # Hostile alliance on either side.
+        if tx.get(key) and str(tx[key]) in hostile_allis:  # Hostile alliance on either side.
             return True
     return False
 
@@ -402,6 +408,10 @@ def render_transactions(corp_id: int) -> str:
         parts.append(f'<th>{html.escape(h.replace("_"," ").title())}</th>')
     parts.extend(['</tr>','</thead>','<tbody>'])
 
+    cfg = BigBrotherConfig.get_solo()
+    hostile_corps = {s.strip() for s in (cfg.hostile_corporations or "").split(",") if s.strip()}
+    hostile_allis = {s.strip() for s in (cfg.hostile_alliances or "").split(",") if s.strip()}
+
     for t in display:
         parts.append('<tr>')
         for col in headers:
@@ -412,15 +422,15 @@ def render_transactions(corp_id: int) -> str:
                 for key in SUS_TYPES:
                     if key in t['type']:  # Suspect ref-type.
                         style = 'color: red;'
-                if BigBrotherConfig.get_solo().show_market_transactions:
+                if cfg.show_market_transactions:
                     if "market_escrow" in t['type'] or "market_transaction" in t['type']:
                         style = 'color: red;'
             if aablacklist_active():
                 if col in ('first_party_name', 'second_party_name') and check_char_add_to_bl(t.get(col + '_id', -1)):  # Parties on blacklist.
                     style = 'color: red;'
-            if col.endswith('corporation') and t.get(col + '_id') and str(t[col + '_id']) in BigBrotherConfig.get_solo().hostile_corporations:  # Hostile corps.
+            if col.endswith('corporation') and t.get(col + '_id') and str(t[col + '_id']) in hostile_corps:  # Hostile corps.
                 style = 'color: red;'
-            if col.endswith('alliance') and t.get(col + '_id') and str(t[col + '_id']) in BigBrotherConfig.get_solo().hostile_alliances:  # Hostile alliances.
+            if col.endswith('alliance') and t.get(col + '_id') and str(t[col + '_id']) in hostile_allis:  # Hostile alliances.
                 style = 'color: red;'
             def make_td(val, style=""):
                 """Render a TD with optional inline style for hostile cues."""
@@ -470,19 +480,23 @@ def get_corp_hostile_transactions(corp_id: int) -> Dict[int, str]:
                 if BigBrotherConfig.get_solo().show_market_transactions:
                     if "market_escrow" in tx['type'] or "market_transaction" in tx['type']:
                         flags.append(f"Transaction type is **{tx['type']}**")
+            cfg = BigBrotherConfig.get_solo()
+            hostile_corps = {s.strip() for s in (cfg.hostile_corporations or "").split(",") if s.strip()}
+            hostile_allis = {s.strip() for s in (cfg.hostile_alliances or "").split(",") if s.strip()}
+
             if aablacklist_active():
                 if tx['first_party_id'] and check_char_add_to_bl(tx['first_party_id']):  # First party on blacklist.
                     flags.append(f"first_party **{tx['first_party_name']}** is on blacklist")
-            if str(tx['first_party_corporation_id']) in BigBrotherConfig.get_solo().hostile_corporations:  # First-party corporation is flagged hostile.
+            if str(tx['first_party_corporation_id']) in hostile_corps:  # First-party corporation is flagged hostile.
                 flags.append(f"first_party corp **{tx['first_party_corporation']}** is hostile")
-            if str(tx['first_party_alliance_id']) in BigBrotherConfig.get_solo().hostile_alliances:  # First-party alliance is flagged hostile.
+            if str(tx['first_party_alliance_id']) in hostile_allis:  # First-party alliance is flagged hostile.
                 flags.append(f"first_party alliance **{tx['first_party_alliance']}** is hostile")
             if aablacklist_active():
                 if tx['second_party_id'] and check_char_add_to_bl(tx['second_party_id']):  # Counterparty character is hostile.
                     flags.append(f"second_party **{tx['second_party_name']}** is on blacklist")
-            if str(tx['second_party_corporation_id']) in BigBrotherConfig.get_solo().hostile_corporations:  # Counterparty corporation is hostile.
+            if str(tx['second_party_corporation_id']) in hostile_corps:  # Counterparty corporation is hostile.
                 flags.append(f"second_party corp **{tx['second_party_corporation']}** is hostile")
-            if str(tx['second_party_alliance_id']) in BigBrotherConfig.get_solo().hostile_alliances:  # Counterparty alliance is hostile.
+            if str(tx['second_party_alliance_id']) in hostile_allis:  # Counterparty alliance is hostile.
                 flags.append(f"second_party alliance **{tx['second_party_alliance']}** is hostile")
             flags_text = "\n    - ".join(flags)
 

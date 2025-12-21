@@ -46,7 +46,7 @@ from ..models import BigBrotherConfig, ProcessedTransaction, SusTransactionNote,
 
 SUS_TYPES = ("player_trading", "corporation_account_withdrawal", "player_donation")
 
-MAJOR_HUBS = {30000142, 30002187, 30002659, 30002510, 30002057}
+MAJOR_HUBS = {30000142, 30002187, 30002659, 30002510, 30002053}
 SECONDARY_HUBS = {30002661, 30003733, 30001389, 30000144}
 
 
@@ -290,6 +290,7 @@ def get_user_transactions(qs) -> Dict[int, Dict]:
             context = f"Character: {_cached_info(context_id, tx_date)['name']}"
         elif context_type == "eve_system":
             context = "EVE System"
+            system_id = context_id
         elif context_type is None:
             context = "None"
         elif context_type == "market_transaction_id":
@@ -395,13 +396,17 @@ def is_transaction_hostile(tx: dict, user_ids: set = None) -> bool:
             if cfg.market_transactions_threshold_alert and cfg.market_transactions_threshold_percent > 0:
                 if not is_above_threshold(tx, cfg.market_transactions_threshold_percent):
                     return False
-            return True
+            # Fall through to hostile entity checks instead of returning True immediately
+            # return True
+
+    hostile_corps = {s.strip() for s in (cfg.hostile_corporations or "").split(",") if s.strip()}
+    hostile_allis = {s.strip() for s in (cfg.hostile_alliances or "").split(",") if s.strip()}
 
     for key in ("first_party_corporation_id", "second_party_corporation_id"):
-        if tx.get(key) and str(tx[key]) in cfg.hostile_corporations:
+        if tx.get(key) and str(tx[key]) in hostile_corps:
             return True
     for key in ("first_party_alliance_id", "second_party_alliance_id"):
-        if tx.get(key) and str(tx[key]) in cfg.hostile_alliances:
+        if tx.get(key) and str(tx[key]) in hostile_allis:
             return True
 
     return False
@@ -438,6 +443,10 @@ def render_transactions(user_id: int) -> str:
         parts.append(f'<th>{html.escape(h.replace("_"," ").title())}</th>')
     parts.extend(['</tr>','</thead>','<tbody>'])
 
+    cfg = BigBrotherConfig.get_solo()
+    hostile_corps = {s.strip() for s in (cfg.hostile_corporations or "").split(",") if s.strip()}
+    hostile_allis = {s.strip() for s in (cfg.hostile_alliances or "").split(",") if s.strip()}
+
     for t in display:  # Render each hostile transaction row with contextual styling.
         parts.append('<tr>')
         for col in headers:
@@ -448,15 +457,15 @@ def render_transactions(user_id: int) -> str:
                 for key in SUS_TYPES:
                     if key in t['type']:  # Highlight suspicious ref types inline.
                         style = 'color: red;'
-                if BigBrotherConfig.get_solo().show_market_transactions:
+                if cfg.show_market_transactions:
                     if "market_escrow" in t['type'] or "market_transaction" in t['type']:
                         style = 'color: red;'
             if aablacklist_active():
                 if col in ('first_party_name', 'second_party_name') and check_char_add_to_bl(t.get(col + '_id', -1)):  # Parties on blacklist.
                     style = 'color: red;'
-            if col.endswith('corporation') and t.get(col + '_id') and str(t[col + '_id']) in BigBrotherConfig.get_solo().hostile_corporations:  # Hostile corps.
+            if col.endswith('corporation') and t.get(col + '_id') and str(t[col + '_id']) in hostile_corps:  # Hostile corps.
                 style = 'color: red;'
-            if col.endswith('alliance') and t.get(col + '_id') and str(t[col + '_id']) in BigBrotherConfig.get_solo().hostile_alliances:  # Hostile alliances.
+            if col.endswith('alliance') and t.get(col + '_id') and str(t[col + '_id']) in hostile_allis:  # Hostile alliances.
                 style = 'color: red;'
             def make_td(val, style=""):
                 """Render a TD with optional inline style for hostile cues."""
@@ -515,19 +524,23 @@ def get_user_hostile_transactions(user_id: int) -> Dict[int, str]:
                     if "market_escrow" in ttype or "market_transaction" in ttype:
                         flags.append(f"Transaction type is **{ttype}**")
 
+                cfg = BigBrotherConfig.get_solo()
+                hostile_corps = {s.strip() for s in (cfg.hostile_corporations or "").split(",") if s.strip()}
+                hostile_allis = {s.strip() for s in (cfg.hostile_alliances or "").split(",") if s.strip()}
+
                 if aablacklist_active():
                     if tx.get("first_party_id") and check_char_add_to_bl(tx["first_party_id"]):
                         flags.append(f"first_party **{tx['first_party_name']}** is on blacklist")
                     if tx.get("second_party_id") and check_char_add_to_bl(tx["second_party_id"]):
                         flags.append(f"second_party **{tx['second_party_name']}** is on blacklist")
 
-                if str(tx.get("first_party_corporation_id")) in BigBrotherConfig.get_solo().hostile_corporations:
+                if str(tx.get("first_party_corporation_id")) in hostile_corps:
                     flags.append(f"first_party corp **{tx['first_party_corporation']}** is hostile")
-                if str(tx.get("first_party_alliance_id")) in BigBrotherConfig.get_solo().hostile_alliances:
+                if str(tx.get("first_party_alliance_id")) in hostile_allis:
                     flags.append(f"first_party alliance **{tx['first_party_alliance']}** is hostile")
-                if str(tx.get("second_party_corporation_id")) in BigBrotherConfig.get_solo().hostile_corporations:
+                if str(tx.get("second_party_corporation_id")) in hostile_corps:
                     flags.append(f"second_party corp **{tx['second_party_corporation']}** is hostile")
-                if str(tx.get("second_party_alliance_id")) in BigBrotherConfig.get_solo().hostile_alliances:
+                if str(tx.get("second_party_alliance_id")) in hostile_allis:
                     flags.append(f"second_party alliance **{tx['second_party_alliance']}** is hostile")
 
                 flags_lines = [f"    - {flag}" for flag in flags] if flags else ["    - (no extra flags)"]
