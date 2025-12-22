@@ -227,6 +227,7 @@ class BB_ConfigAdmin(SingletonModelAdmin):
         "main_corporation_id",
         "main_alliance_id",
         "is_active",
+        "update_last_dispatch_count",
     )
     filter_horizontal = (
         "pingrole1_messages",
@@ -287,7 +288,7 @@ class TicketToolConfigAdmin(SingletonModelAdmin):
 
     def has_add_permission(self, request):
         """Prevent duplicate ticket config entries."""
-        if PapsConfig.objects.exists():  # Ticket config should remain singleton.
+        if TicketToolConfig.objects.exists():  # Ticket config should remain singleton.
             return False
         return super().has_add_permission(request)
 
