@@ -206,6 +206,10 @@ def warm_entity_cache_task(self, user_id):
     Gather mails, contracts, transactions; warm entity cache.
     Track progress in the DB via WarmProgress.
     """
+    from .models import BigBrotherConfig
+    cfg = BigBrotherConfig.get_solo()
+    if not cfg.is_active or not cfg.is_warmer_active:
+        return
     user_main = resolve_corporation_name(user_id) or str(user_id)
     logger.info(f"corp_name: {user_main}")
     qs = WarmProgress.objects.all()

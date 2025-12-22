@@ -26,6 +26,7 @@ except ImportError:
     logger.error("✅  [AA-BB] - [Signals] - aadiscordbot not installed, signaling won't work.")
 
 @receiver(post_save, sender=BigBrotherConfig)
+@receiver(post_save, sender=TicketToolConfig)
 def trigger_task_sync(sender, instance, **kwargs):
     """When the config changes, make sure Celery schedules match the DB."""
     BB_register_message_tasks.delay()

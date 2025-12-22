@@ -52,6 +52,7 @@ def setup_periodic_task(
     task_path: str,
     schedule,
     enabled: bool = False,
+    update_schedule: bool = False,
 ):
     """
     Create or update a periodic task consistently.
@@ -77,24 +78,27 @@ def setup_periodic_task(
 
     # 3. Create or update
     updated = False
+    is_new = False
     if not task:
         task = PeriodicTask(name=standardized_name)
         updated = True
+        is_new = True
 
     if task.task != task_path:
         task.task = task_path
         updated = True
 
-    if isinstance(schedule, CrontabSchedule):
-        if task.crontab != schedule:
-            task.crontab = schedule
-            task.interval = None
-            updated = True
-    elif isinstance(schedule, IntervalSchedule):
-        if task.interval != schedule:
-            task.interval = schedule
-            task.crontab = None
-            updated = True
+    if is_new or update_schedule:
+        if isinstance(schedule, CrontabSchedule):
+            if task.crontab != schedule:
+                task.crontab = schedule
+                task.interval = None
+                updated = True
+        elif isinstance(schedule, IntervalSchedule):
+            if task.interval != schedule:
+                task.interval = schedule
+                task.crontab = None
+                updated = True
 
     if task.enabled != enabled:
         task.enabled = enabled

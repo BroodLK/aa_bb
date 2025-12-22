@@ -64,7 +64,7 @@ class AaBbConfig(AppConfig):
 
             from django_celery_beat.models import PeriodicTask, IntervalSchedule, CrontabSchedule
             from .tasks_utils import setup_periodic_task, format_task_name
-            from .models import BigBrotherConfig
+            from .models import BigBrotherConfig, TicketToolConfig
 
             # --- CLEANUP AND MIGRATION ---
             try:
@@ -115,14 +115,16 @@ class AaBbConfig(AppConfig):
                 name="BB run regular updates",
                 task_path="aa_bb.tasks.BB_run_regular_updates",
                 schedule=interval,
-                enabled=config.is_active
+                enabled=config.is_active,
+                update_schedule=True
             )
 
             setup_periodic_task(
                 name="CB run regular updates",
                 task_path="aa_bb.tasks_cb.CB_run_regular_updates",
                 schedule=schedule,
-                enabled=config.is_active
+                enabled=config.is_active,
+                update_schedule=False
             )
 
             # Optional: Sync standings from aa-contacts into BigBrother hostiles/members
@@ -131,7 +133,8 @@ class AaBbConfig(AppConfig):
                     name="BB sync contacts from aa-contacts",
                     task_path="aa_bb.tasks.BB_sync_contacts_from_aa_contacts",
                     schedule=schedule,
-                    enabled=config.auto_import_contacts_enabled
+                    enabled=config.auto_import_contacts_enabled,
+                    update_schedule=False
                 )
             else:
                 logger.info("ℹ️  [AA-BB] - [Apps] - aa_contacts not installed; skipping 'BB sync contacts from aa-contacts' beat task registration")
@@ -140,14 +143,16 @@ class AaBbConfig(AppConfig):
                 name="BB kickstart stale CT modules",
                 task_path="aa_bb.tasks_ct.kickstart_stale_ct_modules",
                 schedule=schedule,
-                enabled=config.is_active
+                enabled=config.is_active,
+                update_schedule=False
             )
 
             setup_periodic_task(
                 name="tickets run regular updates",
                 task_path="aa_bb.tasks_tickets.hourly_compliance_check",
                 schedule=schedule,
-                enabled=config.is_active
+                enabled=config.is_active,
+                update_schedule=False
             )
 
             scheduleloa, _ = CrontabSchedule.objects.get_or_create(
@@ -163,14 +168,16 @@ class AaBbConfig(AppConfig):
                 name="BB run regular LoA updates",
                 task_path="aa_bb.tasks_cb.BB_run_regular_loa_updates",
                 schedule=scheduleloa,
-                enabled=config.is_loa_active
+                enabled=config.is_loa_active,
+                update_schedule=False
             )
 
             setup_periodic_task(
                 name="BB check member compliance",
                 task_path="aa_bb.tasks_cb.check_member_compliance",
                 schedule=scheduleloa,
-                enabled=config.is_paps_active
+                enabled=config.is_paps_active,
+                update_schedule=False
             )
 
             schedule_stats, _ = CrontabSchedule.objects.get_or_create(
@@ -186,7 +193,8 @@ class AaBbConfig(AppConfig):
                 name="BB send recurring stats",
                 task_path="aa_bb.tasks_other.BB_send_recurring_stats",
                 schedule=schedule_stats,
-                enabled=config.are_recurring_stats_active
+                enabled=config.are_recurring_stats_active,
+                update_schedule=True
             )
 
             scheduleDB, _ = CrontabSchedule.objects.get_or_create(
@@ -202,7 +210,8 @@ class AaBbConfig(AppConfig):
                 name="BB run regular DB cleanup",
                 task_path="aa_bb.tasks_cb.BB_daily_DB_cleanup",
                 schedule=scheduleDB,
-                enabled=config.is_active
+                enabled=config.is_active,
+                update_schedule=False
             )
 
 
@@ -225,36 +234,42 @@ class AaBbConfig(AppConfig):
                     "task_path": "aa_bb.tasks_cb.BB_send_daily_messages",
                     "schedule": getattr(config, "dailyschedule", None) or default_schedule,
                     "enabled": config.are_daily_messages_active,
+                    "update_schedule": True,
                 },
                 {
                     "name": "BB send optional message 1",
                     "task_path": "aa_bb.tasks_cb.BB_send_opt_message1",
                     "schedule": getattr(config, "optschedule1", None) or default_schedule,
                     "enabled": config.are_opt_messages1_active,
+                    "update_schedule": True,
                 },
                 {
                     "name": "BB send optional message 2",
                     "task_path": "aa_bb.tasks_cb.BB_send_opt_message2",
                     "schedule": getattr(config, "optschedule2", None) or default_schedule,
                     "enabled": config.are_opt_messages2_active,
+                    "update_schedule": True,
                 },
                 {
                     "name": "BB send optional message 3",
                     "task_path": "aa_bb.tasks_cb.BB_send_opt_message3",
                     "schedule": getattr(config, "optschedule3", None) or default_schedule,
                     "enabled": config.are_opt_messages3_active,
+                    "update_schedule": True,
                 },
                 {
                     "name": "BB send optional message 4",
                     "task_path": "aa_bb.tasks_cb.BB_send_opt_message4",
                     "schedule": getattr(config, "optschedule4", None) or default_schedule,
                     "enabled": config.are_opt_messages4_active,
+                    "update_schedule": True,
                 },
                 {
                     "name": "BB send optional message 5",
                     "task_path": "aa_bb.tasks_cb.BB_send_opt_message5",
                     "schedule": getattr(config, "optschedule5", None) or default_schedule,
                     "enabled": config.are_opt_messages5_active,
+                    "update_schedule": True,
                 },
             ]
 
@@ -263,7 +278,8 @@ class AaBbConfig(AppConfig):
                     name=task_info["name"],
                     task_path=task_info["task_path"],
                     schedule=task_info["schedule"],
-                    enabled=task_info["enabled"]
+                    enabled=task_info["enabled"],
+                    update_schedule=task_info.get("update_schedule", False)
                 )
 
 

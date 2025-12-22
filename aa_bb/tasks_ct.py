@@ -257,6 +257,9 @@ def kickstart_stale_ct_modules(days_stale: int = 2, limit: Optional[int] = None,
     Returns:
         Summary string announcing what was queued (and optionally posted to chat).
     """
+    instance = BigBrotherConfig.get_solo()
+    if not instance.is_active:
+        return "Big Brother is inactive."
     conf = CorptoolsConfiguration.get_solo()
     cutoff = timezone.now() - datetime.timedelta(days=days_stale)
     cutoff_really_stale = timezone.now() - datetime.timedelta(days=days_stale, hours=6)
@@ -265,7 +268,6 @@ def kickstart_stale_ct_modules(days_stale: int = 2, limit: Optional[int] = None,
         character__character_ownership__isnull=False
     ).select_related("character")
 
-    instance = BigBrotherConfig.get_solo()
     if instance.limit_to_main_corp and instance.main_corporation_id:
         qs = qs.filter(character__corporation_id=instance.main_corporation_id)
 
