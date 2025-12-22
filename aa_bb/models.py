@@ -598,6 +598,12 @@ class BigBrotherConfig(SingletonModel):
         help_text="End time for the maintenance window where caching is preferred."
     )
 
+    clone_state_always_recheck = models.BooleanField(
+        default=False,
+        verbose_name="Clone State: Always Re-check Proven Skills",
+        help_text="If enabled, characters with a known skill proving their Alpha/Omega state will always be re-checked, bypassing the cache TTL, and potentially catching state changes far quicker. Disabling this can significantly improve performance."
+    )
+
     update_backlog_threshold = models.PositiveIntegerField(
         default=10,
         verbose_name="Update Backlog Threshold (%)",

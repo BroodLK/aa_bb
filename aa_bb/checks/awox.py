@@ -192,12 +192,18 @@ def fetch_awox_kills(user_id, delay=0.2):
             continue
 
         for kill in killmails:
-            kill_id = kill.get("killmail_id")
+            try:
+                kill_id = int(kill.get("killmail_id", 0))
+            except (ValueError, TypeError):
+                continue
+
             hash_ = kill.get("zkb", {}).get("hash")
             value = kill.get("zkb", {}).get("totalValue", 0)
 
             if not kill_id or not hash_:
                 continue
+
+            # Defensive check against duplicates during the fetch loop
             if kill_id in kills_by_id:
                 continue
 
@@ -263,7 +269,18 @@ def fetch_awox_kills(user_id, delay=0.2):
 
         time.sleep(delay)
 
-    data_list = list(kills_by_id.values()) if kills_by_id else []
+    # Final deduplication by link just in case
+    data_list = []
+    seen_links = set()
+    if kills_by_id:
+        # Sort by killmail_id descending to generally show most recent first
+        sorted_keys = sorted(kills_by_id.keys(), reverse=True)
+        for k_id in sorted_keys:
+            kill_data = kills_by_id[k_id]
+            if kill_data['link'] not in seen_links:
+                data_list.append(kill_data)
+                seen_links.add(kill_data['link'])
+
     try:
         AwoxKillsCache.objects.update_or_create(
             user_id=user_id,
