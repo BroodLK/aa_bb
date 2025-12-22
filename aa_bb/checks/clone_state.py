@@ -119,7 +119,9 @@ def determine_character_state(user_id, save: bool = False):
     chars_to_check = []
     for char_id in char_ids:
         db_record = char_db_records.get(char_id)
-
+        if db_record and db_record.skill_used:
+            chars_to_check.append(char_id)
+            continue
         # Use cached state if we're outside the update window, or if it's within TTL inside the window.
         now = timezone.now()
         is_in_window = in_utc_update_window(now, window_start, window_end)
