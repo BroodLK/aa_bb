@@ -136,4 +136,19 @@ class Migration(migrations.Migration):
             name='baseline_initialized',
             field=models.BooleanField(default=False),
         ),
+        migrations.AddField(
+            model_name='bigbrotherconfig',
+            name='clone_state_always_recheck',
+            field=models.BooleanField(default=False, help_text='If enabled, characters with a known skill proving their Alpha/Omega state will always be re-checked, bypassing the cache TTL, and potentially catching state changes far quicker. Disabling this can significantly improve performance.', verbose_name='Clone State: Always Re-check Proven Skills'),
+        ),
+        migrations.AddField(
+            model_name='bigbrotherconfig',
+            name='contacts_source_corporations',
+            field=models.ManyToManyField(blank=True, help_text='Corporations whose aa-contacts standings should be imported. Corporations with positive standing become members; negative standing become hostile; zero is ignored.', related_name='bb_contacts_source_configs_corp', to='eveonline.evecorporationinfo', verbose_name='aa-contacts source corporation'),
+        ),
+        migrations.AddField(
+            model_name='bigbrotherconfig',
+            name='limit_to_main_corp',
+            field=models.BooleanField(default=False, help_text='If enabled, compliance checks and dashboard visibility will be restricted to members of the primary corporation only.', verbose_name='Limit to Main Corporation'),
+        ),
     ]
