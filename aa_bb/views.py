@@ -148,10 +148,18 @@ def get_available_cards():
 
 
 def get_user_id(character_name):
-    """Resolve an auth user ID from a main character name."""
+    """Resolve an auth user ID from a character name, respecting corp restrictions."""
     try:
-        ownership = CharacterOwnership.objects.select_related('user') \
+        ownership = CharacterOwnership.objects.select_related('user__profile__main_character') \
             .get(character__character_name=character_name)
+
+        cfg = BigBrotherConfig.get_solo()
+        if cfg.limit_to_main_corp and cfg.main_corporation_id:
+            # Check if the main character belongs to the restricted corp
+            main_char = getattr(ownership.user.profile, 'main_character', None)
+            if not main_char or main_char.corporation_id != cfg.main_corporation_id:
+                return None
+
         return ownership.user.id
     except CharacterOwnership.DoesNotExist:
         return None
@@ -369,8 +377,9 @@ def index(request: WSGIRequest):
     from .tasks_utils import format_task_name
     task_name = format_task_name('BB run regular updates')
     task = PeriodicTask.objects.filter(name=task_name).first()
-    BigBrotherConfig.get_solo().is_active = True
-    if not BigBrotherConfig.get_solo().is_active:  # Guard against misconfigured BB.
+    cfg = BigBrotherConfig.get_solo()
+    cfg.is_active = True
+    if not cfg.is_active:  # Guard against misconfigured BB.
         msg = (
             "Big Brother is currently inactive; please fill settings and enable the task"
         )
@@ -379,12 +388,14 @@ def index(request: WSGIRequest):
     if request.user.has_perm("aa_bb.full_access"):  # Full-access sees every main character.
         qs = UserProfile.objects.exclude(main_character=None)
     elif request.user.has_perm("aa_bb.recruiter_access"):  # Recruiters see only guest states.
-        guest_states = BigBrotherConfig.get_solo().bb_guest_states.all()
+        guest_states = cfg.bb_guest_states.all()
         qs = UserProfile.objects.filter(state__in=guest_states).exclude(main_character=None)
     else:
         qs = None
 
     if qs is not None:  # Build dropdown choices only when the viewer has visibility.
+        if cfg.limit_to_main_corp and cfg.main_corporation_id:
+            qs = qs.filter(main_character__corporation_id=cfg.main_corporation_id)
         dropdown_options = (
             qs.values_list("main_character__character_name", flat=True)
               .order_by("main_character__character_name")
@@ -1000,6 +1011,10 @@ def loa_admin(request):
         return render(request, "loa/disabled.html")
     # Filtering
     qs = LeaveRequest.objects.select_related('user').order_by('-created_at')
+
+    if cfg.limit_to_main_corp and cfg.main_corporation_id:
+        qs = qs.filter(user__profile__main_character__corporation_id=cfg.main_corporation_id)
+
     user_filter   = request.GET.get('user')
     status_filter = request.GET.get('status')
 
@@ -1009,10 +1024,13 @@ def loa_admin(request):
         qs = qs.filter(status=status_filter)
 
     # Build dropdown options from existing requests
+    users_in_requests_qs = LeaveRequest.objects.all()
+    if cfg.limit_to_main_corp and cfg.main_corporation_id:
+        users_in_requests_qs = users_in_requests_qs.filter(user__profile__main_character__corporation_id=cfg.main_corporation_id)
+
     users_in_requests = (
-        LeaveRequest.objects
-                    .values_list('user__id', 'user__username')
-                    .distinct()
+        users_in_requests_qs.values_list('user__id', 'user__username')
+                            .distinct()
     )
 
     context = {
@@ -1073,9 +1091,14 @@ def delete_request(request, pk):
 def delete_request_admin(request, pk):
     """Admin-only delete path for any LoA request."""
     if request.method == 'POST':  # Guard mutation behind POST.
-        lr = get_object_or_404(LeaveRequest, pk=pk, user=request.user)
+        cfg = BigBrotherConfig.get_solo()
+        lr = get_object_or_404(LeaveRequest, pk=pk)
+        if cfg.limit_to_main_corp and cfg.main_corporation_id:
+            if lr.user.profile.main_character is None or lr.user.profile.main_character.corporation_id != cfg.main_corporation_id:
+                return HttpResponseForbidden("Target user is not in the restricted corporation.")
+
         lr.delete()
-        hook = BigBrotherConfig.get_solo().loawebhook
+        hook = cfg.loawebhook
         userrr = get_main_character_name(request.user.id)
         send_message(f"##{get_pings('LoA Changed Status')} {userrr} deleted {lr.main_character}'s LOA:\n- from **{lr.start_date}**\n- to **{lr.end_date}**\n- reason: **{lr.reason}**", hook)
     return redirect('loa:admin')
@@ -1085,10 +1108,15 @@ def delete_request_admin(request, pk):
 def approve_request(request, pk):
     """Mark an LoA approved and notify Discord."""
     if request.method == 'POST':  # Only process POST actions.
+        cfg = BigBrotherConfig.get_solo()
         lr = get_object_or_404(LeaveRequest, pk=pk)
+        if cfg.limit_to_main_corp and cfg.main_corporation_id:
+            if lr.user.profile.main_character is None or lr.user.profile.main_character.corporation_id != cfg.main_corporation_id:
+                return HttpResponseForbidden("Target user is not in the restricted corporation.")
+
         lr.status = 'approved'
         lr.save()
-        hook = BigBrotherConfig.get_solo().loawebhook
+        hook = cfg.loawebhook
         userrr = get_main_character_name(request.user.id)
         send_message(f"##{get_pings('LoA Changed Status')} {userrr} approved {lr.main_character}'s LOA:\n- from **{lr.start_date}**\n- to **{lr.end_date}**\n- reason: **{lr.reason}**", hook)
     return redirect('loa:admin')
@@ -1098,10 +1126,15 @@ def approve_request(request, pk):
 def deny_request(request, pk):
     """Mark an LoA denied and notify Discord."""
     if request.method == 'POST':  # Only mutate via POST requests.
+        cfg = BigBrotherConfig.get_solo()
         lr = get_object_or_404(LeaveRequest, pk=pk)
+        if cfg.limit_to_main_corp and cfg.main_corporation_id:
+            if lr.user.profile.main_character is None or lr.user.profile.main_character.corporation_id != cfg.main_corporation_id:
+                return HttpResponseForbidden("Target user is not in the restricted corporation.")
+
         lr.status = 'denied'
         lr.save()
-        hook = BigBrotherConfig.get_solo().loawebhook
+        hook = cfg.loawebhook
         userrr = get_main_character_name(request.user.id)
         send_message(f"##{get_pings('LoA Changed Status')} {userrr} denied {lr.main_character}'s LOA:\n- from **{lr.start_date}**\n- to **{lr.end_date}**\n- reason: **{lr.reason}**", hook)
     return redirect('loa:admin')

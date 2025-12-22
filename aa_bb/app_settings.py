@@ -987,22 +987,30 @@ def get_system_owner(system: str) -> Dict[str, str]:
 
 def get_users():
     """List the character names of every member-state user with a main set."""
-    member_states = BigBrotherConfig.get_solo().bb_member_states.all()
+    cfg = BigBrotherConfig.get_solo()
+    member_states = cfg.bb_member_states.all()
+    qs = UserProfile.objects.filter(state__in=member_states).exclude(main_character=None)
+
+    if cfg.limit_to_main_corp and cfg.main_corporation_id:
+        qs = qs.filter(main_character__corporation_id=cfg.main_corporation_id)
+
     users = list(
-        UserProfile.objects.filter(state__in=member_states)
-        .exclude(main_character=None)
-        .values_list("main_character__character_name", flat=True)
+        qs.values_list("main_character__character_name", flat=True)
         .order_by("main_character__character_name")
     )
     return users
 
 def get_user_profiles():
     """Return queryset of eligible user profiles with main characters eager-loaded."""
-    member_states = BigBrotherConfig.get_solo().bb_member_states.all()
+    cfg = BigBrotherConfig.get_solo()
+    member_states = cfg.bb_member_states.all()
+    qs = UserProfile.objects.filter(state__in=member_states).exclude(main_character=None)
+
+    if cfg.limit_to_main_corp and cfg.main_corporation_id:
+        qs = qs.filter(main_character__corporation_id=cfg.main_corporation_id)
+
     users = (
-        UserProfile.objects.filter(state__in=member_states)
-        .exclude(main_character=None)
-        .select_related("main_character", "user")  # optimization
+        qs.select_related("main_character", "user")  # optimization
         .order_by("main_character__character_name")
     )
     return users

@@ -70,6 +70,14 @@ class BB_ConfigAdmin(SingletonModelAdmin):
                     "transaction_notify",
                     "show_market_transactions",
                     "new_user_notify",
+                ),
+            },
+        ),
+        (
+            "Update Performance",
+            {
+                "fields": (
+                    "clone_state_always_recheck",
                     "update_stagger_seconds",
                     "update_cache_ttl_hours",
                     "update_maintenance_window_start",
@@ -153,6 +161,7 @@ class BB_ConfigAdmin(SingletonModelAdmin):
             "User State & Membership",
             {
                 "fields": (
+                    "limit_to_main_corp",
                     "bb_guest_states",
                     "bb_member_states",
                     "member_corporations",
@@ -180,6 +189,7 @@ class BB_ConfigAdmin(SingletonModelAdmin):
                         (
                             "auto_import_contacts_enabled",
                             "contacts_source_alliances",
+                            "contacts_source_corporations",
                             "contacts_handle_neutrals",
                         )
                         if AA_CONTACTS_INSTALLED
@@ -227,7 +237,7 @@ class BB_ConfigAdmin(SingletonModelAdmin):
         "bb_member_states",
         # aa-contacts M2M (only if installed)
         *(
-            ("contacts_source_alliances",)
+            ("contacts_source_alliances", "contacts_source_corporations")
             if AA_CONTACTS_INSTALLED
             else ()
         ),

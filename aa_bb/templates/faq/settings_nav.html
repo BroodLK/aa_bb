@@ -38,4 +38,10 @@
       href="{% url 'aa_bb:manual_settings_tickets' %}"
     >{% translate "TicketToolConfig" %}</a>
   </li>
+  <li class="nav-item">
+    <a
+      class="nav-link{% if request.resolver_match.url_name == 'manual_settings_stats' %} active{% endif %}"
+      href="{% url 'aa_bb:manual_settings_stats' %}"
+    >{% translate "RecurringStatsConfig" %}</a>
+  </li>
 </ul>

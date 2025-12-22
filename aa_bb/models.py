@@ -11,7 +11,7 @@ from django.utils import timezone
 
 from allianceauth.authentication.models import State, UserProfile
 from allianceauth.groupmanagement.models import AuthGroup
-from allianceauth.eveonline.models import EveAllianceInfo
+from allianceauth.eveonline.models import EveAllianceInfo, EveCorporationInfo
 
 import logging
 
@@ -604,6 +604,12 @@ class BigBrotherConfig(SingletonModel):
         help_text="If enabled, characters with a known skill proving their Alpha/Omega state will always be re-checked, bypassing the cache TTL, and potentially catching state changes far quicker. Disabling this can significantly improve performance."
     )
 
+    limit_to_main_corp = models.BooleanField(
+        default=False,
+        help_text="If enabled, compliance checks and dashboard visibility will be restricted to members of the primary corporation only.",
+        verbose_name="Limit to Main Corporation"
+    )
+
     update_backlog_threshold = models.PositiveIntegerField(
         default=10,
         verbose_name="Update Backlog Threshold (%)",
@@ -730,6 +736,18 @@ class BigBrotherConfig(SingletonModel):
             "negative standing become hostile; zero is ignored."
         ),
         verbose_name="aa-contacts source alliance"
+    )
+
+    contacts_source_corporations = models.ManyToManyField(
+        EveCorporationInfo,
+        related_name="bb_contacts_source_configs_corp",
+        blank=True,
+        help_text=(
+            "Corporations whose aa-contacts standings should be imported. "
+            "Corporations with positive standing become members; "
+            "negative standing become hostile; zero is ignored."
+        ),
+        verbose_name="aa-contacts source corporation"
     )
 
     contacts_handle_neutrals = models.CharField(

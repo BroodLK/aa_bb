@@ -421,6 +421,9 @@ def CB_run_regular_updates():
             if qs is None:
                 return
 
+            if instance.limit_to_main_corp and instance.main_corporation_id:
+                qs = qs.filter(corporation_id=instance.main_corporation_id)
+
             corps = list(
                 qs.values_list("corporation_id", flat=True)
                 .order_by("corporation_name")
@@ -906,13 +909,7 @@ def BB_run_regular_loa_updates():
       without an LoA in progress.
     """
     cfg = BigBrotherConfig.get_solo()
-    member_states = BigBrotherConfig.get_solo().bb_member_states.all()
-    qs_profiles = (
-        UserProfile.objects
-        .filter(state__in=member_states)
-        .exclude(main_character=None)
-        .select_related("user", "main_character")
-    )
+    qs_profiles = get_user_profiles()
     if not qs_profiles.exists():  # No members matching filters, so nothing to process.
         logger.info("ℹ️  [AA-BB] - [BB_run_regular_loa_updates] - No member mains found.")
         return

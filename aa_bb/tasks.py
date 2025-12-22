@@ -260,6 +260,17 @@ def BB_update_single_user(user_id, char_name):
         logger.info(f"ℹ️  [AA-BB] - [BB_update_single_user] - BigBrother inactive. Skipping update for {char_name}.")
         return
 
+    # Check if user is in main corp if restriction is enabled
+    if instance.limit_to_main_corp and instance.main_corporation_id:
+        from allianceauth.authentication.models import UserProfile
+        try:
+            profile = UserProfile.objects.select_related('main_character').get(user_id=user_id)
+            if profile.main_character is None or profile.main_character.corporation_id != instance.main_corporation_id:
+                return
+        except UserProfile.DoesNotExist:
+            logger.warning(f"ℹ️  [AA-BB] - [BB_update_single_user] - UserProfile for id {user_id} not found. Skipping.")
+            return
+
     User = get_user_model()
 
     # Retry logic previously inside the main loop
@@ -1442,13 +1453,19 @@ def BB_sync_contacts_from_aa_contacts(self):
         return
 
     source_alliances_field = getattr(cfg, "contacts_source_alliances", None)
-    if source_alliances_field is None or not source_alliances_field.exists():
+    source_corporations_field = getattr(cfg, "contacts_source_corporations", None)
+
+    has_alliances = source_alliances_field is not None and source_alliances_field.exists()
+    has_corporations = source_corporations_field is not None and source_corporations_field.exists()
+
+    if not has_alliances and not has_corporations:
         return
 
     try:
         from importlib import import_module
         aa_contacts_models = import_module("aa_contacts.models")
-        AllianceContact = aa_contacts_models.AllianceContact
+        AllianceContact = getattr(aa_contacts_models, "AllianceContact", None)
+        CorporationContact = getattr(aa_contacts_models, "CorporationContact", None)
     except (ImportError, ModuleNotFoundError):
         return
 
@@ -1470,8 +1487,7 @@ def BB_sync_contacts_from_aa_contacts(self):
     new_whitelist_alliances: set[int] = set()
     new_whitelist_corps: set[int] = set()
 
-    for src_alliance in source_alliances_field.all():
-        contacts_qs = AllianceContact.objects.filter(alliance=src_alliance)
+    def process_contacts(contacts_qs):
         for c in contacts_qs.iterator():
             target_id = int(c.contact_id)
 
@@ -1496,6 +1512,14 @@ def BB_sync_contacts_from_aa_contacts(self):
                         new_hostile_corps.add(target_id)
                     elif neutral_mode == "whitelist":
                         new_whitelist_corps.add(target_id)
+
+    if has_alliances and AllianceContact:
+        for src_alliance in source_alliances_field.all():
+            process_contacts(AllianceContact.objects.filter(alliance=src_alliance))
+
+    if has_corporations and CorporationContact:
+        for src_corp in source_corporations_field.all():
+            process_contacts(CorporationContact.objects.filter(corporation=src_corp))
 
     # Previous import snapshot (what we imported last time)
     cache = getattr(cfg, "contacts_import_cache", {}) or {}

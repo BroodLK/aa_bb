@@ -265,6 +265,10 @@ def kickstart_stale_ct_modules(days_stale: int = 2, limit: Optional[int] = None,
         character__character_ownership__isnull=False
     ).select_related("character")
 
+    instance = BigBrotherConfig.get_solo()
+    if instance.limit_to_main_corp and instance.main_corporation_id:
+        qs = qs.filter(character__corporation_id=instance.main_corporation_id)
+
     if limit:  # Honor caller-provided limit to avoid scanning the entire table.
         qs = qs[: int(limit)]
 

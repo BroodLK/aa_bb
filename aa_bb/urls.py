@@ -26,6 +26,11 @@ urlpatterns = [
         views_faq.manual_settings_tickets,
         name="manual_settings_tickets",
     ),  # Ticket module documentation.
+    path(
+        "manual/settings/stats/",
+        views_faq.manual_settings_stats,
+        name="manual_settings_stats",
+    ),  # Recurring stats documentation.
     path("manual/modules/", views_faq.manual_modules, name="manual_modules"),  # Landing page for module-specific docs.
     path("manual/faq/", views_faq.manual_faq, name="manual_faq"),  # General FAQ/guide landing page.
 

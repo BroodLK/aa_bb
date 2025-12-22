@@ -59,6 +59,13 @@ def manual_settings_tickets(request: WSGIRequest):
 
 @login_required
 @permission_required("aa_bb.basic_access")
+def manual_settings_stats(request: WSGIRequest):
+    """Manual tab: RecurringStatsConfig settings."""
+    return render(request, "faq/settings_stats.html")
+
+
+@login_required
+@permission_required("aa_bb.basic_access")
 def manual_modules(request: WSGIRequest):
     """Manual tab: module status overview with live checks."""
     cfg = BigBrotherConfig.get_solo()
@@ -270,6 +277,42 @@ def manual_modules(request: WSGIRequest):
         )
     )
 
+    # Recurring Stats
+    stats_issues, stats_actions, stats_info = [], [], []
+    register_issue(
+        stats_issues,
+        stats_actions,
+        not cfg.are_recurring_stats_active,
+        format_html("{} is disabled.", code("BigBrotherConfig.are_recurring_stats_active")),
+        format_html("Enable recurring stats in BigBrotherConfig and restart Celery workers."),
+    )
+    register_issue(
+        stats_issues,
+        stats_actions,
+        not cfg.stats_webhook,
+        format_html("{} is empty.", code("BigBrotherConfig.stats_webhook")),
+        format_html("Set a Discord webhook URL in {}.", code("stats_webhook")),
+    )
+    register_issue(
+        stats_issues,
+        stats_actions,
+        cfg.stats_schedule is None,
+        format_html("{} is not linked to a schedule.", code("BigBrotherConfig.stats_schedule")),
+        format_html("Create a crontab/interval schedule and assign it to {}.", code("stats_schedule")),
+    )
+    if cfg.stats_schedule:
+        stats_info.append(format_html("Schedule: {}", cfg.stats_schedule))
+
+    modules.append(
+        make_module(
+            _("Recurring Stats"),
+            _("Periodic AllianceAuth status digests sent to Discord."),
+            stats_issues,
+            stats_actions,
+            info=stats_info,
+        )
+    )
+
     # Cache Warmer
     warmer_issues, warmer_actions = [], []
     register_issue(
@@ -285,6 +328,24 @@ def manual_modules(request: WSGIRequest):
             _("Background task that preloads contracts, mails and transactions before streaming cards."),
             warmer_issues,
             warmer_actions,
+        )
+    )
+
+    # Clone State Performance
+    clone_issues, clone_actions = [], []
+    register_issue(
+        clone_issues,
+        clone_actions,
+        cfg.clone_state_always_recheck,
+        format_html("{} is enabled.", code("BigBrotherConfig.clone_state_always_recheck")),
+        format_html("Consider disabling this if background tasks are running slow."),
+    )
+    modules.append(
+        make_module(
+            _("Clone State Performance"),
+            _("Aggressive Alpha/Omega re-checking toggle."),
+            clone_issues,
+            clone_actions,
         )
     )
 

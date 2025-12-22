@@ -75,6 +75,8 @@ def BB_send_recurring_stats():
     # --- AUTH USERS ---
     if stats_cfg.include_auth_users:
         profiles_qs = UserProfile.objects.all()
+        if cfg.limit_to_main_corp and cfg.main_corporation_id:
+            profiles_qs = profiles_qs.filter(main_character__corporation_id=cfg.main_corporation_id)
         auth_total = profiles_qs.count()
         snapshot["auth_total"] = auth_total
         auth_by_state = {}
@@ -85,6 +87,8 @@ def BB_send_recurring_stats():
     # --- DISCORD USERS ---
     if stats_cfg.include_discord_users and DiscordUser is not None:
         dq = DiscordUser.objects.select_related("user__profile__state")
+        if cfg.limit_to_main_corp and cfg.main_corporation_id:
+            dq = dq.filter(user__profile__main_character__corporation_id=cfg.main_corporation_id)
         discord_total = dq.count()
         snapshot["discord_total"] = discord_total
         discord_by_state = {}
@@ -95,6 +99,8 @@ def BB_send_recurring_stats():
     # --- MUMBLE USERS ---
     if stats_cfg.include_mumble_users and MumbleUser is not None:
         mq = MumbleUser.objects.select_related("user__profile__state")
+        if cfg.limit_to_main_corp and cfg.main_corporation_id:
+            mq = mq.filter(user__profile__main_character__corporation_id=cfg.main_corporation_id)
         mumble_total = mq.count()
         snapshot["mumble_total"] = mumble_total
         mumble_by_state = {}
@@ -104,29 +110,49 @@ def BB_send_recurring_stats():
 
     # --- EVE OBJECT COUNTS ---
     if stats_cfg.include_characters:
-        snapshot["characters_total"] = EveCharacter.objects.count()
+        char_qs = EveCharacter.objects.all()
+        if cfg.limit_to_main_corp and cfg.main_corporation_id:
+            char_qs = char_qs.filter(corporation_id=cfg.main_corporation_id)
+        snapshot["characters_total"] = char_qs.count()
 
     if stats_cfg.include_corporations:
-        snapshot["corporations_total"] = EveCorporationInfo.objects.count()
+        corp_qs = EveCorporationInfo.objects.all()
+        if cfg.limit_to_main_corp and cfg.main_corporation_id:
+            corp_qs = corp_qs.filter(corporation_id=cfg.main_corporation_id)
+        snapshot["corporations_total"] = corp_qs.count()
 
     if stats_cfg.include_alliances:
-        snapshot["alliances_total"] = EveAllianceInfo.objects.count()
+        ali_qs = EveAllianceInfo.objects.all()
+        if cfg.limit_to_main_corp and cfg.main_alliance_id:
+            ali_qs = ali_qs.filter(alliance_id=cfg.main_alliance_id)
+        snapshot["alliances_total"] = ali_qs.count()
 
     # --- TOKENS ---
     if Token is not None:
+        token_qs = Token.objects.all()
+        if cfg.limit_to_main_corp and cfg.main_corporation_id:
+            # Filtering tokens by character's corp. This might be slow but it's correct.
+            token_qs = token_qs.filter(character_id__in=EveCharacter.objects.filter(corporation_id=cfg.main_corporation_id).values("character_id"))
+
         if stats_cfg.include_tokens:
-            snapshot["tokens_total"] = Token.objects.count()
+            snapshot["tokens_total"] = token_qs.count()
         if stats_cfg.include_unique_tokens:
             snapshot["tokens_unique"] = (
-                Token.objects.values("character_id").distinct().count()
+                token_qs.values("character_id").distinct().count()
             )
 
     # --- AUDITS (corptools) ---
     if CharacterAudit is not None and stats_cfg.include_character_audits:
-        snapshot["character_audits_total"] = CharacterAudit.objects.count()
+        ca_qs = CharacterAudit.objects.all()
+        if cfg.limit_to_main_corp and cfg.main_corporation_id:
+            ca_qs = ca_qs.filter(character__corporation_id=cfg.main_corporation_id)
+        snapshot["character_audits_total"] = ca_qs.count()
 
     if CorporationAudit is not None and stats_cfg.include_corporation_audits:
-        snapshot["corporation_audits_total"] = CorporationAudit.objects.count()
+        cpa_qs = CorporationAudit.objects.all()
+        if cfg.limit_to_main_corp and cfg.main_corporation_id:
+            cpa_qs = cpa_qs.filter(corporation__corporation_id=cfg.main_corporation_id)
+        snapshot["corporation_audits_total"] = cpa_qs.count()
 
     # ---- DELTA CALCULATION ----
     previous = stats_cfg.last_snapshot or {}
