@@ -327,22 +327,23 @@ def kickstart_stale_ct_modules(days_stale: int = 2, limit: Optional[int] = None,
                                 audit.character.character_name, char_id, getattr(e, 'args', [None])[0])
 
     # Build summary + optional message
+    if updated_names:  # Send a digest if something was queued so staff gets visibility.
+        names_str = ", ".join(updated_names)
+        summary = (
+            f"## CT audit complete:\n"
+            f"- Processed {total_chars} characters\n"
+            f"- Queued {total_tasks} module task(s) across {submitted_chars} character(s) (stale > {days_stale}d).\n"
+            f"- Characters queued:\n{names_str}"
+        )
+    else:
+        summary = (
+            f"## CT audit complete:\n"
+            f"- Processed {total_chars} characters\n"
+            f"- No stale modules found (threshold > {days_stale}d)."
+        )
+
     ct_update_notify = BigBrotherConfig.get_solo().ct_notify
-    if ct_update_notify:
-        if updated_names:  # Send a digest if something was queued so staff gets visibility.
-            names_str = ", ".join(updated_names)
-            summary = (
-                f"## CT audit complete:\n"
-                f"- Processed {total_chars} characters\n"
-                f"- Queued {total_tasks} module task(s) across {submitted_chars} character(s) (stale > {days_stale}d).\n"
-                f"- Characters queued:\n{names_str}"
-            )
-            send_message(summary)
-        else:
-            summary = (
-                f"## CT audit complete:\n"
-                f"- Processed {total_chars} characters\n"
-                f"- No stale modules found (threshold > {days_stale}d)."
-            )
+    if ct_update_notify and updated_names:
+        send_message(summary)
 
     return summary
