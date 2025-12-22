@@ -131,7 +131,7 @@ class AaBbConfig(AppConfig):
                     name="BB sync contacts from aa-contacts",
                     task_path="aa_bb.tasks.BB_sync_contacts_from_aa_contacts",
                     schedule=schedule,
-                    enabled=config.is_active
+                    enabled=config.auto_import_contacts_enabled
                 )
             else:
                 logger.info("ℹ️  [AA-BB] - [Apps] - aa_contacts not installed; skipping 'BB sync contacts from aa-contacts' beat task registration")

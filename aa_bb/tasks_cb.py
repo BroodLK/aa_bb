@@ -876,18 +876,51 @@ def BB_register_message_tasks():
             "active_attr": "are_opt_messages5_active",
         },
         {
-            "name": "BB send recurring stats",  # ← new
+            "name": "BB send recurring stats",
             "task_path": "aa_bb.tasks_other.BB_send_recurring_stats",
             "schedule_attr": "stats_schedule",
             "active_attr": "are_recurring_stats_active",
         },
+        {
+            "name": "BB run regular LoA updates",
+            "task_path": "aa_bb.tasks_cb.BB_run_regular_loa_updates",
+            "active_attr": "is_loa_active",
+        },
+        {
+            "name": "BB check member compliance",
+            "task_path": "aa_bb.tasks_cb.check_member_compliance",
+            "active_attr": "is_paps_active",
+        },
     ]
+
+    from django.apps import apps
+    if apps.is_installed("aa_contacts"):
+        hourly_25_schedule, _ = CrontabSchedule.objects.get_or_create(
+            minute='25',
+            hour='*',
+            day_of_week='*',
+            day_of_month='*',
+            month_of_year='*',
+            timezone='UTC',
+        )
+        tasks.append({
+            "name": "BB sync contacts from aa-contacts",
+            "task_path": "aa_bb.tasks.BB_sync_contacts_from_aa_contacts",
+            "schedule": hourly_25_schedule,
+            "active_attr": "auto_import_contacts_enabled",
+        })
 
     for task_info in tasks:
         name = task_info["name"]
         task_path = task_info["task_path"]
         config = BigBrotherConfig.get_solo()
-        schedule = getattr(config, task_info["schedule_attr"], None) or default_schedule
+
+        schedule_attr = task_info.get("schedule_attr")
+        if schedule_attr:
+            schedule = getattr(config, schedule_attr, None) or default_schedule
+        else:
+            schedule = task_info.get("schedule") or default_schedule
+
         is_active = bool(getattr(config, task_info["active_attr"], False))
 
         setup_periodic_task(

@@ -1452,6 +1452,9 @@ def BB_sync_contacts_from_aa_contacts(self):
     except Exception:
         return
 
+    if not cfg.auto_import_contacts_enabled:
+        return
+
     source_alliances_field = getattr(cfg, "contacts_source_alliances", None)
     source_corporations_field = getattr(cfg, "contacts_source_corporations", None)
 
