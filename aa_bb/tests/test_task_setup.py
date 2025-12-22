@@ -11,9 +11,11 @@ class TestTaskSetup(TestCase):
         )
 
     def test_format_task_name(self):
-        self.assertEqual(format_task_name("BB run regular updates"), "AA-BB: BB Run Regular Updates")
-        self.assertEqual(format_task_name("CB run regular updates"), "AA-BB: CB Run Regular Updates")
-        self.assertEqual(format_task_name("AA-BB: BB Run Regular Updates"), "AA-BB: BB Run Regular Updates")
+        self.assertEqual(format_task_name("BB run regular updates"), "BB: Run Regular Updates")
+        self.assertEqual(format_task_name("CB run regular updates"), "CB: Run Regular Updates")
+        self.assertEqual(format_task_name("AA-BB: BB Run Regular Updates"), "BB: Run Regular Updates")
+        self.assertEqual(format_task_name("tickets run regular updates"), "BB: Tickets Run Regular Updates")
+        self.assertEqual(format_task_name("BB sync contacts from aa-contacts"), "BB: Sync Contacts From AA Contacts")
 
     def test_setup_periodic_task_creation(self):
         task_name = "BB run regular updates"

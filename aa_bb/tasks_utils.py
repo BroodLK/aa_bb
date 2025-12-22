@@ -6,17 +6,36 @@ logger = logging.getLogger(__name__)
 
 def format_task_name(name: str) -> str:
     """
-    Standardize a task name with 'AA-BB: ' prefix and proper capitalization.
+    Standardize a task name with proper prefix and capitalization.
+    'BB: ' is used for BB tasks, 'CB: ' for CB tasks.
     """
-    prefix = "AA-BB: "
-    if name.startswith(prefix):
-        raw_name = name[len(prefix):]
+    # 1. Strip any existing known prefixes
+    prefixes = ["AA-BB: ", "BB: ", "CB: "]
+    raw_name = name
+    original_prefix = None
+    for p in prefixes:
+        if raw_name.startswith(p):
+            original_prefix = p
+            raw_name = raw_name[len(p):]
+            break
+
+    # 2. Determine the new prefix and strip "BB " or "CB " if it's there
+    if raw_name.upper().startswith("BB "):
+        actual_prefix = "BB: "
+        raw_name = raw_name[3:]
+    elif raw_name.upper().startswith("CB "):
+        actual_prefix = "CB: "
+        raw_name = raw_name[3:]
+    elif original_prefix == "CB: ":
+        actual_prefix = "CB: "
+    elif raw_name.lower().startswith("tickets run"):
+        actual_prefix = "BB: "
     else:
-        raw_name = name
+        actual_prefix = "BB: "
 
     def format_word(word):
         upper_word = word.upper()
-        if upper_word in ["BB", "CB", "CT", "DB"]:
+        if upper_word in ["BB", "CB", "CT", "DB", "AA", "ESI", "EVE", "API"]:
             return upper_word
         elif upper_word == "LOA":
             return "LoA"
@@ -25,7 +44,8 @@ def format_task_name(name: str) -> str:
     # Replace hyphens with spaces for better capitalization
     raw_name = raw_name.replace('-', ' ')
     formatted_words = [format_word(w) for w in raw_name.split()]
-    return prefix + " ".join(formatted_words)
+    return actual_prefix + " ".join(formatted_words)
+
 
 def setup_periodic_task(
     name: str,
@@ -35,7 +55,7 @@ def setup_periodic_task(
 ):
     """
     Create or update a periodic task consistently.
-    Ensures naming scheme 'AA-BB: ' and proper capitalization.
+    Ensures naming scheme 'BB: ' or 'CB: ' and proper capitalization.
     Renames existing tasks if necessary.
     Never deletes tasks.
     """

@@ -63,8 +63,36 @@ class AaBbConfig(AppConfig):
                 return
 
             from django_celery_beat.models import PeriodicTask, IntervalSchedule, CrontabSchedule
-            from .tasks_utils import setup_periodic_task
+            from .tasks_utils import setup_periodic_task, format_task_name
             from .models import BigBrotherConfig
+
+            # --- CLEANUP AND MIGRATION ---
+            try:
+                # 1. Delete obsolete Reddit tasks
+                reddit_orphans = PeriodicTask.objects.filter(name__icontains="reddit")
+                if reddit_orphans.exists():
+                    logger.info(f"🗑️ [AA-BB] - [Apps] - Deleting {reddit_orphans.count()} obsolete reddit periodic tasks.")
+                    reddit_orphans.delete()
+
+                # 2. Rename existing tasks to the new naming scheme
+                migration_filters = ["AA-BB: ", "BB ", "CB ", "tickets run"]
+                for pattern in migration_filters:
+                    for task in PeriodicTask.objects.filter(name__startswith=pattern):
+                        new_name = format_task_name(task.name)
+                        if new_name != task.name:
+                            if PeriodicTask.objects.filter(name=new_name).exists():
+                                existing = PeriodicTask.objects.get(name=new_name)
+                                if existing.task == task.task:
+                                    logger.info(f"🗑️ [AA-BB] - [Apps] - Deleting duplicate task '{task.name}' as '{new_name}' already exists.")
+                                    task.delete()
+                                    continue
+
+                            logger.info(f"🔄 [AA-BB] - [Apps] - Renaming periodic task '{task.name}' -> '{new_name}'")
+                            task.name = new_name
+                            task.save()
+            except Exception as e:
+                logger.warning(f"⚠️ [AA-BB] - [Apps] - Task migration/cleanup failed: {e}")
+            # --- END CLEANUP ---
 
             config = BigBrotherConfig.get_solo()
             stagger = max(getattr(config, "update_stagger_seconds", 3600), 3600)
