@@ -19,6 +19,7 @@ from django.apps import apps
 from django.utils import timezone
 from typing import Optional, Dict, Tuple, Any, List
 from django.db import transaction, IntegrityError, OperationalError
+from django.db.models import Q
 
 from .models import (
     Alliance_names, Corporation_names, Character_names, BigBrotherConfig, id_types,
@@ -991,8 +992,10 @@ def get_users():
     member_states = cfg.bb_member_states.all()
     qs = UserProfile.objects.filter(state__in=member_states).exclude(main_character=None)
 
-    if cfg.limit_to_main_corp and cfg.main_corporation_id:
-        qs = qs.filter(main_character__corporation_id=cfg.main_corporation_id)
+    member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
+    member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
+    if member_corps or member_allis:
+        qs = qs.filter(Q(main_character__corporation_id__in=member_corps) | Q(main_character__alliance_id__in=member_allis))
 
     users = list(
         qs.values_list("main_character__character_name", flat=True)
@@ -1006,8 +1009,10 @@ def get_user_profiles():
     member_states = cfg.bb_member_states.all()
     qs = UserProfile.objects.filter(state__in=member_states).exclude(main_character=None)
 
-    if cfg.limit_to_main_corp and cfg.main_corporation_id:
-        qs = qs.filter(main_character__corporation_id=cfg.main_corporation_id)
+    member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
+    member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
+    if member_corps or member_allis:
+        qs = qs.filter(Q(main_character__corporation_id__in=member_corps) | Q(main_character__alliance_id__in=member_allis))
 
     users = (
         qs.select_related("main_character", "user")  # optimization

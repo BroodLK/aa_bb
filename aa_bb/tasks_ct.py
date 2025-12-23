@@ -12,6 +12,7 @@ from celery import shared_task, chain
 from random import random
 
 from django.utils import timezone
+from django.db.models import Q
 from celery_once.tasks import AlreadyQueued
 
 from allianceauth.services.hooks import get_extension_logger
@@ -269,8 +270,10 @@ def kickstart_stale_ct_modules(days_stale: int = 2, limit: Optional[int] = None,
         character__character_ownership__isnull=False
     ).select_related("character")
 
-    if instance.limit_to_main_corp and instance.main_corporation_id:
-        qs = qs.filter(character__corporation_id=instance.main_corporation_id)
+    member_corps = {int(x) for x in (instance.member_corporations or "").split(",") if x.strip().isdigit()}
+    member_allis = {int(x) for x in (instance.member_alliances or "").split(",") if x.strip().isdigit()}
+    if member_corps or member_allis:
+        qs = qs.filter(Q(character__corporation_id__in=member_corps) | Q(character__alliance_id__in=member_allis))
 
     if limit:  # Honor caller-provided limit to avoid scanning the entire table.
         qs = qs[: int(limit)]

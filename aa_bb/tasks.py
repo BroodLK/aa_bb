@@ -2,6 +2,7 @@ from django.db.utils import OperationalError
 import time
 import traceback
 from django.utils import timezone
+from django.db.models import Q
 from celery import shared_task, current_app
 
 from .models import (
@@ -105,18 +106,21 @@ def BB_update_single_user(user_id, char_name):
         logger.info(f"ℹ️  [AA-BB] - [BB_update_single_user] - BigBrother inactive. Skipping update for {char_name}.")
         return
 
-    # Check if user is in main corp if restriction is enabled
-    if instance.limit_to_main_corp and instance.main_corporation_id:
-        from allianceauth.authentication.models import UserProfile
-        try:
-            profile = UserProfile.objects.select_related('main_character').get(user_id=user_id)
-            if profile.main_character is None or profile.main_character.corporation_id != instance.main_corporation_id:
-                return
-        except UserProfile.DoesNotExist:
-            logger.warning(f"ℹ️  [AA-BB] - [BB_update_single_user] - UserProfile for id {user_id} not found. Skipping.")
-            return
-
     User = get_user_model()
+    try:
+        user_obj = User.objects.get(id=user_id)
+    except User.DoesNotExist:
+        logger.error(f"ℹ️  [AA-BB] - [BB_update_single_user] - User {user_id} not found.")
+        return
+
+    limit_notifications = False
+
+    if instance.limit_to_main_corp:
+        profile = getattr(user_obj, 'profile', None)
+        main_char_obj = getattr(profile, 'main_character', None) if profile else None
+        is_main_corp = (main_char_obj and main_char_obj.corporation_id == instance.main_corporation_id)
+        limit_notifications = not is_main_corp
+
 
     # Retry logic previously inside the main loop
     for attempt in range(3):
@@ -333,12 +337,11 @@ def BB_update_single_user(user_id, char_name):
                         changes.append(f"###{get_pings('AwoX')} New AWOX Kill(s):\n{link_list}")
                     logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} new links")
                     tcfg = TicketToolConfig.get_solo()
-                    if tcfg.awox_monitor_enabled and time_in_corp(
+                    if not limit_notifications and tcfg.awox_monitor_enabled and time_in_corp(
                         user_id) >= 1:  # guardrail: only fire tickets for monitored corps
                         try:
                             try:
-                                user = User.objects.get(id=user_id)
-                                discord_id = get_discord_user_id(user)
+                                discord_id = get_discord_user_id(user_obj)
 
                                 ticket_message = f"<@&{tcfg.Role_ID}>,<@{discord_id}> detection indicates your involvement in an AWOX kill, please explain:\n{link_list}"
                                 send_status_embed(
@@ -890,7 +893,7 @@ def BB_update_single_user(user_id, char_name):
             else:
                 send_notifications = True
 
-            if send_notifications and changes:
+            if not limit_notifications and send_notifications and changes:
                 """
                 Build all embed chunks and hand them off to a dedicated
                 send task so Discord messages are serialized and never

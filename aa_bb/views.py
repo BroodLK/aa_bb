@@ -17,6 +17,7 @@ from django.http import (
 from django.shortcuts import render, redirect, get_object_or_404
 from django.views.decorators.http import require_POST
 from django.core.cache import cache
+from django.db.models import Q
 from django_celery_beat.models import PeriodicTask
 from django.utils import timezone
 
@@ -148,16 +149,17 @@ def get_available_cards():
 
 
 def get_user_id(character_name):
-    """Resolve an auth user ID from a character name, respecting corp restrictions."""
+    """Resolve an auth user ID from a character name, respecting member restrictions."""
     try:
         ownership = CharacterOwnership.objects.select_related('user__profile__main_character') \
             .get(character__character_name=character_name)
 
         cfg = BigBrotherConfig.get_solo()
-        if cfg.limit_to_main_corp and cfg.main_corporation_id:
-            # Check if the main character belongs to the restricted corp
+        member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
+        member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
+        if member_corps or member_allis:
             main_char = getattr(ownership.user.profile, 'main_character', None)
-            if not main_char or main_char.corporation_id != cfg.main_corporation_id:
+            if not main_char or (main_char.corporation_id not in member_corps and main_char.alliance_id not in member_allis):
                 return None
 
         return ownership.user.id
@@ -398,8 +400,11 @@ def index(request: WSGIRequest):
         qs = None
 
     if qs is not None:  # Build dropdown choices only when the viewer has visibility.
-        if cfg.limit_to_main_corp and cfg.main_corporation_id:
-            qs = qs.filter(main_character__corporation_id=cfg.main_corporation_id)
+        member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
+        member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
+        if member_corps or member_allis:
+            qs = qs.filter(Q(main_character__corporation_id__in=member_corps) | Q(main_character__alliance_id__in=member_allis))
+
         dropdown_options = (
             qs.values_list("main_character__character_name", flat=True)
               .order_by("main_character__character_name")
@@ -1016,8 +1021,10 @@ def loa_admin(request):
     # Filtering
     qs = LeaveRequest.objects.select_related('user').order_by('-created_at')
 
-    if cfg.limit_to_main_corp and cfg.main_corporation_id:
-        qs = qs.filter(user__profile__main_character__corporation_id=cfg.main_corporation_id)
+    member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
+    member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
+    if member_corps or member_allis:
+        qs = qs.filter(Q(user__profile__main_character__corporation_id__in=member_corps) | Q(user__profile__main_character__alliance_id__in=member_allis))
 
     user_filter   = request.GET.get('user')
     status_filter = request.GET.get('status')
@@ -1029,8 +1036,10 @@ def loa_admin(request):
 
     # Build dropdown options from existing requests
     users_in_requests_qs = LeaveRequest.objects.all()
-    if cfg.limit_to_main_corp and cfg.main_corporation_id:
-        users_in_requests_qs = users_in_requests_qs.filter(user__profile__main_character__corporation_id=cfg.main_corporation_id)
+    member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
+    member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
+    if member_corps or member_allis:
+        users_in_requests_qs = users_in_requests_qs.filter(Q(user__profile__main_character__corporation_id__in=member_corps) | Q(user__profile__main_character__alliance_id__in=member_allis))
 
     users_in_requests = (
         users_in_requests_qs.values_list('user__id', 'user__username')
@@ -1096,7 +1105,8 @@ def delete_request(request, pk):
             return HttpResponseForbidden("You may only delete your own requests.")
         elif lr.status == 'pending':  # Only pending requests may be removed.
             lr.delete()
-            hook = BigBrotherConfig.get_solo().loawebhook
+            cfg = BigBrotherConfig.get_solo()
+            hook = cfg.loawebhook
             send_status_embed(
                 subject="LoA Deleted",
                 lines=[
@@ -1117,9 +1127,12 @@ def delete_request_admin(request, pk):
     if request.method == 'POST':  # Guard mutation behind POST.
         cfg = BigBrotherConfig.get_solo()
         lr = get_object_or_404(LeaveRequest, pk=pk)
-        if cfg.limit_to_main_corp and cfg.main_corporation_id:
-            if lr.user.profile.main_character is None or lr.user.profile.main_character.corporation_id != cfg.main_corporation_id:
-                return HttpResponseForbidden("Target user is not in the restricted corporation.")
+        member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
+        member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
+        if member_corps or member_allis:
+            main_char = getattr(lr.user.profile, 'main_character', None)
+            if not main_char or (main_char.corporation_id not in member_corps and main_char.alliance_id not in member_allis):
+                return HttpResponseForbidden("Target user is not in a member corporation/alliance.")
 
         lr.delete()
         hook = cfg.loawebhook
@@ -1144,9 +1157,12 @@ def approve_request(request, pk):
     if request.method == 'POST':  # Only process POST actions.
         cfg = BigBrotherConfig.get_solo()
         lr = get_object_or_404(LeaveRequest, pk=pk)
-        if cfg.limit_to_main_corp and cfg.main_corporation_id:
-            if lr.user.profile.main_character is None or lr.user.profile.main_character.corporation_id != cfg.main_corporation_id:
-                return HttpResponseForbidden("Target user is not in the restricted corporation.")
+        member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
+        member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
+        if member_corps or member_allis:
+            main_char = getattr(lr.user.profile, 'main_character', None)
+            if not main_char or (main_char.corporation_id not in member_corps and main_char.alliance_id not in member_allis):
+                return HttpResponseForbidden("Target user is not in a member corporation/alliance.")
 
         lr.status = 'approved'
         lr.save()
@@ -1172,9 +1188,12 @@ def deny_request(request, pk):
     if request.method == 'POST':  # Only mutate via POST requests.
         cfg = BigBrotherConfig.get_solo()
         lr = get_object_or_404(LeaveRequest, pk=pk)
-        if cfg.limit_to_main_corp and cfg.main_corporation_id:
-            if lr.user.profile.main_character is None or lr.user.profile.main_character.corporation_id != cfg.main_corporation_id:
-                return HttpResponseForbidden("Target user is not in the restricted corporation.")
+        member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
+        member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
+        if member_corps or member_allis:
+            main_char = getattr(lr.user.profile, 'main_character', None)
+            if not main_char or (main_char.corporation_id not in member_corps and main_char.alliance_id not in member_allis):
+                return HttpResponseForbidden("Target user is not in a member corporation/alliance.")
 
         lr.status = 'denied'
         lr.save()

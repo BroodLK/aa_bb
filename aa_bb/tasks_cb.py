@@ -17,6 +17,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 from django.utils import timezone
+from django.db.models import Q
 from celery import shared_task
 from django_celery_beat.models import PeriodicTask, CrontabSchedule, IntervalSchedule
 
@@ -264,8 +265,10 @@ def CB_run_regular_updates():
             if qs is None:
                 return
 
-            if instance.limit_to_main_corp and instance.main_corporation_id:
-                qs = qs.filter(corporation_id=instance.main_corporation_id)
+            member_corps = {int(x) for x in (instance.member_corporations or "").split(",") if x.strip().isdigit()}
+            member_allis = {int(x) for x in (instance.member_alliances or "").split(",") if x.strip().isdigit()}
+            if member_corps or member_allis:
+                qs = qs.filter(Q(corporation_id__in=member_corps) | Q(alliance_id__in=member_allis))
 
             corps = list(
                 qs.values_list("corporation_id", flat=True)
@@ -349,7 +352,11 @@ def check_member_compliance():
     instance = BigBrotherConfig.get_solo()
     if not instance.is_active:  # plugin disabled → skip expensive checks
         return
-    users = get_users()
+    profiles_qs = get_user_profiles()
+    if instance.limit_to_main_corp:
+        profiles_qs = profiles_qs.filter(main_character__corporation_id=instance.main_corporation_id)
+
+    users = list(profiles_qs.values_list("main_character__character_name", flat=True))
     messages = ""
 
     for char_name in users:
@@ -377,7 +384,14 @@ def check_member_compliance():
     from allianceauth.eveonline.models import EveCorporationInfo, EveCharacter
     from .app_settings import get_corporation_info, get_alliance_name
     missing_characters = []
-    corp_ids = instance.member_corporations
+
+    if instance.limit_to_main_corp:
+        corp_ids = str(instance.main_corporation_id)
+        ali_ids = ""
+    else:
+        corp_ids = instance.member_corporations
+        ali_ids = instance.member_alliances
+
     if corp_ids:  # optionally check extra corp ids even if they’re outside auth
         for corp_id in corp_ids.split(","):
             corp_chars = []
@@ -401,7 +415,7 @@ def check_member_compliance():
             if corp_chars:  # Only append corp section when missing members were found.
                 chars_str = "\n".join(corp_chars)
                 missing_characters.append(f"- {corp_name}\n{chars_str}")
-    ali_ids = instance.member_alliances
+
     logger.info(f"✅  [AA-BB] - [check_member_compliance] - ali_ids: {str(ali_ids)}")
     if ali_ids:  # optional alliance-level audits
         for ali_id in ali_ids.split(","):

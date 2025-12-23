@@ -208,11 +208,15 @@ def hourly_compliance_check():
 
     now = timezone.now()
 
-    profiles = list(get_user_profiles())
+    profiles_qs = get_user_profiles()
+    if bb_cfg.limit_to_main_corp:
+        profiles_qs = profiles_qs.filter(main_character__corporation_id=bb_cfg.main_corporation_id)
+
+    profiles = list(profiles_qs)
     allowed_users = {p.user for p in profiles}
 
     # 1. Check compliance reasons
-    for UserProfil in get_user_profiles():
+    for UserProfil in profiles:
         user = UserProfil.user
         if user in t_cfg.excluded_users.all():  # Skip users explicitly excluded from checks.
             continue
@@ -234,7 +238,11 @@ def hourly_compliance_check():
             notifications_by_hook[hook_url] = []
         notifications_by_hook[hook_url].append(msg)
 
-    for ticket in ComplianceTicket.objects.all():
+    tickets_qs = ComplianceTicket.objects.all()
+    if bb_cfg.limit_to_main_corp:
+        tickets_qs = tickets_qs.filter(user__profile__main_character__corporation_id=bb_cfg.main_corporation_id)
+
+    for ticket in tickets_qs:
         reason = ticket.reason
         hook = get_webhook_for_reason(reason)
 

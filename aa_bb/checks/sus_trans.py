@@ -16,6 +16,7 @@ logger.setLevel(logging.DEBUG)
 from ..app_settings import (
     get_user_characters,
     get_entity_info,
+    get_safe_entities,
     aablacklist_active,
 )
 
@@ -349,9 +350,13 @@ def is_transaction_hostile(tx: dict, user_ids: set = None) -> bool:
         return False
 
     cfg = BigBrotherConfig.get_solo()
+    safe_entities = get_safe_entities()
 
     if aablacklist_active():
-        if check_char_add_to_bl(tx.get("first_party_id")) or check_char_add_to_bl(tx.get("second_party_id")):
+        fpid = tx.get("first_party_id")
+        spid = tx.get("second_party_id")
+        if (fpid and fpid not in safe_entities and check_char_add_to_bl(fpid)) or \
+           (spid and spid not in safe_entities and check_char_add_to_bl(spid)):
             return True
 
     wlcorp = set((cfg.whitelist_corporations or "").split(","))
@@ -403,10 +408,12 @@ def is_transaction_hostile(tx: dict, user_ids: set = None) -> bool:
     hostile_allis = {s.strip() for s in (cfg.hostile_alliances or "").split(",") if s.strip()}
 
     for key in ("first_party_corporation_id", "second_party_corporation_id"):
-        if tx.get(key) and str(tx[key]) in hostile_corps:
+        kid = tx.get(key)
+        if kid and kid not in safe_entities and str(kid) in hostile_corps:
             return True
     for key in ("first_party_alliance_id", "second_party_alliance_id"):
-        if tx.get(key) and str(tx[key]) in hostile_allis:
+        kid = tx.get(key)
+        if kid and kid not in safe_entities and str(kid) in hostile_allis:
             return True
 
     return False
@@ -446,6 +453,7 @@ def render_transactions(user_id: int) -> str:
     cfg = BigBrotherConfig.get_solo()
     hostile_corps = {s.strip() for s in (cfg.hostile_corporations or "").split(",") if s.strip()}
     hostile_allis = {s.strip() for s in (cfg.hostile_alliances or "").split(",") if s.strip()}
+    safe_entities = get_safe_entities()
 
     for t in display:  # Render each hostile transaction row with contextual styling.
         parts.append('<tr>')
@@ -461,12 +469,18 @@ def render_transactions(user_id: int) -> str:
                     if "market_escrow" in t['type'] or "market_transaction" in t['type']:
                         style = 'color: red;'
             if aablacklist_active():
-                if col in ('first_party_name', 'second_party_name') and check_char_add_to_bl(t.get(col + '_id', -1)):  # Parties on blacklist.
+                if col in ('first_party_name', 'second_party_name'):
+                    pid = t.get(col + '_id', -1)
+                    if pid and pid not in safe_entities and check_char_add_to_bl(pid):  # Parties on blacklist.
+                        style = 'color: red;'
+            if col.endswith('corporation'):
+                cid = t.get(col + '_id')
+                if cid and cid not in safe_entities and str(cid) in hostile_corps:  # Hostile corps.
                     style = 'color: red;'
-            if col.endswith('corporation') and t.get(col + '_id') and str(t[col + '_id']) in hostile_corps:  # Hostile corps.
-                style = 'color: red;'
-            if col.endswith('alliance') and t.get(col + '_id') and str(t[col + '_id']) in hostile_allis:  # Hostile alliances.
-                style = 'color: red;'
+            if col.endswith('alliance'):
+                aid = t.get(col + '_id')
+                if aid and aid not in safe_entities and str(aid) in hostile_allis:  # Hostile alliances.
+                    style = 'color: red;'
             def make_td(val, style=""):
                 """Render a TD with optional inline style for hostile cues."""
                 style_attr = f' style="{style}"' if style else ""
@@ -527,20 +541,27 @@ def get_user_hostile_transactions(user_id: int) -> Dict[int, str]:
                 cfg = BigBrotherConfig.get_solo()
                 hostile_corps = {s.strip() for s in (cfg.hostile_corporations or "").split(",") if s.strip()}
                 hostile_allis = {s.strip() for s in (cfg.hostile_alliances or "").split(",") if s.strip()}
+                safe_entities = get_safe_entities()
 
                 if aablacklist_active():
-                    if tx.get("first_party_id") and check_char_add_to_bl(tx["first_party_id"]):
+                    fpid = tx.get("first_party_id")
+                    if fpid and fpid not in safe_entities and check_char_add_to_bl(fpid):
                         flags.append(f"first_party **{tx['first_party_name']}** is on blacklist")
-                    if tx.get("second_party_id") and check_char_add_to_bl(tx["second_party_id"]):
+                    spid = tx.get("second_party_id")
+                    if spid and spid not in safe_entities and check_char_add_to_bl(spid):
                         flags.append(f"second_party **{tx['second_party_name']}** is on blacklist")
 
-                if str(tx.get("first_party_corporation_id")) in hostile_corps:
+                fpcid = tx.get("first_party_corporation_id")
+                if fpcid and fpcid not in safe_entities and str(fpcid) in hostile_corps:
                     flags.append(f"first_party corp **{tx['first_party_corporation']}** is hostile")
-                if str(tx.get("first_party_alliance_id")) in hostile_allis:
+                fpaid = tx.get("first_party_alliance_id")
+                if fpaid and fpaid not in safe_entities and str(fpaid) in hostile_allis:
                     flags.append(f"first_party alliance **{tx['first_party_alliance']}** is hostile")
-                if str(tx.get("second_party_corporation_id")) in hostile_corps:
+                spcid = tx.get("second_party_corporation_id")
+                if spcid and spcid not in safe_entities and str(spcid) in hostile_corps:
                     flags.append(f"second_party corp **{tx['second_party_corporation']}** is hostile")
-                if str(tx.get("second_party_alliance_id")) in hostile_allis:
+                spaid = tx.get("second_party_alliance_id")
+                if spaid and spaid not in safe_entities and str(spaid) in hostile_allis:
                     flags.append(f"second_party alliance **{tx['second_party_alliance']}** is hostile")
 
                 flags_lines = [f"    - {flag}" for flag in flags] if flags else ["    - (no extra flags)"]

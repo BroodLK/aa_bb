@@ -166,6 +166,8 @@ def get_hostile_clone_locations(user_id: int) -> Dict[str, str]:
 
     hostile_str = cfg.hostile_alliances or ""
     hostile_ids = {int(s) for s in hostile_str.split(",") if s.strip().isdigit()}
+    hostile_corp_str = cfg.hostile_corporations or ""
+    hostile_corp_ids = {int(s) for s in hostile_corp_str.split(",") if s.strip().isdigit()}
 
     excluded_systems_str = cfg.excluded_systems or ""
     excluded_system_ids = {
@@ -219,6 +221,7 @@ def get_hostile_clone_locations(user_id: int) -> Dict[str, str]:
         if (
             nullsec_flag
             or (oid in hostile_ids if oid is not None else False)
+            or (oid in hostile_corp_ids if oid is not None else False)
             or "Unresolvable" in oname
         ):
             parts = [oname]

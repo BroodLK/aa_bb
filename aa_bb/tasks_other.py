@@ -3,6 +3,7 @@ from .models import (
 )
 from .app_settings import send_message, send_status_embed, _chunk_embed_lines
 from django.apps import apps
+from django.db.models import Q
 
 from celery import shared_task
 
@@ -73,8 +74,11 @@ def BB_send_recurring_stats():
     # --- AUTH USERS ---
     if stats_cfg.include_auth_users:
         profiles_qs = UserProfile.objects.all()
-        if cfg.limit_to_main_corp and cfg.main_corporation_id:
-            profiles_qs = profiles_qs.filter(main_character__corporation_id=cfg.main_corporation_id)
+        member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
+        member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
+        if member_corps or member_allis:
+            profiles_qs = profiles_qs.filter(Q(main_character__corporation_id__in=member_corps) | Q(main_character__alliance_id__in=member_allis))
+
         auth_total = profiles_qs.count()
         snapshot["auth_total"] = auth_total
         auth_by_state = {}
@@ -85,8 +89,11 @@ def BB_send_recurring_stats():
     # --- DISCORD USERS ---
     if stats_cfg.include_discord_users and DiscordUser is not None:
         dq = DiscordUser.objects.select_related("user__profile__state")
-        if cfg.limit_to_main_corp and cfg.main_corporation_id:
-            dq = dq.filter(user__profile__main_character__corporation_id=cfg.main_corporation_id)
+        member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
+        member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
+        if member_corps or member_allis:
+            dq = dq.filter(Q(user__profile__main_character__corporation_id__in=member_corps) | Q(user__profile__main_character__alliance_id__in=member_allis))
+
         discord_total = dq.count()
         snapshot["discord_total"] = discord_total
         discord_by_state = {}
@@ -97,8 +104,11 @@ def BB_send_recurring_stats():
     # --- MUMBLE USERS ---
     if stats_cfg.include_mumble_users and MumbleUser is not None:
         mq = MumbleUser.objects.select_related("user__profile__state")
-        if cfg.limit_to_main_corp and cfg.main_corporation_id:
-            mq = mq.filter(user__profile__main_character__corporation_id=cfg.main_corporation_id)
+        member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
+        member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
+        if member_corps or member_allis:
+            mq = mq.filter(Q(user__profile__main_character__corporation_id__in=member_corps) | Q(user__profile__main_character__alliance_id__in=member_allis))
+
         mumble_total = mq.count()
         snapshot["mumble_total"] = mumble_total
         mumble_by_state = {}
@@ -109,28 +119,37 @@ def BB_send_recurring_stats():
     # --- EVE OBJECT COUNTS ---
     if stats_cfg.include_characters:
         char_qs = EveCharacter.objects.all()
-        if cfg.limit_to_main_corp and cfg.main_corporation_id:
-            char_qs = char_qs.filter(corporation_id=cfg.main_corporation_id)
+        member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
+        member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
+        if member_corps or member_allis:
+            char_qs = char_qs.filter(Q(corporation_id__in=member_corps) | Q(alliance_id__in=member_allis))
+
         snapshot["characters_total"] = char_qs.count()
 
     if stats_cfg.include_corporations:
         corp_qs = EveCorporationInfo.objects.all()
-        if cfg.limit_to_main_corp and cfg.main_corporation_id:
-            corp_qs = corp_qs.filter(corporation_id=cfg.main_corporation_id)
+        member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
+        member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
+        if member_corps or member_allis:
+            corp_qs = corp_qs.filter(Q(corporation_id__in=member_corps) | Q(alliance_id__in=member_allis))
+
         snapshot["corporations_total"] = corp_qs.count()
 
     if stats_cfg.include_alliances:
         ali_qs = EveAllianceInfo.objects.all()
-        if cfg.limit_to_main_corp and cfg.main_alliance_id:
-            ali_qs = ali_qs.filter(alliance_id=cfg.main_alliance_id)
+        member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
+        if member_allis:
+            ali_qs = ali_qs.filter(alliance_id__in=member_allis)
+
         snapshot["alliances_total"] = ali_qs.count()
 
     # --- TOKENS ---
     if Token is not None:
         token_qs = Token.objects.all()
-        if cfg.limit_to_main_corp and cfg.main_corporation_id:
-            # Filtering tokens by character's corp. This might be slow but it's correct.
-            token_qs = token_qs.filter(character_id__in=EveCharacter.objects.filter(corporation_id=cfg.main_corporation_id).values("character_id"))
+        member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
+        member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
+        if member_corps or member_allis:
+            token_qs = token_qs.filter(character_id__in=EveCharacter.objects.filter(Q(corporation_id__in=member_corps) | Q(alliance_id__in=member_allis)).values("character_id"))
 
         if stats_cfg.include_tokens:
             snapshot["tokens_total"] = token_qs.count()
@@ -142,14 +161,20 @@ def BB_send_recurring_stats():
     # --- AUDITS (corptools) ---
     if CharacterAudit is not None and stats_cfg.include_character_audits:
         ca_qs = CharacterAudit.objects.all()
-        if cfg.limit_to_main_corp and cfg.main_corporation_id:
-            ca_qs = ca_qs.filter(character__corporation_id=cfg.main_corporation_id)
+        member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
+        member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
+        if member_corps or member_allis:
+            ca_qs = ca_qs.filter(Q(character__corporation_id__in=member_corps) | Q(character__alliance_id__in=member_allis))
+
         snapshot["character_audits_total"] = ca_qs.count()
 
     if CorporationAudit is not None and stats_cfg.include_corporation_audits:
         cpa_qs = CorporationAudit.objects.all()
-        if cfg.limit_to_main_corp and cfg.main_corporation_id:
-            cpa_qs = cpa_qs.filter(corporation__corporation_id=cfg.main_corporation_id)
+        member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
+        member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
+        if member_corps or member_allis:
+            cpa_qs = cpa_qs.filter(Q(corporation__corporation_id__in=member_corps) | Q(corporation__alliance_id__in=member_allis))
+
         snapshot["corporation_audits_total"] = cpa_qs.count()
 
     # ---- DELTA CALCULATION ----

@@ -44,9 +44,18 @@ def removed_character(sender, instance, **kwargs):
     try:
         character = instance.character
         discord_id = get_discord_user_id(instance.user)
-        member_states = BigBrotherConfig.get_solo().bb_member_states.all()
+        bb_cfg = BigBrotherConfig.get_solo()
+        member_states = bb_cfg.bb_member_states.all()
         if instance.user.profile.state not in member_states:
             return
+
+        if bb_cfg.limit_to_main_corp:
+            # Check if the user's main character belongs to the primary corporation
+            profile = getattr(instance.user, 'profile', None)
+            main_char = getattr(profile, 'main_character', None) if profile else None
+            if not main_char or main_char.corporation_id != bb_cfg.main_corporation_id:
+                return
+
         tcfg = TicketToolConfig.get_solo()
         ticket_message = (
             f"<@&{tcfg.Role_ID}>,<@{discord_id}> Auth lost access to your character "

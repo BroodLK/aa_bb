@@ -12,6 +12,7 @@ from datetime import datetime
 from ..app_settings import (
     get_user_characters,
     get_entity_info,
+    get_safe_entities,
     aablacklist_active,
 )
 from django.utils import timezone
@@ -112,33 +113,38 @@ def get_user_contracts(qs) -> Dict[int, Dict]:
 
 
 def get_cell_style_for_contract_row(column: str, row: dict) -> str:
+    safe_entities = get_safe_entities()
     if aablacklist_active():
-        if column == "issuer_name" and check_char_add_to_bl(row.get("issuer_id")):
-            return "color: red;"
-        if column == "assignee_name" and check_char_add_to_bl(row.get("assignee_id")):
-            return "color: red;"
+        if column == "issuer_name":
+            iid = row.get("issuer_id")
+            if iid and iid not in safe_entities and check_char_add_to_bl(iid):
+                return "color: red;"
+        if column == "assignee_name":
+            aid = row.get("assignee_id")
+            if aid and aid not in safe_entities and check_char_add_to_bl(aid):
+                return "color: red;"
 
     if column == "issuer_corporation":
         cid = row.get("issuer_corporation_id")
-        if cid and str(cid) in BigBrotherConfig.get_solo().hostile_corporations:
+        if cid and cid not in safe_entities and str(cid) in BigBrotherConfig.get_solo().hostile_corporations:
             return "color: red;"
         return ""
 
     if column == "issuer_alliance":
         aid = row.get("issuer_alliance_id")
-        if aid and str(aid) in BigBrotherConfig.get_solo().hostile_alliances:
+        if aid and aid not in safe_entities and str(aid) in BigBrotherConfig.get_solo().hostile_alliances:
             return "color: red;"
         return ""
 
     if column == "assignee_corporation":
         cid = row.get("assignee_corporation_id")
-        if cid and str(cid) in BigBrotherConfig.get_solo().hostile_corporations:
+        if cid and cid not in safe_entities and str(cid) in BigBrotherConfig.get_solo().hostile_corporations:
             return "color: red;"
         return ""
 
     if column == "assignee_alliance":
         aid = row.get("assignee_alliance_id")
-        if aid and str(aid) in BigBrotherConfig.get_solo().hostile_alliances:
+        if aid and aid not in safe_entities and str(aid) in BigBrotherConfig.get_solo().hostile_alliances:
             return "color: red;"
         return ""
 
@@ -146,20 +152,27 @@ def get_cell_style_for_contract_row(column: str, row: dict) -> str:
 
 
 def is_contract_row_hostile(row: dict) -> bool:
+    safe_entities = get_safe_entities()
     if aablacklist_active():
-        if check_char_add_to_bl(row.get("issuer_id")):
+        iid = row.get("issuer_id")
+        if iid and iid not in safe_entities and check_char_add_to_bl(iid):
             return True
-        if check_char_add_to_bl(row.get("assignee_id")):
+        aid = row.get("assignee_id")
+        if aid and aid not in safe_entities and check_char_add_to_bl(aid):
             return True
 
     solo = BigBrotherConfig.get_solo()
-    if row.get("issuer_corporation_id") and str(row["issuer_corporation_id"]) in solo.hostile_corporations:
+    icid = row.get("issuer_corporation_id")
+    if icid and icid not in safe_entities and str(icid) in solo.hostile_corporations:
         return True
-    if row.get("issuer_alliance_id") and str(row["issuer_alliance_id"]) in solo.hostile_alliances:
+    iaid = row.get("issuer_alliance_id")
+    if iaid and iaid not in safe_entities and str(iaid) in solo.hostile_alliances:
         return True
-    if row.get("assignee_corporation_id") and str(row["assignee_corporation_id"]) in solo.hostile_corporations:
+    acid = row.get("assignee_corporation_id")
+    if acid and acid not in safe_entities and str(acid) in solo.hostile_corporations:
         return True
-    if row.get("assignee_alliance_id") and str(row["assignee_alliance_id"]) in solo.hostile_alliances:
+    aaid = row.get("assignee_alliance_id")
+    if aaid and aaid not in safe_entities and str(aaid) in solo.hostile_alliances:
         return True
     return False
 
@@ -203,20 +216,21 @@ def get_user_hostile_contracts(user_id: int) -> Dict[int, str]:
                 continue
 
             flags: List[str] = []
+            safe_entities = get_safe_entities()
             if aablacklist_active():
-                if c["issuer_name"] != "-" and check_char_add_to_bl(c["issuer_id"]):
+                if c["issuer_name"] != "-" and c["issuer_id"] not in safe_entities and check_char_add_to_bl(c["issuer_id"]):
                     flags.append(f"Issuer **{c['issuer_name']}** is on blacklist")
-            if str(c["issuer_corporation_id"]) in hostile_corps:
+            if c["issuer_corporation_id"] not in safe_entities and str(c["issuer_corporation_id"]) in hostile_corps:
                 flags.append(f"Issuer corp **{c['issuer_corporation']}** is hostile")
-            if str(c["issuer_alliance_id"]) in hostile_allis:
+            if c["issuer_alliance_id"] not in safe_entities and str(c["issuer_alliance_id"]) in hostile_allis:
                 flags.append(f"Issuer alliance **{c['issuer_alliance']}** is hostile")
 
             if aablacklist_active():
-                if c["assignee_name"] != "-" and check_char_add_to_bl(c["assignee_id"]):
+                if c["assignee_name"] != "-" and c["assignee_id"] not in safe_entities and check_char_add_to_bl(c["assignee_id"]):
                     flags.append(f"Assignee **{c['assignee_name']}** is on blacklist")
-            if str(c["assignee_corporation_id"]) in hostile_corps:
+            if c["assignee_corporation_id"] not in safe_entities and str(c["assignee_corporation_id"]) in hostile_corps:
                 flags.append(f"Assignee corp **{c['assignee_corporation']}** is hostile")
-            if str(c["assignee_alliance_id"]) in hostile_allis:
+            if c["assignee_alliance_id"] not in safe_entities and str(c["assignee_alliance_id"]) in hostile_allis:
                 flags.append(f"Assignee alliance **{c['assignee_alliance']}** is hostile")
 
             flags_text = "\n    - ".join(flags) if flags else "(no flags)"

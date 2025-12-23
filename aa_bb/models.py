@@ -607,7 +607,7 @@ class BigBrotherConfig(SingletonModel):
 
     limit_to_main_corp = models.BooleanField(
         default=False,
-        help_text=_("If enabled, compliance checks and dashboard visibility will be restricted to members of the primary corporation only."),
+        help_text=_("If enabled, automated compliance tickets and compliance notifications will be restricted to members of the primary corporation only. Dashboard visibility and regular background updates will still include all monitored members."),
         verbose_name=_("Limit to Main Corporation")
     )
 
