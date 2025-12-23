@@ -1488,6 +1488,11 @@ def _chunk_embed_lines(lines, max_chars=1900):
                 segments.append(current_segment)
                 current_segment = []
                 in_code = False
+        elif not in_code and (line.startswith("#") or line.startswith("- ") or line.startswith("* ") or line.startswith("  - ") or line.startswith("  * ")):
+            # Break at top-level bullet points or headers to keep related indented lines together
+            if current_segment:
+                segments.append(current_segment)
+            current_segment = [line]
         else:
             current_segment.append(line)
 
