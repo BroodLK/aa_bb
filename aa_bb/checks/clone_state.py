@@ -137,7 +137,6 @@ def determine_character_state(user_id, save: bool = False):
                 "state": db_record.state if db_record.state else "unknown",
                 "skill_used": db_record.skill_used,
                 "last_state": db_record.state,
-                "last_checked_at": db_record.last_checked_at,
             }
             continue
         else:
