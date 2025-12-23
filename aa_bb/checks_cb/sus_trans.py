@@ -51,12 +51,16 @@ SECONDARY_HUBS = {30002661, 30003733, 30001389, 30000144}
 
 def is_major_hub(tx: dict) -> bool:
     system_id = tx.get("system_id")
-    return system_id in MAJOR_HUBS
+    if not system_id:
+        return False
+    return int(system_id) in MAJOR_HUBS
 
 
 def is_secondary_hub(tx: dict) -> bool:
     system_id = tx.get("system_id")
-    return system_id in SECONDARY_HUBS
+    if not system_id:
+        return False
+    return int(system_id) in SECONDARY_HUBS
 
 
 def is_excluded_system(tx: dict, excluded_str: str) -> bool:
@@ -66,7 +70,7 @@ def is_excluded_system(tx: dict, excluded_str: str) -> bool:
     if not system_id:
         return False
     excluded_ids = {int(s.strip()) for s in excluded_str.split(",") if s.strip().isdigit()}
-    return system_id in excluded_ids
+    return int(system_id) in excluded_ids
 
 
 def get_or_create_prices(item_id):
@@ -331,8 +335,8 @@ def is_transaction_hostile(tx: dict) -> bool:
     if aablacklist_active():
         if check_char_add_to_bl(tx.get('first_party_id')) or check_char_add_to_bl(tx.get('second_party_id')):  # Either party is on the blacklist.
             return True
-    wlcorp = set((cfg.whitelist_corporations or "").split(','))
-    wlali = set((cfg.whitelist_alliances or "").split(','))
+    wlcorp = {s.strip() for s in (cfg.whitelist_corporations or "").split(',') if s.strip()}
+    wlali = {s.strip() for s in (cfg.whitelist_alliances or "").split(',') if s.strip()}
     fpcorp = str(tx.get('first_party_corporation_id') or '')
     spcorp = str(tx.get('second_party_corporation_id') or '')
     fpali = str(tx.get('first_party_alliance_id') or '')
@@ -347,20 +351,17 @@ def is_transaction_hostile(tx: dict) -> bool:
     for key in SUS_TYPES:
         if key in tx.get('type'):  # Suspicious ref types always raise flags.
             return True
-    if cfg.show_market_transactions:
-        if "market_escrow" in tx.get('type') or "market_transaction" in tx.get('type'):
-            if not cfg.market_transactions_show_major_hubs and is_major_hub(tx):
-                return False
-            if not cfg.market_transactions_show_secondary_hubs and is_secondary_hub(tx):
-                return False
-            if is_excluded_system(tx, cfg.market_transactions_excluded_systems):
-                return False
+    if "market_escrow" in tx.get('type') or "market_transaction" in tx.get('type'):
+        if not cfg.market_transactions_show_major_hubs and is_major_hub(tx):
+            return False
+        if not cfg.market_transactions_show_secondary_hubs and is_secondary_hub(tx):
+            return False
+        if is_excluded_system(tx, cfg.market_transactions_excluded_systems):
+            return False
 
-            if cfg.market_transactions_threshold_alert and cfg.market_transactions_threshold_percent > 0:
-                if not is_above_threshold(tx, cfg.market_transactions_threshold_percent):
-                    return False
-            # Fall through to hostile entity checks instead of returning True immediately
-            # return True
+        if cfg.market_transactions_threshold_alert and cfg.market_transactions_threshold_percent > 0:
+            if not is_above_threshold(tx, cfg.market_transactions_threshold_percent):
+                return False
 
     hostile_corps = {s.strip() for s in (cfg.hostile_corporations or "").split(",") if s.strip()}
     hostile_allis = {s.strip() for s in (cfg.hostile_alliances or "").split(",") if s.strip()}

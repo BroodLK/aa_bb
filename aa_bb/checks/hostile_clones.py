@@ -484,7 +484,6 @@ def render_clones(user_id: int) -> Optional[str]:
     if not rows:
         return '<p>No clones found.</p>'
 
-    # === NEW: put hostile rows at the top ===
     rows.sort(key=lambda r: (not r["hostile"], r["character"], r["system"]))
 
     html_parts = [
