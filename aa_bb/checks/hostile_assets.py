@@ -68,10 +68,15 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
             key = getattr(system_obj, "pk", None)
             sys_name = system_obj.name
         elif location_id:
-            # If the system ID is not available, we can't accurately check sovereignty
-            # or determine if the location is hostile based on system-level rules.
-            # We skip these records for now.
-            pass
+            # Attempt to resolve system name from eveuniverse if it's a solar system
+            key = location_id
+            if 30000000 <= key <= 34000000:
+                try:
+                    from eveuniverse.models import EveSolarSystem
+                    sys_obj = EveSolarSystem.objects.get(id=key)
+                    sys_name = sys_obj.name
+                except Exception:
+                    pass
 
         if not key:
             return

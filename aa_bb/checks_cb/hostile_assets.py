@@ -32,11 +32,19 @@ def get_asset_locations(corp_id: int) -> Dict[int, Optional[str]]:
 
     system_map: Dict[int, Optional[str]] = {}
 
-    def add_system(system_obj):
+    def add_system(system_obj, loc_id=None):
         """Track the system when the asset resolves to a solar system."""
         if system_obj:  # Skip placeholder corp assets with missing solar system.
             key = getattr(system_obj, 'pk', None)
             system_map[key] = system_obj.name
+        elif loc_id:
+            if 30000000 <= loc_id <= 34000000:
+                try:
+                    from eveuniverse.models import EveSolarSystem
+                    sys_obj = EveSolarSystem.objects.get(id=loc_id)
+                    system_map[loc_id] = sys_obj.name
+                except Exception:
+                    system_map[loc_id] = None
 
     # All corp assets (exclude ones where location_flag is "solar_system")
     assets = CorpAsset.objects.select_related('location_name__system') \
@@ -45,7 +53,7 @@ def get_asset_locations(corp_id: int) -> Dict[int, Optional[str]]:
 
     for asset in assets:
         loc = asset.location_name
-        add_system(getattr(loc, 'system', None))
+        add_system(getattr(loc, 'system', None), getattr(loc, 'id', None))
 
     sorted_items = sorted(
         system_map.items(),

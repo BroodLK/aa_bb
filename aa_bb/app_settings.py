@@ -933,13 +933,13 @@ def resolve_character_name(char_id: int) -> str:
         return f"Unresolvable eve map{e_short}{e_detail}"
 
 
-def get_system_owner(system: str) -> Dict[str, str]:
+def get_system_owner(system: Dict) -> Dict[str, str]:
     """
     Get sovereignty owner of an EVE system by name.
     Always returns a dict with keys: owner_id, owner_name, owner_type.
     """
     owner_id = "0"
-    owner_name = f"Unresolvable Init"
+    owner_name = "Unresolvable Init"
     owner_type = "unknown"
 
     # 1) Pull name and ID from the passed-in dict
@@ -953,7 +953,37 @@ def get_system_owner(system: str) -> Dict[str, str]:
         sov_map = _get_sov_map()
         entry = next((s for s in sov_map if s.get("system_id") == system_id), None)
         if not entry:
-            return {"owner_id": owner_id, "owner_name": f"Unresolvable structure due to lack of docking rights", "owner_type": owner_type}
+            # Fallback for systems not in the sovereignty map (e.g. Highsec/Lowsec)
+            # or for NPC stations.
+            if system_id:
+                if 30000000 <= system_id <= 34000000:
+                    try:
+                        from eveuniverse.models import EveSolarSystem
+                        sys_obj = EveSolarSystem.objects.select_related("faction").get(id=system_id)
+                        if sys_obj.faction:
+                            return {
+                                "owner_id": str(sys_obj.faction.id),
+                                "owner_name": sys_obj.faction.name,
+                                "owner_type": "faction"
+                            }
+                        else:
+                            return {"owner_id": "0", "owner_name": "Unclaimed", "owner_type": "unknown"}
+                    except Exception:
+                        pass
+                elif 60000000 <= system_id <= 64000000:
+                    try:
+                        from eveuniverse.models import EveStation
+                        station_obj = EveStation.objects.select_related("owner").get(id=system_id)
+                        if station_obj.owner:
+                            return {
+                                "owner_id": str(station_obj.owner.id),
+                                "owner_name": station_obj.owner.name,
+                                "owner_type": "corporation"
+                            }
+                    except Exception:
+                        pass
+
+            return {"owner_id": owner_id, "owner_name": "Unresolvable structure due to lack of docking rights", "owner_type": owner_type}
 
     except Exception as e:
         logger.exception(f"Failed to fetch sovereignty for system ID {system_id}: {e}")

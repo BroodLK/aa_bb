@@ -49,6 +49,15 @@ def get_clones(user_id: int) -> Dict[int, Optional[str]]:
             # use .pk for primary key, map to its name
             system_map[system_obj.pk] = system_obj.name
         elif loc_id is not None:  # Fallback when EveLocation missing but ID available.
+            # Try to resolve solar system name if it falls in the range
+            if 30000000 <= loc_id <= 34000000:
+                try:
+                    from eveuniverse.models import EveSolarSystem
+                    sys_obj = EveSolarSystem.objects.get(id=loc_id)
+                    system_map[loc_id] = sys_obj.name
+                    return
+                except Exception:
+                    pass
             # fallback for unnamed systems
             system_map[loc_id] = None
 
@@ -119,7 +128,16 @@ def get_hostile_clone_locations(user_id: int) -> Dict[str, str]:
             system_name_map[sid] = system_obj.name
         elif loc_id is not None:
             sid = loc_id
-            system_name_map.setdefault(sid, None)
+            # Try to resolve solar system name if it falls in the range
+            if 30000000 <= sid <= 34000000:
+                try:
+                    from eveuniverse.models import EveSolarSystem
+                    sys_obj = EveSolarSystem.objects.get(id=sid)
+                    system_name_map.setdefault(sid, sys_obj.name)
+                except Exception:
+                    system_name_map.setdefault(sid, None)
+            else:
+                system_name_map.setdefault(sid, None)
         else:
             return
 
@@ -363,16 +381,24 @@ def render_clones(user_id: int) -> Optional[str]:
         # - otherwise distinguish between system id and pure location id
         if system_name:
             display_name = system_name
-        else:
-            if system_id and system_id == loc_id:
-                # Only have a station/structure id
-                display_name = f"Location ID {loc_id}"
-            elif system_id:
-                display_name = f"System ID {system_id}"
-            elif loc_id:
-                display_name = f"Location ID {loc_id}"
+        elif system_id:
+            # Try to resolve system name from eveuniverse if it's a solar system
+            if 30000000 <= system_id <= 34000000:
+                try:
+                    from eveuniverse.models import EveSolarSystem
+                    sys_obj = EveSolarSystem.objects.get(id=system_id)
+                    display_name = sys_obj.name
+                except Exception:
+                    display_name = f"System ID {system_id}"
             else:
-                display_name = "Unknown"
+                if system_id == loc_id:
+                    display_name = f"Location ID {loc_id}"
+                else:
+                    display_name = f"System ID {system_id}"
+        elif loc_id:
+            display_name = f"Location ID {loc_id}"
+        else:
+            display_name = "Unknown"
 
         # System whitelist only applies when we actually know the system id
         if system_id and system_id in excluded_system_ids:
