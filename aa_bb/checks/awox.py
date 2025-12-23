@@ -26,7 +26,7 @@ from ..app_settings import (
     get_site_url,
     resolve_alliance_name,
     resolve_character_name,
-    send_message,
+    send_status_embed,
 )
 
 from ..esi_client import call_result, esi
@@ -80,15 +80,19 @@ def _notify_zkill_down_once(preview: str, status: int | None, content_type: str 
     if now - _last_zkill_down_notice_monotonic < 2 * 60 * 60:
         return
     _last_zkill_down_notice_monotonic = now
-    msg = (
-        "zKillboard appears unavailable and awox checks will not work (non-JSON response).\n"
-        f"status={status} content_type='{content_type}'\n"
+    lines = [
+        "zKillboard appears unavailable and awox checks will not work (non-JSON response).",
+        f"status={status} content_type='{content_type}'",
         f"body preview: ```{preview}```"
-    )
+    ]
     try:
         awox_notify = BigBrotherConfig.get_solo().awox_notify
         if awox_notify:
-            send_message(msg)
+            send_status_embed(
+                subject="zKillboard Unavailable",
+                lines=lines,
+                color=0xFF0000,
+            )
     except Exception as e:
         logger.warning(f"Failed to send zKill down notification: {e}")
 

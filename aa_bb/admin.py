@@ -139,6 +139,8 @@ class BB_ConfigAdmin(SingletonModelAdmin):
                     "optwebhook3",
                     "optwebhook4",
                     "optwebhook5",
+                    "user_compliance_webhook",
+                    "corp_compliance_webhook",
                     "stats_webhook",
                 )
             },

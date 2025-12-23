@@ -39,13 +39,14 @@ from .models import (
     LeaveRequest
 )
 from .app_settings import (
-    send_message,
     get_pings,
     resolve_corporation_name,
     get_users,
     get_user_id,
     get_character_id,
     get_user_profiles,
+    send_status_embed,
+    _chunk_embed_lines,
 )
 from aa_bb.checks_cb.hostile_assets import get_corp_hostile_asset_locations
 from aa_bb.checks_cb.sus_contracts import get_corp_hostile_contracts
@@ -71,88 +72,6 @@ logger = get_extension_logger(__name__)
 VERBOSE_WEBHOOK_LOGGING = True
 
 
-def send_status_embed(
-    subject: str,
-    lines: list[str],
-    *,
-    override_title: str | None = None,
-    color: int = 0xED4245,  # Discord red
-) -> None:
-    """
-    Send a Discord embed via the existing send_message() webhook.
-
-    - subject: usually the corp name
-    - lines: list of lines to go into embed description
-    - override_title: optional explicit title
-    - color: embed accent color (int)
-    """
-
-    if VERBOSE_WEBHOOK_LOGGING:
-        logger.debug(
-            "✅  [AA-BB] - [Embed] - send_status_embed called | subject=%r | lines=%d",
-            subject,
-            len(lines) if lines else 0,
-        )
-
-    # Defensive: never send empty embeds
-    if not lines:
-        if VERBOSE_WEBHOOK_LOGGING:
-            logger.debug("ℹ️  [AA-BB] - [Embed] - aborted: no lines supplied")
-        return
-
-    # Discord limits
-    MAX_DESC = 4096
-    MAX_LINES = 50
-
-    title = override_title if override_title is not None else subject
-
-    if VERBOSE_WEBHOOK_LOGGING:
-        logger.debug(
-            "✅  [AA-BB] - [Embed] - title resolved | title=%r | color=%#x",
-            title,
-            color,
-        )
-
-    # Trim excessive lines but keep tables / sections intact
-    safe_lines = lines[:MAX_LINES]
-    if len(lines) > MAX_LINES:
-        logger.warning(
-            "ℹ️  [AA-BB] - [Embed] - line cap exceeded | original=%d | capped=%d",
-            len(lines),
-            MAX_LINES,
-        )
-
-    description = "\n".join(safe_lines)
-
-    # Hard truncate if someone messed up
-    if len(description) > MAX_DESC:
-        logger.error(
-            "ℹ️  [AA-BB] - [Embed] - description overflow | chars=%d | truncating",
-            len(description),
-        )
-        description = description[: MAX_DESC - 3] + "..."
-
-    if VERBOSE_WEBHOOK_LOGGING:
-        logger.debug(
-            "✅  [AA-BB] - [Embed] - payload ready | lines=%d | chars=%d",
-            len(safe_lines),
-            len(description),
-        )
-
-    embed = {
-        "embeds": [
-            {
-                "title": title,
-                "description": description,
-                "color": color,
-            }
-        ]
-    }
-
-    if VERBOSE_WEBHOOK_LOGGING:
-        logger.debug("✅  [AA-BB] - [Embed] - sending embed payload")
-
-    send_message(embed)
 
 
 @shared_task()
@@ -184,82 +103,6 @@ def CB_send_discord_notifications(subject: str, chunks: list[list[str]]) -> None
         )
         time.sleep(0.25)  # tiny delay to be nice to the webhook
 
-
-def _chunk_embed_lines(lines: list[str], max_chars: int = 1900) -> list[list[str]]:
-    """
-    Split a list of lines into chunks whose joined text length
-    is <= max_chars, without breaking ``` code blocks.
-
-    Returns: List[List[str]] – each inner list is one embed body.
-    """
-    # First, group into "segments": either a full code block or a run of normal lines
-    segments: list[list[str]] = []
-    current_segment: list[str] = []
-    in_code = False
-
-    for line in lines:
-        stripped = line.strip()
-
-        if stripped.startswith("```"):
-            # Starting a new code block
-            if not in_code:
-                # flush any accumulated non-code segment
-                if current_segment:
-                    segments.append(current_segment)
-                    current_segment = []
-                in_code = True
-                current_segment = [line]
-            else:
-                # closing an existing code block
-                current_segment.append(line)
-                segments.append(current_segment)
-                current_segment = []
-                in_code = False
-        else:
-            current_segment.append(line)
-
-    if current_segment:
-        segments.append(current_segment)
-
-    # Now pack segments into chunks by total char length
-    chunks: list[list[str]] = []
-    current_chunk: list[str] = []
-    current_len = 0
-
-    for seg in segments:
-        seg_text = "\n".join(seg)
-        seg_len = len(seg_text) + (1 if current_chunk else 0)  # newline before segment
-
-        if seg_len > max_chars:
-            # Segment itself is huge; fall back to splitting inside it line-by-line
-            for line in seg:
-                line_len = len(line) + (1 if current_chunk else 0)
-                if current_len + line_len > max_chars and current_chunk:
-                    chunks.append(current_chunk)
-                    current_chunk = [line]
-                    current_len = len(line)
-                else:
-                    current_chunk.append(line)
-                    current_len += line_len
-            continue
-
-        if current_len + seg_len > max_chars and current_chunk:
-            # Start a new chunk
-            chunks.append(current_chunk)
-            current_chunk = list(seg)
-            current_len = len(seg_text)
-        else:
-            # Add segment to current chunk
-            if current_chunk:
-                current_chunk.append("")  # blank line between segments
-                current_len += 1
-            current_chunk.extend(seg)
-            current_len += len(seg_text)
-
-    if current_chunk:
-        chunks.append(current_chunk)
-
-    return chunks
 
 @shared_task
 def CB_update_single_corp(corp_id):
@@ -462,9 +305,10 @@ def CB_run_regular_updates():
                             percent = (remaining_count / total_corps) * 100
                             if percent > instance.update_backlog_threshold:
                                 logger.warning(f"ℹ️  [AA-BB] - [CB_run_regular_updates] - Corp Update backlog detected: {remaining_count} tasks remaining")
-                                send_message(
-                                    f"#{get_pings('Error')} **Corp Update Backlog Alert**: {remaining_count} corps are still "
-                                    "being processed from the previous run."
+                                send_status_embed(
+                                    subject="Corp Update Backlog Alert",
+                                    lines=[f"{get_pings('Error')} {remaining_count} corps are still being processed from the previous run."],
+                                    color=0xFF0000,
                                 )
             except Exception as e:
                 logger.error(f"ℹ️  [AA-BB] - [CB_run_regular_updates] - Failed to check for backlog: {e}")
@@ -474,19 +318,24 @@ def CB_run_regular_updates():
 
     except Exception as e:
         logger.error("ℹ️  [AA-BB] - [CB_run_regular_updates] - Task failed", exc_info=True)
-        instance.is_active = True
-        instance.save()
-        send_message(
-            f"#{get_pings('Error')} Corp Brother encountered an unexpected error"
-        )
         tb_str = traceback.format_exc()
-        send_message(f"```{tb_str[:1900]}```")
+        tb_lines = [f"{get_pings('Error')} Corp Brother encountered an unexpected error", "```python"] + tb_str.split("\n") + ["```"]
+        for chunk in _chunk_embed_lines(tb_lines):
+            send_status_embed(
+                subject="Corp Brother Error",
+                lines=chunk,
+                color=0xFF0000,
+            )
 
     from .tasks_utils import format_task_name
     task_name = format_task_name('CB run regular updates')
     task = PeriodicTask.objects.filter(name=task_name).first()
     if task and not task.enabled:
-        send_message("Corp Brother task has finished, you can now enable the task")
+        send_status_embed(
+            subject="Corp Brother",
+            lines=["Task has finished, you can now enable the task"],
+            color=0x00FF00,
+        )
 
 
 @shared_task
@@ -592,8 +441,13 @@ def check_member_compliance():
         compliance_msg += f"\n## Non Compliant users found:\n" + messages
 
     if compliance_msg:  # Only ping Discord when there is something to report.
-        compliance_msg = f"#{get_pings('Compliance')} Compliance Issues found:" + compliance_msg
-        send_message(compliance_msg)
+        lines = [f"{get_pings('Compliance')} Compliance Issues found:"] + compliance_msg.split("\n")
+        for chunk in _chunk_embed_lines(lines):
+            send_status_embed(
+                subject="Compliance Audit",
+                lines=chunk,
+                color=0xFF0000,
+            )
 
 import requests
 
@@ -646,7 +500,12 @@ def BB_send_daily_messages():
         return  # Still nothing to send
 
     message = random.choice(list(unsent_messages))
-    send_message(message.text, webhook)
+    send_status_embed(
+        subject="Daily Message",
+        lines=[message.text],
+        color=0x3498db,
+        hook=webhook
+    )
 
     # Mark as sent
     message.sent_in_cycle = True
@@ -674,7 +533,12 @@ def BB_send_opt_message1():
         return  # Still nothing to send
 
     message = random.choice(list(unsent_messages))
-    send_message(message.text, webhook)
+    send_status_embed(
+        subject="Optional Message #1",
+        lines=[message.text],
+        color=0x3498db,
+        hook=webhook
+    )
 
     # Mark as sent
     message.sent_in_cycle = True
@@ -702,7 +566,12 @@ def BB_send_opt_message2():
         return  # Still nothing to send
 
     message = random.choice(list(unsent_messages))
-    send_message(message.text, webhook)
+    send_status_embed(
+        subject="Optional Message #2",
+        lines=[message.text],
+        color=0x3498db,
+        hook=webhook
+    )
 
     # Mark as sent
     message.sent_in_cycle = True
@@ -730,7 +599,12 @@ def BB_send_opt_message3():
         return  # Still nothing to send
 
     message = random.choice(list(unsent_messages))
-    send_message(message.text, webhook)
+    send_status_embed(
+        subject="Optional Message #3",
+        lines=[message.text],
+        color=0x3498db,
+        hook=webhook
+    )
 
     # Mark as sent
     message.sent_in_cycle = True
@@ -758,7 +632,12 @@ def BB_send_opt_message4():
         return  # Still nothing to send
 
     message = random.choice(list(unsent_messages))
-    send_message(message.text, webhook)
+    send_status_embed(
+        subject="Optional Message #4",
+        lines=[message.text],
+        color=0x3498db,
+        hook=webhook
+    )
 
     # Mark as sent
     message.sent_in_cycle = True
@@ -786,7 +665,12 @@ def BB_send_opt_message5():
         return  # Still nothing to send
 
     message = random.choice(list(unsent_messages))
-    send_message(message.text, webhook)
+    send_status_embed(
+        subject="Optional Message #5",
+        lines=[message.text],
+        color=0x3498db,
+        hook=webhook
+    )
 
     # Mark as sent
     message.sent_in_cycle = True
@@ -796,204 +680,21 @@ def BB_send_opt_message5():
 @shared_task
 def BB_register_message_tasks():
     """
-    Ensure the celery-beat entries exist for the daily/optional message streams.
-    Also syncs the main update task interval with the stagger window.
+    Ensure all periodic tasks exist and match the configuration.
     """
     logger.info("✅  [AA-BB] - [BB_register_message_tasks] - Running BB_register_message_tasks...")
-
-    config = BigBrotherConfig.get_solo()
-
-    # Sync main update task
-    stagger = config.update_stagger_seconds
-    if stagger < 3600:
-        stagger = 3600
-
-    interval, _ = IntervalSchedule.objects.get_or_create(
-        every=stagger,
-        period=IntervalSchedule.SECONDS,
-    )
-
-    from .tasks_utils import format_task_name
-    update_task = PeriodicTask.objects.filter(name=format_task_name("BB run regular updates")).first()
-    if update_task:
-        updated = False
-        if update_task.crontab:
-            update_task.crontab = None
-            updated = True
-        if update_task.interval != interval:
-            update_task.interval = interval
-            updated = True
-        if updated:
-            update_task.save()
-            logger.info(f"✅  [AA-BB] - [BB_register_message_tasks] - Synced 'BB run regular updates' interval to {stagger}s")
-
-    # Default fallback schedule (12:00 UTC daily)
-    default_schedule, _ = CrontabSchedule.objects.get_or_create(
-        minute='0',
-        hour='12',
-        day_of_week='*',
-        day_of_month='*',
-        month_of_year='*',
-        timezone='UTC',
-    )
-
-    # Standard schedule (hourly at :25)
-    hourly_25_schedule, _ = CrontabSchedule.objects.get_or_create(
-        minute='25',
-        hour='*',
-        day_of_week='*',
-        day_of_month='*',
-        month_of_year='*',
-        timezone='UTC',
-    )
-
-    # Daily Cleanup schedule (01:00 UTC daily)
-    cleanup_schedule, _ = CrontabSchedule.objects.get_or_create(
-        minute='0',
-        hour='1',
-        day_of_week='*',
-        day_of_month='*',
-        month_of_year='*',
-        timezone='UTC',
-    )
-
-    # Tasks info: name, task path, config schedule attr, active flag attr
-    tasks = [
-        {
-            "name": "BB run regular updates",
-            "task_path": "aa_bb.tasks.BB_run_regular_updates",
-            "schedule": interval,
-            "active_attr": "is_active",
-            "update_schedule": True,
-        },
-        {
-            "name": "CB run regular updates",
-            "task_path": "aa_bb.tasks_cb.CB_run_regular_updates",
-            "schedule": hourly_25_schedule,
-            "active_attr": "is_active",
-        },
-        {
-            "name": "BB kickstart stale CT modules",
-            "task_path": "aa_bb.tasks_ct.kickstart_stale_ct_modules",
-            "schedule": hourly_25_schedule,
-            "active_attr": "is_active",
-        },
-        {
-            "name": "BB run regular DB cleanup",
-            "task_path": "aa_bb.tasks_cb.BB_daily_DB_cleanup",
-            "schedule": cleanup_schedule,
-            "active_attr": "is_active",
-        },
-        {
-            "name": "tickets run regular updates",
-            "task_path": "aa_bb.tasks_tickets.hourly_compliance_check",
-            "schedule": hourly_25_schedule,
-            "active_attr": "is_active", # Will be combined with TicketToolConfig.enabled
-        },
-        {
-            "name": "BB send daily message",
-            "task_path": "aa_bb.tasks_cb.BB_send_daily_messages",
-            "schedule_attr": "dailyschedule",
-            "active_attr": "are_daily_messages_active",
-            "update_schedule": True,
-        },
-        {
-            "name": "BB send optional message 1",
-            "task_path": "aa_bb.tasks_cb.BB_send_opt_message1",
-            "schedule_attr": "optschedule1",
-            "active_attr": "are_opt_messages1_active",
-            "update_schedule": True,
-        },
-        {
-            "name": "BB send optional message 2",
-            "task_path": "aa_bb.tasks_cb.BB_send_opt_message2",
-            "schedule_attr": "optschedule2",
-            "active_attr": "are_opt_messages2_active",
-            "update_schedule": True,
-        },
-        {
-            "name": "BB send optional message 3",
-            "task_path": "aa_bb.tasks_cb.BB_send_opt_message3",
-            "schedule_attr": "optschedule3",
-            "active_attr": "are_opt_messages3_active",
-            "update_schedule": True,
-        },
-        {
-            "name": "BB send optional message 4",
-            "task_path": "aa_bb.tasks_cb.BB_send_opt_message4",
-            "schedule_attr": "optschedule4",
-            "active_attr": "are_opt_messages4_active",
-            "update_schedule": True,
-        },
-        {
-            "name": "BB send optional message 5",
-            "task_path": "aa_bb.tasks_cb.BB_send_opt_message5",
-            "schedule_attr": "optschedule5",
-            "active_attr": "are_opt_messages5_active",
-            "update_schedule": True,
-        },
-        {
-            "name": "BB send recurring stats",
-            "task_path": "aa_bb.tasks_other.BB_send_recurring_stats",
-            "schedule_attr": "stats_schedule",
-            "active_attr": "are_recurring_stats_active",
-            "update_schedule": True,
-        },
-        {
-            "name": "BB run regular LoA updates",
-            "task_path": "aa_bb.tasks_cb.BB_run_regular_loa_updates",
-            "active_attr": "is_loa_active",
-        },
-        {
-            "name": "BB check member compliance",
-            "task_path": "aa_bb.tasks_cb.check_member_compliance",
-            "active_attr": "is_paps_active",
-        },
-    ]
-
-    from django.apps import apps
-    if apps.is_installed("aa_contacts"):
-        tasks.append({
-            "name": "BB sync contacts from aa-contacts",
-            "task_path": "aa_bb.tasks.BB_sync_contacts_from_aa_contacts",
-            "schedule": hourly_25_schedule,
-            "active_attr": "auto_import_contacts_enabled",
-        })
-
-    for task_info in tasks:
-        name = task_info["name"]
-        task_path = task_info["task_path"]
-        config = BigBrotherConfig.get_solo()
-
-        schedule_attr = task_info.get("schedule_attr")
-        if schedule_attr:
-            schedule = getattr(config, schedule_attr, None) or default_schedule
-        else:
-            schedule = task_info.get("schedule") or default_schedule
-
-        is_active = bool(getattr(config, task_info["active_attr"], False))
-        update_schedule = task_info.get("update_schedule", False)
-
-        setup_periodic_task(
-            name=name,
-            task_path=task_path,
-            schedule=schedule,
-            enabled=is_active,
-            update_schedule=update_schedule
-        )
-
+    from .tasks_utils import sync_periodic_tasks
+    sync_periodic_tasks()
 
 
 @shared_task
 def BB_run_regular_loa_updates():
     """
     Scan every member main and update LoA statuses / inactivity flags.
-
-    - Marks approved requests as in-progress/finished based on dates.
-    - Sends LoA inactivity warnings when a pilot exceeds the allowed logoff days
-      without an LoA in progress.
     """
     cfg = BigBrotherConfig.get_solo()
+    if not cfg.is_active:
+        return
     qs_profiles = get_user_profiles()
     if not qs_profiles.exists():  # No members matching filters, so nothing to process.
         logger.info("ℹ️  [AA-BB] - [BB_run_regular_loa_updates] - No member mains found.")
@@ -1037,11 +738,25 @@ def BB_run_regular_loa_updates():
             if lr.start_date <= today <= lr.end_date and lr.status == "approved":  # Approved LoAs become in-progress when dates hit.
                 lr.status = "in_progress"
                 lr.save(update_fields=["status"])
-                send_message(f"{user.username}'s LoA Request status changed to in progress")
+                send_status_embed(
+                    subject="LoA Status Change",
+                    lines=[f"{user.username}'s LoA Request status changed to in progress"],
+                    color=0x3498db,
+                )
             elif today > lr.end_date and lr.status != "finished":  # Auto-close requests whose end dates passed.
                 lr.status = "finished"
                 lr.save(update_fields=["status"])
-                send_message(f"##{get_pings('LoA Changed Status')} **{ec}**'s LoA\n- from **{lr.start_date}**\n- to **{lr.end_date}**\n- for **{lr.reason}**\n## has finished")
+                send_status_embed(
+                    subject="LoA Finished",
+                    lines=[
+                        f"{get_pings('LoA Changed Status')} **{ec}**'s LoA",
+                        f"- from **{lr.start_date}**",
+                        f"- to **{lr.end_date}**",
+                        f"- for **{lr.reason}**",
+                        "## has finished"
+                    ],
+                    color=0x3498db,
+                )
         has_active_loa = LeaveRequest.objects.filter(
             user=user,
             status="in_progress",
@@ -1051,8 +766,13 @@ def BB_run_regular_loa_updates():
         if days_since > cfg.loa_max_logoff_days and not has_active_loa:  # Flag members inactive beyond policy without LoA.
             flags.append(f"- **{ec}** was last seen online on {latest_logoff} (**{days_since}** days ago where maximum w/o a LoA request is **{cfg.loa_max_logoff_days}**)")
     if flags and cfg.is_loa_active:  # Notify staff when inactivity breaches are detected. but also don't send unless LOA is actually on
-        flags_text = "\n".join(flags)
-        send_message(f"##{get_pings('LoA Inactivity')} Inactive Members Found:\n{flags_text}")
+        lines = [f"{get_pings('LoA Inactivity')} Inactive Members Found:"] + flags
+        for chunk in _chunk_embed_lines(lines):
+            send_status_embed(
+                subject="LoA Inactivity",
+                lines=chunk,
+                color=0xFF0000,
+            )
 
 
 @shared_task
@@ -1063,6 +783,8 @@ def BB_daily_DB_cleanup():
     Deletes stale name caches, employment caches, processed mail/contract/transaction
     entries that no longer have backing data, and non-member PAP compliance rows.
     """
+    if not BigBrotherConfig.get_solo().is_active:
+        return
     from .models import (
         Alliance_names, Character_names, Corporation_names, UserStatus, EntityInfoCache,
         id_types, CharacterEmploymentCache, FrequentCorpChangesCache, CurrentStintCache, AwoxKillsCache,
@@ -1184,5 +906,10 @@ def BB_daily_DB_cleanup():
         logger.warning(f"ℹ️  [AA-BB] - [BB_daily_DB_cleanup] - PapCompliance cleanup failed: {e}")
 
     if flags:  # Summarize cleanup actions when anything was removed.
-        flags_text = "\n".join(flags)
-        send_message(f"### DB Cleanup Complete:\n{flags_text}")
+        lines = ["DB Cleanup Complete:"] + flags
+        for chunk in _chunk_embed_lines(lines):
+            send_status_embed(
+                subject="DB Cleanup",
+                lines=chunk,
+                color=0x3498db,
+            )

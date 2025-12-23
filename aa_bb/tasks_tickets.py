@@ -37,7 +37,7 @@ except ImportError:
         return []
 
 from .models import BigBrotherConfig, TicketToolConfig, PapCompliance, LeaveRequest, ComplianceTicket
-from .app_settings import send_message, get_user_profiles, get_character_id
+from .app_settings import get_user_profiles, get_character_id, send_status_embed, _chunk_embed_lines
 
 User = get_user_model()
 
@@ -160,37 +160,50 @@ def discord_check(user):
 
 
 
+def get_webhook_for_reason(reason: str) -> Optional[str]:
+    """Resolve which webhook URL to use based on the ticket reason."""
+    bb_cfg = BigBrotherConfig.get_solo()
+    if reason in ["paps_check", "afk_check", "discord_check", "char_removed"]:
+        return bb_cfg.user_compliance_webhook or bb_cfg.webhook
+    if reason in ["corp_check", "awox_kill"]:
+        return bb_cfg.corp_compliance_webhook or bb_cfg.webhook
+    return bb_cfg.webhook
+
+
 @shared_task
 def hourly_compliance_check():
     """Run the top-of-hour audit that enforces compliance rules and reminders."""
-    cfg = TicketToolConfig.get_solo()
+    bb_cfg = BigBrotherConfig.get_solo()
+    if not bb_cfg.is_active:
+        return
+    t_cfg = TicketToolConfig.get_solo()
     max_days = {
-        "corp_check": cfg.corp_check,
-        "paps_check": cfg.paps_check,
-        "afk_check": cfg.afk_check,
-        "discord_check": cfg.discord_check,
+        "corp_check": t_cfg.corp_check,
+        "paps_check": t_cfg.paps_check,
+        "afk_check": t_cfg.afk_check,
+        "discord_check": t_cfg.discord_check,
     }
 
     # Per-reason reminder frequency (in days)
     reminder_frequency = {
-        "corp_check": cfg.corp_check_frequency,
-        "paps_check": cfg.paps_check_frequency,
-        "afk_check": cfg.afk_check_frequency,
-        "discord_check": cfg.discord_check_frequency,
+        "corp_check": t_cfg.corp_check_frequency,
+        "paps_check": t_cfg.paps_check_frequency,
+        "afk_check": t_cfg.afk_check_frequency,
+        "discord_check": t_cfg.discord_check_frequency,
     }
 
     reason_checkers = {
-        "corp_check": (corp_check, cfg.corp_check_reason),
-        "paps_check": (paps_check, cfg.paps_check_reason),
-        "afk_check": (afk_check, cfg.afk_check_reason),
-        "discord_check": (discord_check, cfg.discord_check_reason),
+        "corp_check": (corp_check, t_cfg.corp_check_reason),
+        "paps_check": (paps_check, t_cfg.paps_check_reason),
+        "afk_check": (afk_check, t_cfg.afk_check_reason),
+        "discord_check": (discord_check, t_cfg.discord_check_reason),
     }
 
     reminder_messages = {
-        "corp_check": cfg.corp_check_reminder,
-        "paps_check": cfg.paps_check_reminder,
-        "afk_check": cfg.afk_check_reminder,
-        "discord_check": cfg.discord_check_reminder,
+        "corp_check": t_cfg.corp_check_reminder,
+        "paps_check": t_cfg.paps_check_reminder,
+        "afk_check": t_cfg.afk_check_reminder,
+        "discord_check": t_cfg.discord_check_reminder,
     }
 
     now = timezone.now()
@@ -201,7 +214,7 @@ def hourly_compliance_check():
     # 1. Check compliance reasons
     for UserProfil in get_user_profiles():
         user = UserProfil.user
-        if user in cfg.excluded_users.all():  # Skip users explicitly excluded from checks.
+        if user in t_cfg.excluded_users.all():  # Skip users explicitly excluded from checks.
             continue
         for reason, (checker, msg_template) in reason_checkers.items():
             checked = checker(user)
@@ -210,10 +223,20 @@ def hourly_compliance_check():
                 ensure_ticket(user, reason)
 
     # 2. Process existing tickets
-    ticket_resolved_manually_notify = BigBrotherConfig.ticket_notify_man
-    ticket_resolved_automatic_notify = BigBrotherConfig.ticket_notify_auto
+    ticket_resolved_manually_notify = bb_cfg.ticket_notify_man
+    ticket_resolved_automatic_notify = bb_cfg.ticket_notify_auto
+
+    # For grouping notifications by webhook
+    notifications_by_hook: dict[str, list[str]] = {}
+
+    def add_notification(hook_url, msg):
+        if hook_url not in notifications_by_hook:
+            notifications_by_hook[hook_url] = []
+        notifications_by_hook[hook_url].append(msg)
+
     for ticket in ComplianceTicket.objects.all():
         reason = ticket.reason
+        hook = get_webhook_for_reason(reason)
 
         if reason == "char_removed" or reason == "awox_kill":  # These rely on manual resolution flow.
             logger.info(f"✅  [AA-BB] - [hourly_compliance_check] - reason:{reason}, resolved:{ticket.is_resolved}")
@@ -221,7 +244,7 @@ def hourly_compliance_check():
                 logger.info(f"✅  [AA-BB] - [hourly_compliance_check] - reason:{reason}")
                 close_ticket(ticket)
                 if ticket_resolved_manually_notify:
-                    send_message(f"ticket for <@{ticket.discord_user_id}> resolved")
+                    add_notification(hook, f"✅ Ticket for <@{ticket.discord_user_id}> (**{reason}**) resolved")
             continue
 
         checker, _ = reason_checkers[reason]
@@ -230,19 +253,19 @@ def hourly_compliance_check():
         if ticket.user and checker(ticket.user):  # Condition cleared, close and notify.
             close_ticket(ticket)
             if ticket_resolved_automatic_notify:
-                send_message(f"ticket for <@{ticket.discord_user_id}> resolved")
+                add_notification(hook, f"✅ Ticket for <@{ticket.discord_user_id}> (**{reason}**) resolved")
             continue
 
         if ticket.user not in allowed_users:  # User left the org, close ticket and alert.
             close_ticket(ticket)
             if ticket_resolved_automatic_notify:
-                send_message(f"User <@{ticket.discord_user_id}> is no longer a member, closing ticket")
+                add_notification(hook, f"❌ User <@{ticket.discord_user_id}> is no longer a member, closing ticket (**{reason}**)")
             continue
 
         if not ticket.user:  # Missing auth user entirely, close ticket.
             close_ticket(ticket)
             if ticket_resolved_automatic_notify:
-                send_message(f"ticket for <@{ticket.discord_user_id}> closed due to missing auth user")
+                add_notification(hook, f"⚠️ Ticket for <@{ticket.discord_user_id}> (**{reason}**) closed due to missing auth user")
             continue
 
         # Reminder logic with per-reason frequency + max-days cap
@@ -253,7 +276,7 @@ def hourly_compliance_check():
         max_dayss = max_days.get(reason, 30)
         if days_elapsed > max_dayss:  # Escalate when overdue beyond max window.
             # escalation: ping staff role to kick the user
-            mention = f"<@&{cfg.Role_ID}>"           # role mention
+            mention = f"<@&{t_cfg.Role_ID}>"           # role mention
             user_mention = f"<@{ticket.discord_user_id}>"
             msg = (f"⚠️ {mention} please review compliance ticket for {user_mention}. "
                    f"Issue **{reason}** has exceeded {max_dayss} days without resolution. "
@@ -281,7 +304,7 @@ def hourly_compliance_check():
         if reason == "paps_check":  # PAP reminder template only uses {days}.
             msg = template.format(days=days_left)
         else:
-            msg = template.format(namee=mention, role=cfg.Role_ID, days=days_left)
+            msg = template.format(namee=mention, role=t_cfg.Role_ID, days=days_left)
 
         # Queue the bot-side reminder (ensure task_kwargs is present)
         run_task_function.apply_async(
@@ -296,6 +319,17 @@ def hourly_compliance_check():
         # Mark today as reminded so the system does not ping again today
         ticket.last_reminder_sent = days_elapsed
         ticket.save(update_fields=["last_reminder_sent"])
+
+    # Flush grouped notifications
+    for hook_url, lines in notifications_by_hook.items():
+        chunks = _chunk_embed_lines(lines)
+        for chunk in chunks:
+            send_status_embed(
+                subject="Ticket Updates",
+                lines=chunk,
+                color=0x3498db,  # Blue
+                hook=hook_url
+            )
 
     # Rebalance ticket categories after processing tickets
     try:
@@ -361,7 +395,12 @@ def ensure_ticket(user, reason):
         # If still nothing, log and notify, then stop
         if not discord_user:  # There is no reasonable recipient—alert staff and bail.
             logger.error(f"✅  [AA-BB] - [ensure_ticket] - Failed to create a {reason} ticket for {username}. No eligible fallback found: no superuser or Discord admin with Discord linked.")
-            send_message(f"Failed to create a {reason} ticket for {username}. No eligible fallback found: no superuser or Discord admin with Discord linked.")
+            send_status_embed(
+                subject="Ticket Creation Failed",
+                lines=[f"Failed to create a **{reason}** ticket for **{username}**. No eligible fallback found: no superuser or Discord admin with Discord linked."],
+                color=0xe74c3c,  # Red
+                hook=get_webhook_for_reason(reason)
+            )
             return
 
         discord_id = discord_user.uid
@@ -390,7 +429,12 @@ def ensure_ticket(user, reason):
         user=user, reason=reason, is_resolved=False
     ).exists()
     if not exists:  # Only emit side effects when a new ticket is needed.
-        send_message(f"ticket for {user.username} created, reason - {reason}")
+        send_status_embed(
+            subject="Ticket Created",
+            lines=[f"Ticket for **{user.username}** created, reason - **{reason}**"],
+            color=0xf1c40f,  # Yellow
+            hook=get_webhook_for_reason(reason)
+        )
         run_task_function.apply_async(
             args=["aa_bb.tasks_bot.create_compliance_ticket"],
             kwargs={

@@ -1,7 +1,7 @@
 from .models import (
     BigBrotherConfig, RecurringStatsConfig
 )
-from .app_settings import send_message
+from .app_settings import send_message, send_status_embed, _chunk_embed_lines
 from django.apps import apps
 
 from celery import shared_task
@@ -13,12 +13,10 @@ logger = logging.getLogger(__name__)
 def BB_send_recurring_stats():
     """
     Build and post recurring stats to the configured webhook.
-
-    - Uses BigBrotherConfig for a webhook and schedule-enabled flag.
-    - Uses RecurringStatsConfig for which states/stats to include and for deltas.
     """
-
     cfg = BigBrotherConfig.get_solo()
+    if not cfg.is_active:
+        return
 
     webhook = cfg.stats_webhook
     if not webhook:
@@ -251,9 +249,15 @@ def BB_send_recurring_stats():
     if stats_cfg.include_corporation_audits:
         add_flat("Corporation Audits", "corporation_audits_total")
 
-    message = "\n".join(lines).strip()
-    if message:
-        send_message(message, webhook)
+    if lines:
+        chunks = _chunk_embed_lines(lines)
+        for chunk in chunks:
+            send_status_embed(
+                subject="Recurring Stats Update",
+                lines=chunk,
+                color=0x3498db,  # Blue
+                hook=webhook
+            )
 
     # Update snapshot + last run
     stats_cfg.last_run_at = now

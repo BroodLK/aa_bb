@@ -18,7 +18,8 @@ from .app_settings import (
     get_user_id,
     get_character_id,
     get_pings,
-    send_message
+    send_status_embed,
+    _chunk_embed_lines,
 )
 from aa_bb.checks.awox import get_awox_kill_links
 from aa_bb.checks.cyno import get_user_cyno_info, get_current_stint_days_in_corp
@@ -53,162 +54,6 @@ from allianceauth.services.hooks import get_extension_logger
 logger = get_extension_logger(__name__)
 VERBOSE_WEBHOOK_LOGGING = True
 
-def send_status_embed(
-    subject: str,
-    lines: list[str],
-    *,
-    override_title: str | None = None,
-    color: int = 0xED4245,  # Discord red
-):
-    """
-    Send a Discord embed via the existing send_message() webhook.
-    """
-
-    if VERBOSE_WEBHOOK_LOGGING:
-        logger.debug(
-            "✅  [AA-BB] - [Embed] - send_status_embed called | subject=%r | lines=%d",
-            subject,
-            len(lines) if lines else 0,
-        )
-
-    # Defensive: never send empty embeds
-    if not lines:
-        logger.debug("ℹ️  [AA-BB] - [Embed] - aborted: no lines supplied")
-        return
-
-    # Discord limits
-    MAX_DESC = 4096
-    MAX_LINES = 50
-
-    title = override_title if override_title is not None else subject
-
-    if VERBOSE_WEBHOOK_LOGGING:
-        logger.debug(
-            "✅  [AA-BB] - [Embed] - title resolved | title=%r | color=%#x",
-            title,
-            color,
-        )
-
-    # Trim excessive lines but keep tables intact
-    safe_lines = lines[:MAX_LINES]
-
-    if len(lines) > MAX_LINES:
-        logger.warning(
-            "✅  [AA-BB] - [Embed] - line cap exceeded | original=%d | capped=%d",
-            len(lines),
-            MAX_LINES,
-        )
-
-    description = "\n".join(safe_lines)
-
-    # Hard truncate if someone messed up
-    if len(description) > MAX_DESC:
-        logger.error(
-            "✅  [AA-BB] - [Embed] - description overflow | chars=%d | truncating",
-            len(description),
-        )
-        description = description[: MAX_DESC - 3] + "..."
-
-    if VERBOSE_WEBHOOK_LOGGING:
-        logger.debug(
-            "✅  [AA-BB] - [Embed] - payload ready | lines=%d | chars=%d",
-            len(safe_lines),
-            len(description),
-        )
-
-    embed = {
-        "embeds": [
-            {
-                "title": title,
-                "description": description,
-                "color": color,
-            }
-        ]
-    }
-
-    if VERBOSE_WEBHOOK_LOGGING:
-        logger.debug("✅  [AA-BB] - [Embed] - sending embed payload")
-    time.sleep(0.25)
-    send_message(embed)
-
-
-# Helper to keep embed lines reasonably narrow for mobile (≈40 chars)
-def _chunk_embed_lines(lines, max_chars=1900):
-    """
-    Split a list of lines into chunks whose joined text length
-    is <= max_chars, without breaking ``` code blocks.
-
-    Returns: List[List[str]] – each inner list is one embed body.
-    """
-    # First, group into "segments": either a full code block or a run of normal lines
-    segments = []
-    current_segment = []
-    in_code = False
-
-    for line in lines:
-        stripped = line.strip()
-
-        if stripped.startswith("```"):
-            # Starting a new code block
-            if not in_code:
-                # flush any accumulated non-code segment
-                if current_segment:
-                    segments.append(current_segment)
-                    current_segment = []
-                in_code = True
-                current_segment = [line]
-            else:
-                # closing an existing code block
-                current_segment.append(line)
-                segments.append(current_segment)
-                current_segment = []
-                in_code = False
-        else:
-            current_segment.append(line)
-
-    if current_segment:
-        segments.append(current_segment)
-
-    # Now pack segments into chunks by total char length
-    chunks = []
-    current_chunk = []
-    current_len = 0
-
-    for seg in segments:
-        # Estimate length if we add this segment (with newlines)
-        seg_text = "\n".join(seg)
-        seg_len = len(seg_text) + (1 if current_chunk else 0)  # +1 for newline before segment
-
-        if seg_len > max_chars:
-            # Segment itself is huge; fall back to splitting inside it line-by-line
-            for line in seg:
-                line_len = len(line) + (1 if current_chunk else 0)
-                if current_len + line_len > max_chars and current_chunk:
-                    chunks.append(current_chunk)
-                    current_chunk = [line]
-                    current_len = len(line)
-                else:
-                    current_chunk.append(line)
-                    current_len += line_len
-            continue
-
-        if current_len + seg_len > max_chars and current_chunk:
-            # Start a new chunk
-            chunks.append(current_chunk)
-            current_chunk = list(seg)
-            current_len = len(seg_text)
-        else:
-            # Add segment to current chunk
-            if current_chunk:
-                current_chunk.append("")  # ensure a blank line between segments
-                current_len += 1
-            current_chunk.extend(seg)
-            current_len += len(seg_text)
-
-    if current_chunk:
-        chunks.append(current_chunk)
-
-    return chunks
 
 
 def parse_hostile_summary(summary: str):
@@ -496,11 +341,15 @@ def BB_update_single_user(user_id, char_name):
                                 discord_id = get_discord_user_id(user)
 
                                 ticket_message = f"<@&{tcfg.Role_ID}>,<@{discord_id}> detection indicates your involvement in an AWOX kill, please explain:\n{link_list}"
-                                send_message(f"ticket for {instance.user} created, reason - AWOX Kill")
+                                send_status_embed(
+                                    subject="Ticket Created",
+                                    lines=[f"Ticket for **{status.user}** created, reason - **AWOX Kill**"],
+                                    color=0xf1c40f,  # Yellow
+                                )
                                 run_task_function.apply_async(
                                     args=["aa_bb.tasks_bot.create_compliance_ticket"],
                                     kwargs={
-                                        "task_args": [instance.user.id, discord_id, "awox_kill", ticket_message],
+                                        "task_args": [status.user.id, discord_id, "awox_kill", ticket_message],
                                         "task_kwargs": {}
                                     }
                                 )
@@ -1140,7 +989,6 @@ def BB_run_regular_updates():
         latest state even if no Discord messages were sent this run.
     """
     instance = BigBrotherConfig.get_solo()
-    instance.is_active = True
 
     try:
         from django.contrib.auth import get_user_model
@@ -1204,11 +1052,13 @@ def BB_run_regular_updates():
                                     f"ℹ️  [AA-BB] - [BB_run_regular_updates] - Update backlog detected: {remaining_count} tasks remaining "
                                     f"({percent:.1f}% of last run count {instance.update_last_dispatch_count})"
                                 )
-                                send_message(
-                                    f"#{get_pings('Error')} **Update Backlog Alert**: {remaining_count} users are still "
-                                    f"being processed from the previous update run ({percent:.1f}% of "
-                                    f"{instance.update_last_dispatch_count} users). "
-                                    "This may indicate that the update stagger window is too short or workers are overloaded."
+                                send_status_embed(
+                                    subject="Update Backlog Alert",
+                                    lines=[
+                                        f"{get_pings('Error')} {remaining_count} users are still being processed from the previous update run ({percent:.1f}% of {instance.update_last_dispatch_count} users).",
+                                        "This may indicate that the update stagger window is too short or workers are overloaded."
+                                    ],
+                                    color=0xFF0000,
                                 )
                 except Exception as e:
                     logger.error(f"ℹ️  [AA-BB] - [BB_run_regular_updates] - Failed to check for update backlog: {e}", exc_info=True)
@@ -1264,33 +1114,24 @@ def BB_run_regular_updates():
         logger.error("ℹ️  [AA-BB] - [BB_run_regular_updates] - Task failed", exc_info=True)
         instance.is_active = True
         instance.save()
-        send_message(
-            f"#{get_pings('Error')} Big Brother encountered an unexpected error"
-        )
-
-        # send the error in chunks to keep within discord limits and keep it in code blocks
-
         tb_str = traceback.format_exc()
-        max_chunk = 1000
-        start = 0
-        length = len(tb_str)
-
-        while start < length:
-            end = min(start + max_chunk, length)
-            if end < length:  # maintain readable chunks whenever possible
-                nl = tb_str.rfind('\n', start, end)
-                if nl != -1 and nl > start:  # break on newline if it exists inside this chunk
-                    end = nl + 1
-            chunk = tb_str[start:end]
-            time.sleep(0.25)
-            send_message(f"```{chunk}```")
-            start = end
+        tb_lines = [f"{get_pings('Error')} Big Brother encountered an unexpected error", "```python"] + tb_str.split("\n") + ["```"]
+        for chunk in _chunk_embed_lines(tb_lines):
+            send_status_embed(
+                subject="Big Brother Error",
+                lines=chunk,
+                color=0xFF0000,
+            )
 
     from .tasks_utils import format_task_name
     task_name = format_task_name('BB run regular updates')
     task = PeriodicTask.objects.filter(name=task_name).first()
-    if not task.enabled:  # inform admins when the periodic task finished its initial run
-        send_message("initial run of the Big Brother task has finished, you can now enable the task")
+    if task and not task.enabled:  # inform admins when the periodic task finished its initial run
+        send_status_embed(
+            subject="Big Brother",
+            lines=["Initial run of the task has finished, you can now enable the task"],
+            color=0x00FF00,
+        )
 
 @shared_task()
 def BB_send_discord_notifications(subject: str, chunks: list[list[str]]) -> None:

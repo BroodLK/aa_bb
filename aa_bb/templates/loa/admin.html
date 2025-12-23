@@ -3,16 +3,17 @@
   Includes filter controls plus per-row action forms wired up to the LOA views.
 -->
 {% extends 'loa/base.html' %}
+{% load i18n %}
 {% load static %}
 
 {% block details %}
-  <h1>All Leave of Absence Requests</h1>
+  <h1>{% translate "All Leave of Absence Requests" %}</h1>
 
   <form method="get" class="row g-3 mb-4">
     <div class="col-auto">
-      <label class="form-label" for="filter-user">User:</label>
+      <label class="form-label" for="filter-user">{% translate "User" %}:</label>
       <select name="user" id="filter-user" class="form-select">
-        <option value="">All</option>
+        <option value="">{% translate "All" %}</option>
         {% for uid, uname in users %}
           <option value="{{ uid }}" {% if uid|stringformat:"s" == current_user %}selected{% endif %}>
             {{ uname }}
@@ -21,9 +22,9 @@
       </select>
     </div>
     <div class="col-auto">
-      <label class="form-label" for="filter-status">Status:</label>
+      <label class="form-label" for="filter-status">{% translate "Status" %}:</label>
       <select name="status" id="filter-status" class="form-select">
-        <option value="">All</option>
+        <option value="">{% translate "All" %}</option>
         {% for code, label in status_choices %}
           <option value="{{ code }}" {% if code == current_status %}selected{% endif %}>
             {{ label }}
@@ -32,7 +33,7 @@
       </select>
     </div>
     <div class="col-auto align-self-end">
-      <button type="submit" class="btn btn-primary">Filter</button>
+      <button type="submit" class="btn btn-primary">{% translate "Filter" %}</button>
     </div>
   </form>
 
@@ -40,13 +41,13 @@
     <table class="table table-striped">
       <thead>
         <tr>
-          <th>User</th>
-          <th>Start</th>
-          <th>End</th>
-          <th>Created</th>
-          <th>Reason</th>
-          <th>Status</th>
-          <th class="text-end">Actions</th>
+          <th>{% translate "User" %}</th>
+          <th>{% translate "Start" %}</th>
+          <th>{% translate "End" %}</th>
+          <th>{% translate "Created" %}</th>
+          <th>{% translate "Reason" %}</th>
+          <th>{% translate "Status" %}</th>
+          <th class="text-end">{% translate "Actions" %}</th>
         </tr>
       </thead>
       <tbody>
@@ -78,7 +79,7 @@
                   {% if req.status == 'approved' %}disabled{% endif %}
                   {% if req.status == 'in_progress' %}disabled{% endif %}
                   {% if req.status == 'finished' %}disabled{% endif %}
-                >Approve</button>
+                >{% translate "Approve" %}</button>
               </form>
 
               {# Deny #}
@@ -90,7 +91,7 @@
                   {% if req.status == 'denied' %}disabled{% endif %}
                   {% if req.status == 'in_progress' %}disabled{% endif %}
                   {% if req.status == 'finished' %}disabled{% endif %}
-                >Deny</button>
+                >{% translate "Deny" %}</button>
               </form>
 
               {# Delete #}
@@ -99,7 +100,7 @@
                 <button
                   type="submit"
                   class="btn btn-sm btn-danger"
-                >Delete</button>
+                >{% translate "Delete" %}</button>
               </form>
             </td>
           </tr>
@@ -107,6 +108,6 @@
       </tbody>
     </table>
   {% else %}
-    <p>No Leave Requests found.</p>
+    <p>{% translate "No Leave Requests found." %}</p>
   {% endif %}
 {% endblock %}

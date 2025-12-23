@@ -1364,3 +1364,168 @@ def send_message(message, hook: str = None):
             len(buffer),
         )
         _post_with_retries({"content": buffer})
+
+
+def send_status_embed(
+    subject: str,
+    lines: List[str],
+    *,
+    override_title: Optional[str] = None,
+    color: int = 0xED4245,  # Discord red
+    hook: Optional[str] = None,
+) -> None:
+    """
+    Send a Discord embed via the existing send_message() webhook.
+
+    - subject: usually the corp name
+    - lines: list of lines to go into embed description
+    - override_title: optional explicit title
+    - color: embed accent color (int)
+    - hook: optional webhook URL override
+    """
+
+    if VERBOSE_WEBHOOK_LOGGING:
+        logger.debug(
+            "✅  [AA-BB] - [Embed] - send_status_embed called | subject=%r | lines=%d",
+            subject,
+            len(lines) if lines else 0,
+        )
+
+    # Defensive: never send empty embeds
+    if not lines:
+        if VERBOSE_WEBHOOK_LOGGING:
+            logger.debug("ℹ️  [AA-BB] - [Embed] - aborted: no lines supplied")
+        return
+
+    # Discord limits
+    MAX_DESC = 4096
+    MAX_LINES = 50
+
+    title = override_title if override_title is not None else subject
+
+    if VERBOSE_WEBHOOK_LOGGING:
+        logger.debug(
+            "✅  [AA-BB] - [Embed] - title resolved | title=%r | color=%#x",
+            title,
+            color,
+        )
+
+    # Trim excessive lines but keep tables / sections intact
+    safe_lines = lines[:MAX_LINES]
+    if len(lines) > MAX_LINES:
+        logger.warning(
+            "ℹ️  [AA-BB] - [Embed] - line cap exceeded | original=%d | capped=%d",
+            len(lines),
+            MAX_LINES,
+        )
+
+    description = "\n".join(safe_lines)
+
+    # Hard truncate if someone messed up
+    if len(description) > MAX_DESC:
+        logger.error(
+            "ℹ️  [AA-BB] - [Embed] - description overflow | chars=%d | truncating",
+            len(description),
+        )
+        description = description[: MAX_DESC - 3] + "..."
+
+    if VERBOSE_WEBHOOK_LOGGING:
+        logger.debug(
+            "✅  [AA-BB] - [Embed] - payload ready | lines=%d | chars=%d",
+            len(safe_lines),
+            len(description),
+        )
+
+    embed = {
+        "embeds": [
+            {
+                "title": title,
+                "description": description,
+                "color": color,
+            }
+        ]
+    }
+
+    if VERBOSE_WEBHOOK_LOGGING:
+        logger.debug("✅  [AA-BB] - [Embed] - sending embed payload")
+
+    time.sleep(0.25)
+    send_message(embed, hook=hook)
+
+
+def _chunk_embed_lines(lines, max_chars=1900):
+    """
+    Split a list of lines into chunks whose joined text length
+    is <= max_chars, without breaking ``` code blocks.
+
+    Returns: List[List[str]] – each inner list is one embed body.
+    """
+    # First, group into "segments": either a full code block or a run of normal lines
+    segments = []
+    current_segment = []
+    in_code = False
+
+    for line in lines:
+        stripped = line.strip()
+
+        if stripped.startswith("```"):
+            # Starting a new code block
+            if not in_code:
+                # flush any accumulated non-code segment
+                if current_segment:
+                    segments.append(current_segment)
+                    current_segment = []
+                in_code = True
+                current_segment = [line]
+            else:
+                # closing an existing code block
+                current_segment.append(line)
+                segments.append(current_segment)
+                current_segment = []
+                in_code = False
+        else:
+            current_segment.append(line)
+
+    if current_segment:
+        segments.append(current_segment)
+
+    # Now pack segments into chunks by total char length
+    chunks = []
+    current_chunk = []
+    current_len = 0
+
+    for seg in segments:
+        # Estimate length if we add this segment (with newlines)
+        seg_text = "\n".join(seg)
+        seg_len = len(seg_text) + (1 if current_chunk else 0)  # +1 for newline before segment
+
+        if seg_len > max_chars:
+            # Segment itself is huge; fall back to splitting inside it line-by-line
+            for line in seg:
+                line_len = len(line) + (1 if current_chunk else 0)
+                if current_len + line_len > max_chars and current_chunk:
+                    chunks.append(current_chunk)
+                    current_chunk = [line]
+                    current_len = len(line)
+                else:
+                    current_chunk.append(line)
+                    current_len += line_len
+            continue
+
+        if current_len + seg_len > max_chars and current_chunk:
+            # Start a new chunk
+            chunks.append(current_chunk)
+            current_chunk = list(seg)
+            current_len = len(seg_text)
+        else:
+            # Add segment to current chunk
+            if current_chunk:
+                current_chunk.append("")  # ensure a blank line between segments
+                current_len += 1
+            current_chunk.extend(seg)
+            current_len += len(seg_text)
+
+    if current_chunk:
+        chunks.append(current_chunk)
+
+    return chunks

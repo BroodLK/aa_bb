@@ -12,8 +12,9 @@ from django.db.models.signals import post_save, pre_delete
 from allianceauth.authentication.models import CharacterOwnership
 
 from .models import BigBrotherConfig, TicketToolConfig
-from .tasks import BB_register_message_tasks
-from .app_settings import send_message
+from .tasks_cb import BB_register_message_tasks
+from .tasks_tickets import get_webhook_for_reason
+from .app_settings import send_message, send_status_embed
 
 import logging
 
@@ -53,7 +54,12 @@ def removed_character(sender, instance, **kwargs):
             f"when you change your PW. Please fix it ASAP and get yourself a PW manager so "
             f"you don't forget it again. (you'll need to do so on all 3 auths)"
         )
-        send_message(f"ticket for {instance.user} created, reason - Character Removed")
+        send_status_embed(
+            subject="Ticket Created",
+            lines=[f"Ticket for **{instance.user}** created, reason - **Character Removed**"],
+            color=0xf1c40f,  # Yellow
+            hook=get_webhook_for_reason("char_removed")
+        )
         run_task_function.apply_async(
             args=["aa_bb.tasks_bot.create_compliance_ticket"],
             kwargs={

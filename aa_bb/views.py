@@ -26,7 +26,7 @@ from celery.exceptions import Ignore
 from allianceauth.authentication.models import UserProfile, CharacterOwnership
 
 from .forms import LeaveRequestForm
-from .app_settings import get_user_characters, get_entity_info, get_main_character_name, get_character_id, send_message, get_pings, aablacklist_active
+from .app_settings import get_user_characters, get_entity_info, get_main_character_name, get_character_id, get_pings, aablacklist_active, send_status_embed
 from .models import BigBrotherConfig, WarmProgress, LeaveRequest
 
 from aa_bb.checks.awox import render_awox_kills_html
@@ -1066,7 +1066,17 @@ def loa_request(request):
 
             # 3) send webhook with character
             hook = cfg.loawebhook
-            send_message(f"##{get_pings('LoA Request')} {main_char} requested LOA:\n- from **{lr.start_date}**\n- to **{lr.end_date}**\n- reason: **{lr.reason}**", hook)
+            send_status_embed(
+                subject="LoA Request",
+                lines=[
+                    f"{get_pings('LoA Request')} {main_char} requested LOA:",
+                    f"- from **{lr.start_date}**",
+                    f"- to **{lr.end_date}**",
+                    f"- reason: **{lr.reason}**"
+                ],
+                color=0x3498db,
+                hook=hook
+            )
 
             return redirect('loa:index')
         else:
@@ -1087,7 +1097,17 @@ def delete_request(request, pk):
         elif lr.status == 'pending':  # Only pending requests may be removed.
             lr.delete()
             hook = BigBrotherConfig.get_solo().loawebhook
-            send_message(f"##{get_pings('LoA Changed Status')} {lr.main_character} deleted their LOA:\n- from **{lr.start_date}**\n- to **{lr.end_date}**\n- reason: **{lr.reason}**", hook)
+            send_status_embed(
+                subject="LoA Deleted",
+                lines=[
+                    f"{get_pings('LoA Changed Status')} {lr.main_character} deleted their LOA:",
+                    f"- from **{lr.start_date}**",
+                    f"- to **{lr.end_date}**",
+                    f"- reason: **{lr.reason}**"
+                ],
+                color=0x3498db,
+                hook=hook
+            )
     return redirect('loa:index')
 
 @login_required
@@ -1104,7 +1124,17 @@ def delete_request_admin(request, pk):
         lr.delete()
         hook = cfg.loawebhook
         userrr = get_main_character_name(request.user.id)
-        send_message(f"##{get_pings('LoA Changed Status')} {userrr} deleted {lr.main_character}'s LOA:\n- from **{lr.start_date}**\n- to **{lr.end_date}**\n- reason: **{lr.reason}**", hook)
+        send_status_embed(
+            subject="LoA Deleted by Admin",
+            lines=[
+                f"{get_pings('LoA Changed Status')} {userrr} deleted {lr.main_character}'s LOA:",
+                f"- from **{lr.start_date}**",
+                f"- to **{lr.end_date}**",
+                f"- reason: **{lr.reason}**"
+            ],
+            color=0x3498db,
+            hook=hook
+        )
     return redirect('loa:admin')
 
 @login_required
@@ -1122,7 +1152,17 @@ def approve_request(request, pk):
         lr.save()
         hook = cfg.loawebhook
         userrr = get_main_character_name(request.user.id)
-        send_message(f"##{get_pings('LoA Changed Status')} {userrr} approved {lr.main_character}'s LOA:\n- from **{lr.start_date}**\n- to **{lr.end_date}**\n- reason: **{lr.reason}**", hook)
+        send_status_embed(
+            subject="LoA Approved",
+            lines=[
+                f"{get_pings('LoA Changed Status')} {userrr} approved {lr.main_character}'s LOA:",
+                f"- from **{lr.start_date}**",
+                f"- to **{lr.end_date}**",
+                f"- reason: **{lr.reason}**"
+            ],
+            color=0x3498db,
+            hook=hook
+        )
     return redirect('loa:admin')
 
 @login_required
@@ -1140,5 +1180,15 @@ def deny_request(request, pk):
         lr.save()
         hook = cfg.loawebhook
         userrr = get_main_character_name(request.user.id)
-        send_message(f"##{get_pings('LoA Changed Status')} {userrr} denied {lr.main_character}'s LOA:\n- from **{lr.start_date}**\n- to **{lr.end_date}**\n- reason: **{lr.reason}**", hook)
+        send_status_embed(
+            subject="LoA Denied",
+            lines=[
+                f"{get_pings('LoA Changed Status')} {userrr} denied {lr.main_character}'s LOA:",
+                f"- from **{lr.start_date}**",
+                f"- to **{lr.end_date}**",
+                f"- reason: **{lr.reason}**"
+            ],
+            color=0x3498db,
+            hook=hook
+        )
     return redirect('loa:admin')

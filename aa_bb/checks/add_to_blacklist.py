@@ -7,7 +7,7 @@ blacklist when authorized staff request it.
 """
 
 from allianceauth.authentication.models import CharacterOwnership
-from ..app_settings import aablacklist_active, send_message, get_pings
+from ..app_settings import aablacklist_active, get_pings, send_status_embed
 from django.contrib.auth.models import User
 from django.urls import reverse
 from django.middleware.csrf import get_token
@@ -181,6 +181,10 @@ def add_user_characters_to_blacklist(
             alliance_name=None,
         )
         newly_blacklisted.append(char.character_name)
-        send_message(f"{get_pings('New Blacklist Entry')}{target_main_name}'s character {char.character_name} added to blacklist by {added_by}")
+        send_status_embed(
+            subject="New Blacklist Entry",
+            lines=[f"{get_pings('New Blacklist Entry')}{target_main_name}'s character {char.character_name} added to blacklist by {added_by}"],
+            color=0xFF0000,
+        )
 
     return newly_blacklisted

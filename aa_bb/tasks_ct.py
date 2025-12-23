@@ -18,7 +18,7 @@ from allianceauth.services.hooks import get_extension_logger
 from esi.errors import TokenExpiredError, TokenError, TokenInvalidError
 from esi.models import Token
 
-from .app_settings import send_message
+from .app_settings import send_message, send_status_embed, _chunk_embed_lines
 from .models import BigBrotherConfig
 
 logger = get_extension_logger(__name__)
@@ -49,6 +49,7 @@ try:
         update_char_location,
     )
 except ImportError:
+
     logger.error("✅  [AA-BB] - [Tasks_CT] - Corptools not installed, CT tasks will not be available.")
 
 
@@ -350,6 +351,13 @@ def kickstart_stale_ct_modules(days_stale: int = 2, limit: Optional[int] = None,
 
     ct_update_notify = BigBrotherConfig.get_solo().ct_notify
     if ct_update_notify and updated_names:
-        send_message(summary)
+        lines = summary.split("\n")
+        chunks = _chunk_embed_lines(lines)
+        for chunk in chunks:
+            send_status_embed(
+                subject="CT Audit Update",
+                lines=chunk,
+                color=0x9b59b6,  # Purple
+            )
 
     return summary
