@@ -453,8 +453,14 @@ class BigBrotherConfig(SingletonModel):
 
     clone_notify = models.BooleanField(
         default=True,
-        help_text=_("Whether to send Clone State Change notifications to discord"),
+        help_text=_("Whether to send Hostile Jump Clone Location Change notifications to discord"),
         verbose_name=_("Hostile Jump Clone Location Change Discord Notifications")
+    )
+
+    clone_state_notify = models.BooleanField(
+        default=True,
+        help_text=_("Whether to send Alpha/Omega Clone State Change notifications to discord"),
+        verbose_name=_("Clone State Change Discord Notifications")
     )
 
     asset_notify = models.BooleanField(

@@ -63,6 +63,7 @@ class BB_ConfigAdmin(SingletonModelAdmin):
                     "cyno_notify",
                     "sp_inject_notify",
                     "clone_notify",
+                    "clone_state_notify",
                     "asset_notify",
                     "contact_notify",
                     "contract_notify",

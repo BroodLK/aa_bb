@@ -252,7 +252,7 @@ def BB_update_single_user(user_id, char_name):
 
                 # final summary message
                 if flagggs:  # only when changes are detected should notifications and saves occur
-                    if instance.clone_notify:
+                    if instance.clone_state_notify:
                         changes.append(f"###{pinggg} Clone state change detected:{''.join(flagggs)}")
                     status.clone_status = state_result
                     status.save()
