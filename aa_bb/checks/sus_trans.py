@@ -264,6 +264,7 @@ def gather_user_transactions(user_id: int):
     user_ids = set(user_chars.keys())
     qs = WalletJournalEntry.objects.filter(second_party_id__in=user_ids)
     qs = qs.exclude(first_party_id__in=user_ids, second_party_id__in=user_ids)
+    qs = qs.exclude(ref_type="insurance")
     return qs
 
 

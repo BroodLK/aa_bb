@@ -249,6 +249,7 @@ def gather_user_transactions(corp_id: int):
     corp_audit = CorporationAudit.objects.get(corporation=corp_info)
 
     qs = CorporationWalletJournalEntry.objects.filter(division__corporation=corp_audit)
+    qs = qs.exclude(ref_type="insurance")
     logger.info(f"qs:{qs.count()}")
     return qs
 
