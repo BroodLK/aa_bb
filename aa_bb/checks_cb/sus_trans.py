@@ -249,7 +249,6 @@ def gather_user_transactions(corp_id: int):
     corp_audit = CorporationAudit.objects.get(corporation=corp_info)
 
     qs = CorporationWalletJournalEntry.objects.filter(division__corporation=corp_audit)
-    qs = qs.exclude(ref_type="insurance")
     logger.info(f"qs:{qs.count()}")
     return qs
 
@@ -362,9 +361,6 @@ def is_transaction_hostile(tx: dict) -> bool:
 
     if fp_whitelisted and sp_whitelisted:  # Both parties are whitelisted, so skip hostility.
         return False
-    for key in SUS_TYPES:
-        if key in tx.get('type'):  # Suspicious ref types always raise flags.
-            return True
     if "market_escrow" in tx.get('type') or "market_transaction" in tx.get('type'):
         if not cfg.market_transactions_show_major_hubs and is_major_hub(tx):
             return False
@@ -386,9 +382,6 @@ def is_transaction_hostile(tx: dict) -> bool:
     for key in ('first_party_alliance_id', 'second_party_alliance_id'):
         if tx.get(key) and str(tx[key]) in hostile_allis:  # Hostile alliance on either side.
             return True
-
-    if is_location_hostile(tx.get('location_id'), tx.get('system_id')):
-        return True
 
     return False
 

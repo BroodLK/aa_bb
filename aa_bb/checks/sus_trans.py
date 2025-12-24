@@ -264,7 +264,6 @@ def gather_user_transactions(user_id: int):
     user_ids = set(user_chars.keys())
     qs = WalletJournalEntry.objects.filter(second_party_id__in=user_ids)
     qs = qs.exclude(first_party_id__in=user_ids, second_party_id__in=user_ids)
-    qs = qs.exclude(ref_type="insurance")
     return qs
 
 
@@ -403,10 +402,6 @@ def is_transaction_hostile(tx: dict, user_ids: set = None) -> bool:
     if _is_member_or_ignored(fp_corp, fp_alli) and _is_member_or_ignored(sp_corp, sp_alli):
         return False
 
-    for key in SUS_TYPES:
-        if key in (tx.get("type") or ""):
-            return True
-
     if "market_escrow" in (tx.get("type") or "") or "market_transaction" in (tx.get("type") or ""):
         if not cfg.market_transactions_show_major_hubs and is_major_hub(tx):
             return False
@@ -429,9 +424,6 @@ def is_transaction_hostile(tx: dict, user_ids: set = None) -> bool:
         kid = tx.get(key)
         if kid and kid not in safe_entities and str(kid) in hostile_allis:
             return True
-
-    if is_location_hostile(tx.get("location_id"), tx.get("system_id")):
-        return True
 
     return False
 
