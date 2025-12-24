@@ -18,6 +18,10 @@ from ..app_settings import (
     get_entity_info,
     get_safe_entities,
     aablacklist_active,
+    resolve_location_name,
+    resolve_location_system_id,
+    is_location_hostile,
+    get_system_owner,
 )
 
 if aablacklist_active():
@@ -30,10 +34,12 @@ try:
     from corptools.models import (
         CharacterWalletJournalEntry as WalletJournalEntry,
         CharacterMarketTransaction,
+        Structure,
     )
 except ImportError:
     logger.error("Corptools not installed, corp checks will not work.")
     CharacterMarketTransaction = None
+    Structure = None
 
 from django.apps import apps
 EVEUNIVERSE_INSTALLED = apps.is_installed("eveuniverse")
@@ -287,15 +293,20 @@ def get_user_transactions(qs) -> Dict[int, Dict]:
         context_id = entry.context_id
         context_type = entry.context_id_type
         system_id = None
+        location_id = None
         type_id = None
         quantity = 1
         if context_type == "structure_id":
-            context = f"Structure ID: {context_id}"
+            name = resolve_location_name(context_id)
+            context = f"Structure: {name}" if name else f"Structure ID: {context_id}"
+            location_id = context_id
+            system_id = resolve_location_system_id(context_id)
         elif context_type == "character_id":
             context = f"Character: {_cached_info(context_id, tx_date)['name']}"
         elif context_type == "eve_system":
             context = "EVE System"
             system_id = context_id
+            location_id = context_id
         elif context_type is None:
             context = "None"
         elif context_type == "market_transaction_id":
@@ -303,6 +314,7 @@ def get_user_transactions(qs) -> Dict[int, Dict]:
             if CharacterMarketTransaction:
                 m_tx = CharacterMarketTransaction.objects.filter(transaction_id=context_id).first()
                 if m_tx:
+                    location_id = m_tx.location_id if hasattr(m_tx, "location_id") else None
                     system_id = m_tx.location.system_id if hasattr(m_tx.location, "system_id") else None
                     type_id = m_tx.type_id
                     quantity = m_tx.quantity
@@ -332,6 +344,7 @@ def get_user_transactions(qs) -> Dict[int, Dict]:
             "context": context,
             "type": entry.ref_type,
             "system_id": system_id,
+            "location_id": location_id,
             "type_id": type_id,
             "quantity": quantity,
         }
@@ -415,6 +428,9 @@ def is_transaction_hostile(tx: dict, user_ids: set = None) -> bool:
         kid = tx.get(key)
         if kid and kid not in safe_entities and str(kid) in hostile_allis:
             return True
+
+    if is_location_hostile(tx.get("location_id"), tx.get("system_id")):
+        return True
 
     return False
 
@@ -564,6 +580,22 @@ def get_user_hostile_transactions(user_id: int) -> Dict[int, str]:
                 if spaid and spaid not in safe_entities and str(spaid) in hostile_allis:
                     flags.append(f"second_party alliance **{tx['second_party_alliance']}** is hostile")
 
+                loc_id = tx.get("location_id") or tx.get("system_id")
+                if loc_id and is_location_hostile(tx.get("location_id"), tx.get("system_id")):
+                    loc_name = resolve_location_name(loc_id) or f"ID {loc_id}"
+                    owner_info = get_system_owner({"id": loc_id})
+                    oname = owner_info.get("owner_name")
+                    rname = owner_info.get("region_name")
+                    flag = f"Location **{loc_name}** is hostile space"
+                    if oname or rname:
+                        info_parts = []
+                        if oname:
+                            info_parts.append(oname)
+                        if rname and rname != "Unknown Region":
+                            info_parts.append(f"Region: {rname}")
+                        flag += f" ({' | '.join(info_parts)})"
+                    flags.append(flag)
+
                 flags_lines = [f"    - {flag}" for flag in flags] if flags else ["    - (no extra flags)"]
 
                 note_lines = [
@@ -579,6 +611,9 @@ def get_user_hostile_transactions(user_id: int) -> Dict[int, str]:
 
                 if tx.get("reason"):
                     note_lines.append(f"  Reason: **{tx['reason']}**")
+
+                if tx.get("context") and tx.get("context") != "None":
+                    note_lines.append(f"  Context: **{tx['context']}**")
 
                 note_lines.append("  Flags:")
                 note_lines.extend(flags_lines)

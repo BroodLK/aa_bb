@@ -60,21 +60,22 @@ VERBOSE_WEBHOOK_LOGGING = True
 def parse_hostile_summary(summary: str):
     """
     Parse the summary string from get_hostile_asset_locations /
-    get_hostile_clone_locations into (owner, ships, chars).
+    get_hostile_clone_locations into (owner, region, ships, chars).
 
     Expected format from helpers is:
-      "Owner Name | Ships: A, B | Chars: X, Y"
+      "Owner Name | Region: Region Name | Ships: A, B | Chars: X, Y"
     or
       "Owner Name | Chars: X, Y"
 
     Ships may be empty for clones.
     """
     owner = summary or "Unresolvable"
+    region = ""
     ships = ""
     chars: list[str] = []
 
     if not summary:
-        return owner, ships, chars
+        return owner, region, ships, chars
 
     parts = [p.strip() for p in summary.split("|") if p.strip()]
     if parts:
@@ -84,13 +85,15 @@ def parse_hostile_summary(summary: str):
         label, _, rest = seg.partition(":")
         label = label.strip().lower()
         value = rest.strip()
-        if label == "ships":
+        if label == "region":
+            region = value
+        elif label == "ships":
             ships = value
         elif label == "chars":
             if value:
                 chars = [c.strip() for c in value.split(",") if c.strip()]
 
-    return owner, ships, chars
+    return owner, region, ships, chars
 
 
 @shared_task
@@ -643,12 +646,12 @@ def BB_update_single_user(user_id, char_name):
                 old_systems = set(status.hostile_assets or [])
                 new_systems = set(hostile_assets_result) - old_systems
 
-                # Build mapping: char -> list of (system, owner, ships)
-                assets_by_char: dict[str, list[tuple[str, str, str]]] = {}
+                # Build mapping: char -> list of (system, owner, region, ships)
+                assets_by_char: dict[str, list[tuple[str, str, str, str]]] = {}
 
                 for system in new_systems:
                     summary = hostile_assets_result.get(system, "")
-                    owner, ships, chars = parse_hostile_summary(summary)
+                    owner, region, ships, chars = parse_hostile_summary(summary)
 
                     # If helper didn't give chars for some reason, fall back
                     if not chars:
@@ -656,14 +659,17 @@ def BB_update_single_user(user_id, char_name):
 
                     for cname in chars:
                         assets_by_char.setdefault(cname, []).append(
-                            (system, owner, ships)
+                            (system, owner, region, ships)
                         )
 
                 lines: list[str] = []
                 for cname in sorted(assets_by_char.keys()):
                     lines.append(f"- {cname}")
-                    for system, owner, ships in assets_by_char[cname]:
-                        lines.append(f"  - {system} ({owner})")
+                    for system, owner, region, ships in assets_by_char[cname]:
+                        info = f"{system} ({owner})"
+                        if region:
+                            info = f"{system} ({owner} | {region})"
+                        lines.append(f"  - {info}")
                         if ships:
                             lines.append(f"    - {ships}")
 
@@ -693,26 +699,29 @@ def BB_update_single_user(user_id, char_name):
                 old_systems = set(status.hostile_clones or [])
                 new_systems = set(hostile_clones_result) - old_systems
 
-                # Build mapping: char -> list of (system, owner)
-                clones_by_char: dict[str, list[tuple[str, str]]] = {}
+                # Build mapping: char -> list of (system, owner, region)
+                clones_by_char: dict[str, list[tuple[str, str, str]]] = {}
 
                 for system in new_systems:
                     summary = hostile_clones_result.get(system, "")
-                    owner, _ships, chars = parse_hostile_summary(summary)
+                    owner, region, _ships, chars = parse_hostile_summary(summary)
 
                     if not chars:
                         chars = ["Unknown Character"]
 
                     for cname in chars:
                         clones_by_char.setdefault(cname, []).append(
-                            (system, owner)
+                            (system, owner, region)
                         )
 
                 lines: list[str] = []
                 for cname in sorted(clones_by_char.keys()):
                     lines.append(f"- {cname}")
-                    for system, owner in clones_by_char[cname]:
-                        lines.append(f"  - {system} ({owner})")
+                    for system, owner, region in clones_by_char[cname]:
+                        info = f"{system} ({owner})"
+                        if region:
+                            info = f"{system} ({owner} | {region})"
+                        lines.append(f"  - {info}")
 
                 if lines:
                     link_list = "\n".join(lines)

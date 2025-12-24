@@ -19,6 +19,7 @@ from ..app_settings import (
     is_nullsec,
     get_safe_entities,
     is_player_structure,
+    resolve_location_name,
 )
 from ..models import BigBrotherConfig
 import logging
@@ -49,17 +50,7 @@ def get_clones(user_id: int) -> Dict[int, Optional[str]]:
             # use .pk for primary key, map to its name
             system_map[system_obj.pk] = system_obj.name
         elif loc_id is not None:  # Fallback when EveLocation missing but ID available.
-            # Try to resolve solar system name if it falls in the range
-            if 30000000 <= loc_id <= 34000000:
-                try:
-                    from eveuniverse.models import EveSolarSystem
-                    sys_obj = EveSolarSystem.objects.get(id=loc_id)
-                    system_map[loc_id] = sys_obj.name
-                    return
-                except Exception:
-                    pass
-            # fallback for unnamed systems
-            system_map[loc_id] = None
+            system_map[loc_id] = resolve_location_name(loc_id)
 
     # iterate through all characters owned by the user
     for co in CharacterOwnership.objects.filter(user=user).select_related("character"):
@@ -128,16 +119,7 @@ def get_hostile_clone_locations(user_id: int) -> Dict[str, str]:
             system_name_map[sid] = system_obj.name
         elif loc_id is not None:
             sid = loc_id
-            # Try to resolve solar system name if it falls in the range
-            if 30000000 <= sid <= 34000000:
-                try:
-                    from eveuniverse.models import EveSolarSystem
-                    sys_obj = EveSolarSystem.objects.get(id=sid)
-                    system_name_map.setdefault(sid, sys_obj.name)
-                except Exception:
-                    system_name_map.setdefault(sid, None)
-            else:
-                system_name_map.setdefault(sid, None)
+            system_name_map.setdefault(sid, resolve_location_name(sid))
         else:
             return
 
@@ -212,6 +194,7 @@ def get_hostile_clone_locations(user_id: int) -> Dict[str, str]:
 
         nullsec_flag = consider_nullsec and is_nullsec(system_id)
         oname = "Unresolvable"
+        rname = "Unknown Region"
         oid: Optional[int] = None
 
         if not owner_info:
@@ -231,6 +214,7 @@ def get_hostile_clone_locations(user_id: int) -> Dict[str, str]:
         oname = owner_info.get("owner_name") or (
             f"ID {oid}" if oid is not None else "Unresolvable"
         )
+        rname = owner_info.get("region_name") or "Unknown Region"
 
         if consider_nullsec and is_nullsec(system_id):
             if oid is None or oid not in safe_entities:
@@ -243,6 +227,8 @@ def get_hostile_clone_locations(user_id: int) -> Dict[str, str]:
             or "Unresolvable" in oname
         ):
             parts = [oname]
+            if rname and rname != "Unknown Region":
+                parts.append(f"Region: {rname}")
             char_list = sorted(system_char_map.get(system_id, set()))
             if char_list:
                 parts.append("Chars: " + ", ".join(char_list))
@@ -382,21 +368,9 @@ def render_clones(user_id: int) -> Optional[str]:
         if system_name:
             display_name = system_name
         elif system_id:
-            # Try to resolve system name from eveuniverse if it's a solar system
-            if 30000000 <= system_id <= 34000000:
-                try:
-                    from eveuniverse.models import EveSolarSystem
-                    sys_obj = EveSolarSystem.objects.get(id=system_id)
-                    display_name = sys_obj.name
-                except Exception:
-                    display_name = f"System ID {system_id}"
-            else:
-                if system_id == loc_id:
-                    display_name = f"Location ID {loc_id}"
-                else:
-                    display_name = f"System ID {system_id}"
+            display_name = resolve_location_name(system_id) or f"System ID {system_id}"
         elif loc_id:
-            display_name = f"Location ID {loc_id}"
+            display_name = resolve_location_name(loc_id) or f"Location ID {loc_id}"
         else:
             display_name = "Unknown"
 
@@ -476,6 +450,7 @@ def render_clones(user_id: int) -> Optional[str]:
                 "jump_clone": clone["jump_clone"] or "",
                 "implants_html": mark_safe("<br>".join(clone["implants"])),
                 "owner": oname,
+                "region": owner_info.get("region_name") if owner_info else "Unknown Region",
                 "hostile": hostile,
                 "unresolvable": unresolvable,
             }
@@ -495,24 +470,28 @@ def render_clones(user_id: int) -> Optional[str]:
         "<th>Clone Status</th>"
         "<th>Implants</th>"
         "<th>Owner</th>"
+        "<th>Region</th>"
         "</tr>"
         "</thead>"
         "<tbody>",
     ]
 
     for row in rows:
+        region = row.get("region", "Unknown Region")
         if row["hostile"]:
             row_tpl = (
                 "<tr><td>{}</td><td>{}</td><td>{}</td>"
-                "<td>{}</td><td class=\"text-danger\">{}</td></tr>"
+                "<td>{}</td><td class=\"text-danger\">{}</td>"
+                "<td>{}</td></tr>"
             )
         elif row["unresolvable"]:
             row_tpl = (
                 "<tr><td>{}</td><td>{}</td><td>{}</td>"
-                "<td>{}</td><td class=\"text-warning\"><em>{}</em></td></tr>"
+                "<td>{}</td><td class=\"text-warning\"><em>{}</em></td>"
+                "<td>{}</td></tr>"
             )
         else:
-            row_tpl = "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>"
+            row_tpl = "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>"
 
         html_parts.append(
             format_html(
@@ -522,6 +501,7 @@ def render_clones(user_id: int) -> Optional[str]:
                 row["jump_clone"],
                 row["implants_html"],
                 row["owner"],
+                region,
             )
         )
 

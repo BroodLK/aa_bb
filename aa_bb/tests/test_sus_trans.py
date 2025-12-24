@@ -1,7 +1,8 @@
 from django.test import TestCase
+from unittest.mock import MagicMock, patch
 from aa_bb.models import BigBrotherConfig
-from aa_bb.checks.sus_trans import is_transaction_hostile
-from aa_bb.checks_cb.sus_trans import is_transaction_hostile as is_transaction_hostile_cb
+from aa_bb.checks.sus_trans import is_transaction_hostile, get_user_transactions
+from aa_bb.checks_cb.sus_trans import is_transaction_hostile as is_transaction_hostile_cb, get_user_transactions as get_user_transactions_cb
 
 class TestSusTrans(TestCase):
     def setUp(self):
@@ -115,3 +116,108 @@ class TestSusTrans(TestCase):
         self.cfg.save()
 
         self.assertFalse(is_transaction_hostile_cb(tx), "String system_id should still be filtered out by major hub filter (corp version)")
+
+    @patch("aa_bb.checks.sus_trans.is_location_hostile")
+    def test_transaction_location_hostility(self, mock_is_hostile):
+        tx = {
+            "type": "player_trading",
+            "location_id": 1000000000001,
+            "system_id": 30000001,
+            "first_party_id": 1,
+            "second_party_id": 2,
+        }
+
+        mock_is_hostile.return_value = True
+        self.assertTrue(is_transaction_hostile(tx), "Transaction in hostile location should be hostile")
+
+        mock_is_hostile.return_value = False
+        # It's still hostile because it's player_trading (SUS_TYPES)
+        self.assertTrue(is_transaction_hostile(tx), "player_trading should be hostile regardless of location")
+
+        # Test a normal transaction that is only hostile due to location
+        tx["type"] = "normal_transaction"
+        mock_is_hostile.return_value = True
+        self.assertTrue(is_transaction_hostile(tx), "Normal transaction in hostile location should be hostile")
+
+        mock_is_hostile.return_value = False
+        self.assertFalse(is_transaction_hostile(tx), "Normal transaction in safe location should not be hostile")
+
+    @patch('aa_bb.checks.sus_trans.resolve_location_name')
+    @patch('aa_bb.checks.sus_trans.resolve_location_system_id')
+    @patch('aa_bb.checks.sus_trans.get_entity_info')
+    def test_structure_id_resolution(self, mock_get_entity_info, mock_resolve_system, mock_resolve_name):
+        # Setup mock for get_entity_info
+        mock_get_entity_info.return_value = {
+            'name': 'Test Character',
+            'corp_id': 123,
+            'corp_name': 'Test Corp',
+            'alli_id': 456,
+            'alli_name': 'Test Alliance'
+        }
+
+        # Setup mock for location resolution
+        mock_resolve_name.return_value = "Test Structure"
+        mock_resolve_system.return_value = 30000142 # Jita
+
+        # Create a mock entry
+        entry = MagicMock()
+        entry.entry_id = 1001
+        entry.date = MagicMock()
+        entry.first_party_id = 1
+        entry.second_party_id = 2
+        entry.context_id = 123456789
+        entry.context_id_type = "structure_id"
+        entry.amount = 1000
+        entry.balance = 5000
+        entry.description = "Test transaction"
+        entry.reason = "None"
+        entry.ref_type = "player_donation"
+
+        qs = [entry]
+
+        result = get_user_transactions(qs)
+
+        tx = result[1001]
+        self.assertEqual(tx["context"], "Structure: Test Structure")
+        self.assertEqual(tx["system_id"], 30000142)
+
+    @patch('aa_bb.checks_cb.sus_trans.resolve_location_name')
+    @patch('aa_bb.checks_cb.sus_trans.resolve_location_system_id')
+    @patch('aa_bb.checks_cb.sus_trans.get_entity_info')
+    @patch('aa_bb.checks_cb.sus_trans.get_eve_entity_type')
+    def test_structure_id_resolution_cb(self, mock_get_type, mock_get_entity_info, mock_resolve_system, mock_resolve_name):
+        # Setup mock for get_entity_info
+        mock_get_entity_info.return_value = {
+            'name': 'Test Character',
+            'corp_id': 123,
+            'corp_name': 'Test Corp',
+            'alli_id': 456,
+            'alli_name': 'Test Alliance'
+        }
+        mock_get_type.return_value = "character"
+
+        # Setup mock for location resolution
+        mock_resolve_name.return_value = "Test Structure CB"
+        mock_resolve_system.return_value = 30000142 # Jita
+
+        # Create a mock entry
+        entry = MagicMock()
+        entry.entry_id = 2001
+        entry.date = MagicMock()
+        entry.first_party_id = 1
+        entry.second_party_id = 2
+        entry.context_id = 987654321
+        entry.context_id_type = "structure_id"
+        entry.amount = 2000
+        entry.balance = 6000
+        entry.description = "Test transaction corp"
+        entry.reason = "None"
+        entry.ref_type = "player_donation"
+
+        qs = [entry]
+
+        result = get_user_transactions_cb(qs)
+
+        tx = result[2001]
+        self.assertEqual(tx["context"], "Structure: Test Structure CB")
+        self.assertEqual(tx["system_id"], 30000142)

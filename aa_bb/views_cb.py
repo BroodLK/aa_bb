@@ -42,7 +42,10 @@ from aa_bb.checks_cb.sus_contracts import (
     gather_user_contracts,
 )
 
-from .app_settings import get_user_characters, get_entity_info, get_character_id, resolve_corporation_name, aablacklist_active
+from .app_settings import (
+    get_user_characters, get_entity_info, get_character_id,
+    resolve_corporation_name, aablacklist_active, resolve_location_name
+)
 from .models import BigBrotherConfig, WarmProgress
 
 if aablacklist_active():
@@ -503,6 +506,8 @@ def stream_contracts_sse(request: WSGIRequest):
                         'assignee_alliance':        ainfo["alli_name"],
                         'assignee_alliance_id':     ainfo["alli_id"],
                         'status':                   c.status,
+                        'start_location':           resolve_location_name(getattr(c, "start_location_id", None)),
+                        'end_location':             resolve_location_name(getattr(c, "end_location_id", None)),
                     }
 
                     style_map = {
@@ -573,7 +578,7 @@ VISIBLE_CONTR = [
     "issued_date", "end_date",
     "contract_type", "issuer_name", "issuer_corporation",
     "issuer_alliance", "assignee_name", "assignee_corporation",
-    "assignee_alliance", "status",
+    "assignee_alliance", "status", "start_location", "end_location",
 ]
 
 def _render_contract_row_html(row: dict) -> str:

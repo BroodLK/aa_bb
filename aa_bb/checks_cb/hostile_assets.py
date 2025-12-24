@@ -6,7 +6,7 @@ live and highlight systems owned by alliances on the hostile list.
 """
 
 from allianceauth.eveonline.models import EveCorporationInfo
-from ..app_settings import get_system_owner
+from ..app_settings import get_system_owner, resolve_location_name, resolve_location_system_id
 from ..models import BigBrotherConfig
 from django.utils.html import format_html
 from typing import List, Optional, Dict
@@ -38,13 +38,9 @@ def get_asset_locations(corp_id: int) -> Dict[int, Optional[str]]:
             key = getattr(system_obj, 'pk', None)
             system_map[key] = system_obj.name
         elif loc_id:
-            if 30000000 <= loc_id <= 34000000:
-                try:
-                    from eveuniverse.models import EveSolarSystem
-                    sys_obj = EveSolarSystem.objects.get(id=loc_id)
-                    system_map[loc_id] = sys_obj.name
-                except Exception:
-                    system_map[loc_id] = None
+            sid = resolve_location_system_id(loc_id)
+            if sid:
+                system_map[sid] = resolve_location_name(sid)
 
     # All corp assets (exclude ones where location_flag is "solar_system")
     assets = CorpAsset.objects.select_related('location_name__system') \
@@ -102,11 +98,15 @@ def get_corp_hostile_asset_locations(corp_id: int) -> Dict[str, str]:
             oid = None
 
         oname = owner_info.get("owner_name") or (f"ID {oid}" if oid is not None else "Unresolvable")
+        rname = owner_info.get("region_name")
 
         # include only hostile or unresolvable owners
         if oid in hostile_ids or "Unresolvable" in oname:  # Persist only hostile or unresolved sovereignty holders.
-            hostile_map[display_name] = oname
-            logger.info(f"Hostile asset system: {display_name} owned by {oname} ({oid})")
+            summary = oname
+            if rname and rname != "Unknown Region":
+                summary = f"{oname} | Region: {rname}"
+            hostile_map[display_name] = summary
+            logger.info(f"Hostile asset system: {display_name} owned by {summary} ({oid})")
 
     return hostile_map
 
@@ -129,7 +129,7 @@ def render_assets(corp_id: int) -> Optional[str]:
     #logger.debug(f"Hostile IDs for assets: {hostile_ids}")
 
     html = '<table class="table table-striped">'
-    html += '<thead><tr><th>System</th><th>Owner</th></tr></thead><tbody>'
+    html += '<thead><tr><th>System</th><th>Owner</th><th>Region</th></tr></thead><tbody>'
 
     for system_id, system_name in systems.items():
         # build the dict your get_system_owner() wants:
@@ -137,7 +137,9 @@ def render_assets(corp_id: int) -> Optional[str]:
             "id":   system_id,
             "name": system_name or f"Unknown ({system_id})"
         })
+        rname = "—"
         if owner_info:  # Only resolve sovereignty details when SDE returns something.
+            rname = owner_info.get("region_name") or "—"
             raw_owner_id = owner_info.get("owner_id")
             if raw_owner_id:  # Convert IDs to ints when present.
                 try:
@@ -159,10 +161,10 @@ def render_assets(corp_id: int) -> Optional[str]:
 
         # ← THIS must be indented inside the loop!
         if hostile:  # Paint hostile ownership red for attention.
-            row_tpl = '<tr><td>{}</td><td style="color: red;">{}</td></tr>'
+            row_tpl = '<tr><td>{}</td><td style="color: red;">{}</td><td>{}</td></tr>'
         else:  # Neutral owners get default styling.
-            row_tpl = '<tr><td>{}</td><td>{}</td></tr>'
-        html += format_html(row_tpl, system_name, oname)
+            row_tpl = '<tr><td>{}</td><td>{}</td><td>{}</td></tr>'
+        html += format_html(row_tpl, system_name, oname, rname)
 
     html += "</tbody></table>"
     return html

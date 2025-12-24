@@ -20,7 +20,10 @@ from ..app_settings import (
     get_character_id,
     get_eve_entity_type,
     get_entity_info,
-    aablacklist_active
+    aablacklist_active,
+    resolve_location_name,
+    is_location_hostile,
+    get_system_owner,
 )
 
 if aablacklist_active():
@@ -116,6 +119,10 @@ def get_user_contracts(qs) -> Dict[int, Dict]:
             'assignee_alliance':        ainfo["alli_name"],
             'assignee_alliance_id':     ainfo["alli_id"],
             'status':                   c.status,
+            'start_location_id':        getattr(c, "start_location_id", None),
+            'start_location':           resolve_location_name(getattr(c, "start_location_id", None)),
+            'end_location_id':          getattr(c, "end_location_id", None),
+            'end_location':             resolve_location_name(getattr(c, "end_location_id", None)),
         }
     logger.info(f"Number of contracts returned: {len(result)}")
     return result
@@ -186,6 +193,11 @@ def is_contract_row_hostile(row: dict) -> bool:
     if row.get("assignee_alliance_id") and str(row["assignee_alliance_id"]) in solo.hostile_alliances:  # Assignee alliance hostile.
         return True
 
+    if is_location_hostile(row.get("start_location_id")):
+        return True
+    if is_location_hostile(row.get("end_location_id")):
+        return True
+
     return False
 
 
@@ -252,6 +264,37 @@ def get_corp_hostile_contracts(corp_id: int) -> Dict[int, str]:
                 flags.append(f"Assignee corp **{c['assignee_corporation']}** is hostile")
             if str(c['assignee_alliance_id']) in hostile_allis:  # Assignee alliance matches hostile list.
                 flags.append(f"Assignee alliance **{c['assignee_alliance']}** is hostile")
+
+            if is_location_hostile(c.get("start_location_id")):
+                loc_id = c.get("start_location_id")
+                owner_info = get_system_owner({"id": loc_id})
+                oname = owner_info.get("owner_name")
+                rname = owner_info.get("region_name")
+                flag = f"Start location **{c['start_location']}** is hostile space"
+                if oname or rname:
+                    info_parts = []
+                    if oname:
+                        info_parts.append(oname)
+                    if rname and rname != "Unknown Region":
+                        info_parts.append(f"Region: {rname}")
+                    flag += f" ({' | '.join(info_parts)})"
+                flags.append(flag)
+
+            if is_location_hostile(c.get("end_location_id")):
+                loc_id = c.get("end_location_id")
+                owner_info = get_system_owner({"id": loc_id})
+                oname = owner_info.get("owner_name")
+                rname = owner_info.get("region_name")
+                flag = f"End location **{c['end_location']}** is hostile space"
+                if oname or rname:
+                    info_parts = []
+                    if oname:
+                        info_parts.append(oname)
+                    if rname and rname != "Unknown Region":
+                        info_parts.append(f"Region: {rname}")
+                    flag += f" ({' | '.join(info_parts)})"
+                flags.append(flag)
+
             flags_text = "\n    - ".join(flags)
 
             note_text = (
@@ -261,7 +304,9 @@ def get_corp_hostile_contracts(corp_id: int) -> Dict[int, str]:
                 f"\n  - from **{c['issuer_name']}**(**{c['issuer_corporation']}**/"
                   f"**{c['issuer_alliance']}**), "
                 f"\n  - to **{c['assignee_name']}**(**{c['assignee_corporation']}**/"
-                  f"**{c['assignee_alliance']}**); "
+                  f"**{c['assignee_alliance']}**), "
+                f"\n  - start **{c['start_location']}**, "
+                f"\n  - end **{c['end_location']}**; "
                 f"\n  - flags:\n    - {flags_text}"
             )
             SusContractNote.objects.update_or_create(

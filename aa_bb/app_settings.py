@@ -936,11 +936,13 @@ def resolve_character_name(char_id: int) -> str:
 def get_system_owner(system: Dict) -> Dict[str, str]:
     """
     Get sovereignty owner of an EVE system by name.
-    Always returns a dict with keys: owner_id, owner_name, owner_type.
+    Always returns a dict with keys: owner_id, owner_name, owner_type, region_id, region_name.
     """
     owner_id = "0"
     owner_name = "Unresolvable Init"
     owner_type = "unknown"
+    region_id = "0"
+    region_name = "Unknown Region"
 
     # 1) Pull name and ID from the passed-in dict
     system_id = system.get("id")
@@ -949,47 +951,106 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
     if system_nam:  # Convert the provided name into a proper string when available.
         system_name = str(system_nam)
 
+    # Resolve parent system if this is a location
+    parent_system_id = resolve_location_system_id(system_id)
+    if parent_system_id:
+        try:
+            from eveuniverse.models import EveSolarSystem
+            sys_obj = EveSolarSystem.objects.select_related("constellation__region").get(id=parent_system_id)
+            region_id = str(sys_obj.constellation.region.id)
+            region_name = sys_obj.constellation.region.name
+        except Exception:
+            pass
+
     try:
         sov_map = _get_sov_map()
-        entry = next((s for s in sov_map if s.get("system_id") == system_id), None)
+        # If it's a structure or station, we want the system it's in for SOV
+        target_sov_id = parent_system_id or system_id
+        entry = next((s for s in sov_map if s.get("system_id") == target_sov_id), None)
         if not entry:
             # Fallback for systems not in the sovereignty map (e.g. Highsec/Lowsec)
             # or for NPC stations.
-            if system_id:
-                if 30000000 <= system_id <= 34000000:
+            if target_sov_id:
+                if 30000000 <= target_sov_id <= 34000000:
                     try:
                         from eveuniverse.models import EveSolarSystem
-                        sys_obj = EveSolarSystem.objects.select_related("faction").get(id=system_id)
+                        sys_obj = EveSolarSystem.objects.select_related("faction").get(id=target_sov_id)
                         if sys_obj.faction:
                             return {
                                 "owner_id": str(sys_obj.faction.id),
                                 "owner_name": sys_obj.faction.name,
-                                "owner_type": "faction"
+                                "owner_type": "faction",
+                                "region_id": region_id,
+                                "region_name": region_name
                             }
                         else:
-                            return {"owner_id": "0", "owner_name": "Unclaimed", "owner_type": "unknown"}
+                            return {
+                                "owner_id": "0",
+                                "owner_name": "Unclaimed",
+                                "owner_type": "unknown",
+                                "region_id": region_id,
+                                "region_name": region_name
+                            }
                     except Exception:
                         pass
-                elif 60000000 <= system_id <= 64000000:
+                elif 60000000 <= target_sov_id <= 64000000:
                     try:
                         from eveuniverse.models import EveStation
-                        station_obj = EveStation.objects.select_related("owner").get(id=system_id)
+                        station_obj = EveStation.objects.select_related("owner").get(id=target_sov_id)
                         if station_obj.owner:
                             return {
                                 "owner_id": str(station_obj.owner.id),
                                 "owner_name": station_obj.owner.name,
-                                "owner_type": "corporation"
+                                "owner_type": "corporation",
+                                "region_id": region_id,
+                                "region_name": region_name
                             }
                     except Exception:
                         pass
 
-            return {"owner_id": owner_id, "owner_name": "Unresolvable structure due to lack of docking rights", "owner_type": owner_type}
+            # If it's specifically a player structure ID that we can't resolve owner for
+            if system_id and is_player_structure(system_id):
+                try:
+                    from corptools.models import Structure
+                    struct = Structure.objects.filter(structure_id=system_id).select_related("corporation__corporation").first()
+                    if struct and struct.corporation and struct.corporation.corporation:
+                        return {
+                            "owner_id": str(struct.corporation.corporation.corporation_id),
+                            "owner_name": struct.corporation.corporation.corporation_name,
+                            "owner_type": "corporation",
+                            "region_id": region_id,
+                            "region_name": region_name
+                        }
+                except Exception:
+                    pass
+
+                return {
+                    "owner_id": owner_id,
+                    "owner_name": "Unresolvable structure due to lack of docking rights",
+                    "owner_type": owner_type,
+                    "region_id": region_id,
+                    "region_name": region_name
+                }
+
+            return {
+                "owner_id": owner_id,
+                "owner_name": "Unresolvable location",
+                "owner_type": owner_type,
+                "region_id": region_id,
+                "region_name": region_name
+            }
 
     except Exception as e:
         logger.exception(f"Failed to fetch sovereignty for system ID {system_id}: {e}")
         e_short = e.__class__.__name__
         e_detail = getattr(e, 'code', None) or getattr(e, 'status', None) or str(e)
-        return {"owner_id": owner_id, "owner_name": f"Unresolvable sov, {e_short}{e_detail}", "owner_type": owner_type}
+        return {
+            "owner_id": owner_id,
+            "owner_name": f"Unresolvable sov, {e_short}{e_detail}",
+            "owner_type": owner_type,
+            "region_id": region_id,
+            "region_name": region_name
+        }
 
     # 3) Determine owner ID and type
     alliance_id = entry.get("alliance_id")
@@ -1001,7 +1062,13 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
         owner_id = str(faction_id)
         owner_type = "faction"
     else:
-        return {"owner_id": "0", "owner_name": "Unclaimed", "owner_type": "unknown"}
+        return {
+            "owner_id": "0",
+            "owner_name": "Unclaimed",
+            "owner_type": "unknown",
+            "region_id": region_id,
+            "region_name": region_name
+        }
 
     # 4) Resolve owner name
     try:
@@ -1010,7 +1077,88 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
         owner_name = "Unresolvable owner"
         owner_id = "0"
         owner_type = "unknown"
-    return {"owner_id": owner_id, "owner_name": owner_name, "owner_type": owner_type}
+
+    return {
+        "owner_id": owner_id,
+        "owner_name": owner_name,
+        "owner_type": owner_type,
+        "region_id": region_id,
+        "region_name": region_name
+    }
+
+
+def is_location_hostile(location_id: int, system_id: int = None) -> bool:
+    """
+    Determines if a given location (structure, station, or system) is considered hostile.
+    Returns True if hostile, False if safe.
+    """
+    if not location_id and not system_id:
+        return False
+
+    cfg = BigBrotherConfig.get_solo()
+    safe_entities = get_safe_entities()
+    hostile_alli_ids = {int(s) for s in (cfg.hostile_alliances or "").split(",") if s.strip().isdigit()}
+    hostile_corp_ids = {int(s) for s in (cfg.hostile_corporations or "").split(",") if s.strip().isdigit()}
+
+    # Resolve location owner
+    owner_info = get_system_owner({"id": location_id or system_id})
+    oid = None
+    oname = ""
+    if owner_info:
+        try:
+            oid = int(owner_info.get("owner_id", 0))
+        except (ValueError, TypeError):
+            oid = None
+        oname = owner_info.get("owner_name", "")
+
+    # If it's a structure
+    if location_id and is_player_structure(location_id):
+        # Friendly structure overrides system hostility
+        if oid and oid in safe_entities:
+            return False
+        # Hostile structure
+        if oid and (oid in hostile_alli_ids or oid in hostile_corp_ids):
+            return True
+        if "Unresolvable" in oname:
+            return True
+
+    # Check system-level hostility
+    target_system = system_id or (resolve_location_system_id(location_id) if location_id else None)
+    if target_system:
+        # If the location we checked was a structure, oid is structure owner.
+        # We might also need to check system (sov) owner for nullsec flags.
+        if target_system != location_id:
+            sys_owner_info = get_system_owner({"id": target_system})
+            try:
+                soid = int(sys_owner_info.get("owner_id", 0))
+            except (ValueError, TypeError):
+                soid = None
+        else:
+            soid = oid
+
+        # Base hostility from system owner
+        if soid:
+            if soid in hostile_alli_ids or soid in hostile_corp_ids:
+                return True
+
+        # Consider nullsec hostile
+        if cfg.consider_nullsec_hostile and is_nullsec(target_system):
+            # Safe if system is owned by us/allies
+            if soid is not None and soid in safe_entities:
+                return False
+            # Otherwise, if we are in a friendly structure (handled above), it's safe.
+            # If we are here, it's either an NPC station or a hostile/unknown structure.
+            return True
+
+    # General fallback for hostile lists if not already caught
+    if oid:
+        if oid in hostile_alli_ids or oid in hostile_corp_ids:
+            return True
+
+    if "Unresolvable" in oname:
+        return True
+
+    return False
 
 
 
@@ -1072,6 +1220,81 @@ def is_player_structure(location_id):
     Structure IDs are typically large (>= 1,000,000,000,000).
     """
     return location_id >= 1_000_000_000_000
+
+def resolve_location_name(location_id: int) -> Optional[str]:
+    """
+    Attempts to resolve a location_id to a human-readable name.
+    1) Solar System (30M-34M)
+    2) NPC Station (60M-64M)
+    3) Player Structure (>= 1T)
+    """
+    if not location_id:
+        return None
+
+    # 1) Solar System
+    if 30000000 <= location_id <= 34000000:
+        try:
+            from eveuniverse.models import EveSolarSystem
+            return EveSolarSystem.objects.get(id=location_id).name
+        except Exception:
+            pass
+
+    # 2) NPC Station
+    if 60000000 <= location_id <= 64000000:
+        try:
+            from eveuniverse.models import EveStation
+            return EveStation.objects.get(id=location_id).name
+        except Exception:
+            pass
+
+    # 3) Player Structure
+    if is_player_structure(location_id):
+        try:
+            from corptools.models import Structure
+            struct = Structure.objects.filter(structure_id=location_id).first()
+            if struct:
+                return struct.name
+        except Exception:
+            pass
+
+    return None
+
+def resolve_location_system_id(location_id: int) -> Optional[int]:
+    """
+    Attempts to resolve a location_id to its parent solar system ID.
+    """
+    if not location_id:
+        return None
+
+    # 1) Solar System
+    if 30000000 <= location_id <= 34000000:
+        return location_id
+
+    # 2) NPC Station
+    if 60000000 <= location_id <= 64000000:
+        try:
+            from eveuniverse.models import EveStation
+            station = EveStation.objects.get(id=location_id)
+            return station.eve_solar_system_id
+        except Exception:
+            pass
+
+    # 3) Player Structure
+    if is_player_structure(location_id):
+        try:
+            from corptools.models import Structure, EveLocation
+            struct = Structure.objects.filter(structure_id=location_id).first()
+            if struct:
+                return struct.system_id
+
+            # Fallback to EveLocation for non-owned structures
+            loc = EveLocation.objects.filter(location_id=location_id).first()
+            if loc and loc.system_id:
+                return loc.system_id
+        except Exception:
+            pass
+
+    return None
 
 def is_ship(type_id):
     """Checks if a type_id belongs to a ship."""
