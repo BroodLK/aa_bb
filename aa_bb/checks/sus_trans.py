@@ -353,6 +353,13 @@ def get_user_transactions(qs) -> Dict[int, Dict]:
 
 
 def is_transaction_hostile(tx: dict, user_ids: set = None) -> bool:
+    ttype = tx.get("type") or ""
+    is_sus_type = any(st in ttype for st in SUS_TYPES)
+    is_market = "market_escrow" in ttype or "market_transaction" in ttype
+
+    if not (is_sus_type or is_market):
+        return False
+
     if user_ids and tx.get("first_party_id") in user_ids and tx.get("second_party_id") in user_ids:
         return False
 

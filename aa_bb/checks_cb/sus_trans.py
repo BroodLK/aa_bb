@@ -344,6 +344,13 @@ def is_transaction_hostile(tx: dict) -> bool:
     """
     Mark transaction as hostile if first_party or second_party or corps/alliances are blacklisted
     """
+    ttype = tx.get("type") or ""
+    is_sus_type = any(st in ttype for st in SUS_TYPES)
+    is_market = "market_escrow" in ttype or "market_transaction" in ttype
+
+    if not (is_sus_type or is_market):
+        return False
+
     cfg = BigBrotherConfig.get_solo()
     if aablacklist_active():
         if check_char_add_to_bl(tx.get('first_party_id')) or check_char_add_to_bl(tx.get('second_party_id')):  # Either party is on the blacklist.
