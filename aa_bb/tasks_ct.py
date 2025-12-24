@@ -12,13 +12,14 @@ from celery import shared_task, chain
 from random import random
 
 from django.utils import timezone
+from django.db.models import Q
 from celery_once.tasks import AlreadyQueued
 
 from allianceauth.services.hooks import get_extension_logger
 from esi.errors import TokenExpiredError, TokenError, TokenInvalidError
 from esi.models import Token
 
-from .app_settings import send_message
+from .app_settings import send_message, send_status_embed, _chunk_embed_lines
 from .models import BigBrotherConfig
 
 logger = get_extension_logger(__name__)
@@ -49,7 +50,8 @@ try:
         update_char_location,
     )
 except ImportError:
-    logger.error("Corptools not installed, CT tasks will not be available.")
+
+    logger.error("✅  [AA-BB] - [Tasks_CT] - Corptools not installed, CT tasks will not be available.")
 
 
 @dataclass(frozen=True)
@@ -70,7 +72,7 @@ def _safe_identity_refresh(char_id: int):
     try:
         EveCharacter.objects.update_character(char_id)
     except Exception as e:
-        logger.warning(f"Identity refresh failed for {char_id}: {e}", exc_info=True)
+        logger.warning(f"✅  [AA-BB] - [_safe_identity_refresh] - Identity refresh failed for {char_id}: {e}", exc_info=True)
 
 
 def _is_enabled(flag_name: Optional[str]) -> bool:
@@ -115,10 +117,10 @@ def _has_valid_token_with_scopes(char_id: int, scopes: Sequence[str]) -> bool:
     try:
         return bool(token.valid_access_token())
     except (TokenExpiredError, TokenInvalidError) as e:
-        logger.info(f"Skipping char {char_id}: unusable token for scopes {scopes} ({e.__class__.__name__})")
+        logger.info(f"✅  [AA-BB] - [_has_valid_token_with_scopes] - Skipping char {char_id}: unusable token for scopes {scopes} ({e.__class__.__name__})")
         return False
     except Exception as e:
-        logger.warning(f"Unexpected token error for char {char_id} (scopes {scopes}): {e}", exc_info=True)
+        logger.warning(f"✅  [AA-BB] - [_has_valid_token_with_scopes] - Unexpected token error for char {char_id} (scopes {scopes}): {e}", exc_info=True)
         return False
 
 
@@ -257,6 +259,9 @@ def kickstart_stale_ct_modules(days_stale: int = 2, limit: Optional[int] = None,
     Returns:
         Summary string announcing what was queued (and optionally posted to chat).
     """
+    instance = BigBrotherConfig.get_solo()
+    if not instance.is_active:
+        return "Big Brother is inactive."
     conf = CorptoolsConfiguration.get_solo()
     cutoff = timezone.now() - datetime.timedelta(days=days_stale)
     cutoff_really_stale = timezone.now() - datetime.timedelta(days=days_stale, hours=6)
@@ -264,6 +269,11 @@ def kickstart_stale_ct_modules(days_stale: int = 2, limit: Optional[int] = None,
     qs = CharacterAudit.objects.filter(
         character__character_ownership__isnull=False
     ).select_related("character")
+
+    member_corps = {int(x) for x in (instance.member_corporations or "").split(",") if x.strip().isdigit()}
+    member_allis = {int(x) for x in (instance.member_alliances or "").split(",") if x.strip().isdigit()}
+    if member_corps or member_allis:
+        qs = qs.filter(Q(character__corporation_id__in=member_corps) | Q(character__alliance_id__in=member_allis))
 
     if limit:  # Honor caller-provided limit to avoid scanning the entire table.
         qs = qs[: int(limit)]
@@ -307,7 +317,7 @@ def kickstart_stale_ct_modules(days_stale: int = 2, limit: Optional[int] = None,
 
             if dry_run:  # Only log the plan—do not enqueue tasks in dry-run mode.
                 logger.info(
-                    f"[DRY-RUN] Would submit chain of {len(que)} task(s) "
+                    f"✅  [AA-BB] - [kickstart_stale_ct_modules] - [DRY-RUN] Would submit chain of {len(que)} task(s) "
                     f"for {audit.character.character_name} ({char_id})"
                 )
             else:
@@ -316,33 +326,41 @@ def kickstart_stale_ct_modules(days_stale: int = 2, limit: Optional[int] = None,
                     chain(*que).apply_async(priority=6, countdown=max(0, int(delay)))
                     submitted_chars += 1
                     logger.info(
-                        "Queued chain of %d task(s) for %s (%s) with delay=%s",
+                        "✅  [AA-BB] - [kickstart_stale_ct_modules] - Queued chain of %d task(s) for %s (%s) with delay=%s",
                         len(que),
                         audit.character.character_name,
                         char_id,
                         int(delay),
                     )
                 except AlreadyQueued as e:
-                    logger.info("Skipped chain for %s (%s): first task already queued (ttl≈%s)",
+                    logger.info("✅  [AA-BB] - [kickstart_stale_ct_modules] - Skipped chain for %s (%s): first task already queued (ttl≈%s)",
                                 audit.character.character_name, char_id, getattr(e, 'args', [None])[0])
 
     # Build summary + optional message
+    if updated_names:  # Send a digest if something was queued so staff gets visibility.
+        names_str = ", ".join(updated_names)
+        summary = (
+            f"## CT audit complete:\n"
+            f"- Processed {total_chars} characters\n"
+            f"- Queued {total_tasks} module task(s) across {submitted_chars} character(s) (stale > {days_stale}d).\n"
+            f"- Characters queued:\n{names_str}"
+        )
+    else:
+        summary = (
+            f"## CT audit complete:\n"
+            f"- Processed {total_chars} characters\n"
+            f"- No stale modules found (threshold > {days_stale}d)."
+        )
+
     ct_update_notify = BigBrotherConfig.get_solo().ct_notify
-    if ct_update_notify:
-        if updated_names:  # Send a digest if something was queued so staff gets visibility.
-            names_str = ", ".join(updated_names)
-            summary = (
-                f"## CT audit complete:\n"
-                f"- Processed {total_chars} characters\n"
-                f"- Queued {total_tasks} module task(s) across {submitted_chars} character(s) (stale > {days_stale}d).\n"
-                f"- Characters queued:\n{names_str}"
-            )
-            send_message(summary)
-        else:
-            summary = (
-                f"## CT audit complete:\n"
-                f"- Processed {total_chars} characters\n"
-                f"- No stale modules found (threshold > {days_stale}d)."
+    if ct_update_notify and updated_names:
+        lines = summary.split("\n")
+        chunks = _chunk_embed_lines(lines)
+        for chunk in chunks:
+            send_status_embed(
+                subject="CT Audit Update",
+                lines=chunk,
+                color=0x9b59b6,  # Purple
             )
 
     return summary

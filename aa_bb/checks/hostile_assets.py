@@ -12,6 +12,8 @@ from ..app_settings import (
     is_nullsec,
     is_player_structure,
     get_safe_entities,
+    resolve_location_name,
+    resolve_location_system_id,
 )
 from ..models import BigBrotherConfig
 from django.utils.html import format_html
@@ -68,10 +70,10 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
             key = getattr(system_obj, "pk", None)
             sys_name = system_obj.name
         elif location_id:
-            # If the system ID is not available, we can't accurately check sovereignty
-            # or determine if the location is hostile based on system-level rules.
-            # We skip these records for now.
-            pass
+            # Attempt to resolve system name
+            key = resolve_location_system_id(location_id)
+            if key:
+                sys_name = resolve_location_name(key)
 
         if not key:
             return
@@ -121,12 +123,7 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
 
             loc = asset.location_name
             system_obj = getattr(loc, "system", None) if loc else None
-            # Fix: EveLocation uses location_name for the name string
-            loc_name = (
-                getattr(loc, "location_name", f"Location {asset.location_id}")
-                if loc
-                else f"Location {asset.location_id}"
-            )
+            loc_name = resolve_location_name(asset.location_id) or f"Location {asset.location_id}"
 
             ship_name = None
             try:
@@ -254,6 +251,9 @@ def get_hostile_asset_locations(user_id: int) -> Dict[str, str]:
 
         # Build the owner/detail string
         parts = [oname]
+        rname = owner_info.get("region_name")
+        if rname and rname != "Unknown Region":
+            parts.append(f"Region: {rname}")
 
         if all_ships:
             parts.append("Ships: " + ", ".join(sorted(all_ships)))
@@ -382,6 +382,7 @@ def render_assets(user_id: int) -> Optional[str]:
                         "location": loc_name,
                         "character": char_name,
                         "owner": oname,
+                        "region": owner_info.get("region_name") if owner_info else "Unknown Region",
                         "hostile": system_hostile,
                         "ships": ship_str,
                     }
@@ -403,10 +404,11 @@ def render_assets(user_id: int) -> Optional[str]:
     html += (
         '<thead>'
         '  <tr>'
-        '      <th style="width: 20%">System</th>'
+        '      <th style="width: 15%">System</th>'
         '      <th style="width: 20%">Station</th>'
-        '      <th style="width: 20%">Character</th>'
-        '      <th style="width: 20%">Owner</th>'
+        '      <th style="width: 15%">Character</th>'
+        '      <th style="width: 15%">Owner</th>'
+        '      <th style="width: 15%">Region</th>'
         '      <th style="width: 20%">Hostile Asset</th>'
         '  </tr>'
         '</thead>'
@@ -416,6 +418,7 @@ def render_assets(user_id: int) -> Optional[str]:
     for row in rows:
         system_cell = row["system"]
         owner_cell = row["owner"]
+        region_cell = row.get("region", "Unknown Region")
         hostile_ship = row["ships"] if row["hostile"] else ""
         if row["hostile"]:
             owner_cell = mark_safe(f'<span class="text-danger">{owner_cell}</span>')
@@ -427,11 +430,13 @@ def render_assets(user_id: int) -> Optional[str]:
             '       <td>{}</td>'
             '       <td>{}</td>'
             '       <td>{}</td>'
+            '       <td>{}</td>'
             '   </tr>',
             system_cell,
             row["location"],
             row["character"],
             owner_cell,
+            region_cell,
             hostile_ship,
         )
 

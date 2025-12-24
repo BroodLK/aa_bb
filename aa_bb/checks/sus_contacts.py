@@ -18,12 +18,13 @@ from ..app_settings import (
     get_user_characters,
     is_npc_character,
     get_entity_info,
+    get_safe_entities,
     aablacklist_active
 )
 from django.utils import timezone
 
 if aablacklist_active():
-    from .corp_blacklist import check_char_corp_bl
+    from .add_to_blacklist import check_char_add_to_bl
 
 try:
     from corptools.models import CharacterContact
@@ -143,21 +144,22 @@ def get_cell_style_for_row(cid: int, column: str, row: dict) -> str:
             return 'color: #FF0000;'
 
     # New fixed columns
+    safe_entities = get_safe_entities()
     if aablacklist_active():
         if column == 'character':  # Character column only highlights hostile chars.
-            if row.get('contact_type') == 'character' and check_char_corp_bl(cid):  # Highlight hostile character contacts.
+            if row.get('contact_type') == 'character' and cid not in safe_entities and check_char_add_to_bl(cid):  # Highlight hostile character contacts.
                 return 'color: red;'
             return ''
 
     if column == 'corporation':  # Corp column highlights hostile corporations.
         coid = row.get("coid")
-        if coid and str(coid) in BigBrotherConfig.get_solo().hostile_corporations:  # Highlight hostile corps.
+        if coid and coid not in safe_entities and str(coid) in BigBrotherConfig.get_solo().hostile_corporations:  # Highlight hostile corps.
             return 'color: red;'
         return ''
 
     if column == 'alliance':  # Alliance column highlights hostile alliances.
         aid = row.get("aid")
-        if aid and str(aid) in BigBrotherConfig.get_solo().hostile_alliances:  # Highlight hostile alliances.
+        if aid and aid not in safe_entities and str(aid) in BigBrotherConfig.get_solo().hostile_alliances:  # Highlight hostile alliances.
             return 'color: red;'
         return ''
 
@@ -239,6 +241,7 @@ def get_user_hostile_notifications(user_id: int) -> dict[int, str]:
     cfg = BigBrotherConfig.get_solo()
     hostile_corps = cfg.hostile_corporations
     hostile_allis = cfg.hostile_alliances
+    safe_entities = get_safe_entities()
     logger.info(f"{hostile_allis}")
 
     for cid, info in contacts.items():
@@ -262,14 +265,14 @@ def get_user_hostile_notifications(user_id: int) -> dict[int, str]:
         logger.info(f"{cname},{aid},{alli_name}")
 
         if aablacklist_active():
-            if ctype == 'character' and check_char_corp_bl(cid):  # Character is on blacklist.
+            if ctype == 'character' and cid not in safe_entities and check_char_add_to_bl(cid):  # Character is on blacklist.
                 alerts.append(f"**{cname}** is on blacklist")
 
         if ctype in ('character', 'corporation') and coid != 0:  # Evaluate corp affiliation when present.
-            if str(coid) in hostile_corps:  # Corp matches hostile list.
+            if coid not in safe_entities and str(coid) in hostile_corps:  # Corp matches hostile list.
                 alerts.append(f"corporation **{corp_name}** is on hostile list")
 
-        if aid != 0 and str(aid) in hostile_allis:  # Alliance belongs to hostile list.
+        if aid != 0 and aid not in safe_entities and str(aid) in hostile_allis:  # Alliance belongs to hostile list.
             alerts.append(f"alliance **{alli_name}** is on hostile list")
 
         if alerts:  # Build notification only when this contact triggered alerts.

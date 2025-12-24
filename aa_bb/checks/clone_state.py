@@ -6,7 +6,7 @@ the same logic can be reused both in HTML renderings and in background
 tasks that persist the findings.
 """
 
-from aa_bb.models import CharacterAccountState
+from aa_bb.models import CharacterAccountState, BigBrotherConfig
 from aa_bb.app_settings import resolve_character_name, get_user_characters
 from django.db import transaction
 from django.utils.html import format_html, mark_safe
@@ -24,9 +24,6 @@ except Exception:
 
 logger = logging.getLogger(__name__)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MAX_CACHE_AGE = timedelta(hours=24)
-UTC_WINDOW_START = time(6, 0)   # 06:00 UTC
-UTC_WINDOW_END   = time(10, 0)  # 10:00 UTC
 
 
 def _load_fallback_skill_ids():
@@ -56,15 +53,23 @@ def _load_fallback_skill_ids():
 
     return sorted(ids)
 
-def in_utc_update_window(now):
+def in_utc_update_window(now, start_time, end_time):
     utc_time = now.time()
-    return UTC_WINDOW_START <= utc_time < UTC_WINDOW_END
+    if start_time < end_time:
+        return start_time <= utc_time < end_time
+    else:  # Window crosses midnight
+        return utc_time >= start_time or utc_time < end_time
 
 
 def determine_character_state(user_id, save: bool = False):
     """
     Inspect every owned character's skill levels and infer Alpha/Omega status.
     """
+    cfg = BigBrotherConfig.get_solo()
+    max_cache_age = timedelta(hours=cfg.update_cache_ttl_hours)
+    window_start = cfg.update_maintenance_window_start
+    window_end = cfg.update_maintenance_window_end
+
     alpha_skills_file = os.path.join(BASE_DIR, "alpha_skills.json")
 
     # Load skill
@@ -114,15 +119,24 @@ def determine_character_state(user_id, save: bool = False):
     chars_to_check = []
     for char_id in char_ids:
         db_record = char_db_records.get(char_id)
-
-        # Use cached state if it's within 24 hours and inside the update window.
+        if cfg.clone_state_always_recheck and db_record and db_record.skill_used:
+            chars_to_check.append(char_id)
+            continue
+        # Use cached state if we're outside the update window, or if it's within TTL inside the window.
         now = timezone.now()
-        if db_record and db_record.last_checked_at and (now - db_record.last_checked_at) < MAX_CACHE_AGE and in_utc_update_window(now):
+        is_in_window = in_utc_update_window(now, window_start, window_end)
+        use_cache = False
+        if db_record and db_record.last_checked_at:
+            if not is_in_window:
+                use_cache = True
+            elif (now - db_record.last_checked_at) < max_cache_age:
+                use_cache = True
+
+        if use_cache:
             result[char_id] = {
                 "state": db_record.state if db_record.state else "unknown",
                 "skill_used": db_record.skill_used,
                 "last_state": db_record.state,
-                "last_checked_at": db_record.last_checked_at,
             }
             continue
         else:
@@ -174,7 +188,7 @@ def determine_character_state(user_id, save: bool = False):
             levels = per_char.get(char_id, {}).get(sid, {"trained": 0, "active": 0})
             trained = levels["trained"]
             active = levels["active"]
-            cap = alpha_caps.get(sid, 5)
+            cap = alpha_caps.get(sid, 0)
 
             if active > cap:
                 state = "omega"
@@ -189,7 +203,7 @@ def determine_character_state(user_id, save: bool = False):
                 levels = per_char.get(char_id, {}).get(sid, {"trained": 0, "active": 0})
                 trained = levels["trained"]
                 active = levels["active"]
-                cap = alpha_caps.get(sid, 5)
+                cap = alpha_caps.get(sid, 0)
 
                 if active > cap:
                     state = "omega"
@@ -215,7 +229,7 @@ def determine_character_state(user_id, save: bool = False):
                 sid = int(row["skill_id"])
                 trained = int(row["trained_skill_level"])
                 active = int(row["active_skill_level"])
-                cap = alpha_caps.get(sid, 5)
+                cap = alpha_caps.get(sid, 0)
 
                 if active > cap:
                     state = "omega"

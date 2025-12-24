@@ -17,6 +17,7 @@ from django.http import (
 from django.shortcuts import render, redirect, get_object_or_404
 from django.views.decorators.http import require_POST
 from django.core.cache import cache
+from django.db.models import Q
 from django_celery_beat.models import PeriodicTask
 from django.utils import timezone
 
@@ -26,7 +27,11 @@ from celery.exceptions import Ignore
 from allianceauth.authentication.models import UserProfile, CharacterOwnership
 
 from .forms import LeaveRequestForm
-from .app_settings import get_user_characters, get_entity_info, get_main_character_name, get_character_id, send_message, get_pings, aablacklist_active
+from .app_settings import (
+    get_user_characters, get_entity_info, get_main_character_name,
+    get_character_id, get_pings, aablacklist_active, send_status_embed,
+    resolve_location_name
+)
 from .models import BigBrotherConfig, WarmProgress, LeaveRequest
 
 from aa_bb.checks.awox import render_awox_kills_html
@@ -34,8 +39,8 @@ from aa_bb.checks.corp_changes import get_frequent_corp_changes
 from aa_bb.checks.cyno import render_user_cyno_info_html
 from aa_bb.checks.hostile_assets import render_assets
 from aa_bb.checks.hostile_clones import render_clones
-# from aa_bb.checks.coalition_blacklist import generate_blacklist_links
-# from aa_bb.checks.alliance_blacklist import get_user_character_names_alliance
+from aa_bb.checks.coalition_blacklist import get_external_blacklist_link
+from aa_bb.checks.alliance_blacklist import get_alliance_blacklist_link
 from aa_bb.checks.sus_contacts import render_contacts
 from aa_bb.checks.sus_mails import (
     is_mail_row_hostile,
@@ -53,10 +58,10 @@ from aa_bb.checks.sus_trans import (
 from .views_cb import CARD_DEFINITIONS
 
 if aablacklist_active():
-    from aa_bb.checks.corp_blacklist import (
-        get_corp_blacklist_html,
+    from aa_bb.checks.add_to_blacklist import (
+        get_add_to_blacklist_html,
         add_user_characters_to_blacklist,
-        check_char_corp_bl,
+        check_char_add_to_bl,
     )
 
 from aa_bb.checks.sus_contracts import (
@@ -109,6 +114,8 @@ if aablacklist_active():
     )
 
 CARD_DEFINITIONS += [
+    {"title": 'Alliance Blacklist', "key": "alliance_bl"},
+    {"title": 'Coalition Blacklist', "key": "external_bl"},
     {"title": 'Audit Compliance', "key": "compliance"},
     {"title": 'Player Corp History', "key": "freq_corp"},
     {"title": 'AWOX Kills', "key": "awox"},
@@ -126,18 +133,18 @@ CARD_DEFINITIONS += [
 
 
 def get_available_cards():
-    """Return card configurations filtered by alliance permissions."""
-    cards = CARD_DEFINITIONS
+    """Return card configurations filtered by settings and permissions."""
+    cards = list(CARD_DEFINITIONS)
     try:
         cfg = BigBrotherConfig.get_solo()
-    except BigBrotherConfig.DoesNotExist:
+    except (BigBrotherConfig.DoesNotExist, OperationalError, ProgrammingError):
         return cards
 
-    # if cfg.main_alliance_id != ALLOWED_ALLIANCE_ID:
-    #     cards = [card for card in cards if card["key"] != "alliance_bl"]
+    if not cfg.alliance_blacklist_url:
+        cards = [card for card in cards if card["key"] != "alliance_bl"]
 
-    # if cfg.main_alliance_id not in ALLOWED_COALITION_ALLIANCE_IDS:
-    #     cards = [card for card in cards if card["key"] != "coalition_bl"]
+    if not cfg.external_blacklist_url:
+        cards = [card for card in cards if card["key"] != "external_bl"]
 
     if not aablacklist_active():
         cards = [card for card in cards if card["key"] != "corp_bl"]
@@ -146,10 +153,19 @@ def get_available_cards():
 
 
 def get_user_id(character_name):
-    """Resolve an auth user ID from a main character name."""
+    """Resolve an auth user ID from a character name, respecting member restrictions."""
     try:
-        ownership = CharacterOwnership.objects.select_related('user') \
+        ownership = CharacterOwnership.objects.select_related('user__profile__main_character') \
             .get(character__character_name=character_name)
+
+        cfg = BigBrotherConfig.get_solo()
+        member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
+        member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
+        if member_corps or member_allis:
+            main_char = getattr(ownership.user.profile, 'main_character', None)
+            if not main_char or (main_char.corporation_id not in member_corps and main_char.alliance_id not in member_allis):
+                return None
+
         return ownership.user.id
     except CharacterOwnership.DoesNotExist:
         return None
@@ -215,6 +231,10 @@ def warm_entity_cache_task(self, user_id):
     Gather mails, contracts, transactions; warm entity cache.
     Track progress in the DB via WarmProgress.
     """
+    from .models import BigBrotherConfig
+    cfg = BigBrotherConfig.get_solo()
+    if not cfg.is_active or not cfg.is_warmer_active:
+        return
     user_main = get_main_character_name(user_id) or str(user_id)
     qs = WarmProgress.objects.all()
     users = [
@@ -364,10 +384,12 @@ def get_warm_progress(request):
 def index(request: WSGIRequest):
     """Render the dashboard shell plus dropdown options for authorized recruiters."""
     dropdown_options = []
-    task_name = 'BB run regular updates'
+    from .tasks_utils import format_task_name
+    task_name = format_task_name('BB run regular updates')
     task = PeriodicTask.objects.filter(name=task_name).first()
-    BigBrotherConfig.get_solo().is_active = True
-    if not BigBrotherConfig.get_solo().is_active:  # Guard against misconfigured BB.
+    cfg = BigBrotherConfig.get_solo()
+    cfg.is_active = True
+    if not cfg.is_active:  # Guard against misconfigured BB.
         msg = (
             "Big Brother is currently inactive; please fill settings and enable the task"
         )
@@ -376,12 +398,17 @@ def index(request: WSGIRequest):
     if request.user.has_perm("aa_bb.full_access"):  # Full-access sees every main character.
         qs = UserProfile.objects.exclude(main_character=None)
     elif request.user.has_perm("aa_bb.recruiter_access"):  # Recruiters see only guest states.
-        guest_states = BigBrotherConfig.get_solo().bb_guest_states.all()
+        guest_states = cfg.bb_guest_states.all()
         qs = UserProfile.objects.filter(state__in=guest_states).exclude(main_character=None)
     else:
         qs = None
 
     if qs is not None:  # Build dropdown choices only when the viewer has visibility.
+        member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
+        member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
+        if member_corps or member_allis:
+            qs = qs.filter(Q(main_character__corporation_id__in=member_corps) | Q(main_character__alliance_id__in=member_allis))
+
         dropdown_options = (
             qs.values_list("main_character__character_name", flat=True)
               .order_by("main_character__character_name")
@@ -389,7 +416,7 @@ def index(request: WSGIRequest):
 
     context = {
         "dropdown_options": dropdown_options,
-        "CARD_DEFINITIONS": CARD_DEFINITIONS,
+        "CARD_DEFINITIONS": get_available_cards(),
     }
     return render(request, "aa_bb/index.html", context)
 
@@ -540,6 +567,8 @@ def stream_contracts_sse(request: WSGIRequest):
                 'assignee_alliance':        ainfo["alli_name"],
                 'assignee_alliance_id':     ainfo["alli_id"],
                 'status':                   c.status,
+                'start_location':           resolve_location_name(getattr(c, "start_location_id", None)),
+                'end_location':             resolve_location_name(getattr(c, "end_location_id", None)),
             }
 
             style_map = {
@@ -582,7 +611,7 @@ VISIBLE_CONTR = [
     "issued_date", "end_date",
     "contract_type", "issuer_name", "issuer_corporation",
     "issuer_alliance", "assignee_name", "assignee_corporation",
-    "assignee_alliance", "status",
+    "assignee_alliance", "status", "start_location", "end_location",
 ]
 
 def _render_contract_row_html(row: dict) -> str:
@@ -637,7 +666,7 @@ def _render_mail_row_html(row: dict) -> str:
                 if col == "recipient_names":  # Hostile recipients get red styling.
                     rid = row["recipient_ids"][i]
                     if aablacklist_active():
-                        if check_char_corp_bl(rid):
+                        if check_char_add_to_bl(rid):
                             style = "color:red;"
                 elif col == "recipient_corps":  # Hostile corps -> red label.
                     cid = row["recipient_corp_ids"][i]
@@ -825,6 +854,10 @@ def stream_transactions_sse(request):
         )
         yield f"event: header\ndata:{json.dumps(header_html)}\n\n"
 
+        cfg = BigBrotherConfig.get_solo()
+        hostile_corps = set((cfg.hostile_corporations or "").split(","))
+        hostile_allis = set((cfg.hostile_alliances or "").split(","))
+
         for entry in qs:
             processed += 1
             yield ": ping\n\n"         # keep‐alive
@@ -837,29 +870,32 @@ def stream_transactions_sse(request):
 
                 # build the <tr> using same style logic as render_transactions()
                 cells = []
-                cfg = BigBrotherConfig.get_solo()
                 for col in headers:
                     val = row.get(col, "")
                     text = html.escape(str(val))
                     style = ""
                     # type‐based red
-                    if col == 'type' and any(st in row['type'] for st in SUS_TYPES):
-                        style = 'color:red;'
+                    if col == 'type':
+                        if any(st in row['type'] for st in SUS_TYPES):
+                            style = 'color:red;'
+                        if cfg.show_market_transactions:
+                            if "market_escrow" in row['type'] or "market_transaction" in row['type']:
+                                style = 'color:red;'
                     # first/second party name
                     if aablacklist_active():
                         if col in ('first_party_name','second_party_name'):
                             id_col = col.replace("_name", "_id")
                             pid = row[id_col]
-                            if check_char_corp_bl(pid):
+                            if check_char_add_to_bl(pid):
                                 style = 'color:red;'
                     # corps & alliances
                     if col.endswith('corporation'):
                         cid = row[f"{col}_id"]
-                        if cid and str(cid) in cfg.hostile_corporations:
+                        if cid and str(cid) in hostile_corps:
                             style = 'color:red;'
                     if col.endswith('alliance'):
                         aid = row[f"{col}_id"]
-                        if aid and str(aid) in cfg.hostile_alliances:
+                        if aid and str(aid) in hostile_allis:
                             style = 'color:red;'
                     def make_td(text, style=""):
                         style_attr = f' style="{style}"' if style else ""
@@ -895,51 +931,16 @@ def get_card_data(request, target_user_id: int, key: str):
 
     elif key == "corp_bl":  # Inline corp blacklist check (with add links).
         issuer_id = request.user.id
-        content   = get_corp_blacklist_html(request, issuer_id, target_user_id) or "a"
+        content   = get_add_to_blacklist_html(request, issuer_id, target_user_id) or "a"
         status    = not (content and "danger" in content)
 
-    # elif key == "alliance_bl":
-    #     from django.contrib.auth.models import User
-    #     try:
-    #         from blacklist.models import BlacklistFilter
-    #         try:
-    #             url = getattr(settings, "SITE_URL", "").rstrip("/")
-    #
-    #             # Use the Smart Filter to see if this user hits the blacklist
-    #             bf = BlacklistFilter()
-    #             results = bf.audit_filter(User.objects.filter(pk=target_user_id))
-    #             data = results.get(target_user_id, {"message": "", "check": True})
-    #             if not data:
-    #                 content = "No Data"
-    #                 status = True
-    #                 return content, status
-    #
-    #             is_clean = data.get("check", True)
-    #
-    #             names = data.get("message", "")
-    #
-    #             if is_clean:
-    #                 # No blacklisted hits for this user
-    #                 content = (
-    #                     "No blacklisted characters found for this user."
-    #                 )
-    #                 status = True
-    #             else:
-    #                 # User has blacklist hits; show them and link to the blacklist app
-    #                 names_html = names.replace(",", "<br>")
-    #                 content = (
-    #                     "The following characters (or their corps/alliances) are on the "
-    #                     "blacklist:<br><br>"
-    #                     f"{names_html}<br><br>"
-    #                     f"Go <a href='{url}/blacklist/blacklist/'>here</a> for full details."
-    #                 )
-    #                 status = False
-    #         except Exception as e:
-    #             content = (e)
-    #             status = False
-    #     except ImportError:
-    #         content = ('blacklist is not installed')
-    #         status  = True
+    elif key == "alliance_bl":
+        content = get_alliance_blacklist_link()
+        status = True
+
+    elif key == "external_bl":
+        content = get_external_blacklist_link()
+        status = True
 
     elif key == "freq_corp":  # Show frequent corporation changes timeline.
         content = get_frequent_corp_changes(target_user_id)
@@ -1025,6 +1026,12 @@ def loa_admin(request):
         return render(request, "loa/disabled.html")
     # Filtering
     qs = LeaveRequest.objects.select_related('user').order_by('-created_at')
+
+    member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
+    member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
+    if member_corps or member_allis:
+        qs = qs.filter(Q(user__profile__main_character__corporation_id__in=member_corps) | Q(user__profile__main_character__alliance_id__in=member_allis))
+
     user_filter   = request.GET.get('user')
     status_filter = request.GET.get('status')
 
@@ -1034,10 +1041,15 @@ def loa_admin(request):
         qs = qs.filter(status=status_filter)
 
     # Build dropdown options from existing requests
+    users_in_requests_qs = LeaveRequest.objects.all()
+    member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
+    member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
+    if member_corps or member_allis:
+        users_in_requests_qs = users_in_requests_qs.filter(Q(user__profile__main_character__corporation_id__in=member_corps) | Q(user__profile__main_character__alliance_id__in=member_allis))
+
     users_in_requests = (
-        LeaveRequest.objects
-                    .values_list('user__id', 'user__username')
-                    .distinct()
+        users_in_requests_qs.values_list('user__id', 'user__username')
+                            .distinct()
     )
 
     context = {
@@ -1069,7 +1081,17 @@ def loa_request(request):
 
             # 3) send webhook with character
             hook = cfg.loawebhook
-            send_message(f"##{get_pings('LoA Request')} {main_char} requested LOA:\n- from **{lr.start_date}**\n- to **{lr.end_date}**\n- reason: **{lr.reason}**", hook)
+            send_status_embed(
+                subject="LoA Request",
+                lines=[
+                    f"{get_pings('LoA Request')} {main_char} requested LOA:",
+                    f"- from **{lr.start_date}**",
+                    f"- to **{lr.end_date}**",
+                    f"- reason: **{lr.reason}**"
+                ],
+                color=0x3498db,
+                hook=hook
+            )
 
             return redirect('loa:index')
         else:
@@ -1089,8 +1111,19 @@ def delete_request(request, pk):
             return HttpResponseForbidden("You may only delete your own requests.")
         elif lr.status == 'pending':  # Only pending requests may be removed.
             lr.delete()
-            hook = BigBrotherConfig.get_solo().loawebhook
-            send_message(f"##{get_pings('LoA Changed Status')} {lr.main_character} deleted their LOA:\n- from **{lr.start_date}**\n- to **{lr.end_date}**\n- reason: **{lr.reason}**", hook)
+            cfg = BigBrotherConfig.get_solo()
+            hook = cfg.loawebhook
+            send_status_embed(
+                subject="LoA Deleted",
+                lines=[
+                    f"{get_pings('LoA Changed Status')} {lr.main_character} deleted their LOA:",
+                    f"- from **{lr.start_date}**",
+                    f"- to **{lr.end_date}**",
+                    f"- reason: **{lr.reason}**"
+                ],
+                color=0x3498db,
+                hook=hook
+            )
     return redirect('loa:index')
 
 @login_required
@@ -1098,11 +1131,29 @@ def delete_request(request, pk):
 def delete_request_admin(request, pk):
     """Admin-only delete path for any LoA request."""
     if request.method == 'POST':  # Guard mutation behind POST.
-        lr = get_object_or_404(LeaveRequest, pk=pk, user=request.user)
+        cfg = BigBrotherConfig.get_solo()
+        lr = get_object_or_404(LeaveRequest, pk=pk)
+        member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
+        member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
+        if member_corps or member_allis:
+            main_char = getattr(lr.user.profile, 'main_character', None)
+            if not main_char or (main_char.corporation_id not in member_corps and main_char.alliance_id not in member_allis):
+                return HttpResponseForbidden("Target user is not in a member corporation/alliance.")
+
         lr.delete()
-        hook = BigBrotherConfig.get_solo().loawebhook
+        hook = cfg.loawebhook
         userrr = get_main_character_name(request.user.id)
-        send_message(f"##{get_pings('LoA Changed Status')} {userrr} deleted {lr.main_character}'s LOA:\n- from **{lr.start_date}**\n- to **{lr.end_date}**\n- reason: **{lr.reason}**", hook)
+        send_status_embed(
+            subject="LoA Deleted by Admin",
+            lines=[
+                f"{get_pings('LoA Changed Status')} {userrr} deleted {lr.main_character}'s LOA:",
+                f"- from **{lr.start_date}**",
+                f"- to **{lr.end_date}**",
+                f"- reason: **{lr.reason}**"
+            ],
+            color=0x3498db,
+            hook=hook
+        )
     return redirect('loa:admin')
 
 @login_required
@@ -1110,12 +1161,30 @@ def delete_request_admin(request, pk):
 def approve_request(request, pk):
     """Mark an LoA approved and notify Discord."""
     if request.method == 'POST':  # Only process POST actions.
+        cfg = BigBrotherConfig.get_solo()
         lr = get_object_or_404(LeaveRequest, pk=pk)
+        member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
+        member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
+        if member_corps or member_allis:
+            main_char = getattr(lr.user.profile, 'main_character', None)
+            if not main_char or (main_char.corporation_id not in member_corps and main_char.alliance_id not in member_allis):
+                return HttpResponseForbidden("Target user is not in a member corporation/alliance.")
+
         lr.status = 'approved'
         lr.save()
-        hook = BigBrotherConfig.get_solo().loawebhook
+        hook = cfg.loawebhook
         userrr = get_main_character_name(request.user.id)
-        send_message(f"##{get_pings('LoA Changed Status')} {userrr} approved {lr.main_character}'s LOA:\n- from **{lr.start_date}**\n- to **{lr.end_date}**\n- reason: **{lr.reason}**", hook)
+        send_status_embed(
+            subject="LoA Approved",
+            lines=[
+                f"{get_pings('LoA Changed Status')} {userrr} approved {lr.main_character}'s LOA:",
+                f"- from **{lr.start_date}**",
+                f"- to **{lr.end_date}**",
+                f"- reason: **{lr.reason}**"
+            ],
+            color=0x3498db,
+            hook=hook
+        )
     return redirect('loa:admin')
 
 @login_required
@@ -1123,10 +1192,28 @@ def approve_request(request, pk):
 def deny_request(request, pk):
     """Mark an LoA denied and notify Discord."""
     if request.method == 'POST':  # Only mutate via POST requests.
+        cfg = BigBrotherConfig.get_solo()
         lr = get_object_or_404(LeaveRequest, pk=pk)
+        member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
+        member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
+        if member_corps or member_allis:
+            main_char = getattr(lr.user.profile, 'main_character', None)
+            if not main_char or (main_char.corporation_id not in member_corps and main_char.alliance_id not in member_allis):
+                return HttpResponseForbidden("Target user is not in a member corporation/alliance.")
+
         lr.status = 'denied'
         lr.save()
-        hook = BigBrotherConfig.get_solo().loawebhook
+        hook = cfg.loawebhook
         userrr = get_main_character_name(request.user.id)
-        send_message(f"##{get_pings('LoA Changed Status')} {userrr} denied {lr.main_character}'s LOA:\n- from **{lr.start_date}**\n- to **{lr.end_date}**\n- reason: **{lr.reason}**", hook)
+        send_status_embed(
+            subject="LoA Denied",
+            lines=[
+                f"{get_pings('LoA Changed Status')} {userrr} denied {lr.main_character}'s LOA:",
+                f"- from **{lr.start_date}**",
+                f"- to **{lr.end_date}**",
+                f"- reason: **{lr.reason}**"
+            ],
+            color=0x3498db,
+            hook=hook
+        )
     return redirect('loa:admin')

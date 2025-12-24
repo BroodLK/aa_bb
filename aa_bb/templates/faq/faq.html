@@ -94,6 +94,23 @@
         </div>
 
         <div class="accordion-item" data-faq-item>
+          <h2 class="accordion-header" id="h-general-corp-only">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#c-general-corp-only" aria-expanded="false" aria-controls="c-general-corp-only">
+              {% translate "Can I restrict BigBrother to only my corporation members?" %}
+            </button>
+          </h2>
+          <div id="c-general-corp-only" class="accordion-collapse collapse" aria-labelledby="h-general-corp-only" data-bs-parent="#bbFaq">
+            <div class="accordion-body">
+              <p class="mb-0">
+                {% blocktrans %}
+                Yes. If you use Alliance Auth for a single corporation but have other alliance members on the same instance, you can enable <code>limit_to_main_corp</code> in <code>BigBrotherConfig</code>. This will restrict all compliance checks, background updates, and dashboard visibility to only those users whose main character belongs to your primary corporation.
+                {% endblocktrans %}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="accordion-item" data-faq-item>
           <h2 class="accordion-header" id="h-general-addchars">
             <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#c-general-addchars" aria-expanded="false" aria-controls="c-general-addchars">
               {% translate "Do users need to add characters to BigBrother?" %}
@@ -188,6 +205,23 @@
                 <strong>{% translate "If you can't disable timeout:" %}</strong>
                 {% translate "You should keep the cache warmer enabled and expect some streams to fail on first load." %}
               </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="accordion-item" data-faq-item>
+          <h2 class="accordion-header" id="h-inst-clonecheck">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#c-inst-clonecheck" aria-expanded="false" aria-controls="c-inst-clonecheck">
+              {% translate "How can I improve Omega/Alpha re-checking performance?" %}
+            </button>
+          </h2>
+          <div id="c-inst-clonecheck" class="accordion-collapse collapse" aria-labelledby="h-inst-clonecheck" data-bs-parent="#bbFaq">
+            <div class="accordion-body">
+              <p class="mb-0">
+                {% blocktrans %}
+                In <code>BigBrotherConfig</code>, you can disable <code>clone_state_always_recheck</code>. When disabled, characters with known skills proving their state will respect the Cache TTL, significantly reducing ESI/DB load during updates.
+                {% endblocktrans %}
+              </p>
             </div>
           </div>
         </div>

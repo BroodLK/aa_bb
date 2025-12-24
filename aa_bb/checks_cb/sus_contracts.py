@@ -20,11 +20,14 @@ from ..app_settings import (
     get_character_id,
     get_eve_entity_type,
     get_entity_info,
-    aablacklist_active
+    aablacklist_active,
+    resolve_location_name,
+    is_location_hostile,
+    get_system_owner,
 )
 
 if aablacklist_active():
-    from aa_bb.checks.corp_blacklist import check_char_corp_bl
+    from aa_bb.checks.add_to_blacklist import check_char_add_to_bl
 try:
     from corptools.models import CorporateContract, CorporationAudit
 except ImportError:
@@ -116,6 +119,10 @@ def get_user_contracts(qs) -> Dict[int, Dict]:
             'assignee_alliance':        ainfo["alli_name"],
             'assignee_alliance_id':     ainfo["alli_id"],
             'status':                   c.status,
+            'start_location_id':        getattr(c, "start_location_id", None),
+            'start_location':           resolve_location_name(getattr(c, "start_location_id", None)),
+            'end_location_id':          getattr(c, "end_location_id", None),
+            'end_location':             resolve_location_name(getattr(c, "end_location_id", None)),
         }
     logger.info(f"Number of contracts returned: {len(result)}")
     return result
@@ -125,14 +132,14 @@ def get_cell_style_for_contract_row(column: str, row: dict) -> str:
     if aablacklist_active():
         if column == 'issuer_name':  # Color issuer names if the character is suspect.
             cid = row.get("issuer_id")
-            if check_char_corp_bl(cid):  # Issuer is on the blacklist.
+            if check_char_add_to_bl(cid):  # Issuer is on the blacklist.
                 return 'color: red;'
             else:
                 return ''
 
         if column == 'assignee_name':  # Color assignee names when suspect.
             cid = row.get("assignee_id")
-            if check_char_corp_bl(cid):  # Assignee is on the blacklist.
+            if check_char_add_to_bl(cid):  # Assignee is on the blacklist.
                 return 'color: red;'
             else:
                 return ''
@@ -170,9 +177,9 @@ def get_cell_style_for_contract_row(column: str, row: dict) -> str:
 def is_contract_row_hostile(row: dict) -> bool:
     """Returns True if the row matches hostile corp/char/alliance criteria."""
     if aablacklist_active():
-        if check_char_corp_bl(row.get("issuer_id")):  # Issuer character/alt is blacklisted.
+        if check_char_add_to_bl(row.get("issuer_id")):  # Issuer character/alt is blacklisted.
             return True
-        if check_char_corp_bl(row.get("assignee_id")):  # Assignee/acceptor is blacklisted.
+        if check_char_add_to_bl(row.get("assignee_id")):  # Assignee/acceptor is blacklisted.
             return True
 
     solo = BigBrotherConfig.get_solo()
@@ -184,6 +191,11 @@ def is_contract_row_hostile(row: dict) -> bool:
     if row.get("assignee_corporation_id") and str(row["assignee_corporation_id"]) in solo.hostile_corporations:  # Assignee corp hostile.
         return True
     if row.get("assignee_alliance_id") and str(row["assignee_alliance_id"]) in solo.hostile_alliances:  # Assignee alliance hostile.
+        return True
+
+    if is_location_hostile(row.get("start_location_id")):
+        return True
+    if is_location_hostile(row.get("end_location_id")):
         return True
 
     return False
@@ -238,7 +250,7 @@ def get_corp_hostile_contracts(corp_id: int) -> Dict[int, str]:
             flags: List[str] = []
             # issuer
             if aablacklist_active():
-                if c['issuer_name'] != '-' and check_char_corp_bl(c['issuer_id']):  # Issuer is blacklisted.
+                if c['issuer_name'] != '-' and check_char_add_to_bl(c['issuer_id']):  # Issuer is blacklisted.
                     flags.append(f"Issuer **{c['issuer_name']}** is on blacklist")
             if str(c['issuer_corporation_id']) in hostile_corps:  # Issuer corp matches hostile list.
                 flags.append(f"Issuer corp **{c['issuer_corporation']}** is hostile")
@@ -246,12 +258,43 @@ def get_corp_hostile_contracts(corp_id: int) -> Dict[int, str]:
                 flags.append(f"Issuer alliance **{c['issuer_alliance']}** is hostile")
             # assignee
             if aablacklist_active():
-                if c['assignee_name'] != '-' and check_char_corp_bl(c['assignee_id']):  # Assignee is blacklisted.
+                if c['assignee_name'] != '-' and check_char_add_to_bl(c['assignee_id']):  # Assignee is blacklisted.
                     flags.append(f"Assignee **{c['assignee_name']}** is on blacklist")
             if str(c['assignee_corporation_id']) in hostile_corps:  # Assignee corp matches hostile list.
                 flags.append(f"Assignee corp **{c['assignee_corporation']}** is hostile")
             if str(c['assignee_alliance_id']) in hostile_allis:  # Assignee alliance matches hostile list.
                 flags.append(f"Assignee alliance **{c['assignee_alliance']}** is hostile")
+
+            if is_location_hostile(c.get("start_location_id")):
+                loc_id = c.get("start_location_id")
+                owner_info = get_system_owner({"id": loc_id})
+                oname = owner_info.get("owner_name")
+                rname = owner_info.get("region_name")
+                flag = f"Start location **{c['start_location']}** is hostile space"
+                if oname or rname:
+                    info_parts = []
+                    if oname:
+                        info_parts.append(oname)
+                    if rname and rname != "Unknown Region":
+                        info_parts.append(f"Region: {rname}")
+                    flag += f" ({' | '.join(info_parts)})"
+                flags.append(flag)
+
+            if is_location_hostile(c.get("end_location_id")):
+                loc_id = c.get("end_location_id")
+                owner_info = get_system_owner({"id": loc_id})
+                oname = owner_info.get("owner_name")
+                rname = owner_info.get("region_name")
+                flag = f"End location **{c['end_location']}** is hostile space"
+                if oname or rname:
+                    info_parts = []
+                    if oname:
+                        info_parts.append(oname)
+                    if rname and rname != "Unknown Region":
+                        info_parts.append(f"Region: {rname}")
+                    flag += f" ({' | '.join(info_parts)})"
+                flags.append(flag)
+
             flags_text = "\n    - ".join(flags)
 
             note_text = (
@@ -261,7 +304,9 @@ def get_corp_hostile_contracts(corp_id: int) -> Dict[int, str]:
                 f"\n  - from **{c['issuer_name']}**(**{c['issuer_corporation']}**/"
                   f"**{c['issuer_alliance']}**), "
                 f"\n  - to **{c['assignee_name']}**(**{c['assignee_corporation']}**/"
-                  f"**{c['assignee_alliance']}**); "
+                  f"**{c['assignee_alliance']}**), "
+                f"\n  - start **{c['start_location']}**, "
+                f"\n  - end **{c['end_location']}**; "
                 f"\n  - flags:\n    - {flags_text}"
             )
             SusContractNote.objects.update_or_create(

@@ -19,6 +19,7 @@ from ..app_settings import (
     is_nullsec,
     get_safe_entities,
     is_player_structure,
+    resolve_location_name,
 )
 from ..models import BigBrotherConfig
 import logging
@@ -49,8 +50,7 @@ def get_clones(user_id: int) -> Dict[int, Optional[str]]:
             # use .pk for primary key, map to its name
             system_map[system_obj.pk] = system_obj.name
         elif loc_id is not None:  # Fallback when EveLocation missing but ID available.
-            # fallback for unnamed systems
-            system_map[loc_id] = None
+            system_map[loc_id] = resolve_location_name(loc_id)
 
     # iterate through all characters owned by the user
     for co in CharacterOwnership.objects.filter(user=user).select_related("character"):
@@ -119,7 +119,7 @@ def get_hostile_clone_locations(user_id: int) -> Dict[str, str]:
             system_name_map[sid] = system_obj.name
         elif loc_id is not None:
             sid = loc_id
-            system_name_map.setdefault(sid, None)
+            system_name_map.setdefault(sid, resolve_location_name(sid))
         else:
             return
 
@@ -166,6 +166,8 @@ def get_hostile_clone_locations(user_id: int) -> Dict[str, str]:
 
     hostile_str = cfg.hostile_alliances or ""
     hostile_ids = {int(s) for s in hostile_str.split(",") if s.strip().isdigit()}
+    hostile_corp_str = cfg.hostile_corporations or ""
+    hostile_corp_ids = {int(s) for s in hostile_corp_str.split(",") if s.strip().isdigit()}
 
     excluded_systems_str = cfg.excluded_systems or ""
     excluded_system_ids = {
@@ -192,6 +194,7 @@ def get_hostile_clone_locations(user_id: int) -> Dict[str, str]:
 
         nullsec_flag = consider_nullsec and is_nullsec(system_id)
         oname = "Unresolvable"
+        rname = "Unknown Region"
         oid: Optional[int] = None
 
         if not owner_info:
@@ -211,6 +214,7 @@ def get_hostile_clone_locations(user_id: int) -> Dict[str, str]:
         oname = owner_info.get("owner_name") or (
             f"ID {oid}" if oid is not None else "Unresolvable"
         )
+        rname = owner_info.get("region_name") or "Unknown Region"
 
         if consider_nullsec and is_nullsec(system_id):
             if oid is None or oid not in safe_entities:
@@ -219,9 +223,12 @@ def get_hostile_clone_locations(user_id: int) -> Dict[str, str]:
         if (
             nullsec_flag
             or (oid in hostile_ids if oid is not None else False)
+            or (oid in hostile_corp_ids if oid is not None else False)
             or "Unresolvable" in oname
         ):
             parts = [oname]
+            if rname and rname != "Unknown Region":
+                parts.append(f"Region: {rname}")
             char_list = sorted(system_char_map.get(system_id, set()))
             if char_list:
                 parts.append("Chars: " + ", ".join(char_list))
@@ -360,16 +367,12 @@ def render_clones(user_id: int) -> Optional[str]:
         # - otherwise distinguish between system id and pure location id
         if system_name:
             display_name = system_name
+        elif system_id:
+            display_name = resolve_location_name(system_id) or f"System ID {system_id}"
+        elif loc_id:
+            display_name = resolve_location_name(loc_id) or f"Location ID {loc_id}"
         else:
-            if system_id and system_id == loc_id:
-                # Only have a station/structure id
-                display_name = f"Location ID {loc_id}"
-            elif system_id:
-                display_name = f"System ID {system_id}"
-            elif loc_id:
-                display_name = f"Location ID {loc_id}"
-            else:
-                display_name = "Unknown"
+            display_name = "Unknown"
 
         # System whitelist only applies when we actually know the system id
         if system_id and system_id in excluded_system_ids:
@@ -447,6 +450,7 @@ def render_clones(user_id: int) -> Optional[str]:
                 "jump_clone": clone["jump_clone"] or "",
                 "implants_html": mark_safe("<br>".join(clone["implants"])),
                 "owner": oname,
+                "region": owner_info.get("region_name") if owner_info else "Unknown Region",
                 "hostile": hostile,
                 "unresolvable": unresolvable,
             }
@@ -455,7 +459,6 @@ def render_clones(user_id: int) -> Optional[str]:
     if not rows:
         return '<p>No clones found.</p>'
 
-    # === NEW: put hostile rows at the top ===
     rows.sort(key=lambda r: (not r["hostile"], r["character"], r["system"]))
 
     html_parts = [
@@ -467,24 +470,28 @@ def render_clones(user_id: int) -> Optional[str]:
         "<th>Clone Status</th>"
         "<th>Implants</th>"
         "<th>Owner</th>"
+        "<th>Region</th>"
         "</tr>"
         "</thead>"
         "<tbody>",
     ]
 
     for row in rows:
+        region = row.get("region", "Unknown Region")
         if row["hostile"]:
             row_tpl = (
                 "<tr><td>{}</td><td>{}</td><td>{}</td>"
-                "<td>{}</td><td class=\"text-danger\">{}</td></tr>"
+                "<td>{}</td><td class=\"text-danger\">{}</td>"
+                "<td>{}</td></tr>"
             )
         elif row["unresolvable"]:
             row_tpl = (
                 "<tr><td>{}</td><td>{}</td><td>{}</td>"
-                "<td>{}</td><td class=\"text-warning\"><em>{}</em></td></tr>"
+                "<td>{}</td><td class=\"text-warning\"><em>{}</em></td>"
+                "<td>{}</td></tr>"
             )
         else:
-            row_tpl = "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>"
+            row_tpl = "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>"
 
         html_parts.append(
             format_html(
@@ -494,6 +501,7 @@ def render_clones(user_id: int) -> Optional[str]:
                 row["jump_clone"],
                 row["implants_html"],
                 row["owner"],
+                region,
             )
         )
 

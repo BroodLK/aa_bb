@@ -14,11 +14,12 @@ from django.utils import timezone
 from ..app_settings import (
     get_user_characters,
     get_entity_info,
+    get_safe_entities,
     aablacklist_active,
 )
 
 if aablacklist_active():
-    from .corp_blacklist import check_char_corp_bl
+    from .add_to_blacklist import check_char_add_to_bl
 else:
     def check_char_corp_bl(_cid: int) -> bool:
         return False
@@ -123,54 +124,67 @@ def get_user_mails(qs) -> Dict[int, Dict]:
 def get_cell_style_for_mail_cell(column: str, row: dict, index: Optional[int] = None) -> str:
     """Centralized inline-style logic so tables and exports highlight hostiles."""
     solo = BigBrotherConfig.get_solo()
+    safe_entities = get_safe_entities()
     # sender cell
     if column.startswith('sender_'):  # Apply consistent styling to all sender-related columns.
         if aablacklist_active():
-            if column == 'sender_name' and check_char_corp_bl(row.get('sender_id')):  # Highlight hostile/blacklisted senders.
+            if column == 'sender_name':
+                sid = row.get('sender_id')
+                if sid and sid not in safe_entities and check_char_add_to_bl(sid):  # Highlight hostile/blacklisted senders.
+                    return 'color: red;'
+        if column == 'sender_corporation':
+            scid = row.get('sender_corporation_id')
+            if scid and scid not in safe_entities and str(scid) in solo.hostile_corporations:  # Hostile corp.
                 return 'color: red;'
-        if column == 'sender_corporation' and str(row.get('sender_corporation_id')) in solo.hostile_corporations:  # Hostile corp.
-            return 'color: red;'
-        if column == 'sender_alliance' and str(row.get('sender_alliance_id')) in solo.hostile_alliances:  # Hostile alliance.
-            return 'color: red;'
+        if column == 'sender_alliance':
+            said = row.get('sender_alliance_id')
+            if said and said not in safe_entities and str(said) in solo.hostile_alliances:  # Hostile alliance.
+                return 'color: red;'
     # recipient cell
     if column.startswith('recipient_') and index is not None:  # Recipient columns use parallel arrays, keep indexes in sync.
         if aablacklist_active():
             # blacklist check
             rid = row['recipient_ids'][index]
-            if check_char_corp_bl(rid):  # Individual recipient appears on blacklist.
+            if rid and rid not in safe_entities and check_char_add_to_bl(rid):  # Individual recipient appears on blacklist.
                 return 'color: red;'
         # corp/alliance hostility
-        cid = row['recipient_corps'][index] if column == 'recipient_corps' else None
-        aid = row['recipient_alliance_ids'][index] if column == 'recipient_alliance_ids' else None
-        if cid and str(cid) in solo.hostile_corporations:  # Recipient's corp flagged hostile.
+        cid = row['recipient_corp_ids'][index] if len(row.get('recipient_corp_ids', [])) > index else None
+        aid = row['recipient_alliance_ids'][index] if len(row.get('recipient_alliance_ids', [])) > index else None
+        if cid and cid not in safe_entities and str(cid) in solo.hostile_corporations:  # Recipient's corp flagged hostile.
             return 'color: red;'
-        if aid and str(aid) in solo.hostile_alliances:  # Recipient alliance flagged hostile.
+        if aid and aid not in safe_entities and str(aid) in solo.hostile_alliances:  # Recipient alliance flagged hostile.
             return 'color: red;'
     return ''
 
 
 def is_mail_row_hostile(row: dict) -> bool:
     solo = BigBrotherConfig.get_solo()
+    safe_entities = get_safe_entities()
 
     if row.get("sender_name"):
         for key in ["GM ", "CCP "]:
             if key in str(row["sender_name"]):
                 return True
 
-    if aablacklist_active() and check_char_corp_bl(row.get("sender_id")):
+    sid = row.get("sender_id")
+    if aablacklist_active() and sid and sid not in safe_entities and check_char_add_to_bl(sid):
         return True
 
-    if str(row.get("sender_corporation_id")) in solo.hostile_corporations:
+    scid = row.get("sender_corporation_id")
+    if scid and scid not in safe_entities and str(scid) in solo.hostile_corporations:
         return True
-    if str(row.get("sender_alliance_id")) in solo.hostile_alliances:
+    said = row.get("sender_alliance_id")
+    if said and said not in safe_entities and str(said) in solo.hostile_alliances:
         return True
 
-    for idx, rid in enumerate(row["recipient_ids"]):
-        if aablacklist_active() and check_char_corp_bl(rid):
+    for idx, rid in enumerate(row.get("recipient_ids", [])):
+        if aablacklist_active() and rid and rid not in safe_entities and check_char_add_to_bl(rid):
             return True
-        if str(row["recipient_corp_ids"][idx]) in solo.hostile_corporations:
+        rcid = row.get("recipient_corp_ids", [])[idx] if len(row.get("recipient_corp_ids", [])) > idx else None
+        if rcid and rcid not in safe_entities and str(rcid) in solo.hostile_corporations:
             return True
-        if str(row["recipient_alliance_ids"][idx]) in solo.hostile_alliances:
+        raid = row.get("recipient_alliance_ids", [])[idx] if len(row.get("recipient_alliance_ids", [])) > idx else None
+        if raid and raid not in safe_entities and str(raid) in solo.hostile_alliances:
             return True
 
     return False
@@ -210,6 +224,7 @@ def render_mails(user_id: int) -> str:
 
     for row in display:
         html_parts.append('<tr>')
+        safe_entities = get_safe_entities()
         for col in VISIBLE:
             val = row.get(col, '')
             # recipients come as lists
@@ -221,19 +236,21 @@ def render_mails(user_id: int) -> str:
                     if col == 'recipient_names':  # Names column uses multiple hostile checks.
                         rid = row['recipient_ids'][idx]
                         if aablacklist_active():
-                            if check_char_corp_bl(rid):  # Highlight individual recipients on the blacklist.
+                            if rid and rid not in safe_entities and check_char_add_to_bl(rid):  # Highlight individual recipients on the blacklist.
                                 style = 'color:red;'
-                        elif str(row['recipient_corp_ids'][idx]) in BigBrotherConfig.get_solo().hostile_corporations:  # Recipient corp flagged hostile.
+                        rcid = row['recipient_corp_ids'][idx] if len(row.get('recipient_corp_ids', [])) > idx else None
+                        raid = row['recipient_alliance_ids'][idx] if len(row.get('recipient_alliance_ids', [])) > idx else None
+                        if rcid and rcid not in safe_entities and str(rcid) in BigBrotherConfig.get_solo().hostile_corporations:  # Recipient corp flagged hostile.
                             style = 'color:red;'
-                        elif str(row['recipient_alliance_ids'][idx]) in BigBrotherConfig.get_solo().hostile_alliances:  # Recipient alliance flagged hostile.
+                        elif raid and raid not in safe_entities and str(raid) in BigBrotherConfig.get_solo().hostile_alliances:  # Recipient alliance flagged hostile.
                             style = 'color:red;'
                     elif col == 'recipient_corps':  # Corp column uses corp id list for styling.
-                        cid = row['recipient_corp_ids'][idx]
-                        if cid and str(cid) in BigBrotherConfig.get_solo().hostile_corporations:  # Hostile corporation entry.
+                        cid = row['recipient_corp_ids'][idx] if len(row.get('recipient_corp_ids', [])) > idx else None
+                        if cid and cid not in safe_entities and str(cid) in BigBrotherConfig.get_solo().hostile_corporations:  # Hostile corporation entry.
                             style = 'color:red;'
                     elif col == 'recipient_alliances':  # Alliance column uses alliance ids.
-                        aid = row['recipient_alliance_ids'][idx]
-                        if aid and str(aid) in BigBrotherConfig.get_solo().hostile_alliances:  # Hostile alliance entry.
+                        aid = row['recipient_alliance_ids'][idx] if len(row.get('recipient_alliance_ids', [])) > idx else None
+                        if aid and aid not in safe_entities and str(aid) in BigBrotherConfig.get_solo().hostile_alliances:  # Hostile alliance entry.
                             style = 'color:red;'
 
                     if style:  # Wrap each entry in a span to apply per-recipient color.
@@ -248,16 +265,22 @@ def render_mails(user_id: int) -> str:
                 style = ''
                 if col.startswith('sender_'):  # Sender cells reuse the same hostile checks as the list-based helper.
                     if aablacklist_active():
-                        if col == 'sender_name' and check_char_corp_bl(row['sender_id']):  # Sender is blacklisted.
+                        if col == 'sender_name':
+                            sid = row.get('sender_id')
+                            if sid and sid not in safe_entities and check_char_add_to_bl(sid):  # Sender is blacklisted.
+                                style = 'color:red;'
+                        scid = row.get('sender_corporation_id')
+                        said = row.get('sender_alliance_id')
+                        if scid and scid not in safe_entities and str(scid) in BigBrotherConfig.get_solo().hostile_corporations:  # Sender corp hostility.
                             style = 'color:red;'
-                        elif col == 'sender_corporation' and str(row['sender_corporation_id']) in BigBrotherConfig.get_solo().hostile_corporations:  # Sender corp hostility.
-                            style = 'color:red;'
-                        elif col == 'sender_alliance' and str(row['sender_alliance_id']) in BigBrotherConfig.get_solo().hostile_alliances:  # Sender alliance hostility.
+                        elif said and said not in safe_entities and str(said) in BigBrotherConfig.get_solo().hostile_alliances:  # Sender alliance hostility.
                             style = 'color:red;'
                     else:
-                        if col == 'sender_corporation' and str(row['sender_corporation_id']) in BigBrotherConfig.get_solo().hostile_corporations:  # Sender corp hostility.
+                        scid = row.get('sender_corporation_id')
+                        said = row.get('sender_alliance_id')
+                        if scid and scid not in safe_entities and str(scid) in BigBrotherConfig.get_solo().hostile_corporations:  # Sender corp hostility.
                             style = 'color:red;'
-                        elif col == 'sender_alliance' and str(row['sender_alliance_id']) in BigBrotherConfig.get_solo().hostile_alliances:  # Sender alliance hostility.
+                        elif said and said not in safe_entities and str(said) in BigBrotherConfig.get_solo().hostile_alliances:  # Sender alliance hostility.
                             style = 'color:red;'
                 # subject/content keyword highlighting can be done client-side
                 if style:  # Only emit style attribute when a highlight is needed.
@@ -313,22 +336,27 @@ def get_user_hostile_mails(user_id: int) -> Dict[int, str]:
                 continue
 
             flags: List[str] = []
-            if aablacklist_active() and check_char_corp_bl(m["sender_id"]):
-                flags.append(f"Sender **{m['sender_name']}** is on blacklist")
-            if str(m["sender_corporation_id"]) in cfg.hostile_corporations:
+            safe_entities = get_safe_entities()
+            if aablacklist_active():
+                sid = m.get("sender_id")
+                if sid and sid not in safe_entities and check_char_add_to_bl(sid):
+                    flags.append(f"Sender **{m['sender_name']}** is on blacklist")
+            scid = m.get("sender_corporation_id")
+            if scid and scid not in safe_entities and str(scid) in cfg.hostile_corporations:
                 flags.append(f"Sender corp **{m['sender_corporation']}** is hostile")
-            if str(m["sender_alliance_id"]) in cfg.hostile_alliances:
+            said = m.get("sender_alliance_id")
+            if said and said not in safe_entities and str(said) in cfg.hostile_alliances:
                 flags.append(f"Sender alliance **{m['sender_alliance']}** is hostile")
 
             for idx, rid in enumerate(m.get("recipient_ids", [])):
                 name = m["recipient_names"][idx]
-                if aablacklist_active() and check_char_corp_bl(rid):
+                if aablacklist_active() and rid and rid not in safe_entities and check_char_add_to_bl(rid):
                     flags.append(f"Recipient **{name}** is on blacklist")
-                cid = m["recipient_corp_ids"][idx]
-                if cid and str(cid) in cfg.hostile_corporations:
+                rcid = m.get("recipient_corp_ids", [])[idx] if len(m.get("recipient_corp_ids", [])) > idx else None
+                if rcid and rcid not in safe_entities and str(rcid) in cfg.hostile_corporations:
                     flags.append(f"Recipient corp **{m['recipient_corps'][idx]}** is hostile")
-                aid = m["recipient_alliance_ids"][idx]
-                if aid and str(aid) in cfg.hostile_alliances:
+                raid = m.get("recipient_alliance_ids", [])[idx] if len(m.get("recipient_alliance_ids", [])) > idx else None
+                if raid and raid not in safe_entities and str(raid) in cfg.hostile_alliances:
                     flags.append(f"Recipient alliance **{m['recipient_alliances'][idx]}** is hostile")
 
             flags_text = "\n    - ".join(flags) if flags else "(no flags)"

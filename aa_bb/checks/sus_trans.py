@@ -5,8 +5,10 @@ flag suspicious counterparties, and keep deduplicated notes for alerts.
 
 import html
 import logging
+import requests
 from typing import Dict, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -14,23 +16,229 @@ logger.setLevel(logging.DEBUG)
 from ..app_settings import (
     get_user_characters,
     get_entity_info,
+    get_safe_entities,
     aablacklist_active,
+    resolve_location_name,
+    resolve_location_system_id,
+    is_location_hostile,
+    get_system_owner,
 )
 
 if aablacklist_active():
-    from .corp_blacklist import check_char_corp_bl
+    from .add_to_blacklist import check_char_add_to_bl
 else:
     def check_char_corp_bl(_cid: int) -> bool:
         return False
 
 try:
-    from corptools.models import CharacterWalletJournalEntry as WalletJournalEntry
+    from corptools.models import (
+        CharacterWalletJournalEntry as WalletJournalEntry,
+        CharacterMarketTransaction,
+        Structure,
+    )
 except ImportError:
     logger.error("Corptools not installed, corp checks will not work.")
+    CharacterMarketTransaction = None
+    Structure = None
 
-from ..models import BigBrotherConfig, ProcessedTransaction, SusTransactionNote
+from django.apps import apps
+EVEUNIVERSE_INSTALLED = apps.is_installed("eveuniverse")
+if EVEUNIVERSE_INSTALLED:
+    try:
+        from eveuniverse.models import EveMarketPrice
+    except ImportError:
+        EVEUNIVERSE_INSTALLED = False
+
+from ..models import BigBrotherConfig, ProcessedTransaction, SusTransactionNote, EveItemPrice
 
 SUS_TYPES = ("player_trading", "corporation_account_withdrawal", "player_donation")
+
+MAJOR_HUBS = {30000142, 30002187, 30002659, 30002510, 30002053}
+SECONDARY_HUBS = {30002661, 30003733, 30001389, 30000144}
+
+
+def is_major_hub(tx: dict) -> bool:
+    system_id = tx.get("system_id")
+    if not system_id:
+        return False
+    return int(system_id) in MAJOR_HUBS
+
+
+def is_secondary_hub(tx: dict) -> bool:
+    system_id = tx.get("system_id")
+    if not system_id:
+        return False
+    return int(system_id) in SECONDARY_HUBS
+
+
+def is_excluded_system(tx: dict, excluded_str: str) -> bool:
+    if not excluded_str:
+        return False
+    system_id = tx.get("system_id")
+    if not system_id:
+        return False
+    excluded_ids = {int(s.strip()) for s in excluded_str.split(",") if s.strip().isdigit()}
+    return int(system_id) in excluded_ids
+
+
+def get_or_create_prices(item_id, force_refresh=True):
+    cfg = BigBrotherConfig.get_solo()
+
+    # Check local cache first
+    try:
+        price_obj = EveItemPrice.objects.get(eve_type_id=item_id)
+        # If it's fresh (less than configured days), return it
+        if not force_refresh or price_obj.updated > timezone.now() - timedelta(days=cfg.market_transactions_price_max_age):
+            return price_obj
+    except EveItemPrice.DoesNotExist:
+        price_obj = None
+
+    if not force_refresh and price_obj:
+        return price_obj
+
+    # Need to fetch/refresh
+    primary = cfg.market_transactions_price_method
+    methods = [primary]
+    if primary == 'Janice':
+        methods.append('Fuzzwork')
+    else:
+        methods.append('Janice')
+
+    buy = None
+    sell = None
+
+    for method in methods:
+        if method == 'Janice':
+            api_key = cfg.market_transactions_janice_api_key
+            if not api_key:
+                continue
+            try:
+                response = requests.get(
+                    f"https://janice.e-351.com/api/rest/v2/pricer/{item_id}",
+                    headers={
+                        "Content-Type": "text/plain",
+                        "X-ApiKey": api_key,
+                        "accept": "application/json",
+                    },
+                    timeout=10
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    if "immediatePrices" in data:
+                        if cfg.market_transactions_price_instant:
+                            buy = float(data["immediatePrices"]["buyPrice5DayMedian"])
+                            sell = float(data["immediatePrices"]["sellPrice5DayMedian"])
+                        else:
+                            buy = float(data["top5AveragePrices"]["buyPrice5DayMedian"])
+                            sell = float(data["top5AveragePrices"]["sellPrice5DayMedian"])
+                        break
+            except Exception as e:
+                logger.error(f"Janice price fetch failed for {item_id}: {e}")
+
+        elif method == 'Fuzzwork':
+            station_id = cfg.market_transactions_fuzzwork_station_id or 60003760
+            try:
+                response = requests.get(
+                    "https://market.fuzzwork.co.uk/aggregates/",
+                    params={
+                        "types": item_id,
+                        "station": station_id,
+                    },
+                    timeout=10
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    if str(item_id) in data:
+                        item_data = data[str(item_id)]
+                        if cfg.market_transactions_price_instant:
+                            buy = float(item_data["buy"]["max"])
+                            sell = float(item_data["sell"]["min"])
+                        else:
+                            buy = float(item_data["buy"]["percentile"])
+                            sell = float(item_data["sell"]["percentile"])
+                        break
+            except Exception as e:
+                logger.error(f"Fuzzwork price fetch failed for {item_id}: {e}")
+
+    if buy is not None and sell is not None:
+        if price_obj:
+            price_obj.buy = buy
+            price_obj.sell = sell
+            price_obj.save()
+            return price_obj
+        else:
+            return EveItemPrice.objects.create(
+                eve_type_id=item_id,
+                buy=buy,
+                sell=sell
+            )
+
+    return price_obj
+
+
+def is_above_threshold(tx: dict, threshold_percent: float) -> bool:
+    type_id = tx.get("type_id")
+    amount = tx.get("raw_amount", 0)
+    if not type_id or amount == 0:
+        return True
+
+    avg_price = None
+
+    if EVEUNIVERSE_INSTALLED:
+        cfg = BigBrotherConfig.get_solo()
+        try:
+            price_obj = EveMarketPrice.objects.filter(eve_type_id=type_id).first()
+            if price_obj and price_obj.average_price and price_obj.average_price > 0:
+                # Check age
+                if hasattr(price_obj, 'updated_at') and price_obj.updated_at > timezone.now() - timedelta(days=cfg.market_transactions_price_max_age):
+                    avg_price = float(price_obj.average_price)
+        except Exception:
+            logger.exception("Error checking EveUniverse price")
+
+    if avg_price is None:
+        # Fallback to local cache / Janice / Fuzzwork
+        # First attempt with force_refresh=False to avoid API hit if possible
+        try:
+            local_price = get_or_create_prices(type_id, force_refresh=False)
+            if local_price:
+                avg_price = (local_price.buy + local_price.sell) / 2
+
+                # If we have an old price, check if it's suspicious
+                if avg_price > 0:
+                    quantity = tx.get("quantity", 1) or 1
+                    unit_price = abs(amount) / quantity
+                    diff_percent = (abs(unit_price - avg_price) / avg_price) * 100
+
+                    # If NOT suspicious even with old price, we can skip refresh
+                    # If it IS suspicious, we FORCE refresh to be sure
+                    if diff_percent > threshold_percent:
+                        local_price = get_or_create_prices(type_id, force_refresh=True)
+                        if local_price:
+                            avg_price = (local_price.buy + local_price.sell) / 2
+            else:
+                # No price at all, must fetch
+                local_price = get_or_create_prices(type_id, force_refresh=True)
+                if local_price:
+                    avg_price = (local_price.buy + local_price.sell) / 2
+        except Exception:
+            logger.exception("Error checking fallback prices")
+
+    if avg_price is None or avg_price <= 0:
+        return True
+
+    try:
+        quantity = tx.get("quantity", 1)
+        if quantity == 0:
+            quantity = 1
+        unit_price = abs(amount) / quantity
+
+        diff_percent = (abs(unit_price - avg_price) / avg_price) * 100
+        if diff_percent > threshold_percent:
+            return True
+    except Exception:
+        logger.exception("Error checking price threshold")
+
+    return False
 
 
 def _find_employment_at(employment: list, date: datetime) -> Optional[dict]:
@@ -84,16 +292,32 @@ def get_user_transactions(qs) -> Dict[int, Dict]:
 
         context_id = entry.context_id
         context_type = entry.context_id_type
+        system_id = None
+        location_id = None
+        type_id = None
+        quantity = 1
         if context_type == "structure_id":
-            context = f"Structure ID: {context_id}"
+            name = resolve_location_name(context_id)
+            context = f"Structure: {name}" if name else f"Structure ID: {context_id}"
+            location_id = context_id
+            system_id = resolve_location_system_id(context_id)
         elif context_type == "character_id":
             context = f"Character: {_cached_info(context_id, tx_date)['name']}"
         elif context_type == "eve_system":
             context = "EVE System"
+            system_id = context_id
+            location_id = context_id
         elif context_type is None:
             context = "None"
         elif context_type == "market_transaction_id":
             context = f"Market Transaction ID: {context_id}"
+            if CharacterMarketTransaction:
+                m_tx = CharacterMarketTransaction.objects.filter(transaction_id=context_id).first()
+                if m_tx:
+                    location_id = m_tx.location_id if hasattr(m_tx, "location_id") else None
+                    system_id = m_tx.location.system_id if hasattr(m_tx.location, "system_id") else None
+                    type_id = m_tx.type_id
+                    quantity = m_tx.quantity
         else:
             context = f"{context_type}: {context_id}"
 
@@ -101,6 +325,7 @@ def get_user_transactions(qs) -> Dict[int, Dict]:
             "entry_id": tx_id,
             "date": tx_date,
             "amount": "{:,}".format(entry.amount),
+            "raw_amount": float(entry.amount),
             "balance": "{:,}".format(entry.balance),
             "description": entry.description,
             "reason": entry.reason,
@@ -118,12 +343,23 @@ def get_user_transactions(qs) -> Dict[int, Dict]:
             "second_party_alliance": ainfo["alli_name"],
             "context": context,
             "type": entry.ref_type,
+            "system_id": system_id,
+            "location_id": location_id,
+            "type_id": type_id,
+            "quantity": quantity,
         }
 
     return result
 
 
 def is_transaction_hostile(tx: dict, user_ids: set = None) -> bool:
+    ttype = tx.get("type") or ""
+    is_sus_type = any(st in ttype for st in SUS_TYPES)
+    is_market = "market_escrow" in ttype or "market_transaction" in ttype
+
+    if not (is_sus_type or is_market):
+        return False
+
     if user_ids and tx.get("first_party_id") in user_ids and tx.get("second_party_id") in user_ids:
         return False
 
@@ -138,13 +374,17 @@ def is_transaction_hostile(tx: dict, user_ids: set = None) -> bool:
         return False
 
     cfg = BigBrotherConfig.get_solo()
+    safe_entities = get_safe_entities()
 
     if aablacklist_active():
-        if check_char_corp_bl(tx.get("first_party_id")) or check_char_corp_bl(tx.get("second_party_id")):
+        fpid = tx.get("first_party_id")
+        spid = tx.get("second_party_id")
+        if (fpid and fpid not in safe_entities and check_char_add_to_bl(fpid)) or \
+           (spid and spid not in safe_entities and check_char_add_to_bl(spid)):
             return True
 
-    wlcorp = set((cfg.whitelist_corporations or "").split(","))
-    wlali = set((cfg.whitelist_alliances or "").split(","))
+    wlcorp = {s.strip() for s in (cfg.whitelist_corporations or "").split(",") if s.strip()}
+    wlali = {s.strip() for s in (cfg.whitelist_alliances or "").split(",") if s.strip()}
     fpcorp_str = str(fp_corp or "")
     spcorp_str = str(sp_corp or "")
     fpali_str = str(fp_alli or "")
@@ -169,15 +409,27 @@ def is_transaction_hostile(tx: dict, user_ids: set = None) -> bool:
     if _is_member_or_ignored(fp_corp, fp_alli) and _is_member_or_ignored(sp_corp, sp_alli):
         return False
 
-    for key in SUS_TYPES:
-        if key in (tx.get("type") or ""):
-            return True
+    if "market_escrow" in (tx.get("type") or "") or "market_transaction" in (tx.get("type") or ""):
+        if not cfg.market_transactions_show_major_hubs and is_major_hub(tx):
+            return False
+        if not cfg.market_transactions_show_secondary_hubs and is_secondary_hub(tx):
+            return False
+        if is_excluded_system(tx, cfg.market_transactions_excluded_systems):
+            return False
 
+        if cfg.market_transactions_threshold_alert and cfg.market_transactions_threshold_percent > 0:
+            if not is_above_threshold(tx, cfg.market_transactions_threshold_percent):
+                return False
+
+    hostile_corps = {s.strip() for s in (cfg.hostile_corporations or "").split(",") if s.strip()}
+    hostile_allis = {s.strip() for s in (cfg.hostile_alliances or "").split(",") if s.strip()}
     for key in ("first_party_corporation_id", "second_party_corporation_id"):
-        if tx.get(key) and str(tx[key]) in cfg.hostile_corporations:
+        kid = tx.get(key)
+        if kid and kid not in safe_entities and str(kid) in hostile_corps:
             return True
     for key in ("first_party_alliance_id", "second_party_alliance_id"):
-        if tx.get(key) and str(tx[key]) in cfg.hostile_alliances:
+        kid = tx.get(key)
+        if kid and kid not in safe_entities and str(kid) in hostile_allis:
             return True
 
     return False
@@ -214,6 +466,11 @@ def render_transactions(user_id: int) -> str:
         parts.append(f'<th>{html.escape(h.replace("_"," ").title())}</th>')
     parts.extend(['</tr>','</thead>','<tbody>'])
 
+    cfg = BigBrotherConfig.get_solo()
+    hostile_corps = {s.strip() for s in (cfg.hostile_corporations or "").split(",") if s.strip()}
+    hostile_allis = {s.strip() for s in (cfg.hostile_alliances or "").split(",") if s.strip()}
+    safe_entities = get_safe_entities()
+
     for t in display:  # Render each hostile transaction row with contextual styling.
         parts.append('<tr>')
         for col in headers:
@@ -224,13 +481,22 @@ def render_transactions(user_id: int) -> str:
                 for key in SUS_TYPES:
                     if key in t['type']:  # Highlight suspicious ref types inline.
                         style = 'color: red;'
+                if cfg.show_market_transactions:
+                    if "market_escrow" in t['type'] or "market_transaction" in t['type']:
+                        style = 'color: red;'
             if aablacklist_active():
-                if col in ('first_party_name', 'second_party_name') and check_char_corp_bl(t.get(col + '_id', -1)):  # Parties on blacklist.
+                if col in ('first_party_name', 'second_party_name'):
+                    pid = t.get(col + '_id', -1)
+                    if pid and pid not in safe_entities and check_char_add_to_bl(pid):  # Parties on blacklist.
+                        style = 'color: red;'
+            if col.endswith('corporation'):
+                cid = t.get(col + '_id')
+                if cid and cid not in safe_entities and str(cid) in hostile_corps:  # Hostile corps.
                     style = 'color: red;'
-            if col.endswith('corporation') and t.get(col + '_id') and str(t[col + '_id']) in BigBrotherConfig.get_solo().hostile_corporations:  # Hostile corps.
-                style = 'color: red;'
-            if col.endswith('alliance') and t.get(col + '_id') and str(t[col + '_id']) in BigBrotherConfig.get_solo().hostile_alliances:  # Hostile alliances.
-                style = 'color: red;'
+            if col.endswith('alliance'):
+                aid = t.get(col + '_id')
+                if aid and aid not in safe_entities and str(aid) in hostile_allis:  # Hostile alliances.
+                    style = 'color: red;'
             def make_td(val, style=""):
                 """Render a TD with optional inline style for hostile cues."""
                 style_attr = f' style="{style}"' if style else ""
@@ -284,20 +550,51 @@ def get_user_hostile_transactions(user_id: int) -> Dict[int, str]:
                     if key in ttype:
                         flags.append(f"Transaction type is **{ttype}**")
 
+                if BigBrotherConfig.get_solo().show_market_transactions:
+                    if "market_escrow" in ttype or "market_transaction" in ttype:
+                        flags.append(f"Transaction type is **{ttype}**")
+
+                cfg = BigBrotherConfig.get_solo()
+                hostile_corps = {s.strip() for s in (cfg.hostile_corporations or "").split(",") if s.strip()}
+                hostile_allis = {s.strip() for s in (cfg.hostile_alliances or "").split(",") if s.strip()}
+                safe_entities = get_safe_entities()
+
                 if aablacklist_active():
-                    if tx.get("first_party_id") and check_char_corp_bl(tx["first_party_id"]):
+                    fpid = tx.get("first_party_id")
+                    if fpid and fpid not in safe_entities and check_char_add_to_bl(fpid):
                         flags.append(f"first_party **{tx['first_party_name']}** is on blacklist")
-                    if tx.get("second_party_id") and check_char_corp_bl(tx["second_party_id"]):
+                    spid = tx.get("second_party_id")
+                    if spid and spid not in safe_entities and check_char_add_to_bl(spid):
                         flags.append(f"second_party **{tx['second_party_name']}** is on blacklist")
 
-                if str(tx.get("first_party_corporation_id")) in BigBrotherConfig.get_solo().hostile_corporations:
+                fpcid = tx.get("first_party_corporation_id")
+                if fpcid and fpcid not in safe_entities and str(fpcid) in hostile_corps:
                     flags.append(f"first_party corp **{tx['first_party_corporation']}** is hostile")
-                if str(tx.get("first_party_alliance_id")) in BigBrotherConfig.get_solo().hostile_alliances:
+                fpaid = tx.get("first_party_alliance_id")
+                if fpaid and fpaid not in safe_entities and str(fpaid) in hostile_allis:
                     flags.append(f"first_party alliance **{tx['first_party_alliance']}** is hostile")
-                if str(tx.get("second_party_corporation_id")) in BigBrotherConfig.get_solo().hostile_corporations:
+                spcid = tx.get("second_party_corporation_id")
+                if spcid and spcid not in safe_entities and str(spcid) in hostile_corps:
                     flags.append(f"second_party corp **{tx['second_party_corporation']}** is hostile")
-                if str(tx.get("second_party_alliance_id")) in BigBrotherConfig.get_solo().hostile_alliances:
+                spaid = tx.get("second_party_alliance_id")
+                if spaid and spaid not in safe_entities and str(spaid) in hostile_allis:
                     flags.append(f"second_party alliance **{tx['second_party_alliance']}** is hostile")
+
+                loc_id = tx.get("location_id") or tx.get("system_id")
+                if loc_id and is_location_hostile(tx.get("location_id"), tx.get("system_id")):
+                    loc_name = resolve_location_name(loc_id) or f"ID {loc_id}"
+                    owner_info = get_system_owner({"id": loc_id})
+                    oname = owner_info.get("owner_name")
+                    rname = owner_info.get("region_name")
+                    flag = f"Location **{loc_name}** is hostile space"
+                    if oname or rname:
+                        info_parts = []
+                        if oname:
+                            info_parts.append(oname)
+                        if rname and rname != "Unknown Region":
+                            info_parts.append(f"Region: {rname}")
+                        flag += f" ({' | '.join(info_parts)})"
+                    flags.append(flag)
 
                 flags_lines = [f"    - {flag}" for flag in flags] if flags else ["    - (no extra flags)"]
 
@@ -314,6 +611,9 @@ def get_user_hostile_transactions(user_id: int) -> Dict[int, str]:
 
                 if tx.get("reason"):
                     note_lines.append(f"  Reason: **{tx['reason']}**")
+
+                if tx.get("context") and tx.get("context") != "None":
+                    note_lines.append(f"  Context: **{tx['context']}**")
 
                 note_lines.append("  Flags:")
                 note_lines.extend(flags_lines)
