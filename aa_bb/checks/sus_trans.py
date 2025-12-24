@@ -187,7 +187,7 @@ def is_above_threshold(tx: dict, threshold_percent: float) -> bool:
     if EVEUNIVERSE_INSTALLED:
         cfg = BigBrotherConfig.get_solo()
         try:
-            price_obj = EveMarketPrice.objects.filter(type_id=type_id).first()
+            price_obj = EveMarketPrice.objects.filter(eve_type_id=type_id).first()
             if price_obj and price_obj.average_price and price_obj.average_price > 0:
                 # Check age
                 if hasattr(price_obj, 'updated_at') and price_obj.updated_at > timezone.now() - timedelta(days=cfg.market_transactions_price_max_age):

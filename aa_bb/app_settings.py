@@ -962,9 +962,9 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
         if parent_system_id:
             try:
                 from eveuniverse.models import EveSolarSystem
-                sys_obj = EveSolarSystem.objects.select_related("constellation__region").get(id=parent_system_id)
-                region_id = str(sys_obj.constellation.region.id)
-                region_name = sys_obj.constellation.region.name
+                sys_obj = EveSolarSystem.objects.select_related("eve_constellation__eve_region").get(id=parent_system_id)
+                region_id = str(sys_obj.eve_constellation.eve_region.id)
+                region_name = sys_obj.eve_constellation.eve_region.name
             except Exception:
                 pass
 
@@ -979,33 +979,24 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
                 if 30000000 <= target_sov_id <= 34000000:
                     try:
                         from eveuniverse.models import EveSolarSystem
-                        sys_obj = EveSolarSystem.objects.select_related("faction").get(id=target_sov_id)
-                        if sys_obj.faction:
-                            return {
-                                "owner_id": str(sys_obj.faction.id),
-                                "owner_name": sys_obj.faction.name,
-                                "owner_type": "faction",
-                                "region_id": region_id,
-                                "region_name": region_name
-                            }
-                        else:
-                            return {
-                                "owner_id": "0",
-                                "owner_name": "Unclaimed",
-                                "owner_type": "unknown",
-                                "region_id": region_id,
-                                "region_name": region_name
-                            }
+                        sys_obj = EveSolarSystem.objects.get(id=target_sov_id)
+                        return {
+                            "owner_id": "0",
+                            "owner_name": "Unclaimed",
+                            "owner_type": "unknown",
+                            "region_id": region_id,
+                            "region_name": region_name
+                        }
                     except Exception:
                         pass
                 elif 60000000 <= target_sov_id <= 64000000:
                     try:
                         from eveuniverse.models import EveStation
-                        station_obj = EveStation.objects.select_related("owner").get(id=target_sov_id)
-                        if station_obj.owner:
+                        station_obj = EveStation.objects.get(id=target_sov_id)
+                        if station_obj.owner_id:
                             return {
-                                "owner_id": str(station_obj.owner.id),
-                                "owner_name": station_obj.owner.name,
+                                "owner_id": str(station_obj.owner_id),
+                                "owner_name": resolve_corporation_name(station_obj.owner_id),
                                 "owner_type": "corporation",
                                 "region_id": region_id,
                                 "region_name": region_name
