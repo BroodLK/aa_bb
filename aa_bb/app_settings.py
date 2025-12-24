@@ -945,24 +945,29 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
     region_name = "Unknown Region"
 
     # 1) Pull name and ID from the passed-in dict
-    system_id = system.get("id")
+    system_id_raw = system.get("id")
+    try:
+        system_id = int(system_id_raw) if system_id_raw is not None else None
+    except (ValueError, TypeError):
+        system_id = None
+
     system_nam = system.get("name")
     system_name = str()
     if system_nam:  # Convert the provided name into a proper string when available.
         system_name = str(system_nam)
 
-    # Resolve parent system if this is a location
-    parent_system_id = resolve_location_system_id(system_id)
-    if parent_system_id:
-        try:
-            from eveuniverse.models import EveSolarSystem
-            sys_obj = EveSolarSystem.objects.select_related("constellation__region").get(id=parent_system_id)
-            region_id = str(sys_obj.constellation.region.id)
-            region_name = sys_obj.constellation.region.name
-        except Exception:
-            pass
-
     try:
+        # Resolve parent system if this is a location
+        parent_system_id = resolve_location_system_id(system_id)
+        if parent_system_id:
+            try:
+                from eveuniverse.models import EveSolarSystem
+                sys_obj = EveSolarSystem.objects.select_related("constellation__region").get(id=parent_system_id)
+                region_id = str(sys_obj.constellation.region.id)
+                region_name = sys_obj.constellation.region.name
+            except Exception:
+                pass
+
         sov_map = _get_sov_map()
         # If it's a structure or station, we want the system it's in for SOV
         target_sov_id = parent_system_id or system_id
@@ -1208,9 +1213,10 @@ def get_user_id(character_name):
 
 def is_nullsec(system_id):
     try:
+        system_id = int(system_id)
         sys = EveSolarSystem.objects.get(id=system_id)
         return sys.security_status <= 0.0
-    except EveSolarSystem.DoesNotExist:
+    except (EveSolarSystem.DoesNotExist, ValueError, TypeError):
         return False
 
 def is_player_structure(location_id):
@@ -1219,7 +1225,10 @@ def is_player_structure(location_id):
     (Citadel, Engineering Complex, Refinery) rather than an NPC station.
     Structure IDs are typically large (>= 1,000,000,000,000).
     """
-    return location_id >= 1_000_000_000_000
+    try:
+        return int(location_id) >= 1_000_000_000_000
+    except (ValueError, TypeError):
+        return False
 
 def resolve_location_name(location_id: int) -> Optional[str]:
     """
@@ -1229,6 +1238,11 @@ def resolve_location_name(location_id: int) -> Optional[str]:
     3) Player Structure (>= 1T)
     """
     if not location_id:
+        return None
+
+    try:
+        location_id = int(location_id)
+    except (ValueError, TypeError):
         return None
 
     # 1) Solar System
@@ -1257,6 +1271,15 @@ def resolve_location_name(location_id: int) -> Optional[str]:
         except Exception:
             pass
 
+    # Fallback to EveLocation
+    try:
+        from corptools.models import EveLocation
+        loc = EveLocation.objects.filter(location_id=location_id).first()
+        if loc:
+            return loc.location_name
+    except Exception:
+        pass
+
     return None
 
 def resolve_location_system_id(location_id: int) -> Optional[int]:
@@ -1264,6 +1287,11 @@ def resolve_location_system_id(location_id: int) -> Optional[int]:
     Attempts to resolve a location_id to its parent solar system ID.
     """
     if not location_id:
+        return None
+
+    try:
+        location_id = int(location_id)
+    except (ValueError, TypeError):
         return None
 
     # 1) Solar System
