@@ -12,10 +12,7 @@
 # BigBrother
 BigBrother is an Alliance Auth plugin, **_originally written by Andrew Xadi_**, that performs continuous pilot auditing, compliance monitoring, intelligence gathering, and behavioral analysis. It monitors activity such as skills, cyno capabilities, SP injections, corporation movement, assets, clones, and more, then delivers structured leadership-focused reports.
 
-All while invisible to the general membership unless you chose to expose it to them. No "adding chars" to it, it pulls relevant information from CorpTools.
-
-> [!WARNING]
-> This is a **beta** release. Please report issues through GitHub.
+All while invisible to the general membership unless you choose to expose it to them. No "adding chars" to it, it pulls relevant information from CorpTools.
 
 ## Index
 
@@ -36,21 +33,19 @@ All while invisible to the general membership unless you chose to expose it to t
 ### The following AllianceAuth plugins are **_required_**:
 
 ```md
-allianceauth-corptools >= 2.12.0 (this app will adopt 3.0.0 as soon as version 3 is out of beta)
+allianceauth >= 4.3.1
+allianceauth-corptools >= 2.12.0
 allianceauth-discordbot >= 4.1.0
 aa-charlink >= 1.11.1
 django-esi >= 8.2.0
+django-eveuniverse >= 1.5.9
 ```
-
-You do not have to use afat, but it does need to be installed.
-
 ### Optional plugins
 ```md
 allianceauth-afat >= 4.1.1
 allianceauth-blacklist >= 0.1.1
 aa-contacts >= 0.10.2
 ```
-As stated, this plugin is optional but is obviously required for using it to sync your hostiles.
 
 ## Install Instructions
 After making sure to add the above prerequisite applications.
@@ -63,7 +58,7 @@ pip install aa-bb==3.2.3
 ```bash
 vi myauth/settings/local.py
 ```
-add `aa_bb` to installed apps.
+Add `aa_bb` to your `INSTALLED_APPS`. Ensure that the prerequisite applications listed above are also present in `INSTALLED_APPS`.
 ```bash
 python manage.py migrate && python manage.py collectstatic --noinput
 ```
@@ -73,7 +68,7 @@ exit your venv
 sudo supervisorctl restart myauth:
 ```
 > [!IMPORTANT]
-> It is recommended to use a threaded worker setup with memmon for this application. The following is an example
+> It is recommended to use a threaded worker setup with memmon for this application. Also note that threaded workers are provided by default with allianceauth, this serves as a reminder that these values can be adjusted to suit your needs. The following is an example
 
 In your supervisor.conf
 ```bash
@@ -93,7 +88,7 @@ killasgroup=true
 priority=998
 
 [eventlistener:memmon]
-command=/home/allianceserver/venv/auth/bin/memmon -p worker_00=512MB -p worker_01=512MB -p -p gunicorn=512MB
+command=/home/allianceserver/venv/auth/bin/memmon -p worker_00=512MB -p worker_01=512MB -p gunicorn=512MB
 directory=/home/allianceserver/myauth
 events=TICK_60
 stdout_logfile=/home/allianceserver/myauth/log/memmon.log
@@ -144,7 +139,7 @@ In your AA Admin navigate to AA_BB
     - Select any @here conditions
     - Select any @everyone conditions
   - Under Webhooks
-  - >Dont forget you can send it to a thread by using `https://discordapp.com/api/webhooks/<url>/<url>?thread_id=<threadid>`\
+  - >Don't forget you can send it to a thread by using `https://discordapp.com/api/webhooks/<url>/<url>?thread_id=<threadid>`\
     The thread must be in the same channel that the webhook is configured to.
     - **The main "Webhook" This is used to send notifications of user and corp changes to Discord**
     - LOA Webhook
@@ -154,7 +149,8 @@ In your AA Admin navigate to AA_BB
   - Under Schedules
     - Configure specific schedules for daily messages, optional messages, and recurring stats.
   - Under User State and Membership
-  [!WARNING] Failure to configure this will result in AA_BB not working
+  - > [!WARNING]
+  - > Failure to configure this will result in AA_BB not working
     - Configure what states you consider "members" you will receive updates on these in discord
     - Configure what states you consider "guest" these will be preloaded into cache, but not notified in discord.
     - Configure what corporations you consider to be members, these are friendly entities.
@@ -175,15 +171,10 @@ Once you are satisfied with the configuration, you may explore the other configu
 
 Okay, but now you want it to actually do the things, go to `Periodic Tasks` and **Run** `BB run regular updates`
 
-Once the task has run for the first time, it will post in the discord webhook when it has completed (about an hour) and will inform you to go back and enabled the tasks, you must enablkke `BB run regular updates` but the other tasks are based on your needs.
+Once the task has run for the first time, it will post in the discord webhook when it has completed (about an hour) and will inform you to go back and enable the tasks, you must enable `BB run regular updates` but the other tasks are based on your needs.
 
 
 # Features
-
-> [!WARNING]
-> **_Reddit Support_**:\
-> Reddit functionality requires paid API access. Because of this requirement, Reddit posting and monitoring features have not been tested.\
-> As such, a list of what it does do will not be included in this readme for now.
 
 ## Dashboard
 ![Screenshot of Dashboard](https://i.imgur.com/ZmsVjgK.gif)
@@ -320,12 +311,12 @@ BigBrother integrates directly with **aa-contacts** to provide continuous hostil
   - Contacts below 0 status are added to hostile
     - Both Corp and Alliances
   - Contacts above 0 are added to members
-    - Both Corp and ALliances
-  - Contacts at 0 (nuetral)
+    - Both Corp and Alliances
+  - Contacts at 0 (neutral)
     - You are presented with 3 choices
       - Ignore, do nothing.
-        - Add them to ignore list.
-        - Add them to hostile list.
+      - Add them to ignore list.
+      - Add them to hostile list.
 
 ### What it does NOT do
 - It does **not** delete or create contacts in game
