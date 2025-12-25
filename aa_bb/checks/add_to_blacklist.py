@@ -7,12 +7,12 @@ blacklist when authorized staff request it.
 """
 
 from allianceauth.authentication.models import CharacterOwnership
-from ..app_settings import aablacklist_active, send_message, get_pings
+from ..app_settings import aablacklist_active, get_pings, send_status_embed
 from django.contrib.auth.models import User
 from django.urls import reverse
 from django.middleware.csrf import get_token
 
-def check_corp_bl(user_id):
+def check_add_to_blacklist(user_id):
     """
     Return a mapping of character name -> bool (is blacklisted).
 
@@ -24,10 +24,10 @@ def check_corp_bl(user_id):
     status_map = {}
     for co in CharacterOwnership.objects.filter(user__id=user_id):
         cid = co.character.character_id
-        status_map[co.character.character_name] = check_char_corp_bl(cid)
+        status_map[co.character.character_name] = check_char_add_to_bl(cid)
     return status_map
 
-def check_char_corp_bl(cid):
+def check_char_add_to_bl(cid):
     """
     Lightweight helper used by multiple checks to see if a character id
     appears in the blacklist table. Returns True when blacklisted.
@@ -42,7 +42,7 @@ def check_char_corp_bl(cid):
         ).values_list('eve_id', flat=True)
         return cid in blacklisted_ids
 
-def get_corp_blacklist_html(
+def get_add_to_blacklist_html(
     request,
     issuer_user_id: int,
     target_user_id: int
@@ -63,14 +63,10 @@ def get_corp_blacklist_html(
     # Generate CSRF token for the form:
     token = get_token(request)
 
-    status_map = check_corp_bl(target_user_id)
+    status_map = check_add_to_blacklist(target_user_id)
     items = list(status_map.items())
 
     html = [
-        f"<form method='post' action='{action_url}'>",
-        f"  <input type='hidden' name='csrfmiddlewaretoken' value='{token}'/>",
-        f"  <input type='hidden' name='issuer_user_id' value='{issuer_user_id}'/>",
-        f"  <input type='hidden' name='target_user_id' value='{target_user_id}'/>",
         "  <ul>",
     ]
 
@@ -83,9 +79,9 @@ def get_corp_blacklist_html(
         )
         html.append(f"    <li>{line}</li>")
 
+    html.append("  </ul>")
+
     if request.user.has_perm("aa_bb.can_blacklist_characters"):  # Only staff can see the POST form.
-        action_url = reverse("BigBrother:add_blacklist")
-        token      = get_token(request)
         html += [
             f"<form method='post' action='{action_url}'>",
             f"  <input type='hidden' name='csrfmiddlewaretoken' value='{token}'/>",
@@ -93,7 +89,7 @@ def get_corp_blacklist_html(
             f"  <input type='hidden' name='target_user_id' value='{target_user_id}'/>",
             "  <label for='reason'>Reason (max 4000 chars):</label><br/>",
             "  <textarea id='reason' name='reason' maxlength='4000' rows='4' cols='50' class='form-control'></textarea><br/>",
-            "  <button type='submit' class='btn btn-secondary'>Add to Blacklist</button>",
+            "  <button type='submit' class='btn btn-secondary mt-2'>Add to Blacklist</button>",
             "</form>",
         ]
 
@@ -185,6 +181,10 @@ def add_user_characters_to_blacklist(
             alliance_name=None,
         )
         newly_blacklisted.append(char.character_name)
-        send_message(f"{get_pings('New Blacklist Entry')}{target_main_name}'s character {char.character_name} added to blacklist by {added_by}")
+        send_status_embed(
+            subject="New Blacklist Entry",
+            lines=[f"{get_pings('New Blacklist Entry')}{target_main_name}'s character {char.character_name} added to blacklist by {added_by}"],
+            color=0xFF0000,
+        )
 
     return newly_blacklisted

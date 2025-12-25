@@ -2,7 +2,8 @@ from django.db.utils import OperationalError
 import time
 import traceback
 from django.utils import timezone
-from celery import shared_task
+from django.db.models import Q
+from celery import shared_task, current_app
 
 from .models import (
     UserStatus,
@@ -18,7 +19,8 @@ from .app_settings import (
     get_user_id,
     get_character_id,
     get_pings,
-    send_message
+    send_status_embed,
+    _chunk_embed_lines,
 )
 from aa_bb.checks.awox import get_awox_kill_links
 from aa_bb.checks.cyno import get_user_cyno_info, get_current_stint_days_in_corp
@@ -53,182 +55,27 @@ from allianceauth.services.hooks import get_extension_logger
 logger = get_extension_logger(__name__)
 VERBOSE_WEBHOOK_LOGGING = True
 
-def send_status_embed(
-    subject: str,
-    lines: list[str],
-    *,
-    override_title: str | None = None,
-    color: int = 0xED4245,  # Discord red
-):
-    """
-    Send a Discord embed via the existing send_message() webhook.
-    """
-
-    if VERBOSE_WEBHOOK_LOGGING:
-        logger.debug(
-            "[EMBED] send_status_embed called | subject=%r | lines=%d",
-            subject,
-            len(lines) if lines else 0,
-        )
-
-    # Defensive: never send empty embeds
-    if not lines:
-        logger.debug("[EMBED] aborted: no lines supplied")
-        return
-
-    # Discord limits
-    MAX_DESC = 4096
-    MAX_LINES = 50
-
-    title = override_title if override_title is not None else subject
-
-    if VERBOSE_WEBHOOK_LOGGING:
-        logger.debug(
-            "[EMBED] title resolved | title=%r | color=%#x",
-            title,
-            color,
-        )
-
-    # Trim excessive lines but keep tables intact
-    safe_lines = lines[:MAX_LINES]
-
-    if len(lines) > MAX_LINES:
-        logger.warning(
-            "[EMBED] line cap exceeded | original=%d | capped=%d",
-            len(lines),
-            MAX_LINES,
-        )
-
-    description = "\n".join(safe_lines)
-
-    # Hard truncate if someone messed up
-    if len(description) > MAX_DESC:
-        logger.error(
-            "[EMBED] description overflow | chars=%d | truncating",
-            len(description),
-        )
-        description = description[: MAX_DESC - 3] + "..."
-
-    if VERBOSE_WEBHOOK_LOGGING:
-        logger.debug(
-            "[EMBED] payload ready | lines=%d | chars=%d",
-            len(safe_lines),
-            len(description),
-        )
-
-    embed = {
-        "embeds": [
-            {
-                "title": title,
-                "description": description,
-                "color": color,
-            }
-        ]
-    }
-
-    if VERBOSE_WEBHOOK_LOGGING:
-        logger.debug("[EMBED] sending embed payload")
-    time.sleep(0.25)
-    send_message(embed)
-
-
-# Helper to keep embed lines reasonably narrow for mobile (≈40 chars)
-def _chunk_embed_lines(lines, max_chars=1900):
-    """
-    Split a list of lines into chunks whose joined text length
-    is <= max_chars, without breaking ``` code blocks.
-
-    Returns: List[List[str]] – each inner list is one embed body.
-    """
-    # First, group into "segments": either a full code block or a run of normal lines
-    segments = []
-    current_segment = []
-    in_code = False
-
-    for line in lines:
-        stripped = line.strip()
-
-        if stripped.startswith("```"):
-            # Starting a new code block
-            if not in_code:
-                # flush any accumulated non-code segment
-                if current_segment:
-                    segments.append(current_segment)
-                    current_segment = []
-                in_code = True
-                current_segment = [line]
-            else:
-                # closing an existing code block
-                current_segment.append(line)
-                segments.append(current_segment)
-                current_segment = []
-                in_code = False
-        else:
-            current_segment.append(line)
-
-    if current_segment:
-        segments.append(current_segment)
-
-    # Now pack segments into chunks by total char length
-    chunks = []
-    current_chunk = []
-    current_len = 0
-
-    for seg in segments:
-        # Estimate length if we add this segment (with newlines)
-        seg_text = "\n".join(seg)
-        seg_len = len(seg_text) + (1 if current_chunk else 0)  # +1 for newline before segment
-
-        if seg_len > max_chars:
-            # Segment itself is huge; fall back to splitting inside it line-by-line
-            for line in seg:
-                line_len = len(line) + (1 if current_chunk else 0)
-                if current_len + line_len > max_chars and current_chunk:
-                    chunks.append(current_chunk)
-                    current_chunk = [line]
-                    current_len = len(line)
-                else:
-                    current_chunk.append(line)
-                    current_len += line_len
-            continue
-
-        if current_len + seg_len > max_chars and current_chunk:
-            # Start a new chunk
-            chunks.append(current_chunk)
-            current_chunk = list(seg)
-            current_len = len(seg_text)
-        else:
-            # Add segment to current chunk
-            if current_chunk:
-                current_chunk.append("")  # ensure a blank line between segments
-                current_len += 1
-            current_chunk.extend(seg)
-            current_len += len(seg_text)
-
-    if current_chunk:
-        chunks.append(current_chunk)
-
-    return chunks
 
 
 def parse_hostile_summary(summary: str):
     """
     Parse the summary string from get_hostile_asset_locations /
-    get_hostile_clone_locations into (owner, ships, chars).
+    get_hostile_clone_locations into (owner, region, ships, chars).
 
     Expected format from helpers is:
-      "Owner Name | Ships: A, B | Chars: X, Y"
+      "Owner Name | Region: Region Name | Ships: A, B | Chars: X, Y"
     or
       "Owner Name | Chars: X, Y"
 
     Ships may be empty for clones.
     """
     owner = summary or "Unresolvable"
+    region = ""
     ships = ""
     chars: list[str] = []
 
     if not summary:
-        return owner, ships, chars
+        return owner, region, ships, chars
 
     parts = [p.strip() for p in summary.split("|") if p.strip()]
     if parts:
@@ -238,13 +85,15 @@ def parse_hostile_summary(summary: str):
         label, _, rest = seg.partition(":")
         label = label.strip().lower()
         value = rest.strip()
-        if label == "ships":
+        if label == "region":
+            region = value
+        elif label == "ships":
             ships = value
         elif label == "chars":
             if value:
                 chars = [c.strip() for c in value.split(",") if c.strip()]
 
-    return owner, ships, chars
+    return owner, region, ships, chars
 
 
 @shared_task
@@ -253,42 +102,56 @@ def BB_update_single_user(user_id, char_name):
     Process updates for a single user.
     Broken out from BB_run_regular_updates for scalability.
     """
-    logger.info(f"START Update for user: {char_name} (ID: {user_id})")
+    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - START Update for user: {char_name} (ID: {user_id})")
 
     instance = BigBrotherConfig.get_solo()
     if not instance.is_active:
-        logger.info(f"BigBrother inactive. Skipping update for {char_name}.")
+        logger.info(f"ℹ️  [AA-BB] - [BB_update_single_user] - BigBrother inactive. Skipping update for {char_name}.")
         return
 
     User = get_user_model()
+    try:
+        user_obj = User.objects.get(id=user_id)
+    except User.DoesNotExist:
+        logger.error(f"ℹ️  [AA-BB] - [BB_update_single_user] - User {user_id} not found.")
+        return
+
+    limit_notifications = False
+
+    if instance.limit_to_main_corp:
+        profile = getattr(user_obj, 'profile', None)
+        main_char_obj = getattr(profile, 'main_character', None) if profile else None
+        is_main_corp = (main_char_obj and main_char_obj.corporation_id == instance.main_corporation_id)
+        limit_notifications = not is_main_corp
+
 
     # Retry logic previously inside the main loop
     for attempt in range(3):
         try:
             # pingroleID = instance.pingroleID # Unused variable?
 
-            logger.info(f"[{char_name}] Fetching Cyno Info...")
+            logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Fetching Cyno Info...")
             cyno_result = get_user_cyno_info(user_id)
 
-            logger.info(f"[{char_name}] Fetching Skill Info...")
+            logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Fetching Skill Info...")
             skills_result = get_multiple_user_skill_info(user_id, skill_ids)
 
-            logger.info(f"[{char_name}] Determining Character State...")
+            logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Determining Character State...")
             state_result = determine_character_state(user_id, True)
 
-            logger.info(f"[{char_name}] Fetching AWOX Links...")
+            logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Fetching AWOX Links...")
             awox_data = get_awox_kill_links(user_id)
             awox_links = [x["link"] for x in awox_data]
             awox_map = {x["link"]: x for x in awox_data}
 
-            logger.info(f"[{char_name}] Fetching Hostile Clones...")
+            logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Fetching Hostile Clones...")
             hostile_clones_result = get_hostile_clone_locations(user_id)
 
-            logger.info(f"[{char_name}] Fetching Hostile Assets...")
+            logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Fetching Hostile Assets...")
 
             hostile_assets_result = get_hostile_asset_locations(user_id)
 
-            logger.info(f"[{char_name}] Fetching Sus Contacts/Contracts/Mails/Trans...")
+            logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Fetching Sus Contacts/Contracts/Mails/Trans...")
             sus_contacts_result = {str(cid): v for cid, v in get_user_hostile_notifications(user_id).items()}
             sus_contracts_result = {str(issuer_id): v for issuer_id, v in get_user_hostile_contracts(user_id).items()}
             sus_mails_result = {str(issuer_id): v for issuer_id, v in get_user_hostile_mails(user_id).items()}
@@ -322,7 +185,7 @@ def BB_update_single_user(user_id, char_name):
                     out[name] = filtered
                 return out
 
-            logger.info(f"[{char_name}] Processing SP Ratios...")
+            logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Processing SP Ratios...")
             for char_nameeee, data in skills_result.items():
                 char_id = get_character_id(char_nameeee)
                 char_age = get_char_age(char_id)
@@ -340,7 +203,7 @@ def BB_update_single_user(user_id, char_name):
                 for char_dic in (cyno_result or {}).values()
             )
             has_skills = any(
-                entry[sid]["trained"] > 0 or entry[sid]["active"] > 0
+                entry.get(sid, {}).get("trained", 0) > 0 or entry.get(sid, {}).get("active", 0) > 0
                 for entry in skills_result.values()
                 for sid in skill_ids
             )
@@ -355,7 +218,7 @@ def BB_update_single_user(user_id, char_name):
             # load (or create) cached status so diffs apply correctly
             status, created = UserStatus.objects.get_or_create(user_id=user_id)
 
-            logger.info(f"[{char_name}] Status loaded (created={created}). Calculating changes...")
+            logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Status loaded (created={created}). Calculating changes...")
 
             changes = []
 
@@ -392,7 +255,7 @@ def BB_update_single_user(user_id, char_name):
 
                 # final summary message
                 if flagggs:  # only when changes are detected should notifications and saves occur
-                    if instance.clone_notify:
+                    if instance.clone_state_notify:
                         changes.append(f"###{pinggg} Clone state change detected:{''.join(flagggs)}")
                     status.clone_status = state_result
                     status.save()
@@ -461,44 +324,47 @@ def BB_update_single_user(user_id, char_name):
                     return f"- {link}"
 
                 link_list = "\n".join(format_awox_line(link) for link in new_links)
-                logger.info(f"{char_name} new links {link_list}")
+                logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} new links {link_list}")
                 link_list3 = "\n".join(f"- {link}" for link in awox_links)
-                logger.info(f"{char_name} new links {link_list3}")
+                logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} new links {link_list3}")
                 link_list2 = "\n".join(f"- {link}" for link in old_links)
-                logger.info(f"{char_name} old links {link_list2}")
+                logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} old links {link_list2}")
                 if status.has_awox_kills != has_awox and has_awox:  # first time awox kills were spotted for this user
                     if not has_awox:
                         if instance.awox_notify:
                             changes.append(f"### AWOX Kill Status: 🟢")
                     status.has_awox_kills = has_awox
-                    logger.info(f"{char_name} changed")
+                    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} changed")
                 if new_links:  # send notifications only for links not yet alerted on
                     if instance.awox_notify:
                         changes.append(f"###{get_pings('AwoX')} New AWOX Kill(s):\n{link_list}")
-                    logger.info(f"{char_name} new links")
+                    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} new links")
                     tcfg = TicketToolConfig.get_solo()
-                    if tcfg.awox_monitor_enabled and time_in_corp(
+                    if not limit_notifications and tcfg.awox_monitor_enabled and time_in_corp(
                         user_id) >= 1:  # guardrail: only fire tickets for monitored corps
                         try:
                             try:
-                                user = User.objects.get(id=user_id)
-                                discord_id = get_discord_user_id(user)
+                                discord_id = get_discord_user_id(user_obj)
 
                                 ticket_message = f"<@&{tcfg.Role_ID}>,<@{discord_id}> detection indicates your involvement in an AWOX kill, please explain:\n{link_list}"
-                                send_message(f"ticket for {instance.user} created, reason - AWOX Kill")
+                                send_status_embed(
+                                    subject="Ticket Created",
+                                    lines=[f"Ticket for **{status.user}** created, reason - **AWOX Kill**"],
+                                    color=0xf1c40f,  # Yellow
+                                )
                                 run_task_function.apply_async(
                                     args=["aa_bb.tasks_bot.create_compliance_ticket"],
                                     kwargs={
-                                        "task_args": [instance.user.id, discord_id, "awox_kill", ticket_message],
+                                        "task_args": [status.user.id, discord_id, "awox_kill", ticket_message],
                                         "task_kwargs": {}
                                     }
                                 )
                             except Exception as e:
-                                logger.error(e)
+                                logger.error(f"ℹ️  [AA-BB] - [BB_update_single_user] - {e}")
                                 pass
 
                         except Exception as e:
-                            logger.error(e)
+                            logger.error(f"ℹ️  [AA-BB] - [BB_update_single_user] - {e}")
                             pass
                 old = set(status.awox_kill_links or [])
                 new = set(awox_links) - old
@@ -636,9 +502,9 @@ def BB_update_single_user(user_id, char_name):
 
                             table_lines.append(f"{corp_label:<21} | {corp_days} days")
                         except EveCharacter.DoesNotExist:
-                            logger.warning(f"EveCharacter not found for {charname} (id={cid}), skipping corp time.")
+                            logger.warning(f"ℹ️  [AA-BB] - [BB_update_single_user] - EveCharacter not found for {charname} (id={cid}), skipping corp time.")
                         except Exception as e:
-                            logger.warning(f"Could not fetch corp time for {charname}: {e}")
+                            logger.warning(f"ℹ️  [AA-BB] - [BB_update_single_user] - Could not fetch corp time for {charname}: {e}")
 
 
                         table_block = "```\n" + "\n".join(table_lines) + "\n```"
@@ -732,7 +598,7 @@ def BB_update_single_user(user_id, char_name):
                         )
                         if anything == False:  # skip characters with zero relevant skills (just noise)
                             continue
-                        logger.info(new_entry.values())
+                        logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {new_entry.values()}")
 
                         if instance.cyno_notify:
                             changes.append(f"- **{charname}**:")
@@ -780,12 +646,12 @@ def BB_update_single_user(user_id, char_name):
                 old_systems = set(status.hostile_assets or [])
                 new_systems = set(hostile_assets_result) - old_systems
 
-                # Build mapping: char -> list of (system, owner, ships)
-                assets_by_char: dict[str, list[tuple[str, str, str]]] = {}
+                # Build mapping: char -> list of (system, owner, region, ships)
+                assets_by_char: dict[str, list[tuple[str, str, str, str]]] = {}
 
                 for system in new_systems:
                     summary = hostile_assets_result.get(system, "")
-                    owner, ships, chars = parse_hostile_summary(summary)
+                    owner, region, ships, chars = parse_hostile_summary(summary)
 
                     # If helper didn't give chars for some reason, fall back
                     if not chars:
@@ -793,33 +659,36 @@ def BB_update_single_user(user_id, char_name):
 
                     for cname in chars:
                         assets_by_char.setdefault(cname, []).append(
-                            (system, owner, ships)
+                            (system, owner, region, ships)
                         )
 
                 lines: list[str] = []
                 for cname in sorted(assets_by_char.keys()):
                     lines.append(f"- {cname}")
-                    for system, owner, ships in assets_by_char[cname]:
-                        lines.append(f"  - {system} ({owner})")
+                    for system, owner, region, ships in assets_by_char[cname]:
+                        info = f"{system} ({owner})"
+                        if region:
+                            info = f"{system} ({owner} | {region})"
+                        lines.append(f"  - {info}")
                         if ships:
                             lines.append(f"    - {ships}")
 
                 if lines:
                     link_list = "\n".join(lines)
-                    logger.info(f"{char_name} new hostile assets:\n{link_list}")
+                    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} new hostile assets:\n{link_list}")
 
                 # Overall boolean flip
                 if status.has_hostile_assets != has_hostile_assets:
                     if not has_hostile_assets:
                         if instance.asset_notify:
                             changes.append("### Hostile Asset Status: 🟢")
-                    logger.info(f"{char_name} hostile asset status changed")
+                    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} hostile asset status changed")
 
                 # Only add a "New Hostile Assets" section when there are actually new systems
                 if new_systems and lines:
                     if instance.asset_notify:
                         changes.append(f"###{get_pings('New Hostile Assets')} New Hostile Assets:\n{link_list}")
-                    logger.info(f"{char_name} new hostile asset systems: {', '.join(sorted(new_systems))}")
+                    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} new hostile asset systems: {', '.join(sorted(new_systems))}")
 
                 status.has_hostile_assets = has_hostile_assets
                 status.hostile_assets = hostile_assets_result
@@ -830,42 +699,45 @@ def BB_update_single_user(user_id, char_name):
                 old_systems = set(status.hostile_clones or [])
                 new_systems = set(hostile_clones_result) - old_systems
 
-                # Build mapping: char -> list of (system, owner)
-                clones_by_char: dict[str, list[tuple[str, str]]] = {}
+                # Build mapping: char -> list of (system, owner, region)
+                clones_by_char: dict[str, list[tuple[str, str, str]]] = {}
 
                 for system in new_systems:
                     summary = hostile_clones_result.get(system, "")
-                    owner, _ships, chars = parse_hostile_summary(summary)
+                    owner, region, _ships, chars = parse_hostile_summary(summary)
 
                     if not chars:
                         chars = ["Unknown Character"]
 
                     for cname in chars:
                         clones_by_char.setdefault(cname, []).append(
-                            (system, owner)
+                            (system, owner, region)
                         )
 
                 lines: list[str] = []
                 for cname in sorted(clones_by_char.keys()):
                     lines.append(f"- {cname}")
-                    for system, owner in clones_by_char[cname]:
-                        lines.append(f"  - {system} ({owner})")
+                    for system, owner, region in clones_by_char[cname]:
+                        info = f"{system} ({owner})"
+                        if region:
+                            info = f"{system} ({owner} | {region})"
+                        lines.append(f"  - {info}")
 
                 if lines:
                     link_list = "\n".join(lines)
-                    logger.info(f"{char_name} new hostile clones:\n{link_list}")
+                    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} new hostile clones:\n{link_list}")
 
                 # Overall boolean flip
                 if status.has_hostile_clones != has_hostile_clones:
                     if not has_hostile_clones:
                         if instance.clone_notify:
                             changes.append("### Hostile Clone Status: 🟢")
-                    logger.info(f"{char_name} hostile clone status changed")
+                    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} hostile clone status changed")
 
                 if new_systems and lines:
                     if instance.clone_notify:
                         changes.append(f"###{get_pings('New Hostile Clones')} New Hostile Clone(s):\n{link_list}")
-                    logger.info(f"{char_name} new hostile clone systems: {', '.join(sorted(new_systems))}")
+                    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} new hostile clone systems: {', '.join(sorted(new_systems))}")
 
                 status.has_hostile_clones = has_hostile_clones
                 status.hostile_clones = hostile_clones_result
@@ -883,19 +755,19 @@ def BB_update_single_user(user_id, char_name):
                     link_list = "\n".join(
                         f"🔗 {sus_contacts_result[cid]}" for cid in new_links
                     )
-                    logger.info(f"{char_name} new assets:\n{link_list}")
+                    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} new assets:\n{link_list}")
 
                 if old_ids:  # optional debug log for existing entries
                     old_link_list = "\n".join(
                         f"🔗 {old_contacts[cid]}" for cid in old_ids if cid in old_contacts
                     )
-                    logger.info(f"{char_name} old assets:\n{old_link_list}")
+                    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} old assets:\n{old_link_list}")
 
                 if status.has_sus_contacts != has_sus_contacts:  # flag boolean flip
                     if not has_sus_contacts:
                         if instance.contact_notify:
                             changes.append(f"### Suspicious Contact Status: 🟢")
-                logger.info(f"{char_name} status changed")
+                logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} status changed")
 
                 if new_links:  # include the new contact entries in the summary
                     if instance.contact_notify:
@@ -923,19 +795,19 @@ def BB_update_single_user(user_id, char_name):
                     link_list = "\n".join(
                         f"🔗 {sus_contracts_result[issuer_id]}" for issuer_id in new_links
                     )
-                    logger.info(f"{char_name} new assets:\n{link_list}")
+                    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} new assets:\n{link_list}")
 
                 if old_ids:  # optional logging for previous entries
                     old_link_list = "\n".join(
                         f"🔗 {old_contracts[issuer_id]}" for issuer_id in old_ids if issuer_id in old_contracts
                     )
-                    logger.info(f"{char_name} old assets:\n{old_link_list}")
+                    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} old assets:\n{old_link_list}")
 
                 if status.has_sus_contracts != has_sus_contracts:  # summarize boolean change
                     if not has_sus_contracts:
                         if instance.contract_notify:
                             changes.append(f"## Suspicious Contract Status: 🟢")
-                logger.info(f"{char_name} status changed")
+                logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} status changed")
 
                 if new_links:  # write each new contract entry to the report
                     if instance.contract_notify:
@@ -963,19 +835,19 @@ def BB_update_single_user(user_id, char_name):
                     link_list = "\n".join(
                         f"🔗 {sus_mails_result[issuer_id]}" for issuer_id in new_links
                     )
-                    logger.info(f"{char_name} new assets:\n{link_list}")
+                    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} new assets:\n{link_list}")
 
                 if old_ids:  # optional logging for previous entries
                     old_link_list = "\n".join(
                         f"🔗 {old_mails[issuer_id]}" for issuer_id in old_ids if issuer_id in old_mails
                     )
-                    logger.info(f"{char_name} old assets:\n{old_link_list}")
+                    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} old assets:\n{old_link_list}")
 
                 if status.has_sus_mails != has_sus_mails:  # summarize boolean change
                     if not has_sus_mails:
                         if instance.mail_notify:
                             changes.append(f"### Suspicious Mail Status: 🟢")
-                logger.info(f"{char_name} status changed")
+                logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} status changed")
 
                 if new_links:  # enumerate the new mail entries for the report
                     if instance.mail_notify:
@@ -1003,28 +875,26 @@ def BB_update_single_user(user_id, char_name):
                     link_list = "\n".join(
                         f"{sus_trans_result[issuer_id]}" for issuer_id in new_links
                     )
-                    logger.info(f"{char_name} new trans:\n{link_list}")
+                    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} new trans:\n{link_list}")
 
                 if old_ids:
                     old_link_list = "\n".join(
                         f"{old_trans[issuer_id]}" for issuer_id in old_ids if issuer_id in old_trans
                     )
-                    logger.info(f"{char_name} old trans:\n{old_link_list}")
+                    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} old trans:\n{old_link_list}")
 
                 if status.has_sus_trans != has_sus_trans:
                     if not has_sus_trans:
                         if instance.transaction_notify:
                             changes.append(f"## Suspicious Transactions Status: 🟢")
-                logger.info(f"{char_name} status changed")
+                logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} status changed")
                 if new_links:
                     if instance.transaction_notify:
                         changes.append(f"### New Suspicious Transactions{get_pings('New Suspicious Transactions')}:\n{link_list}")
                 status.has_sus_trans = has_sus_trans
                 status.sus_trans = sus_trans_result
 
-            is_base_est = not status.baseline_initialized
-
-            if not is_base_est:
+            if not status.baseline_initialized:
                 if not instance.new_user_notify:
                     send_notifications = False
                 else:
@@ -1032,14 +902,14 @@ def BB_update_single_user(user_id, char_name):
             else:
                 send_notifications = True
 
-            if send_notifications and changes:
+            if not limit_notifications and send_notifications and changes:
                 """
                 Build all embed chunks and hand them off to a dedicated
                 send task so Discord messages are serialized and never
                 interleave between users.
                 """
                 logger.info(
-                    "[%s] Preparing %d change blocks for Discord...",
+                    "✅  [AA-BB] - [BB_update_single_user] - [%s] baseline data exists. Calculating changes across %d blocks...",
                     char_name,
                     len(changes),
                 )
@@ -1057,7 +927,7 @@ def BB_update_single_user(user_id, char_name):
 
                     for body_chunk in _chunk_embed_lines(raw_lines, max_chars=1900):
                         logger.info(
-                            "[%s] Prepared embed chunk with %d lines",
+                            "✅  [AA-BB] - [BB_update_single_user] - [%s] Prepared embed chunk with %d lines",
                             char_name,
                             len(body_chunk),
                         )
@@ -1065,7 +935,7 @@ def BB_update_single_user(user_id, char_name):
 
                 if all_chunks:
                     logger.info(
-                        "[%s] Enqueuing %d embed chunks to BB_send_discord_notifications",
+                        "✅  [AA-BB] - [BB_update_single_user] - [%s] Enqueuing %d embed chunks to BB_send_discord_notifications",
                         char_name,
                         len(all_chunks),
                     )
@@ -1075,7 +945,7 @@ def BB_update_single_user(user_id, char_name):
             status.updated = timezone.now()
             status.save()
 
-            logger.info(f"END Update for user: {char_name} (ID: {user_id}) - Success")
+            logger.info(f"✅  [AA-BB] - [BB_update_single_user] - END Update for user: {char_name} (ID: {user_id}) - Success")
             break
 
         except OperationalError as e:
@@ -1083,20 +953,20 @@ def BB_update_single_user(user_id, char_name):
             if code == 1213 or "deadlock" in str(e).lower():
                 delay = 0.5 * (attempt + 1)
                 logger.warning(
-                    f"Deadlock while processing {char_name} "
+                    f"ℹ️  [AA-BB] - [BB_update_single_user] - Deadlock while processing {char_name} "
                     f"(attempt {attempt + 1}/3); sleeping {delay:.1f}s before retry."
                 )
                 time.sleep(delay)
                 # after last attempt, give up on this user but keep the overall stream alive
                 if attempt == 2:
                     logger.error(
-                        f"Skipping {char_name} after repeated deadlocks."
+                        f"ℹ️  [AA-BB] - [BB_update_single_user] - Skipping {char_name} after repeated deadlocks."
                     )
                 continue
             # not a deadlock → re-raise and let outer handler deal with it
             raise
         except Exception as e:
-            logger.error(f"Failed to update user {char_name}: {e}", exc_info=True)
+            logger.error(f"ℹ️  [AA-BB] - [BB_update_single_user] - Failed to update user {char_name}: {e}", exc_info=True)
             raise
 
 
@@ -1131,7 +1001,6 @@ def BB_run_regular_updates():
         latest state even if no Discord messages were sent this run.
     """
     instance = BigBrotherConfig.get_solo()
-    instance.is_active = True
 
     try:
         from django.contrib.auth import get_user_model
@@ -1161,17 +1030,62 @@ def BB_run_regular_updates():
             users = list(get_users())
             total_users = len(users)
             logger.info(
-                f"BB_run_regular_updates: Dispatching updates for {total_users} users (staggered)."
+                f"✅  [AA-BB] - [BB_run_regular_updates] - Dispatching updates for {total_users} users (staggered)."
             )
+
+            # Backlog check
+            if instance.update_last_dispatch_count > 0:
+                try:
+                    inspector = current_app.control.inspect()
+                    if inspector:
+                        active = inspector.active() or {}
+                        reserved = inspector.reserved() or {}
+
+                        task_name = BB_update_single_user.name
+                        remaining_count = 0
+
+                        for worker_tasks in active.values():
+                            if worker_tasks:
+                                for t in worker_tasks:
+                                    if t.get('name') == task_name:
+                                        remaining_count += 1
+
+                        for worker_tasks in reserved.values():
+                            if worker_tasks:
+                                for t in worker_tasks:
+                                    if t.get('name') == task_name:
+                                        remaining_count += 1
+
+                        if remaining_count > 0 and instance.update_backlog_notify:
+                            threshold = instance.update_backlog_threshold
+                            percent = (remaining_count / instance.update_last_dispatch_count) * 100
+                            if percent > threshold:
+                                logger.warning(
+                                    f"ℹ️  [AA-BB] - [BB_run_regular_updates] - Update backlog detected: {remaining_count} tasks remaining "
+                                    f"({percent:.1f}% of last run count {instance.update_last_dispatch_count})"
+                                )
+                                send_status_embed(
+                                    subject="Update Backlog Alert",
+                                    lines=[
+                                        f"{get_pings('Error')} {remaining_count} users are still being processed from the previous update run ({percent:.1f}% of {instance.update_last_dispatch_count} users).",
+                                        "This may indicate that the update stagger window is too short or workers are overloaded."
+                                    ],
+                                    color=0xFF0000,
+                                )
+                except Exception as e:
+                    logger.error(f"ℹ️  [AA-BB] - [BB_run_regular_updates] - Failed to check for update backlog: {e}", exc_info=True)
+
+            instance.update_last_dispatch_count = total_users
+            instance.save()
 
             if total_users == 0:
                 return
 
-            # We want to spread the work roughly across 1 hour (3600s)
+            # We want to spread the work roughly across the configured stagger window
             # so we don't spike CPU at the top of the hour.
             from datetime import timedelta
 
-            window_seconds = 3600
+            window_seconds = instance.update_stagger_seconds
             # minimum spacing between users, so tasks don't all land at the same second
             if total_users < 720:
                 min_spacing = 5
@@ -1199,7 +1113,7 @@ def BB_run_regular_updates():
                 eta = now + timedelta(seconds=offset)
 
                 logger.info(
-                    f"Scheduling BB_update_single_user for {char_name} (id={user_id}) "
+                    f"✅  [AA-BB] - [BB_run_regular_updates] - Scheduling BB_update_single_user for {char_name} (id={user_id}) "
                     f"in {offset}s at {eta.isoformat()}."
                 )
 
@@ -1209,36 +1123,27 @@ def BB_run_regular_updates():
                 )
 
     except Exception as e:
-        logger.error("Task failed", exc_info=True)
+        logger.error("ℹ️  [AA-BB] - [BB_run_regular_updates] - Task failed", exc_info=True)
         instance.is_active = True
         instance.save()
-        send_message(
-            f"#{get_pings('Error')} Big Brother encountered an unexpected error"
-        )
-
-        # send the error in chunks to keep within discord limits and keep it in code blocks
-
         tb_str = traceback.format_exc()
-        max_chunk = 1000
-        start = 0
-        length = len(tb_str)
+        tb_lines = [f"{get_pings('Error')} Big Brother encountered an unexpected error", "```python"] + tb_str.split("\n") + ["```"]
+        for chunk in _chunk_embed_lines(tb_lines):
+            send_status_embed(
+                subject="Big Brother Error",
+                lines=chunk,
+                color=0xFF0000,
+            )
 
-        while start < length:
-            end = min(start + max_chunk, length)
-            if end < length:  # maintain readable chunks whenever possible
-                nl = tb_str.rfind('\n', start, end)
-                if nl != -1 and nl > start:  # break on newline if it exists inside this chunk
-                    end = nl + 1
-            chunk = tb_str[start:end]
-            time.sleep(0.25)
-            send_message(f"```{chunk}```")
-            start = end
-
-    from django_celery_beat.models import PeriodicTask
-    task_name = 'BB run regular updates'
+    from .tasks_utils import format_task_name
+    task_name = format_task_name('BB run regular updates')
     task = PeriodicTask.objects.filter(name=task_name).first()
-    if not task.enabled:  # inform admins when the periodic task finished its initial run
-        send_message("initial run of the Big Brother task has finished, you can now enable the task")
+    if task and not task.enabled:  # inform admins when the periodic task finished its initial run
+        send_status_embed(
+            subject="Big Brother",
+            lines=["Initial run of the task has finished, you can now enable the task"],
+            color=0x00FF00,
+        )
 
 @shared_task()
 def BB_send_discord_notifications(subject: str, chunks: list[list[str]]) -> None:
@@ -1252,14 +1157,14 @@ def BB_send_discord_notifications(subject: str, chunks: list[list[str]]) -> None
     interleave between users or checks.
     """
     logger.info(
-        "[BB_SEND] Dispatching %d embed chunks for %s",
+        "✅  [AA-BB] - [BB_send_discord_notifications] - Dispatching %d embed chunks for %s",
         len(chunks),
         subject,
     )
 
     for idx, lines in enumerate(chunks):
         logger.debug(
-            "[BB_SEND] Sending chunk %d/%d for %s (lines=%d)",
+            "✅  [AA-BB] - [BB_send_discord_notifications] - Sending chunk %d/%d for %s (lines=%d)",
             idx + 1,
             len(chunks),
             subject,
@@ -1400,13 +1305,24 @@ def BB_sync_contacts_from_aa_contacts(self):
     except Exception:
         return
 
+    if not cfg.auto_import_contacts_enabled:
+        return
+
     source_alliances_field = getattr(cfg, "contacts_source_alliances", None)
-    if source_alliances_field is None or not source_alliances_field.exists():
+    source_corporations_field = getattr(cfg, "contacts_source_corporations", None)
+
+    has_alliances = source_alliances_field is not None and source_alliances_field.exists()
+    has_corporations = source_corporations_field is not None and source_corporations_field.exists()
+
+    if not has_alliances and not has_corporations:
         return
 
     try:
-        from aa_contacts.models import AllianceContact
-    except Exception:
+        from importlib import import_module
+        aa_contacts_models = import_module("aa_contacts.models")
+        AllianceContact = getattr(aa_contacts_models, "AllianceContact", None)
+        CorporationContact = getattr(aa_contacts_models, "CorporationContact", None)
+    except (ImportError, ModuleNotFoundError):
         return
 
     # Existing config sets (works for M2M or CSV TextFields)
@@ -1427,8 +1343,7 @@ def BB_sync_contacts_from_aa_contacts(self):
     new_whitelist_alliances: set[int] = set()
     new_whitelist_corps: set[int] = set()
 
-    for src_alliance in source_alliances_field.all():
-        contacts_qs = AllianceContact.objects.filter(alliance=src_alliance)
+    def process_contacts(contacts_qs):
         for c in contacts_qs.iterator():
             target_id = int(c.contact_id)
 
@@ -1453,6 +1368,14 @@ def BB_sync_contacts_from_aa_contacts(self):
                         new_hostile_corps.add(target_id)
                     elif neutral_mode == "whitelist":
                         new_whitelist_corps.add(target_id)
+
+    if has_alliances and AllianceContact:
+        for src_alliance in source_alliances_field.all():
+            process_contacts(AllianceContact.objects.filter(alliance=src_alliance))
+
+    if has_corporations and CorporationContact:
+        for src_corp in source_corporations_field.all():
+            process_contacts(CorporationContact.objects.filter(corporation=src_corp))
 
     # Previous import snapshot (what we imported last time)
     cache = getattr(cfg, "contacts_import_cache", {}) or {}

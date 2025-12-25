@@ -52,7 +52,7 @@
 <div class="mb-4">
   <label for="pageDropdown">{% translate "Select Account" %}</label>
   <select id="pageDropdown" class="form-control">
-    <option value="" disabled selected>-- Choose an account --</option>
+    <option value=""></option>
     {% for option in dropdown_options %}
       <option value="{{ option }}">{{ option }}</option>
     {% endfor %}
@@ -102,7 +102,8 @@ document.addEventListener('DOMContentLoaded', () => {
       searchField: ['text'],
       create: false,
       closeAfterSelect: true,  // close dropdown after picking
-      sortField: { field: 'text', direction: 'asc' }
+      sortField: { field: 'text', direction: 'asc' },
+      maxOptions: 5000
     });
 
     // Only fire once a definite account has been selected
@@ -181,7 +182,7 @@ document.addEventListener('DOMContentLoaded', () => {
         ${icon}
       </div>
       <div id="${collapseId}" class="collapse">
-        <div class="card-body">${content}</div>
+        <div class="card-body">${content !== null && content !== undefined ? content : (status ? 'No issues found' : 'Error loading data')}</div>
       </div>
     `;
     container.appendChild(cardDiv);

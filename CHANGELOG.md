@@ -1,4 +1,42 @@
 
+## [3.2.4] - 2025-12-24
+
+### Changed
+- Ability to ignore or show market transactions
+- If showing market transactions:
+  - Able to ignore major hubs: Rens, Hek, Dodixie, Jita, Amarr
+  - Able to ignore secondary hubs: Oursulaert, Tash-Murkon Prime, Agil, Perimeter
+  - Able to ignore custom-set systems
+  - Toggle threshold alerts on/off
+  - Set threshold percentage
+  - Set Janice API key
+  - Set Fuzz or Janice as primary (if Janice API is used, they will fall back on each other)
+  - Set Fuzz main station (default: Jita)
+  - Set whether Fuzz uses instant prices
+  - Force updates only every 7 days and only when the alert is triggered
+  - Configurable price update interval
+- Attempted to fix new user spam again, and added new corp spam protection for corp audits
+- Fixed potential bug in clone state
+- Refactored some CorpBrother code
+- Refactored logs throughout
+- Configurable maintenance window
+- Alerts when tasks are getting backed up
+- Configurable threshold for when backlog alerts fire
+- Configurable update window (normal daily updates occur here; default is one hour every hour, with tasks evenly distributed across the window, measured in seconds)
+- Configurable cache time for clone states
+- Removed Reddit module due to Reddit API changes
+- Added tests
+- Renamed Corp BL file
+- Re-added Alliance and Coalition BL cards if enabled and Blacklist is installed; these are simple external links defined in the admin menu
+- Increased searchable accounts on the auth page to 5000
+- Ability to force recheck clone state every run
+- Ability to use corporations with aa-contacts, not just alliances
+- Ability to restrict all checks to the main corporation instead of everyone with the same state
+- Added new FAQ page for recurring stats
+- Updated FAQs and settings pages to reflect changes
+- All messages sent to Discord as embeds
+- Ability to mute clone state change notifications
+
 ## [3.2.3] - 2025-12-19
 
 ### Changed

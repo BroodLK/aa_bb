@@ -42,12 +42,15 @@ from aa_bb.checks_cb.sus_contracts import (
     gather_user_contracts,
 )
 
-from .app_settings import get_user_characters, get_entity_info, get_character_id, resolve_corporation_name, aablacklist_active
+from .app_settings import (
+    get_user_characters, get_entity_info, get_character_id,
+    resolve_corporation_name, aablacklist_active, resolve_location_name
+)
 from .models import BigBrotherConfig, WarmProgress
 
 if aablacklist_active():
-    from aa_bb.checks.corp_blacklist import (
-        check_char_corp_bl,
+    from aa_bb.checks.add_to_blacklist import (
+        check_char_add_to_bl,
 )
 
 try:
@@ -73,7 +76,8 @@ from allianceauth.eveonline.models import EveCorporationInfo
 def index(request: WSGIRequest):
     """Render the CorpBrother dashboard with corp dropdown options."""
     dropdown_options = []
-    task_name = 'BB run regular updates'
+    from .tasks_utils import format_task_name
+    task_name = format_task_name('BB run regular updates')
     task = PeriodicTask.objects.filter(name=task_name).first()
     BigBrotherConfig.get_solo().is_active = True
     if not BigBrotherConfig.get_solo().is_active:  # Inactive BB -> show disabled page.
@@ -205,6 +209,10 @@ def warm_entity_cache_task(self, user_id):
     Gather mails, contracts, transactions; warm entity cache.
     Track progress in the DB via WarmProgress.
     """
+    from .models import BigBrotherConfig
+    cfg = BigBrotherConfig.get_solo()
+    if not cfg.is_active or not cfg.is_warmer_active:
+        return
     user_main = resolve_corporation_name(user_id) or str(user_id)
     logger.info(f"corp_name: {user_main}")
     qs = WarmProgress.objects.all()
@@ -498,6 +506,8 @@ def stream_contracts_sse(request: WSGIRequest):
                         'assignee_alliance':        ainfo["alli_name"],
                         'assignee_alliance_id':     ainfo["alli_id"],
                         'status':                   c.status,
+                        'start_location':           resolve_location_name(getattr(c, "start_location_id", None)),
+                        'end_location':             resolve_location_name(getattr(c, "end_location_id", None)),
                     }
 
                     style_map = {
@@ -568,7 +578,7 @@ VISIBLE_CONTR = [
     "issued_date", "end_date",
     "contract_type", "issuer_name", "issuer_corporation",
     "issuer_alliance", "assignee_name", "assignee_corporation",
-    "assignee_alliance", "status",
+    "assignee_alliance", "status", "start_location", "end_location",
 ]
 
 def _render_contract_row_html(row: dict) -> str:
@@ -651,6 +661,10 @@ def stream_transactions_sse(request):
         )
         yield f"event: header\ndata:{json.dumps(header_html)}\n\n"
 
+        cfg = BigBrotherConfig.get_solo()
+        hostile_corps = set((cfg.hostile_corporations or "").split(","))
+        hostile_allis = set((cfg.hostile_alliances or "").split(","))
+
         for entry in qs:
             processed += 1
             yield ": ping\n\n"         # keep‐alive
@@ -663,29 +677,32 @@ def stream_transactions_sse(request):
 
                 # build the <tr> using same style logic as render_transactions()
                 cells = []
-                cfg = BigBrotherConfig.get_solo()
                 for col in headers:
                     val = row.get(col, "")
                     text = html.escape(str(val))
                     style = ""
                     # type‐based red
-                    if col == 'type' and any(st in row['type'] for st in SUS_TYPES):
-                        style = 'color:red;'
+                    if col == 'type':
+                        if any(st in row['type'] for st in SUS_TYPES):
+                            style = 'color:red;'
+                        if cfg.show_market_transactions:
+                            if "market_escrow" in row['type'] or "market_transaction" in row['type']:
+                                style = 'color:red;'
                     # first/second party name
                     if aablacklist_active():
                         if col in ('first_party_name','second_party_name'):
                             id_col = col.replace("_name", "_id")
                             pid = row[id_col]
-                            if check_char_corp_bl(pid):
+                            if check_char_add_to_bl(pid):
                                 style = 'color:red;'
                     # corps & alliances
                     if col.endswith('corporation'):
                         cid = row[f"{col}_id"]
-                        if cid and str(cid) in cfg.hostile_corporations:
+                        if cid and str(cid) in hostile_corps:
                             style = 'color:red;'
                     if col.endswith('alliance'):
                         aid = row[f"{col}_id"]
-                        if aid and str(aid) in cfg.hostile_alliances:
+                        if aid and str(aid) in hostile_allis:
                             style = 'color:red;'
                     def make_td(text, style=""):
                         style_attr = f' style="{style}"' if style else ""

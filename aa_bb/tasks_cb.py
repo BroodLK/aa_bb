@@ -17,8 +17,9 @@ import logging
 logger = logging.getLogger(__name__)
 
 from django.utils import timezone
+from django.db.models import Q
 from celery import shared_task
-from django_celery_beat.models import PeriodicTask, CrontabSchedule
+from django_celery_beat.models import PeriodicTask, CrontabSchedule, IntervalSchedule
 
 from allianceauth.eveonline.models import EveCharacter, EveCorporationInfo
 from allianceauth.authentication.models import UserProfile
@@ -27,6 +28,7 @@ from .models import (
     BigBrotherConfig, CorpStatus, Messages, OptMessages1, OptMessages2, OptMessages3,
     OptMessages4, OptMessages5
 )
+from .tasks_utils import setup_periodic_task
 from .models import (
     ProcessedContract,
     SusContractNote,
@@ -38,13 +40,14 @@ from .models import (
     LeaveRequest
 )
 from .app_settings import (
-    send_message,
     get_pings,
     resolve_corporation_name,
     get_users,
     get_user_id,
     get_character_id,
     get_user_profiles,
+    send_status_embed,
+    _chunk_embed_lines,
 )
 from aa_bb.checks_cb.hostile_assets import get_corp_hostile_asset_locations
 from aa_bb.checks_cb.sus_contracts import get_corp_hostile_contracts
@@ -61,172 +64,193 @@ try:
         CorporationWalletJournalEntry,
     )
 except ImportError:
-    logger.error("corptools not installed, CB tasks will not be available.")
+    logger.error("ℹ️  [AA-BB] - [Tasks_CB] - corptools not installed, CB tasks will not be available.")
 
-from django.db import transaction
+from django.db import transaction, OperationalError
+from allianceauth.services.hooks import get_extension_logger
 
+logger = get_extension_logger(__name__)
 VERBOSE_WEBHOOK_LOGGING = True
 
 
-def send_status_embed(
-    subject: str,
-    lines: list[str],
-    *,
-    override_title: str | None = None,
-    color: int = 0xED4245,  # Discord red
-) -> None:
+
+
+@shared_task()
+def CB_send_discord_notifications(subject: str, chunks: list[list[str]]) -> None:
     """
-    Send a Discord embed via the existing send_message() webhook.
+    Dedicated task to send Discord embeds for CorpBrother.
 
     - subject: usually the corp name
-    - lines: list of lines to go into embed description
-    - override_title: optional explicit title
-    - color: embed accent color (int)
+    - chunks: list of "lines lists" – each inner list becomes one embed body
     """
+    logger.info(
+        "✅  [AA-BB] - [CB_send_discord_notifications] - Dispatching %d embed chunks for %s",
+        len(chunks),
+        subject,
+    )
 
-    if VERBOSE_WEBHOOK_LOGGING:
+    for idx, lines in enumerate(chunks):
         logger.debug(
-            "[EMBED] send_status_embed called | subject=%r | lines=%d",
+            "✅  [AA-BB] - [CB_send_discord_notifications] - Sending chunk %d/%d for %s (lines=%d)",
+            idx + 1,
+            len(chunks),
             subject,
-            len(lines) if lines else 0,
+            len(lines),
         )
+        send_status_embed(
+            subject=subject,
+            lines=lines,
+            override_title="",  # keep titles minimal; content is in the body
+        )
+        time.sleep(0.25)  # tiny delay to be nice to the webhook
 
-    # Defensive: never send empty embeds
-    if not lines:
-        if VERBOSE_WEBHOOK_LOGGING:
-            logger.debug("[EMBED] aborted: no lines supplied")
+
+@shared_task
+def CB_update_single_corp(corp_id):
+    """
+    Process updates for a single corporation.
+    """
+    instance = BigBrotherConfig.get_solo()
+    if not instance.is_active:
         return
 
-    # Discord limits
-    MAX_DESC = 4096
-    MAX_LINES = 50
+    # Resolve corp name if missing
+    corpstatus, created = CorpStatus.objects.get_or_create(corp_id=corp_id)
+    if not corpstatus.corp_name:
+        corpstatus.corp_name = resolve_corporation_name(corp_id)
+    corp_name = corpstatus.corp_name
 
-    title = override_title if override_title is not None else subject
+    for attempt in range(3):
+        try:
+            ignored_str = instance.ignored_corporations or ""
+            ignored_ids = {int(s) for s in ignored_str.split(",") if s.strip().isdigit()}
+            if corp_id in ignored_ids:
+                return
 
-    if VERBOSE_WEBHOOK_LOGGING:
-        logger.debug(
-            "[EMBED] title resolved | title=%r | color=%#x",
-            title,
-            color,
-        )
+            hostile_assets_result = get_corp_hostile_asset_locations(corp_id)
+            sus_contracts_result = {str(issuer_id): v for issuer_id, v in get_corp_hostile_contracts(corp_id).items()}
+            sus_trans_result = {str(issuer_id): v for issuer_id, v in get_corp_hostile_transactions(corp_id).items()}
 
-    # Trim excessive lines but keep tables / sections intact
-    safe_lines = lines[:MAX_LINES]
-    if len(lines) > MAX_LINES:
-        logger.warning(
-            "[EMBED] line cap exceeded | original=%d | capped=%d",
-            len(lines),
-            MAX_LINES,
-        )
+            has_hostile_assets = bool(hostile_assets_result)
+            has_sus_contracts = bool(sus_contracts_result)
+            has_sus_trans = bool(sus_trans_result)
 
-    description = "\n".join(safe_lines)
+            corp_changes = []
 
-    # Hard truncate if someone messed up
-    if len(description) > MAX_DESC:
-        logger.error(
-            "[EMBED] description overflow | chars=%d | truncating",
-            len(description),
-        )
-        description = description[: MAX_DESC - 3] + "..."
+            def as_dict(x):
+                return x if isinstance(x, dict) else {}
 
-    if VERBOSE_WEBHOOK_LOGGING:
-        logger.debug(
-            "[EMBED] payload ready | lines=%d | chars=%d",
-            len(safe_lines),
-            len(description),
-        )
+            # Hostile Assets
+            if corpstatus.has_hostile_assets != has_hostile_assets or set(hostile_assets_result) != set(corpstatus.hostile_assets or []):
+                old_links = set(corpstatus.hostile_assets or [])
+                new_links = set(hostile_assets_result) - old_links
+                link_list = "\n".join(
+                    f"- {system} owned by {hostile_assets_result[system]}"
+                    for system in (set(hostile_assets_result) - set(corpstatus.hostile_assets or []))
+                )
+                logger.info(f"✅  [AA-BB] - [CB_update_single_corp] - {corp_name} new assets {link_list}")
+                if corpstatus.has_hostile_assets != has_hostile_assets:
+                    if not has_hostile_assets:
+                        corp_changes.append(f"## Hostile Corp Assets: 🟢")
 
-    embed = {
-        "embeds": [
-            {
-                "title": title,
-                "description": description,
-                "color": color,
-            }
-        ]
-    }
+                if new_links:
+                    corp_changes.append(f"##{get_pings('New Hostile Assets')} New Hostile Assets:\n{link_list}")
 
-    if VERBOSE_WEBHOOK_LOGGING:
-        logger.debug("[EMBED] sending embed payload")
+                corpstatus.has_hostile_assets = has_hostile_assets
+                corpstatus.hostile_assets = hostile_assets_result
 
-    send_message(embed)
+            # Suspicious Contracts
+            if corpstatus.has_sus_contracts != has_sus_contracts or set(sus_contracts_result) != set(as_dict(corpstatus.sus_contracts) or {}):
+                old_contracts = as_dict(corpstatus.sus_contracts) or {}
+                old_ids = set(old_contracts.keys())
+                new_ids = set(sus_contracts_result.keys())
+                new_links = new_ids - old_ids
 
+                if corpstatus.has_sus_contracts != has_sus_contracts:
+                    if not has_sus_contracts:
+                        corp_changes.append(f"## Sus Corp Contracts: 🟢")
 
-def _chunk_embed_lines(lines: list[str], max_chars: int = 1900) -> list[list[str]]:
-    """
-    Split a list of lines into chunks whose joined text length
-    is <= max_chars, without breaking ``` code blocks.
+                if new_links:
+                    corp_changes.append(f"## New Sus Contracts:")
+                    for issuer_id in new_links:
+                        res = sus_contracts_result[issuer_id]
+                        ping = get_pings('New Sus Contracts')
+                        if res.startswith("- A -"):
+                            ping = ""
+                        corp_changes.append(f"{res} {ping}")
 
-    Returns: List[List[str]] – each inner list is one embed body.
-    """
-    # First, group into "segments": either a full code block or a run of normal lines
-    segments: list[list[str]] = []
-    current_segment: list[str] = []
-    in_code = False
+                corpstatus.has_sus_contracts = has_sus_contracts
+                corpstatus.sus_contracts = sus_contracts_result
 
-    for line in lines:
-        stripped = line.strip()
+            # Suspicious Transactions
+            if corpstatus.has_sus_trans != has_sus_trans or set(sus_trans_result) != set(as_dict(corpstatus.sus_trans) or {}):
+                old_trans = as_dict(corpstatus.sus_trans) or {}
+                old_ids = set(old_trans.keys())
+                new_ids = set(sus_trans_result.keys())
+                new_links = new_ids - old_ids
 
-        if stripped.startswith("```"):
-            # Starting a new code block
-            if not in_code:
-                # flush any accumulated non-code segment
-                if current_segment:
-                    segments.append(current_segment)
-                    current_segment = []
-                in_code = True
-                current_segment = [line]
+                if corpstatus.has_sus_trans != has_sus_trans:
+                    if not has_sus_trans:
+                        corp_changes.append(f"## Sus Corp Transactions: 🟢")
+
+                if new_links:
+                    corp_changes.append(f"## New Sus Transactions{get_pings('New Sus Transactions')}:\n{link_list}")
+                    link_list_tx = "\n".join(f"{sus_trans_result[issuer_id]}" for issuer_id in new_links)
+                    corp_changes.append(f"## New Sus Transactions{get_pings('New Sus Transactions')}:\n{link_list_tx}")
+
+                corpstatus.has_sus_trans = has_sus_trans
+                corpstatus.sus_trans = sus_trans_result
+
+            # Notifications
+            if not corpstatus.baseline_initialized:
+                send_notifications = instance.new_user_notify
             else:
-                # closing an existing code block
-                current_segment.append(line)
-                segments.append(current_segment)
-                current_segment = []
-                in_code = False
-        else:
-            current_segment.append(line)
+                send_notifications = True
 
-    if current_segment:
-        segments.append(current_segment)
+            if send_notifications and corp_changes:
+                all_lines: list[str] = []
+                for block in corp_changes:
+                    all_lines.extend(str(block).split("\n"))
 
-    # Now pack segments into chunks by total char length
-    chunks: list[list[str]] = []
-    current_chunk: list[str] = []
-    current_len = 0
+                all_chunks = []
+                header_lines = [f"‼️ Status change detected for {corp_name}"]
+                for header_chunk in _chunk_embed_lines(header_lines, max_chars=1900):
+                    all_chunks.append(header_chunk)
 
-    for seg in segments:
-        seg_text = "\n".join(seg)
-        seg_len = len(seg_text) + (1 if current_chunk else 0)  # newline before segment
+                chunks = _chunk_embed_lines(all_lines, max_chars=1900)
+                for chunk in chunks:
+                    all_chunks.append(chunk)
 
-        if seg_len > max_chars:
-            # Segment itself is huge; fall back to splitting inside it line-by-line
-            for line in seg:
-                line_len = len(line) + (1 if current_chunk else 0)
-                if current_len + line_len > max_chars and current_chunk:
-                    chunks.append(current_chunk)
-                    current_chunk = [line]
-                    current_len = len(line)
-                else:
-                    current_chunk.append(line)
-                    current_len += line_len
-            continue
+                if all_chunks:
+                    logger.info(
+                        "✅  [AA-BB] - [CB_update_single_corp] - [%s] Enqueuing %d embed chunks to CB_send_discord_notifications",
+                        corp_name,
+                        len(all_chunks),
+                    )
+                    CB_send_discord_notifications.delay(corp_name, all_chunks)
 
-        if current_len + seg_len > max_chars and current_chunk:
-            # Start a new chunk
-            chunks.append(current_chunk)
-            current_chunk = list(seg)
-            current_len = len(seg_text)
-        else:
-            # Add segment to current chunk
-            if current_chunk:
-                current_chunk.append("")  # blank line between segments
-                current_len += 1
-            current_chunk.extend(seg)
-            current_len += len(seg_text)
+            corpstatus.baseline_initialized = True
+            corpstatus.updated = timezone.now()
+            corpstatus.save()
+            break
 
-    if current_chunk:
-        chunks.append(current_chunk)
+        except OperationalError as e:
+            code = e.args[0] if e.args else None
+            if code == 1213 or "deadlock" in str(e).lower():
+                delay = 0.5 * (attempt + 1)
+                logger.warning(
+                    f"ℹ️  [AA-BB] - [CB_update_single_corp] - Deadlock while processing {corp_id} "
+                    f"(attempt {attempt + 1}/3); sleeping {delay:.1f}s before retry."
+                )
+                time.sleep(delay)
+                if attempt == 2:
+                    logger.error(f"ℹ️  [AA-BB] - [CB_update_single_corp] - Skipping {corp_id} after repeated deadlocks.")
+                continue
+            raise
+        except Exception as e:
+            logger.error(f"ℹ️  [AA-BB] - [CB_update_single_corp] - Failed to update corp {corp_id}: {e}", exc_info=True)
+            raise
 
-    return chunks
 
 @shared_task
 def CB_run_regular_updates():
@@ -236,209 +260,85 @@ def CB_run_regular_updates():
     instance = BigBrotherConfig.get_solo()
 
     try:
-        if instance.is_active:  # only run when the install is active/licensed
-            # Corp Brother
+        if instance.is_active:
             qs = EveCorporationInfo.objects.all()
-            corps = []
-            if qs is not None:  # Skip the queryset handling entirely when no corporations exist.
-                corps = (
-                    qs.values_list("corporation_id", flat=True)
-                      .order_by("corporation_name")
-                ).filter(
-                    corporationaudit__isnull=False,
-                )
+            if qs is None:
+                return
 
+            member_corps = {int(x) for x in (instance.member_corporations or "").split(",") if x.strip().isdigit()}
+            member_allis = {int(x) for x in (instance.member_alliances or "").split(",") if x.strip().isdigit()}
+            if member_corps or member_allis:
+                qs = qs.filter(Q(corporation_id__in=member_corps) | Q(alliance_id__in=member_allis))
+
+            corps = list(
+                qs.values_list("corporation_id", flat=True)
+                .order_by("corporation_name")
+                .filter(corporationaudit__isnull=False)
+            )
+
+            total_corps = len(corps)
+            logger.info(f"✅  [AA-BB] - [CB_run_regular_updates] - Dispatching updates for {total_corps} corps.")
+
+            # Backlog check
+            try:
+                from celery import current_app
+                inspector = current_app.control.inspect()
+                if inspector:
+                    active = inspector.active() or {}
+                    reserved = inspector.reserved() or {}
+                    task_name = CB_update_single_corp.name
+                    remaining_count = 0
+
+                    for worker_tasks in active.values():
+                        if worker_tasks:
+                            for t in worker_tasks:
+                                if t.get('name') == task_name:
+                                    remaining_count += 1
+                    for worker_tasks in reserved.values():
+                        if worker_tasks:
+                            for t in worker_tasks:
+                                if t.get('name') == task_name:
+                                    remaining_count += 1
+
+                    if remaining_count > 0 and instance.update_backlog_notify:
+                        # For corps we might use the same threshold or a fixed one?
+                        # Let's use the same threshold but against total_corps?
+                        # Actually, let's just use a fixed small number or similar logic.
+                        if total_corps > 0:
+                            percent = (remaining_count / total_corps) * 100
+                            if percent > instance.update_backlog_threshold:
+                                logger.warning(f"ℹ️  [AA-BB] - [CB_run_regular_updates] - Corp Update backlog detected: {remaining_count} tasks remaining")
+                                send_status_embed(
+                                    subject="Corp Update Backlog Alert",
+                                    lines=[f"{get_pings('Error')} {remaining_count} corps are still being processed from the previous run."],
+                                    color=0xFF0000,
+                                )
+            except Exception as e:
+                logger.error(f"ℹ️  [AA-BB] - [CB_run_regular_updates] - Failed to check for backlog: {e}")
 
             for corp_id in corps:
-                ignored_str = BigBrotherConfig.get_solo().ignored_corporations or ""
-                ignored_ids = {int(s) for s in ignored_str.split(",") if s.strip().isdigit()}
-                if corp_id in ignored_ids:  # allow admins to hide certain corps entirely
-                    continue
-                hostile_assets_result = get_corp_hostile_asset_locations(corp_id)
-                sus_contracts_result = { str(issuer_id): v for issuer_id, v in get_corp_hostile_contracts(corp_id).items() }
-                sus_trans_result = { str(issuer_id): v for issuer_id, v in get_corp_hostile_transactions(corp_id).items() }
-
-                has_hostile_assets = bool(hostile_assets_result)
-                has_sus_contracts = bool(sus_contracts_result)
-                has_sus_trans = bool(sus_trans_result)
-
-                # Load or create existing record
-                corpstatus, created = CorpStatus.objects.get_or_create(corp_id=corp_id)
-
-                corp_changes = []
-
-                #corpstatus.hostile_assets = []
-                #corpstatus.sus_contracts = {}
-                #corpstatus.sus_trans = {}
-                def as_dict(x):
-                    """Return dicts for JSON fields while tolerating None/strings."""
-                    return x if isinstance(x, dict) else {}
-
-                if not corpstatus.corp_name:  # Resolve names on first run to avoid API hits later.
-                    corpstatus.corp_name = resolve_corporation_name(corp_id)
-
-                corp_name = corpstatus.corp_name
-
-                if corpstatus.has_hostile_assets != has_hostile_assets or set(hostile_assets_result) != set(corpstatus.hostile_assets or []):  # hostile asset list changed?
-                    # Compare and find new links
-                    old_links = set(corpstatus.hostile_assets or [])
-                    new_links = set(hostile_assets_result) - old_links
-                    link_list = "\n".join(
-                        f"- {system} owned by {hostile_assets_result[system]}"
-                        for system in (set(hostile_assets_result) - set(corpstatus.hostile_assets or []))
-                    )
-                    logger.info(f"{corp_name} new assets {link_list}")
-                    link_list2 = "\n- ".join(f"🔗 {link}" for link in old_links)
-                    logger.info(f"{corp_name} old assets {link_list2}")
-                    if corpstatus.has_hostile_assets != has_hostile_assets:  # summarize boolean change
-                        corp_changes.append(f"## Hostile Assets: {'🚩' if has_hostile_assets else '✖'}")
-                        logger.info(f"{corp_name} changed")
-                    if new_links:  # announce newly detected systems
-                        corp_changes.append(f"##{get_pings('New Hostile Assets')} New Hostile Assets:\n{link_list}")
-                        logger.info(f"{corp_name} new assets")
-                    corpstatus.has_hostile_assets = has_hostile_assets
-                    corpstatus.hostile_assets = hostile_assets_result
-
-                if corpstatus.has_sus_contracts != has_sus_contracts or set(sus_contracts_result) != set(as_dict(corpstatus.sus_contracts) or {}):  # Rebuild block when contract list changed.
-                    old_contracts = as_dict(corpstatus.sus_contracts) or {}
-                    #normalized_old = { str(cid): v for cid, v in status.sus_contacts.items() }
-                    #normalized_new = { str(cid): v for cid, v in sus_contacts_result.items() }
-
-                    old_ids   = set(as_dict(corpstatus.sus_contracts).keys())
-                    new_ids   = set(sus_contracts_result.keys())
-                    logger.info(f"old {len(old_ids)}, new {len(new_ids)}")
-                    new_links = new_ids - old_ids
-                    if new_links:  # Announce newly detected hostile contracts.
-                        link_list = "\n".join(
-                            f"🔗 {sus_contracts_result[issuer_id]}" for issuer_id in new_links
-                        )
-                        logger.info(f"{corp_name} new assets:\n{link_list}")
-
-                    if old_ids:  # Provide historical comparison for visibility.
-                        old_link_list = "\n".join(
-                            f"🔗 {old_contracts[issuer_id]}" for issuer_id in old_ids if issuer_id in old_contracts
-                        )
-                        logger.info(f"{corp_name} old assets:\n{old_link_list}")
-
-                    if corpstatus.has_sus_contracts != has_sus_contracts:  # Flag boolean change in summary.
-                        corp_changes.append(f"## Sus Contracts: {'🚩' if has_sus_contracts else '✖'}")
-                    logger.info(f"{corp_name} status changed")
-
-                    if new_links:  # Detail new contract notes per issuer.
-                        corp_changes.append(f"## New Sus Contracts:")
-                        for issuer_id in new_links:
-                            res = sus_contracts_result[issuer_id]
-                            ping = get_pings('New Sus Contracts')
-                            if res.startswith("- A -"):  # Suppress pings for informational entries.
-                                ping = ""
-                            corp_changes.append(f"{res} {ping}")
-
-                    corpstatus.has_sus_contracts = has_sus_contracts
-                    corpstatus.sus_contracts = sus_contracts_result
-
-                if corpstatus.has_sus_trans != has_sus_trans or set(sus_trans_result) != set(as_dict(corpstatus.sus_trans) or {}):  # Track transactional deltas as well.
-                    old_trans = as_dict(corpstatus.sus_trans) or {}
-                    #normalized_old = { str(cid): v for cid, v in status.sus_contacts.items() }
-                    #normalized_new = { str(cid): v for cid, v in sus_contacts_result.items() }
-
-                    old_ids   = set(as_dict(corpstatus.sus_trans).keys())
-                    new_ids   = set(sus_trans_result.keys())
-                    new_links = new_ids - old_ids
-                    if new_links:  # Highlight new suspicious transactions.
-                        link_list = "\n".join(
-                            f"{sus_trans_result[issuer_id]}" for issuer_id in new_links
-                        )
-                        logger.info(f"{corp_name} new trans:\n{link_list}")
-
-                    if old_ids:  # Keep log of previously known records for diff context.
-                        old_link_list = "\n".join(
-                            f"{old_trans[issuer_id]}" for issuer_id in old_ids if issuer_id in old_trans
-                        )
-                        logger.info(f"{corp_name} old trans:\n{old_link_list}")
-
-                    if corpstatus.has_sus_trans != has_sus_trans:  # Change summary for top-level state.
-                        corp_changes.append(f"## Sus Transactions: {'🚩' if has_sus_trans else '✖'}")
-                    logger.info(f"{corp_name} status changed")
-                    if new_links:
-                        corp_changes.append(f"## New Sus Transactions{get_pings('New Sus Transactions')}:\n{link_list}")
-                    #if new_links:
-                    #    changes.append(f"## New Sus Transactions @here:")
-                    #    for issuer_id in new_links:
-                    #        res = sus_trans_result[issuer_id]
-                    #        ping = f""
-                    #        if res.startswith("- A -"):
-                    #            ping = ""
-                    #        changes.append(f"{res} {ping}")
-
-                    corpstatus.has_sus_trans = has_sus_trans
-                    corpstatus.sus_trans = sus_trans_result
-
-                if corp_changes:
-                    # Flatten blocks into individual lines
-                    all_lines: list[str] = []
-                    for block in corp_changes:
-                        # each block may already contain newlines; preserve them
-                        all_lines.extend(str(block).split("\n"))
-
-                    chunks = _chunk_embed_lines(all_lines, max_chars=1900)
-                    for idx, chunk in enumerate(chunks):
-                        title = (
-                            f"🛑 Status change detected for {corp_name}"
-                            if idx == 0
-                            else f"Status change (cont.) for {corp_name}"
-                        )
-
-                        if VERBOSE_WEBHOOK_LOGGING:
-                            logger.debug(
-                                "[CB_EMBED] sending chunk %d/%d for corp %s | lines=%d",
-                                idx + 1,
-                                len(chunks),
-                                corp_name,
-                                len(chunk),
-                            )
-
-                        send_status_embed(
-                            subject=corp_name,
-                            lines=chunk,
-                            override_title=title,
-                            color=0xED4245,
-                        )
-
-                        # tiny delay between messages to avoid hammering the webhook
-                        time.sleep(0.05)
-
-                corpstatus.updated = timezone.now()
-                corpstatus.save()
+                CB_update_single_corp.delay(corp_id)
 
     except Exception as e:
-        logger.error("Task failed", exc_info=True)
-        instance.is_active = True
-        instance.save()
-        send_message(
-            f"#{get_pings('Error')} Corp Brother encountered an unexpected error and disabled itself, "
-            "please forward your aa worker.log and the error below to support"
-        )
-
+        logger.error("ℹ️  [AA-BB] - [CB_run_regular_updates] - Task failed", exc_info=True)
         tb_str = traceback.format_exc()
-        max_chunk = 1000
-        start = 0
-        length = len(tb_str)
+        tb_lines = [f"{get_pings('Error')} Corp Brother encountered an unexpected error", "```python"] + tb_str.split("\n") + ["```"]
+        for chunk in _chunk_embed_lines(tb_lines):
+            send_status_embed(
+                subject="Corp Brother Error",
+                lines=chunk,
+                color=0xFF0000,
+            )
 
-        while start < length:
-            end = min(start + max_chunk, length)
-            if end < length:  # Keep chunks within newline boundaries for readability.
-                nl = tb_str.rfind('\n', start, end)
-                if nl != -1 and nl > start:  # Prefer splitting on line breaks when possible.
-                    end = nl + 1
-            chunk = tb_str[start:end]
-            send_message(f"```{chunk}```")
-            start = end
-
-    from django_celery_beat.models import PeriodicTask
-    task_name = 'CB run regular updates'
+    from .tasks_utils import format_task_name
+    task_name = format_task_name('CB run regular updates')
     task = PeriodicTask.objects.filter(name=task_name).first()
-    if not task.enabled:  # alert admins when the initial manual run has completed
-        send_message("Corp Brother task has finished, you can now enable the task")
+    if task and not task.enabled:
+        send_status_embed(
+            subject="Corp Brother",
+            lines=["Task has finished, you can now enable the task"],
+            color=0x00FF00,
+        )
 
 
 @shared_task
@@ -452,7 +352,11 @@ def check_member_compliance():
     instance = BigBrotherConfig.get_solo()
     if not instance.is_active:  # plugin disabled → skip expensive checks
         return
-    users = get_users()
+    profiles_qs = get_user_profiles()
+    if instance.limit_to_main_corp:
+        profiles_qs = profiles_qs.filter(main_character__corporation_id=instance.main_corporation_id)
+
+    users = list(profiles_qs.values_list("main_character__character_name", flat=True))
     messages = ""
 
     for char_name in users:
@@ -480,7 +384,14 @@ def check_member_compliance():
     from allianceauth.eveonline.models import EveCorporationInfo, EveCharacter
     from .app_settings import get_corporation_info, get_alliance_name
     missing_characters = []
-    corp_ids = instance.member_corporations
+
+    if instance.limit_to_main_corp:
+        corp_ids = str(instance.main_corporation_id)
+        ali_ids = ""
+    else:
+        corp_ids = instance.member_corporations
+        ali_ids = instance.member_alliances
+
     if corp_ids:  # optionally check extra corp ids even if they’re outside auth
         for corp_id in corp_ids.split(","):
             corp_chars = []
@@ -504,14 +415,14 @@ def check_member_compliance():
             if corp_chars:  # Only append corp section when missing members were found.
                 chars_str = "\n".join(corp_chars)
                 missing_characters.append(f"- {corp_name}\n{chars_str}")
-    ali_ids = instance.member_alliances
-    logger.info(f"ali_ids: {str(ali_ids)}")
+
+    logger.info(f"✅  [AA-BB] - [check_member_compliance] - ali_ids: {str(ali_ids)}")
     if ali_ids:  # optional alliance-level audits
         for ali_id in ali_ids.split(","):
-            logger.info(f"ali_id: {str(ali_id)}")
+            logger.info(f"✅  [AA-BB] - [check_member_compliance] - ali_id: {str(ali_id)}")
             ali_chars = []
             ali_id = ali_id.strip()
-            logger.info(f"ali_id: {str(ali_id)}")
+            logger.info(f"✅  [AA-BB] - [check_member_compliance] - ali_id: {str(ali_id)}")
             if not ali_id:  # Ignore empty strings
                 continue
 
@@ -520,13 +431,13 @@ def check_member_compliance():
                 EveCharacter.objects.filter(alliance_id=ali_id)
                 .values_list("character_name", flat=True)
             )
-            logger.info(f"linked_chars: {str(linked_chars)}")
+            logger.info(f"✅  [AA-BB] - [check_member_compliance] - linked_chars: {str(linked_chars)}")
 
             ali_name = get_alliance_name(ali_id)
-            logger.info(f"ali_name: {str(ali_name)}")
+            logger.info(f"✅  [AA-BB] - [check_member_compliance] - ali_name: {str(ali_name)}")
             # Get characters from EveWho API
             all_ali_members = get_ali_character_names(ali_id)
-            logger.info(f"all_ali_members: {str(all_ali_members)}")
+            logger.info(f"✅  [AA-BB] - [check_member_compliance] - all_ali_members: {str(all_ali_members)}")
             # Find missing characters
             for char_name in all_ali_members:
                 if char_name not in linked_chars:  # missing from Auth → flag
@@ -536,7 +447,7 @@ def check_member_compliance():
                 missing_characters.append(f"- {ali_name}\n{chars_str}")
     compliance_msg = ""
     if missing_characters:  # Prepend EveWho gaps when any exist.
-        logger.info(f"missing_characters: {str(missing_characters)}")
+        logger.info(f"✅  [AA-BB] - [check_member_compliance] - missing_characters: {str(missing_characters)}")
         joined_msg = '\n'.join(missing_characters)
         compliance_msg += f"\n## Missing tokens for member characters:\n{joined_msg}"
 
@@ -544,8 +455,13 @@ def check_member_compliance():
         compliance_msg += f"\n## Non Compliant users found:\n" + messages
 
     if compliance_msg:  # Only ping Discord when there is something to report.
-        compliance_msg = f"#{get_pings('Compliance')} Compliance Issues found:" + compliance_msg
-        send_message(compliance_msg)
+        lines = [f"{get_pings('Compliance')} Compliance Issues found:"] + compliance_msg.split("\n")
+        for chunk in _chunk_embed_lines(lines):
+            send_status_embed(
+                subject="Compliance Audit",
+                lines=chunk,
+                color=0xFF0000,
+            )
 
 import requests
 
@@ -598,7 +514,12 @@ def BB_send_daily_messages():
         return  # Still nothing to send
 
     message = random.choice(list(unsent_messages))
-    send_message(message.text, webhook)
+    send_status_embed(
+        subject="Daily Message",
+        lines=[message.text],
+        color=0x3498db,
+        hook=webhook
+    )
 
     # Mark as sent
     message.sent_in_cycle = True
@@ -626,7 +547,12 @@ def BB_send_opt_message1():
         return  # Still nothing to send
 
     message = random.choice(list(unsent_messages))
-    send_message(message.text, webhook)
+    send_status_embed(
+        subject="Optional Message #1",
+        lines=[message.text],
+        color=0x3498db,
+        hook=webhook
+    )
 
     # Mark as sent
     message.sent_in_cycle = True
@@ -654,7 +580,12 @@ def BB_send_opt_message2():
         return  # Still nothing to send
 
     message = random.choice(list(unsent_messages))
-    send_message(message.text, webhook)
+    send_status_embed(
+        subject="Optional Message #2",
+        lines=[message.text],
+        color=0x3498db,
+        hook=webhook
+    )
 
     # Mark as sent
     message.sent_in_cycle = True
@@ -682,7 +613,12 @@ def BB_send_opt_message3():
         return  # Still nothing to send
 
     message = random.choice(list(unsent_messages))
-    send_message(message.text, webhook)
+    send_status_embed(
+        subject="Optional Message #3",
+        lines=[message.text],
+        color=0x3498db,
+        hook=webhook
+    )
 
     # Mark as sent
     message.sent_in_cycle = True
@@ -710,7 +646,12 @@ def BB_send_opt_message4():
         return  # Still nothing to send
 
     message = random.choice(list(unsent_messages))
-    send_message(message.text, webhook)
+    send_status_embed(
+        subject="Optional Message #4",
+        lines=[message.text],
+        color=0x3498db,
+        hook=webhook
+    )
 
     # Mark as sent
     message.sent_in_cycle = True
@@ -738,7 +679,12 @@ def BB_send_opt_message5():
         return  # Still nothing to send
 
     message = random.choice(list(unsent_messages))
-    send_message(message.text, webhook)
+    send_status_embed(
+        subject="Optional Message #5",
+        lines=[message.text],
+        color=0x3498db,
+        hook=webhook
+    )
 
     # Mark as sent
     message.sent_in_cycle = True
@@ -748,126 +694,24 @@ def BB_send_opt_message5():
 @shared_task
 def BB_register_message_tasks():
     """
-    Ensure the celery-beat entries exist for the daily/optional message streams.
+    Ensure all periodic tasks exist and match the configuration.
     """
-    logger.info("🔄 Running BB_register_message_tasks...")
-
-    # Default fallback schedule (12:00 UTC daily)
-    default_schedule, _ = CrontabSchedule.objects.get_or_create(
-        minute='0',
-        hour='12',
-        day_of_week='*',
-        day_of_month='*',
-        month_of_year='*',
-        timezone='UTC',
-    )
-
-    # Tasks info: name, task path, config schedule attr, active flag attr
-    tasks = [
-        {
-            "name": "BB send daily message",
-            "task_path": "aa_bb.tasks_cb.BB_send_daily_messages",
-            "schedule_attr": "dailyschedule",
-            "active_attr": "are_daily_messages_active",
-        },
-        {
-            "name": "BB send optional message 1",
-            "task_path": "aa_bb.tasks_cb.BB_send_opt_message1",
-            "schedule_attr": "optschedule1",
-            "active_attr": "are_opt_messages1_active",
-        },
-        {
-            "name": "BB send optional message 2",
-            "task_path": "aa_bb.tasks_cb.BB_send_opt_message2",
-            "schedule_attr": "optschedule2",
-            "active_attr": "are_opt_messages2_active",
-        },
-        {
-            "name": "BB send optional message 3",
-            "task_path": "aa_bb.tasks_cb.BB_send_opt_message3",
-            "schedule_attr": "optschedule3",
-            "active_attr": "are_opt_messages3_active",
-        },
-        {
-            "name": "BB send optional message 4",
-            "task_path": "aa_bb.tasks_cb.BB_send_opt_message4",
-            "schedule_attr": "optschedule4",
-            "active_attr": "are_opt_messages4_active",
-        },
-        {
-            "name": "BB send optional message 5",
-            "task_path": "aa_bb.tasks_cb.BB_send_opt_message5",
-            "schedule_attr": "optschedule5",
-            "active_attr": "are_opt_messages5_active",
-        },
-        {
-            "name": "BB send recurring stats",  # ← new
-            "task_path": "aa_bb.tasks_other.BB_send_recurring_stats",
-            "schedule_attr": "stats_schedule",
-            "active_attr": "are_recurring_stats_active",
-        },
-    ]
-
-    for task_info in tasks:
-        name = task_info["name"]
-        task_path = task_info["task_path"]
-        config = BigBrotherConfig.get_solo()
-        schedule = getattr(config, task_info["schedule_attr"], None) or default_schedule
-        is_active = getattr(config, task_info["active_attr"], False)
-
-        existing_task = PeriodicTask.objects.filter(name=name).first()
-
-        if is_active:  # ensure the periodic task exists/enabled when feed is on
-            if existing_task is None:  # Nothing scheduled yet; create it.
-                PeriodicTask.objects.create(
-                    name=name,
-                    task=task_path,
-                    crontab=schedule,
-                    enabled=True,
-                )
-                logger.info(f"✅ Created '{name}' periodic task with enabled=True")
-            else:
-                updated = False
-                # if existing_task.crontab != schedule:  # Update schedule if admin changed it.
-                #     existing_task.crontab = schedule
-                #     updated = True
-                if existing_task.task != task_path:  # Ensure callable matches configuration.
-                    existing_task.task = task_path
-                    updated = True
-                # if not existing_task.enabled:  # Re-enable tasks that were left disabled.
-                #     existing_task.enabled = True
-                #     updated = True
-                if updated:  # Persist/log only when the model was mutated.
-                    existing_task.save()
-                    logger.info(f"✅ Updated '{name}' periodic task")
-                else:
-                    logger.info(f"ℹ️ '{name}' periodic task already exists and is up to date")
-        else:  # feed disabled → delete scheduled task
-            if existing_task:  # Remove the stale beat entry to avoid stray posts.
-                existing_task.delete()
-                logger.info(f"🗑️ Deleted '{name}' periodic task because messages are disabled")
-
+    logger.info("✅  [AA-BB] - [BB_register_message_tasks] - Running BB_register_message_tasks...")
+    from .tasks_utils import sync_periodic_tasks
+    sync_periodic_tasks()
 
 
 @shared_task
 def BB_run_regular_loa_updates():
     """
     Scan every member main and update LoA statuses / inactivity flags.
-
-    - Marks approved requests as in-progress/finished based on dates.
-    - Sends LoA inactivity warnings when a pilot exceeds the allowed logoff days
-      without an LoA in progress.
     """
     cfg = BigBrotherConfig.get_solo()
-    member_states = BigBrotherConfig.get_solo().bb_member_states.all()
-    qs_profiles = (
-        UserProfile.objects
-        .filter(state__in=member_states)
-        .exclude(main_character=None)
-        .select_related("user", "main_character")
-    )
+    if not cfg.is_active:
+        return
+    qs_profiles = get_user_profiles()
     if not qs_profiles.exists():  # No members matching filters, so nothing to process.
-        logger.info("No member mains found.")
+        logger.info("ℹ️  [AA-BB] - [BB_run_regular_loa_updates] - No member mains found.")
         return
 
     flags = []
@@ -908,11 +752,25 @@ def BB_run_regular_loa_updates():
             if lr.start_date <= today <= lr.end_date and lr.status == "approved":  # Approved LoAs become in-progress when dates hit.
                 lr.status = "in_progress"
                 lr.save(update_fields=["status"])
-                send_message(f"{user.username}'s LoA Request status changed to in progress")
+                send_status_embed(
+                    subject="LoA Status Change",
+                    lines=[f"{user.username}'s LoA Request status changed to in progress"],
+                    color=0x3498db,
+                )
             elif today > lr.end_date and lr.status != "finished":  # Auto-close requests whose end dates passed.
                 lr.status = "finished"
                 lr.save(update_fields=["status"])
-                send_message(f"##{get_pings('LoA Changed Status')} **{ec}**'s LoA\n- from **{lr.start_date}**\n- to **{lr.end_date}**\n- for **{lr.reason}**\n## has finished")
+                send_status_embed(
+                    subject="LoA Finished",
+                    lines=[
+                        f"{get_pings('LoA Changed Status')} **{ec}**'s LoA",
+                        f"- from **{lr.start_date}**",
+                        f"- to **{lr.end_date}**",
+                        f"- for **{lr.reason}**",
+                        "## has finished"
+                    ],
+                    color=0x3498db,
+                )
         has_active_loa = LeaveRequest.objects.filter(
             user=user,
             status="in_progress",
@@ -922,8 +780,13 @@ def BB_run_regular_loa_updates():
         if days_since > cfg.loa_max_logoff_days and not has_active_loa:  # Flag members inactive beyond policy without LoA.
             flags.append(f"- **{ec}** was last seen online on {latest_logoff} (**{days_since}** days ago where maximum w/o a LoA request is **{cfg.loa_max_logoff_days}**)")
     if flags and cfg.is_loa_active:  # Notify staff when inactivity breaches are detected. but also don't send unless LOA is actually on
-        flags_text = "\n".join(flags)
-        send_message(f"##{get_pings('LoA Inactivity')} Inactive Members Found:\n{flags_text}")
+        lines = [f"{get_pings('LoA Inactivity')} Inactive Members Found:"] + flags
+        for chunk in _chunk_embed_lines(lines):
+            send_status_embed(
+                subject="LoA Inactivity",
+                lines=chunk,
+                color=0xFF0000,
+            )
 
 
 @shared_task
@@ -934,6 +797,8 @@ def BB_daily_DB_cleanup():
     Deletes stale name caches, employment caches, processed mail/contract/transaction
     entries that no longer have backing data, and non-member PAP compliance rows.
     """
+    if not BigBrotherConfig.get_solo().is_active:
+        return
     from .models import (
         Alliance_names, Character_names, Corporation_names, UserStatus, EntityInfoCache,
         id_types, CharacterEmploymentCache, FrequentCorpChangesCache, CurrentStintCache, AwoxKillsCache,
@@ -957,7 +822,7 @@ def BB_daily_DB_cleanup():
     for model, name in models_to_cleanup:
         old_entries = model.objects.filter(updated__lt=two_months_ago)
         count, _ = old_entries.delete()
-        if count > 1:
+        if count > 0:
             flags.append(f"- Deleted {count} old {name} records.")
 
     # Cleanup caches using last_accessed
@@ -971,7 +836,8 @@ def BB_daily_DB_cleanup():
         try:
             old_entries = model.objects.filter(last_accessed__lt=two_months_ago)
             count, _ = old_entries.delete()
-            flags.append(f"- Deleted {count} old {name} records (by last access).")
+            if count > 0:
+                flags.append(f"- Deleted {count} old {name} records (by last access).")
         except Exception:
             continue
 
@@ -979,7 +845,8 @@ def BB_daily_DB_cleanup():
     try:
         stale_ids = id_types.objects.filter(last_accessed__lt=two_months_ago)
         count, _ = stale_ids.delete()
-        flags.append(f"- Deleted {count} old ID type cache records (by last access).")
+        if count > 0:
+            flags.append(f"- Deleted {count} old ID type cache records (by last access).")
     except Exception:
         pass
 
@@ -1004,7 +871,8 @@ def BB_daily_DB_cleanup():
         count_sus = sus_contracts_to_delete.delete()[0]
         count_proc = orphaned_processed_contracts.delete()[0]
 
-    flags.append(f"- Deleted {count_proc} old ProcessedContract and {count_sus} SusContractNote records.")
+    if count_proc > 0 or count_sus > 0:
+        flags.append(f"- Deleted {count_proc} old ProcessedContract and {count_sus} SusContractNote records.")
 
     # -- MAILS --
     existing_mail_ids = set(
@@ -1020,7 +888,8 @@ def BB_daily_DB_cleanup():
         count_sus = sus_mails_to_delete.delete()[0]
         count_proc = orphaned_processed_mails.delete()[0]
 
-    flags.append(f"- Deleted {count_proc} old ProcessedMail and {count_sus} SusMailNote records.")
+    if count_proc > 0 or count_sus > 0:
+        flags.append(f"- Deleted {count_proc} old ProcessedMail and {count_sus} SusMailNote records.")
 
     # -- TRANSACTIONS --
     existing_entry_ids = (
@@ -1037,17 +906,24 @@ def BB_daily_DB_cleanup():
         count_sus = sus_transactions_to_delete.delete()[0]
         count_proc = orphaned_processed_transactions.delete()[0]
 
-    flags.append(f"- Deleted {count_proc} old ProcessedTransaction and {count_sus} SusTransactionNote records.")
+    if count_proc > 0 or count_sus > 0:
+        flags.append(f"- Deleted {count_proc} old ProcessedTransaction and {count_sus} SusTransactionNote records.")
 
     # -- PAP COMPLIANCE: drop entries for non-members --
     try:
         member_profile_ids = list(get_user_profiles().values_list('id', flat=True))
         non_member_pc_qs = PapCompliance.objects.exclude(user_profile_id__in=member_profile_ids)
         deleted_pc = non_member_pc_qs.delete()[0]
-        flags.append(f"- Deleted {deleted_pc} PapCompliance records for non-members.")
+        if deleted_pc > 0:
+            flags.append(f"- Deleted {deleted_pc} PapCompliance records for non-members.")
     except Exception as e:
-        logger.warning(f"PapCompliance cleanup failed: {e}")
+        logger.warning(f"ℹ️  [AA-BB] - [BB_daily_DB_cleanup] - PapCompliance cleanup failed: {e}")
 
     if flags:  # Summarize cleanup actions when anything was removed.
-        flags_text = "\n".join(flags)
-        send_message(f"### DB Cleanup Complete:\n{flags_text}")
+        lines = ["DB Cleanup Complete:"] + flags
+        for chunk in _chunk_embed_lines(lines):
+            send_status_embed(
+                subject="DB Cleanup",
+                lines=chunk,
+                color=0x3498db,
+            )

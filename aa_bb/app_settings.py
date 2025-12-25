@@ -19,6 +19,7 @@ from django.apps import apps
 from django.utils import timezone
 from typing import Optional, Dict, Tuple, Any, List
 from django.db import transaction, IntegrityError, OperationalError
+from django.db.models import Q
 
 from .models import (
     Alliance_names, Corporation_names, Character_names, BigBrotherConfig, id_types,
@@ -932,33 +933,120 @@ def resolve_character_name(char_id: int) -> str:
         return f"Unresolvable eve map{e_short}{e_detail}"
 
 
-def get_system_owner(system: str) -> Dict[str, str]:
+def get_system_owner(system: Dict) -> Dict[str, str]:
     """
     Get sovereignty owner of an EVE system by name.
-    Always returns a dict with keys: owner_id, owner_name, owner_type.
+    Always returns a dict with keys: owner_id, owner_name, owner_type, region_id, region_name.
     """
     owner_id = "0"
-    owner_name = f"Unresolvable Init"
+    owner_name = "Unresolvable Init"
     owner_type = "unknown"
+    region_id = "0"
+    region_name = "Unknown Region"
 
     # 1) Pull name and ID from the passed-in dict
-    system_id = system.get("id")
+    system_id_raw = system.get("id")
+    try:
+        system_id = int(system_id_raw) if system_id_raw is not None else None
+    except (ValueError, TypeError):
+        system_id = None
+
     system_nam = system.get("name")
     system_name = str()
     if system_nam:  # Convert the provided name into a proper string when available.
         system_name = str(system_nam)
 
     try:
+        # Resolve parent system if this is a location
+        parent_system_id = resolve_location_system_id(system_id)
+        if parent_system_id:
+            try:
+                from eveuniverse.models import EveSolarSystem
+                sys_obj = EveSolarSystem.objects.select_related("eve_constellation__eve_region").get(id=parent_system_id)
+                region_id = str(sys_obj.eve_constellation.eve_region.id)
+                region_name = sys_obj.eve_constellation.eve_region.name
+            except Exception:
+                pass
+
         sov_map = _get_sov_map()
-        entry = next((s for s in sov_map if s.get("system_id") == system_id), None)
+        # If it's a structure or station, we want the system it's in for SOV
+        target_sov_id = parent_system_id or system_id
+        entry = next((s for s in sov_map if s.get("system_id") == target_sov_id), None)
         if not entry:
-            return {"owner_id": owner_id, "owner_name": f"Unresolvable structure due to lack of docking rights", "owner_type": owner_type}
+            # Fallback for systems not in the sovereignty map (e.g. Highsec/Lowsec)
+            # or for NPC stations.
+            if target_sov_id:
+                if 30000000 <= target_sov_id <= 34000000:
+                    try:
+                        from eveuniverse.models import EveSolarSystem
+                        sys_obj = EveSolarSystem.objects.get(id=target_sov_id)
+                        return {
+                            "owner_id": "0",
+                            "owner_name": "Unclaimed",
+                            "owner_type": "unknown",
+                            "region_id": region_id,
+                            "region_name": region_name
+                        }
+                    except Exception:
+                        pass
+                elif 60000000 <= target_sov_id <= 64000000:
+                    try:
+                        from eveuniverse.models import EveStation
+                        station_obj = EveStation.objects.get(id=target_sov_id)
+                        if station_obj.owner_id:
+                            return {
+                                "owner_id": str(station_obj.owner_id),
+                                "owner_name": resolve_corporation_name(station_obj.owner_id),
+                                "owner_type": "corporation",
+                                "region_id": region_id,
+                                "region_name": region_name
+                            }
+                    except Exception:
+                        pass
+
+            # If it's specifically a player structure ID that we can't resolve owner for
+            if system_id and is_player_structure(system_id):
+                try:
+                    from corptools.models import Structure
+                    struct = Structure.objects.filter(structure_id=system_id).select_related("corporation__corporation").first()
+                    if struct and struct.corporation and struct.corporation.corporation:
+                        return {
+                            "owner_id": str(struct.corporation.corporation.corporation_id),
+                            "owner_name": struct.corporation.corporation.corporation_name,
+                            "owner_type": "corporation",
+                            "region_id": region_id,
+                            "region_name": region_name
+                        }
+                except Exception:
+                    pass
+
+                return {
+                    "owner_id": owner_id,
+                    "owner_name": "Unresolvable structure due to lack of docking rights",
+                    "owner_type": owner_type,
+                    "region_id": region_id,
+                    "region_name": region_name
+                }
+
+            return {
+                "owner_id": owner_id,
+                "owner_name": "Unresolvable location",
+                "owner_type": owner_type,
+                "region_id": region_id,
+                "region_name": region_name
+            }
 
     except Exception as e:
         logger.exception(f"Failed to fetch sovereignty for system ID {system_id}: {e}")
         e_short = e.__class__.__name__
         e_detail = getattr(e, 'code', None) or getattr(e, 'status', None) or str(e)
-        return {"owner_id": owner_id, "owner_name": f"Unresolvable sov, {e_short}{e_detail}", "owner_type": owner_type}
+        return {
+            "owner_id": owner_id,
+            "owner_name": f"Unresolvable sov, {e_short}{e_detail}",
+            "owner_type": owner_type,
+            "region_id": region_id,
+            "region_name": region_name
+        }
 
     # 3) Determine owner ID and type
     alliance_id = entry.get("alliance_id")
@@ -970,7 +1058,13 @@ def get_system_owner(system: str) -> Dict[str, str]:
         owner_id = str(faction_id)
         owner_type = "faction"
     else:
-        return {"owner_id": "0", "owner_name": "Unclaimed", "owner_type": "unknown"}
+        return {
+            "owner_id": "0",
+            "owner_name": "Unclaimed",
+            "owner_type": "unknown",
+            "region_id": region_id,
+            "region_name": region_name
+        }
 
     # 4) Resolve owner name
     try:
@@ -979,7 +1073,88 @@ def get_system_owner(system: str) -> Dict[str, str]:
         owner_name = "Unresolvable owner"
         owner_id = "0"
         owner_type = "unknown"
-    return {"owner_id": owner_id, "owner_name": owner_name, "owner_type": owner_type}
+
+    return {
+        "owner_id": owner_id,
+        "owner_name": owner_name,
+        "owner_type": owner_type,
+        "region_id": region_id,
+        "region_name": region_name
+    }
+
+
+def is_location_hostile(location_id: int, system_id: int = None) -> bool:
+    """
+    Determines if a given location (structure, station, or system) is considered hostile.
+    Returns True if hostile, False if safe.
+    """
+    if not location_id and not system_id:
+        return False
+
+    cfg = BigBrotherConfig.get_solo()
+    safe_entities = get_safe_entities()
+    hostile_alli_ids = {int(s) for s in (cfg.hostile_alliances or "").split(",") if s.strip().isdigit()}
+    hostile_corp_ids = {int(s) for s in (cfg.hostile_corporations or "").split(",") if s.strip().isdigit()}
+
+    # Resolve location owner
+    owner_info = get_system_owner({"id": location_id or system_id})
+    oid = None
+    oname = ""
+    if owner_info:
+        try:
+            oid = int(owner_info.get("owner_id", 0))
+        except (ValueError, TypeError):
+            oid = None
+        oname = owner_info.get("owner_name", "")
+
+    # If it's a structure
+    if location_id and is_player_structure(location_id):
+        # Friendly structure overrides system hostility
+        if oid and oid in safe_entities:
+            return False
+        # Hostile structure
+        if oid and (oid in hostile_alli_ids or oid in hostile_corp_ids):
+            return True
+        if "Unresolvable" in oname:
+            return True
+
+    # Check system-level hostility
+    target_system = system_id or (resolve_location_system_id(location_id) if location_id else None)
+    if target_system:
+        # If the location we checked was a structure, oid is structure owner.
+        # We might also need to check system (sov) owner for nullsec flags.
+        if target_system != location_id:
+            sys_owner_info = get_system_owner({"id": target_system})
+            try:
+                soid = int(sys_owner_info.get("owner_id", 0))
+            except (ValueError, TypeError):
+                soid = None
+        else:
+            soid = oid
+
+        # Base hostility from system owner
+        if soid:
+            if soid in hostile_alli_ids or soid in hostile_corp_ids:
+                return True
+
+        # Consider nullsec hostile
+        if cfg.consider_nullsec_hostile and is_nullsec(target_system):
+            # Safe if system is owned by us/allies
+            if soid is not None and soid in safe_entities:
+                return False
+            # Otherwise, if we are in a friendly structure (handled above), it's safe.
+            # If we are here, it's either an NPC station or a hostile/unknown structure.
+            return True
+
+    # General fallback for hostile lists if not already caught
+    if oid:
+        if oid in hostile_alli_ids or oid in hostile_corp_ids:
+            return True
+
+    if "Unresolvable" in oname:
+        return True
+
+    return False
 
 
 
@@ -987,22 +1162,34 @@ def get_system_owner(system: str) -> Dict[str, str]:
 
 def get_users():
     """List the character names of every member-state user with a main set."""
-    member_states = BigBrotherConfig.get_solo().bb_member_states.all()
+    cfg = BigBrotherConfig.get_solo()
+    member_states = cfg.bb_member_states.all()
+    qs = UserProfile.objects.filter(state__in=member_states).exclude(main_character=None)
+
+    member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
+    member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
+    if member_corps or member_allis:
+        qs = qs.filter(Q(main_character__corporation_id__in=member_corps) | Q(main_character__alliance_id__in=member_allis))
+
     users = list(
-        UserProfile.objects.filter(state__in=member_states)
-        .exclude(main_character=None)
-        .values_list("main_character__character_name", flat=True)
+        qs.values_list("main_character__character_name", flat=True)
         .order_by("main_character__character_name")
     )
     return users
 
 def get_user_profiles():
     """Return queryset of eligible user profiles with main characters eager-loaded."""
-    member_states = BigBrotherConfig.get_solo().bb_member_states.all()
+    cfg = BigBrotherConfig.get_solo()
+    member_states = cfg.bb_member_states.all()
+    qs = UserProfile.objects.filter(state__in=member_states).exclude(main_character=None)
+
+    member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
+    member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
+    if member_corps or member_allis:
+        qs = qs.filter(Q(main_character__corporation_id__in=member_corps) | Q(main_character__alliance_id__in=member_allis))
+
     users = (
-        UserProfile.objects.filter(state__in=member_states)
-        .exclude(main_character=None)
-        .select_related("main_character", "user")  # optimization
+        qs.select_related("main_character", "user")  # optimization
         .order_by("main_character__character_name")
     )
     return users
@@ -1017,9 +1204,10 @@ def get_user_id(character_name):
 
 def is_nullsec(system_id):
     try:
+        system_id = int(system_id)
         sys = EveSolarSystem.objects.get(id=system_id)
         return sys.security_status <= 0.0
-    except EveSolarSystem.DoesNotExist:
+    except (EveSolarSystem.DoesNotExist, ValueError, TypeError):
         return False
 
 def is_player_structure(location_id):
@@ -1028,7 +1216,104 @@ def is_player_structure(location_id):
     (Citadel, Engineering Complex, Refinery) rather than an NPC station.
     Structure IDs are typically large (>= 1,000,000,000,000).
     """
-    return location_id >= 1_000_000_000_000
+    try:
+        return int(location_id) >= 1_000_000_000_000
+    except (ValueError, TypeError):
+        return False
+
+def resolve_location_name(location_id: int) -> Optional[str]:
+    """
+    Attempts to resolve a location_id to a human-readable name.
+    1) Solar System (30M-34M)
+    2) NPC Station (60M-64M)
+    3) Player Structure (>= 1T)
+    """
+    if not location_id:
+        return None
+
+    try:
+        location_id = int(location_id)
+    except (ValueError, TypeError):
+        return None
+
+    # 1) Solar System
+    if 30000000 <= location_id <= 34000000:
+        try:
+            from eveuniverse.models import EveSolarSystem
+            return EveSolarSystem.objects.get(id=location_id).name
+        except Exception:
+            pass
+
+    # 2) NPC Station
+    if 60000000 <= location_id <= 64000000:
+        try:
+            from eveuniverse.models import EveStation
+            return EveStation.objects.get(id=location_id).name
+        except Exception:
+            pass
+
+    # 3) Player Structure
+    if is_player_structure(location_id):
+        try:
+            from corptools.models import Structure
+            struct = Structure.objects.filter(structure_id=location_id).first()
+            if struct:
+                return struct.name
+        except Exception:
+            pass
+
+    # Fallback to EveLocation
+    try:
+        from corptools.models import EveLocation
+        loc = EveLocation.objects.filter(location_id=location_id).first()
+        if loc:
+            return loc.location_name
+    except Exception:
+        pass
+
+    return None
+
+def resolve_location_system_id(location_id: int) -> Optional[int]:
+    """
+    Attempts to resolve a location_id to its parent solar system ID.
+    """
+    if not location_id:
+        return None
+
+    try:
+        location_id = int(location_id)
+    except (ValueError, TypeError):
+        return None
+
+    # 1) Solar System
+    if 30000000 <= location_id <= 34000000:
+        return location_id
+
+    # 2) NPC Station
+    if 60000000 <= location_id <= 64000000:
+        try:
+            from eveuniverse.models import EveStation
+            station = EveStation.objects.get(id=location_id)
+            return station.eve_solar_system_id
+        except Exception:
+            pass
+
+    # 3) Player Structure
+    if is_player_structure(location_id):
+        try:
+            from corptools.models import Structure, EveLocation
+            struct = Structure.objects.filter(structure_id=location_id).first()
+            if struct:
+                return struct.system_id
+
+            # Fallback to EveLocation for non-owned structures
+            loc = EveLocation.objects.filter(location_id=location_id).first()
+            if loc and loc.system_id:
+                return loc.system_id
+        except Exception:
+            pass
+
+    return None
 
 def is_ship(type_id):
     """Checks if a type_id belongs to a ship."""
@@ -1356,3 +1641,173 @@ def send_message(message, hook: str = None):
             len(buffer),
         )
         _post_with_retries({"content": buffer})
+
+
+def send_status_embed(
+    subject: str,
+    lines: List[str],
+    *,
+    override_title: Optional[str] = None,
+    color: int = 0xED4245,  # Discord red
+    hook: Optional[str] = None,
+) -> None:
+    """
+    Send a Discord embed via the existing send_message() webhook.
+
+    - subject: usually the corp name
+    - lines: list of lines to go into embed description
+    - override_title: optional explicit title
+    - color: embed accent color (int)
+    - hook: optional webhook URL override
+    """
+
+    if VERBOSE_WEBHOOK_LOGGING:
+        logger.debug(
+            "✅  [AA-BB] - [Embed] - send_status_embed called | subject=%r | lines=%d",
+            subject,
+            len(lines) if lines else 0,
+        )
+
+    # Defensive: never send empty embeds
+    if not lines:
+        if VERBOSE_WEBHOOK_LOGGING:
+            logger.debug("ℹ️  [AA-BB] - [Embed] - aborted: no lines supplied")
+        return
+
+    # Discord limits
+    MAX_DESC = 4096
+    MAX_LINES = 50
+
+    title = override_title if override_title is not None else subject
+
+    if VERBOSE_WEBHOOK_LOGGING:
+        logger.debug(
+            "✅  [AA-BB] - [Embed] - title resolved | title=%r | color=%#x",
+            title,
+            color,
+        )
+
+    # Trim excessive lines but keep tables / sections intact
+    safe_lines = lines[:MAX_LINES]
+    if len(lines) > MAX_LINES:
+        logger.warning(
+            "ℹ️  [AA-BB] - [Embed] - line cap exceeded | original=%d | capped=%d",
+            len(lines),
+            MAX_LINES,
+        )
+
+    description = "\n".join(safe_lines)
+
+    # Hard truncate if someone messed up
+    if len(description) > MAX_DESC:
+        logger.error(
+            "ℹ️  [AA-BB] - [Embed] - description overflow | chars=%d | truncating",
+            len(description),
+        )
+        description = description[: MAX_DESC - 3] + "..."
+
+    if VERBOSE_WEBHOOK_LOGGING:
+        logger.debug(
+            "✅  [AA-BB] - [Embed] - payload ready | lines=%d | chars=%d",
+            len(safe_lines),
+            len(description),
+        )
+
+    embed = {
+        "embeds": [
+            {
+                "title": title,
+                "description": description,
+                "color": color,
+            }
+        ]
+    }
+
+    if VERBOSE_WEBHOOK_LOGGING:
+        logger.debug("✅  [AA-BB] - [Embed] - sending embed payload")
+
+    time.sleep(0.25)
+    send_message(embed, hook=hook)
+
+
+def _chunk_embed_lines(lines, max_chars=1900):
+    """
+    Split a list of lines into chunks whose joined text length
+    is <= max_chars, without breaking ``` code blocks.
+
+    Returns: List[List[str]] – each inner list is one embed body.
+    """
+    # First, group into "segments": either a full code block or a run of normal lines
+    segments = []
+    current_segment = []
+    in_code = False
+
+    for line in lines:
+        stripped = line.strip()
+
+        if stripped.startswith("```"):
+            # Starting a new code block
+            if not in_code:
+                # flush any accumulated non-code segment
+                if current_segment:
+                    segments.append(current_segment)
+                    current_segment = []
+                in_code = True
+                current_segment = [line]
+            else:
+                # closing an existing code block
+                current_segment.append(line)
+                segments.append(current_segment)
+                current_segment = []
+                in_code = False
+        elif not in_code and (line.startswith("#") or line.startswith("- ") or line.startswith("* ") or line.startswith("  - ") or line.startswith("  * ")):
+            # Break at top-level bullet points or headers to keep related indented lines together
+            if current_segment:
+                segments.append(current_segment)
+            current_segment = [line]
+        else:
+            current_segment.append(line)
+
+    if current_segment:
+        segments.append(current_segment)
+
+    # Now pack segments into chunks by total char length
+    chunks = []
+    current_chunk = []
+    current_len = 0
+
+    for seg in segments:
+        # Estimate length if we add this segment (with newlines)
+        seg_text = "\n".join(seg)
+        seg_len = len(seg_text) + (1 if current_chunk else 0)  # +1 for newline before segment
+
+        if seg_len > max_chars:
+            # Segment itself is huge; fall back to splitting inside it line-by-line
+            for line in seg:
+                line_len = len(line) + (1 if current_chunk else 0)
+                if current_len + line_len > max_chars and current_chunk:
+                    chunks.append(current_chunk)
+                    current_chunk = [line]
+                    current_len = len(line)
+                else:
+                    current_chunk.append(line)
+                    current_len += line_len
+            continue
+
+        if current_len + seg_len > max_chars and current_chunk:
+            # Start a new chunk
+            chunks.append(current_chunk)
+            current_chunk = list(seg)
+            current_len = len(seg_text)
+        else:
+            # Add segment to current chunk
+            if current_chunk:
+                current_chunk.append("")  # ensure a blank line between segments
+                current_len += 1
+            current_chunk.extend(seg)
+            current_len += len(seg_text)
+
+    if current_chunk:
+        chunks.append(current_chunk)
+
+    return chunks

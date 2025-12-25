@@ -74,7 +74,21 @@ async def create_compliance_ticket(bot, user_id, discord_user_id: int, reason: s
         reason="Compliance ticket creation",
     )
 
-    await channel.send(message)
+    # Use embeds and chunking for the initial message
+    from .app_settings import _chunk_embed_lines
+    lines = message.split("\n")
+    chunks = _chunk_embed_lines(lines)
+
+    for i, chunk in enumerate(chunks):
+        embed = discord.Embed(
+            title=f"Compliance Ticket - {reason}" if i == 0 else None,
+            description="\n".join(chunk),
+            color=discord.Color.from_rgb(241, 196, 15)  # Gold
+        )
+        if i == 0:
+            await channel.send(content=f"<@{discord_user_id}>", embed=embed)
+        else:
+            await channel.send(embed=embed)
 
     ComplianceTicket.objects.create(
         user=user,
@@ -89,7 +103,20 @@ async def send_ticket_reminder(bot, channel_id: int, user_id: int, message: str)
     channel = bot.get_channel(channel_id)
     member = channel.guild.get_member(user_id)
     if channel and member:  # only send reminders when both channel and member resolve
-        await channel.send(message)
+        from .app_settings import _chunk_embed_lines
+        lines = message.split("\n")
+        chunks = _chunk_embed_lines(lines)
+
+        for i, chunk in enumerate(chunks):
+            embed = discord.Embed(
+                title="Ticket Reminder" if i == 0 else None,
+                description="\n".join(chunk),
+                color=discord.Color.orange()
+            )
+            if i == 0:
+                await channel.send(content=f"<@{user_id}>", embed=embed)
+            else:
+                await channel.send(embed=embed)
 
 async def close_ticket_channel(bot, channel_id: int):
     channel = bot.get_channel(channel_id)

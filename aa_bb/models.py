@@ -1,7 +1,8 @@
-from datetime import timedelta
+from datetime import timedelta, time
 
 from django.db import models
 from django.core.exceptions import ValidationError
+from django.core.validators import MinValueValidator
 from solo.models import SingletonModel
 from django.contrib.auth.models import User
 from django.db.models import JSONField
@@ -10,7 +11,7 @@ from django.utils import timezone
 
 from allianceauth.authentication.models import State, UserProfile
 from allianceauth.groupmanagement.models import AuthGroup
-from allianceauth.eveonline.models import EveAllianceInfo
+from allianceauth.eveonline.models import EveAllianceInfo, EveCorporationInfo
 
 import logging
 
@@ -19,8 +20,9 @@ logger = logging.getLogger(__name__)
 try:
     from charlink.models import ComplianceFilter
 except ImportError:
-    logger.warning("charlink not installed")
+    logger.warning("✅  [AA-BB] - [Models] - charlink not installed")
 
+from django.utils.translation import gettext_lazy as _
 from django.apps import apps
 AA_CONTACTS_INSTALLED = apps.is_installed("aa_contacts")
 
@@ -89,18 +91,18 @@ class General(models.Model):
         managed = False
         default_permissions = ()
         permissions = (
-            ("basic_access", "Can access Big Brother"),
-            ("full_access", "Can view all main characters in Big Brother"),
-            ("recruiter_access", "Can view main characters in Guest state only in Big Brother"),
-            ("basic_access_cb", "Can access Corp Brother"),
-            ("full_access_cb", "Can view all corps in Corp Brother"),
-            ("recruiter_access_cb", "Can view guest's corps only in Corp Brother"),
-            ("can_blacklist_characters", "Can add characters to blacklist"),
-            ("can_access_loa", "Can access and submit a Leave Of Absence request"),
-            ("can_view_all_loa", "Can view all Leave Of Absence requests"),
-            ("can_manage_loa", "Can manage Leave Of Absence requests"),
-            ("can_access_paps", "Can access PAP Stats"),
-            ("can_generate_paps", "Can generate PAP Stats"),
+            ("basic_access", _("Can access Big Brother")),
+            ("full_access", _("Can view all main characters in Big Brother")),
+            ("recruiter_access", _("Can view main characters in Guest state only in Big Brother")),
+            ("basic_access_cb", _("Can access Corp Brother")),
+            ("full_access_cb", _("Can view all corps in Corp Brother")),
+            ("recruiter_access_cb", _("Can view guest's corps only in Corp Brother")),
+            ("can_blacklist_characters", _("Can add characters to blacklist")),
+            ("can_access_loa", _("Can access and submit a Leave Of Absence request")),
+            ("can_view_all_loa", _("Can view all Leave Of Absence requests")),
+            ("can_manage_loa", _("Can manage Leave Of Absence requests")),
+            ("can_access_paps", _("Can access PAP Stats")),
+            ("can_generate_paps", _("Can generate PAP Stats")),
         )
 
 class UserStatus(models.Model):
@@ -153,13 +155,13 @@ class UserStatus(models.Model):
     updated = models.DateTimeField(auto_now=True)
 
     class Meta:
-        verbose_name = "User Status"
-        verbose_name_plural = "User Statuses"
+        verbose_name = _("User Status")
+        verbose_name_plural = _("User Statuses")
 
 class NeutralHandling(models.TextChoices):
-    HOSTILE = "hostile", "Handle neutrals as hostile"
-    WHITELIST = "whitelist", "Handle neutrals as whitelisted"
-    IGNORE = "ignore", "Do nothing with neutrals"
+    HOSTILE = "hostile", _("Handle neutrals as hostile")
+    WHITELIST = "whitelist", _("Handle neutrals as whitelisted")
+    IGNORE = "ignore", _("Do nothing with neutrals")
 
 class CorpStatus(models.Model):
     """
@@ -172,6 +174,7 @@ class CorpStatus(models.Model):
     - has_sus_trans / sus_trans: suspicious corp wallet transactions.
     - updated: when the cache row last changed.
     """
+    baseline_initialized = models.BooleanField(default=False)
     corp_id = models.PositiveIntegerField(default=1)
     corp_name = models.TextField(max_length=50)
     has_hostile_assets = models.BooleanField(default=False)
@@ -403,6 +406,20 @@ class PapsConfig(SingletonModel):
         verbose_name_plural = "PAPs/AFAT Configuration"
 
 
+class EveItemPrice(models.Model):
+    eve_type_id = models.IntegerField(primary_key=True)
+    buy = models.FloatField()
+    sell = models.FloatField()
+    updated = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Item Price"
+        verbose_name_plural = "Item Prices"
+
+    def __str__(self):
+        return f"Type {self.eve_type_id}: Buy {self.buy} / Sell {self.sell}"
+
+
 class BigBrotherConfig(SingletonModel):
     """
     Master configuration for every BigBrother/CorpBrother feature.
@@ -424,81 +441,210 @@ class BigBrotherConfig(SingletonModel):
 
     cyno_notify = models.BooleanField(
         default=True,
-        help_text="Whether to send Cyno Change notifications to discord",
-        verbose_name="Cyno ship and skill Discord Notifications"
+        help_text=_("Whether to send Cyno Change notifications to discord"),
+        verbose_name=_("Cyno ship and skill Discord Notifications")
     )
 
     sp_inject_notify = models.BooleanField(
         default=True,
-        help_text="Whether to send SP Injection notifications to discord",
-        verbose_name="Skill Point Injection Discord Notifications"
+        help_text=_("Whether to send SP Injection notifications to discord"),
+        verbose_name=_("Skill Point Injection Discord Notifications")
     )
 
     clone_notify = models.BooleanField(
         default=True,
-        help_text="Whether to send Clone State Change notifications to discord",
-        verbose_name="Hostile Jump Clone Location Change Discord Notifications"
+        help_text=_("Whether to send Hostile Jump Clone Location Change notifications to discord"),
+        verbose_name=_("Hostile Jump Clone Location Change Discord Notifications")
+    )
+
+    clone_state_notify = models.BooleanField(
+        default=True,
+        help_text=_("Whether to send Alpha/Omega Clone State Change notifications to discord"),
+        verbose_name=_("Clone State Change Discord Notifications")
     )
 
     asset_notify = models.BooleanField(
         default=True,
-        help_text="Whether to send Asset Change notifications to discord",
-        verbose_name="Hostile Asset Location Change Discord Notifications"
+        help_text=_("Whether to send Asset Change notifications to discord"),
+        verbose_name=_("Hostile Asset Location Change Discord Notifications")
     )
 
     contact_notify = models.BooleanField(
         default=True,
-        help_text="Whether to send Contact Change notifications to discord",
-        verbose_name="Hostile Contact Change Discord Notifications"
+        help_text=_("Whether to send Contact Change notifications to discord"),
+        verbose_name=_("Hostile Contact Change Discord Notifications")
     )
 
     contract_notify = models.BooleanField(
         default=True,
-        help_text="Whether to send Contract Change notifications to discord",
-        verbose_name="Hostile Contract Discord Notifications"
+        help_text=_("Whether to send Contract Change notifications to discord"),
+        verbose_name=_("Hostile Contract Discord Notifications")
     )
 
     ct_notify = models.BooleanField(
         default=True,
-        help_text="Whether to send CT audit completion notifications to discord",
-        verbose_name="CorpTool Audit Completion Discord Notifications"
+        help_text=_("Whether to send CT audit completion notifications to discord"),
+        verbose_name=_("CorpTool Audit Completion Discord Notifications")
     )
 
     awox_notify = models.BooleanField(
         default=True,
-        help_text="Whether to send AWOX notificaitons to discord",
-        verbose_name="AWOX Discord Notifications"
+        help_text=_("Whether to send AWOX notificaitons to discord"),
+        verbose_name=_("AWOX Discord Notifications")
     )
 
     mail_notify = models.BooleanField(
         default=True,
-        help_text="Whether to send Suspicious Mail notifications to discord",
-        verbose_name="Suspicious Mail Notifications"
+        help_text=_("Whether to send Suspicious Mail notifications to discord"),
+        verbose_name=_("Suspicious Mail Notifications")
     )
 
     transaction_notify = models.BooleanField(
         default=True,
-        help_text="Whether to send Suspicious Transaction notifications to discord",
-        verbose_name="Suspicious Transaction Notifications"
+        help_text=_("Whether to send Suspicious Transaction notifications to discord"),
+        verbose_name=_("Suspicious Transaction Notifications")
+    )
+
+    show_market_transactions = models.BooleanField(
+        default=False,
+        help_text=_("Show transactions with a reference type of market_escrow and market_transaction"),
+        verbose_name=_("Show Market Transactions")
+    )
+
+    market_transactions_show_major_hubs = models.BooleanField(
+        default=False,
+        help_text=_("Show Transactions that take place in the major market hubs (Jita, Amarr, Dodixie, Rens, Hek)"),
+        verbose_name=_("Show Major Hub Transactions")
+    )
+
+    market_transactions_show_secondary_hubs = models.BooleanField(
+        default=True,
+        help_text=_("Show Transactions that take place in secondary market hubs (Oursulaert, Tash-Murkon Prime, Agil, Perimeter)"),
+        verbose_name=_("Show Secondary Hub Transactions")
+    )
+
+    market_transactions_excluded_systems = models.TextField(
+        blank=True,
+        help_text=_("System IDs separated by commas to be excluded from market transactions"),
+        verbose_name=_("Excluded Market Systems")
+    )
+
+    market_transactions_threshold_alert = models.BooleanField(
+        default=False,
+        help_text=_("Trigger alerts only when the purchased or sold price is more than the custom percentage threshold"),
+        verbose_name=_("Enable Market Price Threshold Alert")
+    )
+
+    market_transactions_threshold_percent = models.FloatField(
+        default=0,
+        help_text=_("Custom percentage for market transaction alerts (e.g., 10.5 for 10.5%)"),
+        verbose_name=_("Market Price Threshold Percentage")
+    )
+
+    market_transactions_price_method = models.CharField(
+        max_length=20,
+        choices=[('Fuzzwork', 'Fuzzwork'), ('Janice', 'Janice')],
+        default='Fuzzwork',
+        verbose_name=_("Primary Price Method")
+    )
+
+    market_transactions_janice_api_key = models.TextField(
+        blank=True,
+        null=True,
+        verbose_name=_("Janice API Key")
+    )
+
+    market_transactions_fuzzwork_station_id = models.IntegerField(
+        default=60003760,
+        verbose_name=_("Fuzzwork Station ID"),
+        help_text=_("Default is 60003760 (Jita IV-4)")
+    )
+
+    market_transactions_price_instant = models.BooleanField(
+        default=True,
+        verbose_name=_("Use Instant Prices"),
+        help_text=_("If enabled, uses immediate/instant prices. If disabled, uses average/percentile prices. "
+                  "Only works for Fuzzworks")
+    )
+
+    market_transactions_price_max_age = models.PositiveIntegerField(
+        default=7,
+        help_text=_("Maximum age of cached prices in days before refreshing from API."),
+        verbose_name=_("Market Price Max Age (Days)")
     )
 
     new_user_notify = models.BooleanField(
         default=False,
-        help_text="Whether to send notifications of all previous user history when a user first gets audited, "
-                  "this can be VERY spammy on a first time load of the tool",
-        verbose_name="New User Notifications"
+        help_text=_("Whether to send notifications of all previous user history when a user first gets audited, "
+                  "this can be VERY spammy on a first time load of the tool"),
+        verbose_name=_("New User Notifications")
+    )
+
+    update_stagger_seconds = models.IntegerField(
+        default=3600,
+        validators=[MinValueValidator(3600)],
+        verbose_name=_("Update Stagger Window (seconds)"),
+        help_text=_("The total time window across which user updates are performed.")
+    )
+
+    update_cache_ttl_hours = models.IntegerField(
+        default=24,
+        verbose_name=_("Update Cache TTL (hours)"),
+        help_text=_("How long certain check results are cached before being refreshed. Such as Clone States")
+    )
+
+    update_maintenance_window_start = models.TimeField(
+        default=time(6, 0),
+        verbose_name=_("Maintenance Window Start (UTC)"),
+        help_text=_("Start time for the maintenance window where updating cached data is preferred.")
+    )
+
+    update_maintenance_window_end = models.TimeField(
+        default=time(10, 0),
+        verbose_name=_("Maintenance Window End (UTC)"),
+        help_text=_("End time for the maintenance window where caching is preferred.")
+    )
+
+    clone_state_always_recheck = models.BooleanField(
+        default=False,
+        verbose_name=_("Clone State: Always Re-check Proven Skills"),
+        help_text=_("If enabled, characters with a known skill proving their Alpha/Omega state will always be re-checked, bypassing the cache TTL, and potentially catching state changes far quicker. Disabling this can significantly improve performance.")
+    )
+
+    limit_to_main_corp = models.BooleanField(
+        default=False,
+        help_text=_("If enabled, automated compliance tickets and compliance notifications will be restricted to members of the primary corporation only. Dashboard visibility and regular background updates will still include all monitored members."),
+        verbose_name=_("Limit to Main Corporation")
+    )
+
+    update_backlog_threshold = models.PositiveIntegerField(
+        default=10,
+        verbose_name=_("Update Backlog Threshold (%)"),
+        help_text=_("Alert if more than this percentage of tasks from the previous run are still active.")
+    )
+
+    update_backlog_notify = models.BooleanField(
+        default=True,
+        verbose_name=_("Update Backlog Alert"),
+        help_text=_("Whether to send an alert when a task backlog is detected.")
+    )
+
+    update_last_dispatch_count = models.IntegerField(
+        default=0,
+        editable=False,
+        verbose_name=_("Last Dispatch Count")
     )
 
     ticket_notify_man = models.BooleanField(
         default=True,
-        help_text="Whether to send ticket resolution notifications when manually closed to discord",
-        verbose_name="Ticket Closed Manually Discord Notification"
+        help_text=_("Whether to send ticket resolution notifications when manually closed to discord"),
+        verbose_name=_("Ticket Closed Manually Discord Notification")
     )
 
     ticket_notify_auto = models.BooleanField(
         default=True,
-        help_text="Whether to send ticket resolution notifications when automatically closed to discord",
-        verbose_name="Ticket Closed Automatically Discord Notification"
+        help_text=_("Whether to send ticket resolution notifications when automatically closed to discord"),
+        verbose_name=_("Ticket Closed Automatically Discord Notification")
     )
 
     pingroleID = models.CharField(
@@ -506,8 +652,8 @@ class BigBrotherConfig(SingletonModel):
         null=True,
         blank=False,
         default=0,
-        help_text="Input the role ID you want pinged when people need to investigate",
-        verbose_name="Pinged Role ID #1"
+        help_text=_("Input the role ID you want pinged when people need to investigate"),
+        verbose_name=_("Pinged Role ID #1")
     )
 
     pingroleID2 = models.CharField(
@@ -515,71 +661,71 @@ class BigBrotherConfig(SingletonModel):
         null=True,
         blank=False,
         default=0,
-        help_text="Input the 2nd role ID you want pinged when people need to investigate",
-        verbose_name="Pinged Role ID #2"
+        help_text=_("Input the 2nd role ID you want pinged when people need to investigate"),
+        verbose_name=_("Pinged Role ID #2")
     )
 
     bb_guest_states = models.ManyToManyField(
         State,
         related_name="bb_guest_states_configs",
         blank=True,
-        help_text="List of states to be considered guests",
-        verbose_name="Guest States"
+        help_text=_("List of states to be considered guests"),
+        verbose_name=_("Guest States")
     )
 
     bb_member_states = models.ManyToManyField(
         State,
         related_name="bb_member_states_configs",
         blank=True,
-        help_text="List of states to be considered members",
-        verbose_name="Member States"
+        help_text=_("List of states to be considered members"),
+        verbose_name=_("Member States")
     )
 
     pingrole1_messages = models.ManyToManyField(
         MessageType,
         related_name="pingrole1_configs",
         blank=True,
-        help_text="List of message types that should ping the pingrole1",
-        verbose_name="Pingrole1 Alert Conditions"
+        help_text=_("List of message types that should ping the pingrole1"),
+        verbose_name=_("Pingrole1 Alert Conditions")
     )
 
     pingrole2_messages = models.ManyToManyField(
         MessageType,
         related_name="pingrole2_configs",
         blank=True,
-        help_text="List of message types that should ping the pingrole2",
-        verbose_name="Pingrole2 Alert Conditions"
+        help_text=_("List of message types that should ping the pingrole2"),
+        verbose_name=_("Pingrole2 Alert Conditions")
     )
 
     here_messages = models.ManyToManyField(
         MessageType,
         related_name="here_configs",
         blank=True,
-        help_text="List of message types that should ping @here",
-        verbose_name="@here Alert Conditions"
+        help_text=_("List of message types that should ping @here"),
+        verbose_name=_("@here Alert Conditions")
     )
 
     everyone_messages = models.ManyToManyField(
         MessageType,
         related_name="everyone_configs",
         blank=True,
-        help_text="List of message types that should ping @everyone",
-        verbose_name="@everyone Alert Conditions"
+        help_text=_("List of message types that should ping @everyone"),
+        verbose_name=_("@everyone Alert Conditions")
     )
 
     auto_import_contacts_enabled = models.BooleanField(
         default=False,
-        help_text=(
+        help_text=_(
             "If enabled, BigBrother will periodically read aa-contacts standings "
             "and merge them into member/hostile corp/alliance lists."
         ),
-        verbose_name="Auto-import standings from aa-contacts"
+        verbose_name=_("Auto-import standings from aa-contacts")
     )
 
     contacts_import_cache = models.JSONField(
         default=dict,
         blank=True,
-        help_text=(
+        help_text=_(
             "Internal cache of IDs imported from aa-contacts so that "
             "removed contacts can be pruned without touching manually "
             "added hostiles / members / whitelists."
@@ -591,19 +737,31 @@ class BigBrotherConfig(SingletonModel):
         EveAllianceInfo,
         related_name="bb_contacts_source_configs",
         blank=True,
-        help_text=(
+        help_text=_(
             "Alliances whose aa-contacts standings should be imported. "
             "Alliances with positive standing become members; "
             "negative standing become hostile; zero is ignored."
         ),
-        verbose_name="aa-contacts source alliance"
+        verbose_name=_("aa-contacts source alliance")
+    )
+
+    contacts_source_corporations = models.ManyToManyField(
+        EveCorporationInfo,
+        related_name="bb_contacts_source_configs_corp",
+        blank=True,
+        help_text=_(
+            "Corporations whose aa-contacts standings should be imported. "
+            "Corporations with positive standing become members; "
+            "negative standing become hostile; zero is ignored."
+        ),
+        verbose_name=_("aa-contacts source corporation")
     )
 
     contacts_handle_neutrals = models.CharField(
         max_length=16,
         choices=NeutralHandling.choices,
         default=NeutralHandling.IGNORE,
-        help_text=(
+        help_text=_(
             "Controls how BigBrother treats aa-contacts with neutral (0) standing. "
             "'Hostile' = treat neutrals as hostile, "
             "'Whitelist' = treat neutrals as whitelisted/ignored, "
@@ -615,163 +773,191 @@ class BigBrotherConfig(SingletonModel):
         default="",
         blank=True,
         null=True,
-        help_text="List of alliance IDs considered hostile, separated by ','",
-        verbose_name="Hostile Alliances"
+        help_text=_("List of alliance IDs considered hostile, separated by ','"),
+        verbose_name=_("Hostile Alliances")
     )
 
     hostile_corporations = models.TextField(
         blank=True,
         null=True,
-        help_text="List of corporation IDs considered hostile, separated by ','",
-        verbose_name="Hostile Corporations"
+        help_text=_("List of corporation IDs considered hostile, separated by ','"),
+        verbose_name=_("Hostile Corporations")
     )
 
     consider_nullsec_hostile = models.BooleanField(
         default=False,
-        help_text="Consider all nullsec regions as hostile?",
-        verbose_name="Consider Nullsec as Hostile"
+        help_text=_("Consider all nullsec regions as hostile?"),
+        verbose_name=_("Consider Nullsec as Hostile")
     )
 
     consider_all_structures_hostile = models.BooleanField(
         default=False,
-        help_text="Consider all player owned structures that are not listed as 'whitelist, ignored or member' as hostile?",
-        verbose_name="Consider Citadels as Hostile"
+        help_text=_("Consider all player owned structures that are not listed as 'whitelist, ignored or member' as hostile?"),
+        verbose_name=_("Consider Citadels as Hostile")
     )
 
     consider_npc_stations_hostile = models.BooleanField(
         default=False,
-        help_text="Consider assets in any non-player owned (NPC) station as hostile?",
-        verbose_name="Consider NPC Stations as Hostile"
+        help_text=_("Consider assets in any non-player owned (NPC) station as hostile?"),
+        verbose_name=_("Consider NPC Stations as Hostile")
     )
 
     excluded_systems = models.TextField(
         blank=True,
         null=True,
-        help_text="List of system IDs excluded from hostile checks, separated by ','",
-        verbose_name="Excluded Systems"
+        help_text=_("List of system IDs excluded from hostile checks, separated by ','"),
+        verbose_name=_("Excluded Systems")
     )
 
     excluded_stations = models.TextField(
         blank=True,
         null=True,
-        help_text="List of station/structure IDs excluded from hostile checks, separated by ','",
-        verbose_name="Excluded Stations"
+        help_text=_("List of station/structure IDs excluded from hostile checks, separated by ','"),
+        verbose_name=_("Excluded Stations")
     )
 
     hostile_assets_ships_only = models.BooleanField(
         default=False,
-        help_text="Only consider ship assets when checking and rendering hostile asset locations?",
-        verbose_name="Only Consider Ships as Hostile Assets"
+        help_text=_("Only consider ship assets when checking and rendering hostile asset locations?"),
+        verbose_name=_("Only Consider Ships as Hostile Assets")
     )
 
     whitelist_alliances = models.TextField(
         default="",
         blank=True,
         null=True,
-        help_text="List of alliance IDs considered whitelisted, separated by ','",
-        verbose_name="Whitelisted Alliances"
+        help_text=_("List of alliance IDs considered whitelisted, separated by ','"),
+        verbose_name=_("Whitelisted Alliances")
     )
 
     whitelist_corporations = models.TextField(
         blank=True,
         null=True,
-        help_text="List of corporation IDs considered whitelisted, separated by ','",
-        verbose_name="Whitelisted Corporations"
+        help_text=_("List of corporation IDs considered whitelisted, separated by ','"),
+        verbose_name=_("Whitelisted Corporations")
+    )
+
+    alliance_blacklist_url = models.URLField(
+        blank=True,
+        null=True,
+        help_text=_("URL for the Alliance Blacklist"),
+        verbose_name=_("Alliance Blacklist URL")
+    )
+
+    external_blacklist_url = models.URLField(
+        blank=True,
+        null=True,
+        help_text=_("URL for the External/Coalition Blacklist"),
+        verbose_name=_("External Blacklist URL")
     )
 
     ignored_corporations = models.TextField(
         blank=True,
         null=True,
-        help_text="List of corporation IDs to be ignored in the corp brother task and to not show up in Corp Brother tab, separated by ','",
-        verbose_name="Ignored Corporations"
+        help_text=_("List of corporation IDs to be ignored in the corp brother task and to not show up in Corp Brother tab, separated by ','"),
+        verbose_name=_("Ignored Corporations")
     )
 
     member_corporations = models.TextField(
         blank=True,
         null=True,
-        help_text="List of corporation IDs to be considered members, separated by ','",
-        verbose_name="Member Corporations"
+        help_text=_("List of corporation IDs to be considered members, separated by ','"),
+        verbose_name=_("Member Corporations")
     )
 
     member_alliances = models.TextField(
         blank=True,
         null=True,
-        help_text="List of alliance IDs to be considered members, separated by ','",
-        verbose_name="Member Alliances"
+        help_text=_("List of alliance IDs to be considered members, separated by ','"),
+        verbose_name=_("Member Alliances")
     )
 
     character_scopes = models.TextField(
         default=DEFAULT_CHARACTER_SCOPES,
-        help_text="Comma-separated list of required character scopes",
-        verbose_name="Character Scopes"
+        help_text=_("Comma-separated list of required character scopes"),
+        verbose_name=_("Character Scopes")
     )
     corporation_scopes = models.TextField(
         default=DEFAULT_CORPORATION_SCOPES,
-        help_text="Comma-separated list of required corporation scopes",
-        verbose_name="Corporation Scopes"
+        help_text=_("Comma-separated list of required corporation scopes"),
+        verbose_name=_("Corporation Scopes")
     )
 
     webhook = models.URLField(
         blank=True,
         null=True,
-        help_text="Discord webhook for sending BB notifications",
-        verbose_name="Main Discord Webhook"
+        help_text=_("Discord webhook for sending BB notifications"),
+        verbose_name=_("Main Discord Webhook")
     )
 
     stats_webhook = models.URLField(
         blank=True,
         null=True,
-        help_text="Discord webhook for posting recurring stats.",
-        verbose_name="Recurring Stats Discord Webhook"
+        help_text=_("Discord webhook for posting recurring stats."),
+        verbose_name=_("Recurring Stats Discord Webhook")
     )
 
     loawebhook = models.URLField(
         blank=True,
         null=True,
-        help_text="Discord webhook for sending Leave of Absence",
-        verbose_name="Leave of Absence Discord WebHhok"
+        help_text=_("Discord webhook for sending Leave of Absence"),
+        verbose_name=_("Leave of Absence Discord WebHhok")
     )
 
     dailywebhook = models.URLField(
         blank=True,
         null=True,
-        help_text="Discord webhook for sending daily messages",
-        verbose_name="Daily Message Discord Webhook"
+        help_text=_("Discord webhook for sending daily messages"),
+        verbose_name=_("Daily Message Discord Webhook")
     )
 
     optwebhook1 = models.URLField(
         blank=True,
         null=True,
-        help_text="Discord webhook for sending optional messages 1",
-        verbose_name="Optional Messages #1 Discord Webhook"
+        help_text=_("Discord webhook for sending optional messages 1"),
+        verbose_name=_("Optional Messages #1 Discord Webhook")
     )
 
     optwebhook2 = models.URLField(
         blank=True,
         null=True,
-        help_text="Discord webhook for sending optional messages 2",
-        verbose_name="Optional Messages #2 Discord Webhook"
+        help_text=_("Discord webhook for sending optional messages 2"),
+        verbose_name=_("Optional Messages #2 Discord Webhook")
     )
 
     optwebhook3 = models.URLField(
         blank=True,
         null=True,
-        help_text="Discord webhook for sending optional messages 3",
-        verbose_name="Optional Messages #3 Discord Webhook"
+        help_text=_("Discord webhook for sending optional messages 3"),
+        verbose_name=_("Optional Messages #3 Discord Webhook")
     )
 
     optwebhook4 = models.URLField(
         blank=True,
         null=True,
-        help_text="Discord webhook for sending optional messages 4",
-        verbose_name="Optional Messages #4 Discord Webhook"
+        help_text=_("Discord webhook for sending optional messages 4"),
+        verbose_name=_("Optional Messages #4 Discord Webhook")
     )
 
     optwebhook5 = models.URLField(
         blank=True,
         null=True,
-        help_text="Discord webhook for sending optional messages 5",
-        verbose_name="Optional Messages #5 Discord Webhook"
+        help_text=_("Discord webhook for sending optional messages 5"),
+        verbose_name=_("Optional Messages #5 Discord Webhook")
+    )
+
+    user_compliance_webhook = models.URLField(
+        blank=True,
+        null=True,
+        help_text=_("Discord webhook for sending User compliance notifications"),
+        verbose_name=_("User Compliance Discord Webhook")
+    )
+
+    corp_compliance_webhook = models.URLField(
+        blank=True,
+        null=True,
+        help_text=_("Discord webhook for sending Corp compliance notifications"),
+        verbose_name=_("Corp Compliance Discord Webhook")
     )
 
     stats_schedule = models.ForeignKey(
@@ -780,8 +966,8 @@ class BigBrotherConfig(SingletonModel):
         related_name="bigbrother_stats_schedule",
         null=True,
         blank=True,
-        help_text="Schedule for recurring stats posts.",
-        verbose_name="Recurring Stats Schedule"
+        help_text=_("Schedule for recurring stats posts."),
+        verbose_name=_("Recurring Stats Schedule")
     )
 
     dailyschedule = models.ForeignKey(
@@ -790,8 +976,8 @@ class BigBrotherConfig(SingletonModel):
         related_name='bigbrother_dailyschedule',
         null=True,
         blank=True,
-        help_text="schedule for daily messages",
-        verbose_name="Daily Message Schedule"
+        help_text=_("schedule for daily messages"),
+        verbose_name=_("Daily Message Schedule")
     )
 
     optschedule1 = models.ForeignKey(
@@ -800,8 +986,8 @@ class BigBrotherConfig(SingletonModel):
         related_name='bigbrother_optschedule1',
         null=True,
         blank=True,
-        help_text="schedule for optional messages 1",
-        verbose_name="Optional Messages #1 Schedule"
+        help_text=_("schedule for optional messages 1"),
+        verbose_name=_("Optional Messages #1 Schedule")
     )
 
     optschedule2 = models.ForeignKey(
@@ -810,8 +996,8 @@ class BigBrotherConfig(SingletonModel):
         related_name='bigbrother_optschedule2',
         null=True,
         blank=True,
-        help_text="schedule for optional messages 2",
-        verbose_name="Optional Messages #2 Schedule"
+        help_text=_("schedule for optional messages 2"),
+        verbose_name=_("Optional Messages #2 Schedule")
     )
 
     optschedule3 = models.ForeignKey(
@@ -820,8 +1006,8 @@ class BigBrotherConfig(SingletonModel):
         related_name='bigbrother_optschedule3',
         null=True,
         blank=True,
-        help_text="schedule for optional messages 3",
-        verbose_name="Optional Messages #3 Schedule"
+        help_text=_("schedule for optional messages 3"),
+        verbose_name=_("Optional Messages #3 Schedule")
     )
 
     optschedule4 = models.ForeignKey(
@@ -830,8 +1016,8 @@ class BigBrotherConfig(SingletonModel):
         related_name='bigbrother_optschedule4',
         null=True,
         blank=True,
-        help_text="schedule for optional messages 4",
-        verbose_name="Optional Messages #4 Schedule"
+        help_text=_("schedule for optional messages 4"),
+        verbose_name=_("Optional Messages #4 Schedule")
     )
 
     optschedule5 = models.ForeignKey(
@@ -840,119 +1026,119 @@ class BigBrotherConfig(SingletonModel):
         related_name='bigbrother_optschedule5',
         null=True,
         blank=True,
-        help_text="schedule for optional messages 5",
-        verbose_name="Optional Messages #5 Schedule"
+        help_text=_("schedule for optional messages 5"),
+        verbose_name=_("Optional Messages #5 Schedule")
     )
 
     main_corporation_id = models.BigIntegerField(
         default=0,
         editable=False,
-        help_text="Your Corporation Id",
-        verbose_name="Main Corporation ID"
+        help_text=_("Your Corporation Id"),
+        verbose_name=_("Main Corporation ID")
     )
 
     main_corporation = models.TextField(
         default=0,
         editable=False,
-        help_text="Your Corporation",
-        verbose_name="Main Corporation"
+        help_text=_("Your Corporation"),
+        verbose_name=_("Main Corporation")
     )
 
     main_alliance_id = models.PositiveIntegerField(
         default=123456789,
         editable=False,
-        help_text="Your Alliance ID",
-        verbose_name="Main Alliance ID"
+        help_text=_("Your Alliance ID"),
+        verbose_name=_("Main Alliance ID")
     )
 
     main_alliance = models.TextField(
         default=123456789,
         editable=False,
-        help_text="Your Alliance",
-        verbose_name="Main Alliance"
+        help_text=_("Your Alliance"),
+        verbose_name=_("Main Alliance")
     )
 
     is_active = models.BooleanField(
         default=False,
-        editable=False,
-        help_text="has the plugin been activated/deactivated?",
-        verbose_name="Active?"
+        editable=True,
+        help_text=_("has the plugin been activated/deactivated?"),
+        verbose_name=_("Active?")
     )
 
     is_loa_active = models.BooleanField(
         default=False,
         editable=True,
-        help_text="has the Leave of Absence module been activated/deactivated? (You will need to restart AA for this to take effect)",
-        verbose_name="Leave of Absence Active?"
+        help_text=_("has the Leave of Absence module been activated/deactivated? (You will need to restart AA for this to take effect)"),
+        verbose_name=_("Leave of Absence Active?")
     )
 
     is_paps_active = models.BooleanField(
         default=False,
         editable=True,
-        help_text="has the PAP/AFAT stats module been activated/deactivated? (You will need to restart AA for this to take effect)",
-        verbose_name="PAP/AFAT Stats Active?"
+        help_text=_("has the PAP/AFAT stats module been activated/deactivated? (You will need to restart AA for this to take effect)"),
+        verbose_name=_("PAP/AFAT Stats Active?")
     )
 
     is_warmer_active = models.BooleanField(
         default=True,
         editable=True,
-        help_text="has the Cache warmer feature been activated/deactivated? (You need it if you have a gunicorn timeout set in your supervisor.conf, if you want to disable it, set the timeout to 0 first)",
-        verbose_name="Cache Warmer Active?"
+        help_text=_("has the Cache warmer feature been activated/deactivated? (You need it if you have a gunicorn timeout set in your supervisor.conf, if you want to disable it, set the timeout to 0 first)"),
+        verbose_name=_("Cache Warmer Active?")
     )
 
     loa_max_logoff_days = models.IntegerField(
         default=30,
-        help_text="How many days can a user not login w/o a loa request before notifications",
-        verbose_name="Max Days before needing LOA"
+        help_text=_("How many days can a user not login w/o a loa request before notifications"),
+        verbose_name=_("Max Days before needing LOA")
     )
 
     are_recurring_stats_active = models.BooleanField(
         default=False,
         editable=True,
-        help_text="Are recurring stats posts activated/deactivated?",
-        verbose_name="Recurring Stats Active?"
+        help_text=_("Are recurring stats posts activated/deactivated?"),
+        verbose_name=_("Recurring Stats Active?")
     )
 
     are_daily_messages_active = models.BooleanField(
         default=False,
         editable=True,
-        help_text="are daily messages activated/deactivated?",
-        verbose_name="Daily Messages Active?"
+        help_text=_("are daily messages activated/deactivated?"),
+        verbose_name=_("Daily Messages Active?")
     )
 
     are_opt_messages1_active = models.BooleanField(
         default=False,
         editable=True,
-        help_text="are optional messages 1 activated/deactivated?",
-        verbose_name="Optional Messages 1 Activated?"
+        help_text=_("are optional messages 1 activated/deactivated?"),
+        verbose_name=_("Optional Messages 1 Activated?")
     )
 
     are_opt_messages2_active = models.BooleanField(
         default=False,
         editable=True,
-        help_text="are optional messages 2 activated/deactivated?",
-        verbose_name="Optional Messages 2 Activated?"
+        help_text=_("are optional messages 2 activated/deactivated?"),
+        verbose_name=_("Optional Messages 2 Activated?")
     )
 
     are_opt_messages3_active = models.BooleanField(
         default=False,
         editable=True,
-        help_text="are optional messages 3 activated/deactivated?",
-        verbose_name="Optional Messages 3 Activated?"
+        help_text=_("are optional messages 3 activated/deactivated?"),
+        verbose_name=_("Optional Messages 3 Activated?")
     )
 
     are_opt_messages4_active = models.BooleanField(
         default=False,
         editable=True,
-        help_text="are optional messages 4 activated/deactivated?",
-        verbose_name="Optional Messages 4 Activated?"
+        help_text=_("are optional messages 4 activated/deactivated?"),
+        verbose_name=_("Optional Messages 4 Activated?")
     )
 
     are_opt_messages5_active = models.BooleanField(
         default=False,
         editable=True,
-        help_text="are optional messages 5 activated/deactivated?",
-        verbose_name="Optional Messages 5 Activated?"
+        help_text=_("are optional messages 5 activated/deactivated?"),
+        verbose_name=_("Optional Messages 5 Activated?")
     )
 
     def __str__(self):
@@ -1370,150 +1556,6 @@ class Meta:
     verbose_name = "Big Brother Configuration"
     verbose_name_plural = "Big Brother Configuration"
 
-class BigBrotherRedditSettings(SingletonModel):
-    """
-    Stores OAuth credentials, scheduling, and webhook templates for the Reddit
-    recruitment publisher. The numerous fields map directly to the admin UI
-    (client id/secret, scopes, target subreddit, cadence, Discord notifications,
-    and the stored tokens/permalinks fetched during runtime).
-    """
-    enabled = models.BooleanField(
-        default=False,
-        help_text="Toggle after configuration to allow reddit automation to run."
-    )
-    reddit_client_id = models.CharField(
-        max_length=128,
-        blank=True,
-        help_text="Application client ID from reddit."
-    )
-    reddit_client_secret = models.CharField(
-        max_length=255,
-        blank=True,
-        help_text="Application secret from reddit."
-    )
-    reddit_user_agent = models.CharField(
-        max_length=255,
-        blank=True,
-        default="aa-bb-scheduler/1.0",
-        help_text="Custom user agent that will appear in reddit API calls."
-    )
-    reddit_scope = models.CharField(
-        max_length=255,
-        default="identity submit read",
-        help_text="Space separated scopes requested during Reddit OAuth."
-    )
-    reddit_redirect_override = models.URLField(
-        blank=True,
-        null=True,
-        help_text="Optional custom redirect URI if auto-detected URI is unsuitable."
-    )
-    reddit_subreddit = models.CharField(
-        max_length=64,
-        default="evejobs",
-        help_text="Name of the subreddit to post to."
-    )
-    post_interval_days = models.PositiveIntegerField(
-        default=8,
-        help_text="Minimum delay in days between reddit posts."
-    )
-    reddit_webhook = models.URLField(
-        blank=True,
-        null=True,
-        help_text="Discord webhook where post confirmations should be sent."
-    )
-    reddit_webhook_message = models.TextField(
-        blank=True,
-        default="New reddit post published: {title}\n{url}",
-        help_text="Template for Discord notifications. Supports {title}, {url}, {subreddit}."
-    )
-    reply_message_template = models.TextField(
-        blank=True,
-        default="New reply by {author}: {url}",
-        help_text="Template used when alerting about new replies on reddit."
-    )
-    reddit_access_token = models.TextField(
-        blank=True,
-        editable=False,
-        help_text="Stored Reddit OAuth access token (hidden in admin)."
-    )
-    reddit_refresh_token = models.TextField(
-        blank=True,
-        editable=False,
-        help_text="Stored Reddit OAuth refresh token (hidden in admin)."
-    )
-    reddit_token_type = models.CharField(
-        max_length=32,
-        blank=True,
-        editable=False,
-        help_text="Token type returned by Reddit OAuth (hidden in admin)."
-    )
-    reddit_token_obtained = models.DateTimeField(
-        null=True,
-        blank=True,
-        editable=False,
-        help_text="Timestamp when the Reddit token was stored."
-    )
-    reddit_account_name = models.CharField(
-        max_length=64,
-        blank=True,
-        editable=False,
-        help_text="Reddit account authorized via OAuth (hidden in admin)."
-    )
-    last_submission_id = models.CharField(
-        max_length=32,
-        blank=True,
-        editable=False,
-        help_text="Most recent reddit submission id (hidden in admin)."
-    )
-    last_submission_permalink = models.URLField(
-        blank=True,
-        null=True,
-        editable=False,
-        help_text="Link to the most recent reddit submission (hidden in admin)."
-    )
-    last_submission_at = models.DateTimeField(
-        null=True,
-        blank=True,
-        editable=False,
-        help_text="When the most recent post was created."
-    )
-    last_reply_checked_at = models.DateTimeField(
-        null=True,
-        blank=True,
-        editable=False,
-        help_text="When reddit replies were last scanned."
-    )
-
-    class Meta:
-        verbose_name = "BigBrother Reddit Settings"
-
-    def __str__(self):
-        return "BigBrother Reddit Settings"
-
-
-class BigBrotherRedditMessage(models.Model):
-    """Queue of Markdown job ads reused by the Reddit autoposter."""
-    used_in_cycle = models.BooleanField(
-        default=False,
-        help_text="Automatically toggled once the message is used in a cycle."
-    )
-    title = models.CharField(
-        max_length=300,
-        help_text="Title that will be used for the reddit submission."
-    )
-    content = models.TextField(
-        help_text="Markdown body shared to reddit."
-    )
-    created = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        ordering = ["-created"]
-        verbose_name = "Reddit Recruitment Message"
-        verbose_name_plural = "Reddit Recruitment Messages"
-
-    def __str__(self):
-        status = "used" if self.used_in_cycle else "pending"
-        return f"{self.title} ({status})"
 
 
 class PapCompliance(models.Model):
@@ -1875,8 +1917,13 @@ class CorporationInfoCache(models.Model):
 
     @property
     def is_fresh(self):
-        """Check if cache entry is still valid (24h TTL)."""
-        return timezone.now() - self.updated < timedelta(hours=24)
+        """Check if cache entry is still valid."""
+        try:
+            cfg = BigBrotherConfig.get_solo()
+            ttl = cfg.update_cache_ttl_hours
+        except Exception:
+            ttl = 24
+        return timezone.now() - self.updated < timedelta(hours=ttl)
 
 
 class AllianceHistoryCache(models.Model):
@@ -1901,7 +1948,12 @@ class AllianceHistoryCache(models.Model):
     @property
     def is_fresh(self):
         """Check if data is still within TTL."""
-        return timezone.now() - self.updated < timedelta(hours=24)
+        try:
+            cfg = BigBrotherConfig.get_solo()
+            ttl = cfg.update_cache_ttl_hours
+        except Exception:
+            ttl = 24
+        return timezone.now() - self.updated < timedelta(hours=ttl)
 
 
 class SovereigntyMapCache(models.Model):
@@ -1915,7 +1967,12 @@ class SovereigntyMapCache(models.Model):
 
     @property
     def is_fresh(self):
-        return timezone.now() - self.updated < timedelta(hours=24)
+        try:
+            cfg = BigBrotherConfig.get_solo()
+            ttl = cfg.update_cache_ttl_hours
+        except Exception:
+            ttl = 24
+        return timezone.now() - self.updated < timedelta(hours=ttl)
 
 class CharacterAccountState(models.Model):
     """Persistent record of whether a character is Alpha, Omega, or Unknown."""

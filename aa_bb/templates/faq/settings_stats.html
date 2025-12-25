@@ -1,0 +1,116 @@
+<!--
+  Documentation for each RecurringStatsConfig field used by the stats posts.
+-->
+{% extends 'faq/base.html' %}
+{% load i18n %}
+
+{% block details %}
+{% include 'faq/settings_nav.html' %}
+
+<h1>{% translate "RecurringStatsConfig Fields" %}</h1>
+<p>
+  {% blocktrans %}<code>RecurringStatsConfig</code> controls which statistics are included in the periodic Discord posts. Configure these settings in Django admin &rarr; BigBrother &rarr; Recurring Stats Configuration.{% endblocktrans %}
+</p>
+
+<h2 class="mt-4">{% translate "General Toggle & States" %}</h2>
+<div class="table-responsive">
+  <table class="table table-striped settings">
+    <thead>
+      <tr>
+        <th>{% translate "Field" %}</th>
+        <th>{% translate "Description" %}</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>enabled</code></td>
+        <td>{% translate "Master toggle for recurring stats generation." %}</td>
+      </tr>
+      <tr>
+        <td><code>states</code></td>
+        <td>{% translate "States to break out in the recurring stats (e.g. Member, Blue, Alumni)." %}</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 class="mt-4">{% translate "Included Statistic Blocks" %}</h2>
+<div class="table-responsive">
+  <table class="table table-striped">
+    <thead>
+      <tr>
+        <th>{% translate "Field" %}</th>
+        <th>{% translate "Description" %}</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>include_auth_users</code></td>
+        <td>{% translate "Include total users in auth and per-state breakdown." %}</td>
+      </tr>
+      <tr>
+        <td><code>include_discord_users</code></td>
+        <td>{% translate "Include Discord users totals and per-state breakdown (if Discord service is installed)." %}</td>
+      </tr>
+      <tr>
+        <td><code>include_mumble_users</code></td>
+        <td>{% translate "Include Mumble users totals and per-state breakdown (if Mumble service is installed)." %}</td>
+      </tr>
+      <tr>
+        <td><code>include_characters</code></td>
+        <td>{% translate "Include total number of known characters." %}</td>
+      </tr>
+      <tr>
+        <td><code>include_corporations</code></td>
+        <td>{% translate "Include total number of known corporations." %}</td>
+      </tr>
+      <tr>
+        <td><code>include_alliances</code></td>
+        <td>{% translate "Include total number of known alliances." %}</td>
+      </tr>
+      <tr>
+        <td><code>include_tokens</code></td>
+        <td>{% translate "Include total number of ESI tokens." %}</td>
+      </tr>
+      <tr>
+        <td><code>include_unique_tokens</code></td>
+        <td>{% translate "Include number of unique token owners." %}</td>
+      </tr>
+      <tr>
+        <td><code>include_character_audits</code></td>
+        <td>{% translate "Include total number of Character Audits (from corptools)." %}</td>
+      </tr>
+      <tr>
+        <td><code>include_corporation_audits</code></td>
+        <td>{% translate "Include total number of Corporation Audits (from corptools)." %}</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 class="mt-4">{% translate "Internal State" %}</h2>
+<div class="table-responsive">
+  <table class="table table-striped">
+    <thead>
+      <tr>
+        <th>{% translate "Field" %}</th>
+        <th>{% translate "Description" %}</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>last_run_at</code></td>
+        <td>{% translate "When recurring stats were last posted. Automatically updated." %}</td>
+      </tr>
+      <tr>
+        <td><code>last_snapshot</code></td>
+        <td>{% translate "Previous stats snapshot used for delta calculations. Managed by the system." %}</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<p class="mt-4 text-muted small">
+  {% blocktrans %}The schedule and webhook for these posts are configured in the main <code>BigBrotherConfig</code>.{% endblocktrans %}
+</p>
+{% endblock %}

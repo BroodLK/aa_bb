@@ -50,6 +50,10 @@
     </thead>
     <tbody>
       <tr>
+        <td><code>limit_to_main_corp</code></td>
+        <td>{% translate "If enabled, compliance checks and dashboard visibility will be restricted to members of the primary corporation only. Use this if your Alliance Auth instance is dedicated to a single corporation but contains other alliance members." %}</td>
+      </tr>
+      <tr>
         <td><code>bb_guest_states</code></td>
         <td>{% translate "AllianceAuth states treated as guests. Recruiter-level users only see pilots in these states." %}</td>
       </tr>
@@ -87,6 +91,48 @@
         <td><code>whitelist_alliances</code> / <code>whitelist_corporations</code></td>
         <td>{% translate "IDs that should never be flagged, even if they appear in default hostile data sets." %}</td>
       </tr>
+      <tr>
+        <td><code>consider_nullsec_hostile</code></td>
+        <td>{% translate "If enabled, all systems in nullsec regions are treated as hostile for asset and clone checks." %}</td>
+      </tr>
+      <tr>
+        <td><code>consider_all_structures_hostile</code></td>
+        <td>{% translate "When enabled, any player-owned structure not in your whitelists is treated as a hostile location." %}</td>
+      </tr>
+      <tr>
+        <td><code>consider_npc_stations_hostile</code></td>
+        <td>{% translate "Treats all NPC stations as hostile locations for asset/clone checks." %}</td>
+      </tr>
+      <tr>
+        <td><code>excluded_systems</code> / <code>excluded_stations</code></td>
+        <td>{% translate "Comma-separated IDs of systems or stations that should be ignored by hostile checks." %}</td>
+      </tr>
+      <tr>
+        <td><code>hostile_assets_ships_only</code></td>
+        <td>{% translate "If enabled, only ship assets are evaluated when checking for hostile asset placements." %}</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 class="mt-4">{% translate "Blacklist Settings" %}</h2>
+<div class="table-responsive">
+  <table class="table table-striped">
+    <thead>
+      <tr>
+        <th>{% translate "Field" %}</th>
+        <th>{% translate "Description" %}</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>alliance_blacklist_url</code></td>
+        <td>{% translate "URL for your alliance-level blacklist tool, if applicable." %}</td>
+      </tr>
+      <tr>
+        <td><code>external_blacklist_url</code></td>
+        <td>{% translate "URL for an external or coalition-level blacklist." %}</td>
+      </tr>
     </tbody>
   </table>
 </div>
@@ -107,8 +153,8 @@
         <td>{% translate "When enabled, BigBrother will periodically import standings from aa-contacts and merge them into the member/hostile/whitelist lists." %}</td>
       </tr>
       <tr>
-        <td><code>contacts_source_alliances</code></td>
-        <td>{% translate "Alliances whose aa-contacts standings should be imported. Positive standings become members; negative become hostile; neutral handling is controlled below." %}</td>
+        <td><code>contacts_source_alliances</code> / <code>contacts_source_corporations</code></td>
+        <td>{% translate "Alliances and Corporations whose aa-contacts standings should be imported. Positive standings become members; negative become hostile; neutral handling is controlled below." %}</td>
       </tr>
       <tr>
         <td><code>contacts_handle_neutrals</code></td>
@@ -134,6 +180,18 @@
     </thead>
     <tbody>
       <tr>
+        <td><code>*_notify</code> toggles</td>
+        <td>{% translate "Individual checkboxes to enable/disable Discord alerts for: cyno changes, SP injections, hostile clones, assets, contacts, contracts, CT audits, AWOX kills, mails, and transactions." %}</td>
+      </tr>
+      <tr>
+        <td><code>new_user_notify</code></td>
+        <td>{% translate "If enabled, sends a full history digest when a user is first audited (can be very spammy)." %}</td>
+      </tr>
+      <tr>
+        <td><code>ticket_notify_man</code> / <code>auto</code></td>
+        <td>{% translate "Enable notifications when compliance tickets are closed manually or automatically." %}</td>
+      </tr>
+      <tr>
         <td><code>pingroleID</code> / <code>pingroleID2</code></td>
         <td>{% translate "Discord role IDs to mention when selected message types fire. Use raw numeric IDs." %}</td>
       </tr>
@@ -152,6 +210,60 @@
       <tr>
         <td><code>stats_webhook</code></td>
         <td>{% translate "Discord webhook used for recurring stats posts (when enabled)." %}</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 class="mt-4">{% translate "Market Transaction Settings" %}</h2>
+<div class="table-responsive">
+  <table class="table table-striped">
+    <thead>
+      <tr>
+        <th>{% translate "Field" %}</th>
+        <th>{% translate "Description" %}</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>show_market_transactions</code></td>
+        <td>{% translate "Master toggle to show market escrow and market transaction events in reports." %}</td>
+      </tr>
+      <tr>
+        <td><code>market_transactions_show_major_hubs</code></td>
+        <td>{% translate "Flag transactions occurring in Jita, Amarr, Dodixie, Rens, or Hek." %}</td>
+      </tr>
+      <tr>
+        <td><code>market_transactions_show_secondary_hubs</code></td>
+        <td>{% translate "Flag transactions in secondary hubs like Oursulaert, Agil, or Perimeter." %}</td>
+      </tr>
+      <tr>
+        <td><code>market_transactions_excluded_systems</code></td>
+        <td>{% translate "Comma-separated system IDs to ignore for market transaction monitoring." %}</td>
+      </tr>
+      <tr>
+        <td><code>market_transactions_threshold_alert</code> / <code>percent</code></td>
+        <td>{% translate "Enable alerts only when buy/sell prices deviate from market averages by the specified percentage." %}</td>
+      </tr>
+      <tr>
+        <td><code>market_transactions_price_method</code></td>
+        <td>{% translate "Choose between Fuzzwork or Janice for price lookups." %}</td>
+      </tr>
+      <tr>
+        <td><code>market_transactions_janice_api_key</code></td>
+        <td>{% translate "Required API key if Janice is selected as the price source." %}</td>
+      </tr>
+      <tr>
+        <td><code>market_transactions_fuzzwork_station_id</code></td>
+        <td>{% translate "Reference station for Fuzzwork prices (defaults to Jita IV-4)." %}</td>
+      </tr>
+      <tr>
+        <td><code>market_transactions_price_instant</code></td>
+        <td>{% translate "Prefer immediate/instant prices over average or percentile prices (Fuzzwork only)." %}</td>
+      </tr>
+      <tr>
+        <td><code>market_transactions_price_max_age</code></td>
+        <td>{% translate "Maximum age (in days) for cached market prices before a refresh is triggered." %}</td>
       </tr>
     </tbody>
   </table>
@@ -210,8 +322,28 @@
         <td>{% translate "Master switches for daily and optional message delivery. Turn off to pause alerts without removing schedules or webhooks." %}</td>
       </tr>
       <tr>
+        <td><code>update_stagger_seconds</code></td>
+        <td>{% translate "The total time window across which user updates are performed." %}</td>
+      </tr>
+      <tr>
+        <td><code>update_cache_ttl_hours</code></td>
+        <td>{% translate "How long certain check results are cached before being refreshed. Such as Clone States." %}</td>
+      </tr>
+      <tr>
+        <td><code>update_maintenance_window_start</code> / <code>end</code></td>
+        <td>{% translate "Start and end times for the maintenance window where updating cached data is preferred." %}</td>
+      </tr>
+      <tr>
+        <td><code>update_backlog_threshold</code> / <code>notify</code></td>
+        <td>{% translate "Alert if more than this percentage of tasks from the previous run are still active." %}</td>
+      </tr>
+      <tr>
         <td><code>loa_max_logoff_days</code></td>
         <td>{% translate "Maximum days a user may stay logged off without an LoA before reminders escalate." %}</td>
+      </tr>
+      <tr>
+        <td><code>clone_state_always_recheck</code></td>
+        <td>{% translate "If enabled, characters with known skills proving Alpha/Omega state are re-checked every run, bypassing TTL. Disabling this improves performance for large fleets." %}</td>
       </tr>
     </tbody>
   </table>
