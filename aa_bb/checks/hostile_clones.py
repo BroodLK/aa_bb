@@ -215,6 +215,7 @@ def get_hostile_clone_locations(user_id: int) -> Dict[str, str]:
             if oid is None or oid not in safe_entities:
                 nullsec_flag = True
 
+        system_hostile = False
         # Check each location in this system
         for loc_id in data.get("locations", {}):
             if not loc_id or loc_id in excluded_station_ids:
