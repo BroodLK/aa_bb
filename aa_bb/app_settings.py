@@ -1469,14 +1469,10 @@ def get_safe_entities():
         ids.update(int(x) for x in cfg.whitelist_alliances.split(',') if x.strip().isdigit())
     if cfg.whitelist_corporations:
         ids.update(int(x) for x in cfg.whitelist_corporations.split(',') if x.strip().isdigit())
-    if cfg.whitelist_characters:
-        ids.update(int(x) for x in cfg.whitelist_characters.split(',') if x.strip().isdigit())
 
     # Ignored
     if cfg.ignored_corporations:
         ids.update(int(x) for x in cfg.ignored_corporations.split(',') if x.strip().isdigit())
-    if cfg.ignored_characters:
-        ids.update(int(x) for x in cfg.ignored_characters.split(',') if x.strip().isdigit())
 
     # Members
     if cfg.member_corporations:
