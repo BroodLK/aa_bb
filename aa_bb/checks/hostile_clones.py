@@ -215,26 +215,46 @@ def get_hostile_clone_locations(user_id: int) -> Dict[str, str]:
             if oid is None or oid not in safe_entities:
                 nullsec_flag = True
 
-        struct_flag = False
-        npc_flag = False
-        if consider_structures or consider_npc:
-            for loc_id in data.get("locations", {}):
-                if not loc_id or loc_id in excluded_station_ids:
+        # Check each location in this system
+        for loc_id in data.get("locations", {}):
+            if not loc_id or loc_id in excluded_station_ids:
+                continue
+
+            loc_hostile = False
+            is_struct = is_player_structure(loc_id)
+
+            # Get location owner specifically
+            loc_owner_info = get_system_owner({"id": loc_id})
+            l_oid = None
+            l_oname = "Unresolvable"
+            if loc_owner_info:
+                try:
+                    l_oid = int(loc_owner_info["owner_id"]) if loc_owner_info["owner_id"] else None
+                except (ValueError, TypeError):
+                    pass
+                l_oname = loc_owner_info.get("owner_name") or (f"ID {l_oid}" if l_oid else "Unresolvable")
+
+            if is_struct:
+                # Friendly structure overrides system hostility
+                if l_oid and l_oid in safe_entities:
                     continue
 
-                is_struct = is_player_structure(loc_id)
+                if l_oid and (l_oid in hostile_ids or l_oid in hostile_corp_ids):
+                    loc_hostile = True
+                elif "Unresolvable" in l_oname:
+                    loc_hostile = True
+                elif consider_structures:
+                    loc_hostile = True
+            else:
+                # NPC Station
+                if consider_npc:
+                    loc_hostile = True
+                elif base_hostile or nullsec_flag:
+                    loc_hostile = True
 
-                if consider_structures and is_struct:
-                    if oid is None or oid not in safe_entities:
-                        struct_flag = True
-
-                if consider_npc and not is_struct:
-                    npc_flag = True
-
-                if struct_flag or npc_flag:
-                    break
-
-        system_hostile = base_hostile or nullsec_flag or struct_flag or npc_flag
+            if loc_hostile:
+                system_hostile = True
+                break
 
         if system_hostile:
             parts = [oname]
@@ -410,18 +430,38 @@ def render_clones(user_id: int) -> Optional[str]:
             if oid is None or oid not in safe_entities:
                 nullsec_flag = True
 
-        hostile = base_hostile or nullsec_flag
+        hostile = False
+        is_struct = is_player_structure(loc_id)
 
-        if not hostile and (consider_structures or consider_npc):
-            if loc_id and loc_id not in excluded_station_ids:
-                is_struct = is_player_structure(loc_id)
-                if consider_structures and is_struct:
-                    if oid is None or oid not in safe_entities:
-                        hostile = True
-                if consider_npc and not is_struct:
-                    hostile = True
+        # Get location owner specifically
+        loc_owner_info = get_system_owner({"id": loc_id})
+        l_oid = None
+        l_oname = "Unresolvable"
+        if loc_owner_info:
+            try:
+                l_oid = int(loc_owner_info["owner_id"]) if loc_owner_info["owner_id"] else None
+            except (ValueError, TypeError):
+                pass
+            l_oname = loc_owner_info.get("owner_name") or (f"ID {l_oid}" if l_oid else "Unresolvable")
 
-        unresolvable = "Unresolvable" in oname
+        if is_struct:
+            # Friendly structure overrides system hostility
+            if l_oid and l_oid in safe_entities:
+                hostile = False
+            elif l_oid and (l_oid in hostile_ids or l_oid in hostile_corp_ids):
+                hostile = True
+            elif "Unresolvable" in l_oname:
+                hostile = True
+            elif consider_structures:
+                hostile = True
+        else:
+            # NPC Station
+            if consider_npc:
+                hostile = True
+            elif base_hostile or nullsec_flag:
+                hostile = True
+
+        unresolvable = "Unresolvable" in l_oname
 
         rows.append(
             {

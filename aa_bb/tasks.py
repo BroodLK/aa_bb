@@ -927,20 +927,34 @@ def BB_update_single_user(user_id, char_name):
 
                 # 1) Overall header – almost always a tiny single-chunk embed
                 header_lines = [f"‼️ Status change detected for {char_name}"]
-                for header_chunk in _chunk_embed_lines(header_lines, max_chars=1900):
-                    all_chunks.append(header_chunk)
 
-                # 2) One or more embeds per change block, chunked by char count
-                for chunk in changes:
-                    raw_lines = [ln for ln in chunk.split("\n") if ln.strip()]
+                # Calculate total combined length to see if we can merge everything into one embed
+                total_combined_len = len(header_lines[0]) + sum(len(c) for c in changes) + (len(changes) * 2)
 
-                    for body_chunk in _chunk_embed_lines(raw_lines, max_chars=1900):
-                        logger.info(
-                            "✅  [AA-BB] - [BB_update_single_user] - [%s] Prepared embed chunk with %d lines",
-                            char_name,
-                            len(body_chunk),
-                        )
-                        all_chunks.append(body_chunk)
+                if total_combined_len < 1000:
+                    logger.info(
+                        "✅  [AA-BB] - [BB_update_single_user] - [%s] Merging %d changes into a single status embed (%d chars)",
+                        char_name,
+                        len(changes),
+                        total_combined_len
+                    )
+                    merged_lines = header_lines + [""]
+                    for chunk in changes:
+                        merged_lines.extend([ln for ln in chunk.split("\n") if ln.strip()])
+                        merged_lines.append("") # spacer
+
+                    all_chunks = _chunk_embed_lines(merged_lines, max_chars=1900)
+                else:
+                    # Separate embeds for header and each change block
+                    for header_chunk in _chunk_embed_lines(header_lines, max_chars=1900):
+                        all_chunks.append(header_chunk)
+
+                    # 2) One or more embeds per change block, chunked by char count
+                    for chunk in changes:
+                        raw_lines = [ln for ln in chunk.split("\n") if ln.strip()]
+
+                        for body_chunk in _chunk_embed_lines(raw_lines, max_chars=1900):
+                            all_chunks.append(body_chunk)
 
                 if all_chunks:
                     logger.info(
