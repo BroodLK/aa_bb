@@ -169,7 +169,6 @@ class BB_ConfigAdmin(SingletonModelAdmin):
                     "bb_member_states",
                     "member_corporations",
                     "member_alliances",
-                    "ignored_corporations",
                 )
             },
         ),
