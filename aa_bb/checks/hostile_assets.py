@@ -14,6 +14,7 @@ from ..app_settings import (
     get_safe_entities,
     resolve_location_name,
     resolve_location_system_id,
+    get_hostile_state,
 )
 from ..models import BigBrotherConfig
 from django.utils.html import format_html
@@ -182,61 +183,25 @@ def get_hostile_asset_locations(user_id: int) -> Dict[str, str]:
         system_name = data.get("name")
         display_name = system_name or f"Unknown ({system_id})"
 
-        owner_info = get_system_owner({"id": system_id, "name": display_name})
+        # Base system hostility
+        system_hostile = get_hostile_state(system_id, 'solar_system')
 
-        oid: Optional[int] = None
-        oname = "Unresolvable"
-        base_hostile = False
-
-        if owner_info:
-            try:
-                oid = int(owner_info["owner_id"])
-            except (ValueError, TypeError):
-                oid = None
-
-            oname = owner_info.get("owner_name") or (
-                f"ID {oid}" if oid is not None else "Unresolvable"
-            )
-            base_hostile = (
-                (oid in hostile_ids)
-                or (oid in hostile_corp_ids)
-                or ("Unresolvable" in oname)
-            )
-        else:
-            # No sov info – keep "Unresolvable" behaviour
-            base_hostile = True
-
-        # Config: treat all nullsec as hostile
-        nullsec_flag = consider_nullsec and is_nullsec(system_id)
-
-        # Config: structural / station-type based hostility
-        struct_flag = False
-        npc_flag = False
-
-        if consider_structures or consider_npc:
+        if not system_hostile and (consider_structures or consider_npc):
             for loc_id, loc_data in data.get("locations", {}).items():
                 if not loc_id or loc_id in excluded_station_ids:
                     continue
 
                 is_struct = is_player_structure(loc_id)
-
-                # Player-owned structures not on any safe list
-                if consider_structures and is_struct:
-                    if oid is None or oid not in safe_entities:
-                        struct_flag = True
-
-                # NPC stations (non player-owned), if opted in
-                if consider_npc and not is_struct:
-                    npc_flag = True
-
-                if struct_flag or npc_flag:
+                if get_hostile_state(loc_id, 'structure' if is_struct else 'station'):
+                    system_hostile = True
                     break
 
-        system_hostile = base_hostile or nullsec_flag or struct_flag or npc_flag
         if not system_hostile:
             continue
 
-        # Flatten ships and characters for context + ship-only filter
+        owner_info = get_system_owner({"id": system_id, "name": display_name})
+        oname = owner_info.get("owner_name") or "Unresolvable"
+        oid = owner_info.get("owner_id")
         all_ships: list[str] = []
         char_names = set()
 
@@ -310,57 +275,8 @@ def render_assets(user_id: int) -> Optional[str]:
         system_name = data["name"]
         display_name = system_name or f"Unknown ({system_id})"
 
-        owner_info = get_system_owner({
-            "id": system_id,
-            "name": display_name
-        })
-
-        oid: Optional[int] = None
-        oname = "—"
-        base_hostile = False
-
-        if owner_info:
-            try:
-                oid = int(owner_info["owner_id"]) if owner_info["owner_id"] else None
-            except (ValueError, TypeError):
-                oid = None
-
-            if oid is not None:
-                oname = owner_info["owner_name"] or f"ID {oid}"
-                base_hostile = (
-                    (oid in hostile_ids)
-                    or (oid in hostile_corp_ids)
-                    or ("Unresolvable" in oname)
-                )
-        else:
-            oname = "Unresolvable"
-            base_hostile = True
-
-        nullsec_flag = False
-        if consider_nullsec and is_nullsec(system_id):
-            if oid is None or oid not in safe_entities:
-                nullsec_flag = True
-
-        struct_flag = False
-        npc_flag = False
-        if consider_structures or consider_npc:
-            for loc_id, loc_data in data["locations"].items():
-                if not loc_id or loc_id in excluded_station_ids:
-                    continue
-
-                is_struct = is_player_structure(loc_id)
-
-                if consider_structures and is_struct:
-                    if oid is None or oid not in safe_entities:
-                        struct_flag = True
-
-                if consider_npc and not is_struct:
-                    npc_flag = True
-
-                if struct_flag or npc_flag:
-                    break
-
-        system_hostile = base_hostile or nullsec_flag or struct_flag or npc_flag
+        # Base system hostility
+        system_hostile = get_hostile_state(system_id, 'solar_system')
 
         # Iterate locations inside system
         for loc_id, loc_data in data["locations"].items():
@@ -368,7 +284,18 @@ def render_assets(user_id: int) -> Optional[str]:
             if loc_id in excluded_station_ids:
                 continue
 
+            loc_hostile = system_hostile
+            is_struct = is_player_structure(loc_id)
+            if not loc_hostile and (consider_structures or consider_npc):
+                if get_hostile_state(loc_id, 'structure' if is_struct else 'station'):
+                    loc_hostile = True
+
             loc_name = loc_data["name"]
+            owner_info = get_system_owner({
+                "id": system_id,
+                "name": display_name
+            })
+            oname = owner_info.get("owner_name") or "—"
 
             for char_name, ships in loc_data["characters"].items():
                 # Optionally ignore non-ship assets entirely
@@ -383,7 +310,7 @@ def render_assets(user_id: int) -> Optional[str]:
                         "character": char_name,
                         "owner": oname,
                         "region": owner_info.get("region_name") if owner_info else "Unknown Region",
-                        "hostile": system_hostile,
+                        "hostile": loc_hostile,
                         "ships": ship_str,
                     }
                 )

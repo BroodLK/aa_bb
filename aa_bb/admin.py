@@ -179,8 +179,11 @@ class BB_ConfigAdmin(SingletonModelAdmin):
                 "fields": (
                     "hostile_alliances",
                     "hostile_corporations",
+                    "hostile_everyone_else",
                     "whitelist_alliances",
                     "whitelist_corporations",
+                    "whitelist_characters",
+                    "ignored_corporations",
                     "consider_nullsec_hostile",
                     "consider_all_structures_hostile",
                     "consider_npc_stations_hostile",

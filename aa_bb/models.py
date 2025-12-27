@@ -784,6 +784,12 @@ class BigBrotherConfig(SingletonModel):
         verbose_name=_("Hostile Corporations")
     )
 
+    hostile_everyone_else = models.BooleanField(
+        default=False,
+        help_text=_("If enabled, any entity (character, corporation, or alliance) not explicitly on the member, white, or ignore lists will be treated as hostile."),
+        verbose_name=_("Treat all unknown entities as hostile")
+    )
+
     consider_nullsec_hostile = models.BooleanField(
         default=False,
         help_text=_("Consider all nullsec regions as hostile?"),

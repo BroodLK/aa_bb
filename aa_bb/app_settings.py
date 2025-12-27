@@ -1083,6 +1083,133 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
     }
 
 
+def get_id_hostile_state(entity_id: int, when: datetime = None) -> bool:
+    """
+    Mega-helper function to determine if an ID is considered hostile.
+    Automatically resolves if the ID is a Character, Corporation, Alliance,
+    Solar System, Station, or Structure.
+    """
+    if not entity_id:
+        return False
+
+    try:
+        entity_id = int(entity_id)
+    except (ValueError, TypeError):
+        return False
+
+    # 1. Quick check for known location ID ranges
+    if (30000000 <= entity_id < 40000000) or \
+       (60000000 <= entity_id < 64000000) or \
+       is_player_structure(entity_id):
+        return is_location_hostile(entity_id)
+
+    # 2. Resolve entity type via ESI/Cache
+    entity_type = get_eve_entity_type(entity_id)
+
+    # 3. Handle based on resolved type
+    if entity_type in ('solar_system', 'station', 'structure'):
+        return is_location_hostile(entity_id)
+
+    # 4. Default to entity hostility (Character, Corp, Alliance, Faction)
+    return is_entity_hostile(entity_id, entity_type, when=when)
+
+
+def get_hostile_state(entity_id: int, entity_type: str = None, system_id: int = None, when: datetime = None) -> bool:
+    """
+    Determine the hostile state of an entity or location.
+    Returns True if hostile, False if safe.
+
+    If it's a location (solar_system, station, structure), it uses location-specific
+    hostility logic including sovereignty and structure overrides.
+    """
+    if not entity_id:
+        return False
+
+    try:
+        entity_id = int(entity_id)
+    except (ValueError, TypeError):
+        return False
+
+    # If we have extra info (type or system), we can optimize.
+    # Otherwise, use the mega-helper.
+    if not entity_type and not system_id:
+        return get_id_hostile_state(entity_id, when=when)
+
+    # Location Hostility (System, Station, Structure)
+    if entity_type in ('solar_system', 'station', 'structure') or \
+       (30000000 <= entity_id < 40000000) or \
+       (60000000 <= entity_id < 64000000) or \
+       is_player_structure(entity_id):
+        return is_location_hostile(entity_id, system_id)
+
+    # Entity Hostility (Character, Corporation, Alliance, Faction)
+    return is_entity_hostile(entity_id, entity_type, when=when)
+
+
+def is_entity_hostile(entity_id: int, entity_type: str = None, when: datetime = None) -> bool:
+    """
+    Logic for entity (char, corp, alliance, faction) hostility.
+    """
+    if not entity_id:
+        return False
+    try:
+        entity_id = int(entity_id)
+    except (ValueError, TypeError):
+        return False
+
+    cfg = BigBrotherConfig.get_solo()
+    safe_entities = get_safe_entities()
+
+    # Explicitly Safe
+    if entity_id in safe_entities:
+        return False
+
+    if not entity_type:
+        entity_type = get_eve_entity_type(entity_id)
+
+    # Explicitly Hostile
+    hostile_corps = {int(s) for s in (cfg.hostile_corporations or "").split(",") if s.strip().isdigit()}
+    hostile_allis = {int(s) for s in (cfg.hostile_alliances or "").split(",") if s.strip().isdigit()}
+
+    if entity_type == 'corporation' and entity_id in hostile_corps:
+        return True
+    if entity_type in ('alliance', 'faction') and entity_id in hostile_allis:
+        return True
+
+    if entity_type == 'character':
+        # Blacklist check
+        if aablacklist_active():
+            from aa_bb.checks.add_to_blacklist import check_char_add_to_bl
+            if check_char_add_to_bl(entity_id):
+                return True
+
+        # Check corporation and alliance context for this character
+        # Use get_entity_info to get (potentially historical) corp/alli
+        info = get_entity_info(entity_id, when or timezone.now())
+        if info:
+            # 1. Safe context (whitelist/member) wins
+            if info.get('corp_id') in safe_entities or info.get('alli_id') in safe_entities:
+                return False
+            # 2. Hostile context
+            if info.get('corp_id') in hostile_corps:
+                return True
+            if info.get('alli_id') in hostile_allis:
+                return True
+
+    # Hostile Everyone Else
+    if cfg.hostile_everyone_else:
+        # Ignore NPCs
+        if entity_type == 'character' and is_npc_character(entity_id):
+            return False
+        if entity_type == 'corporation' and is_npc_corporation(entity_id):
+            return False
+
+        # Characters belong to corps/alliances (already checked above if character)
+        return True
+
+    return False
+
+
 def is_location_hostile(location_id: int, system_id: int = None) -> bool:
     """
     Determines if a given location (structure, station, or system) is considered hostile.
@@ -1092,30 +1219,38 @@ def is_location_hostile(location_id: int, system_id: int = None) -> bool:
         return False
 
     cfg = BigBrotherConfig.get_solo()
-    safe_entities = get_safe_entities()
-    hostile_alli_ids = {int(s) for s in (cfg.hostile_alliances or "").split(",") if s.strip().isdigit()}
-    hostile_corp_ids = {int(s) for s in (cfg.hostile_corporations or "").split(",") if s.strip().isdigit()}
 
     # Resolve location owner
     owner_info = get_system_owner({"id": location_id or system_id})
-    oid = None
+    oid = 0
     oname = ""
+    otype = None
     if owner_info:
         try:
             oid = int(owner_info.get("owner_id", 0))
         except (ValueError, TypeError):
-            oid = None
+            oid = 0
         oname = owner_info.get("owner_name", "")
+        otype = owner_info.get("owner_type")
 
     # If it's a structure
     if location_id and is_player_structure(location_id):
         # Friendly structure overrides system hostility
-        if oid and oid in safe_entities:
+        if oid and not is_entity_hostile(oid, otype):
             return False
         # Hostile structure
-        if oid and (oid in hostile_alli_ids or oid in hostile_corp_ids):
+        if oid and is_entity_hostile(oid, otype):
             return True
+
+        if cfg.consider_all_structures_hostile:
+            return True
+
         if "Unresolvable" in oname:
+            return True
+
+    # If it's an NPC station
+    if location_id and 60000000 <= int(location_id) < 64000000:
+        if cfg.consider_npc_stations_hostile:
             return True
 
     # Check system-level hostility
@@ -1127,29 +1262,30 @@ def is_location_hostile(location_id: int, system_id: int = None) -> bool:
             sys_owner_info = get_system_owner({"id": target_system})
             try:
                 soid = int(sys_owner_info.get("owner_id", 0))
+                sotype = sys_owner_info.get("owner_type")
             except (ValueError, TypeError):
-                soid = None
+                soid = 0
+                sotype = None
         else:
             soid = oid
+            sotype = otype
 
         # Base hostility from system owner
-        if soid:
-            if soid in hostile_alli_ids or soid in hostile_corp_ids:
-                return True
+        if soid and is_entity_hostile(soid, sotype):
+            return True
 
         # Consider nullsec hostile
         if cfg.consider_nullsec_hostile and is_nullsec(target_system):
             # Safe if system is owned by us/allies
-            if soid is not None and soid in safe_entities:
+            if soid and not is_entity_hostile(soid, sotype):
                 return False
             # Otherwise, if we are in a friendly structure (handled above), it's safe.
             # If we are here, it's either an NPC station or a hostile/unknown structure.
             return True
 
     # General fallback for hostile lists if not already caught
-    if oid:
-        if oid in hostile_alli_ids or oid in hostile_corp_ids:
-            return True
+    if oid and is_entity_hostile(oid, otype):
+        return True
 
     if "Unresolvable" in oname:
         return True
@@ -1333,10 +1469,14 @@ def get_safe_entities():
         ids.update(int(x) for x in cfg.whitelist_alliances.split(',') if x.strip().isdigit())
     if cfg.whitelist_corporations:
         ids.update(int(x) for x in cfg.whitelist_corporations.split(',') if x.strip().isdigit())
+    if cfg.whitelist_characters:
+        ids.update(int(x) for x in cfg.whitelist_characters.split(',') if x.strip().isdigit())
 
     # Ignored
     if cfg.ignored_corporations:
         ids.update(int(x) for x in cfg.ignored_corporations.split(',') if x.strip().isdigit())
+    if cfg.ignored_characters:
+        ids.update(int(x) for x in cfg.ignored_characters.split(',') if x.strip().isdigit())
 
     # Members
     if cfg.member_corporations:

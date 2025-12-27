@@ -20,6 +20,7 @@ from ..app_settings import (
     get_safe_entities,
     is_player_structure,
     resolve_location_name,
+    get_hostile_state,
 )
 from ..models import BigBrotherConfig
 import logging
@@ -185,47 +186,17 @@ def get_hostile_clone_locations(user_id: int) -> Dict[str, str]:
 
         display_name = system_name or f"ID {system_id}"
 
-        owner_info = get_system_owner(
-            {
-                "id": system_id,
-                "name": display_name,
-            }
-        )
+        # Check hostility using mega-helper
+        if get_hostile_state(system_id, 'solar_system'):
+            owner_info = get_system_owner(
+                {
+                    "id": system_id,
+                    "name": display_name,
+                }
+            )
+            oname = owner_info.get("owner_name") or "Unresolvable"
+            rname = owner_info.get("region_name") or "Unknown Region"
 
-        nullsec_flag = consider_nullsec and is_nullsec(system_id)
-        oname = "Unresolvable"
-        rname = "Unknown Region"
-        oid: Optional[int] = None
-
-        if not owner_info:
-            # fully unresolvable, still worth flagging
-            parts = [oname]
-            char_list = sorted(system_char_map.get(system_id, set()))
-            if char_list:
-                parts.append("Chars: " + ", ".join(char_list))
-            hostile_map[display_name] = " | ".join(parts)
-            logger.info("Hostile clone (unresolvable): %s", display_name)
-            continue
-
-        try:
-            oid = int(owner_info["owner_id"])
-        except (ValueError, TypeError):
-            oid = None
-        oname = owner_info.get("owner_name") or (
-            f"ID {oid}" if oid is not None else "Unresolvable"
-        )
-        rname = owner_info.get("region_name") or "Unknown Region"
-
-        if consider_nullsec and is_nullsec(system_id):
-            if oid is None or oid not in safe_entities:
-                nullsec_flag = True
-
-        if (
-            nullsec_flag
-            or (oid in hostile_ids if oid is not None else False)
-            or (oid in hostile_corp_ids if oid is not None else False)
-            or "Unresolvable" in oname
-        ):
             parts = [oname]
             if rname and rname != "Unknown Region":
                 parts.append(f"Region: {rname}")
@@ -235,10 +206,9 @@ def get_hostile_clone_locations(user_id: int) -> Dict[str, str]:
             summary = " | ".join(parts)
             hostile_map[display_name] = summary
             logger.info(
-                "Hostile clone: %s owned by %s (%s)",
+                "Hostile clone: %s owned by %s",
                 display_name,
                 summary,
-                oid,
             )
 
     return hostile_map
@@ -378,70 +348,22 @@ def render_clones(user_id: int) -> Optional[str]:
         if system_id and system_id in excluded_system_ids:
             continue
 
-        # For ownership checks, fall back to location_id when system_id is missing – this
-        # preserves your current "Unresolvable structure due to lack of docking rights"
-        # messaging for player structures.
-        owner_key = system_id or loc_id
+        # Check hostility using mega-helper
+        # System hostility
+        hostile = get_hostile_state(system_id, 'solar_system')
 
-        owner_info = None
-        if owner_key:
-            owner_info = get_system_owner(
-                {
-                    "id": owner_key,
-                    "name": display_name,
-                }
-            )
-
-        oid: Optional[int] = None
-        oname = "Unresolvable"
-        base_hostile = False
-        unresolvable = False
-
-        if owner_info:
-            try:
-                oid = int(owner_info.get("owner_id")) if owner_info.get("owner_id") else None
-            except (ValueError, TypeError):
-                oid = None
-
-            if oid is not None:
-                oname = owner_info.get("owner_name") or f"ID {oid}"
-                base_hostile = (
-                    (oid in hostile_alli_ids)
-                    or (oid in hostile_corp_ids)
-                    or ("Unresolvable" in oname)
-                )
-            else:
-                # No usable owner id – treat as unresolvable-ish
-                oname = owner_info.get("owner_name") or "Unresolvable"
-                base_hostile = True
-                unresolvable = "Unresolvable" in oname
-        else:
-            # No owner info at all → treat as unresolvable/hostile
-            base_hostile = True
-            unresolvable = True
-            oname = "Unresolvable"
-
-        # Nullsec flag – hostile unless sov owner is on a safe list
-        nullsec_flag = False
-        if consider_nullsec and system_id:
-            if is_nullsec(system_id):
-                if oid is None or oid not in safe_entities:
-                    nullsec_flag = True
-
-        # Structure / NPC flags – use the actual clone location (station/structure)
-        struct_flag = False
-        npc_flag = False
-        if (consider_structures or consider_npc) and loc_id and loc_id not in excluded_station_ids:
+        # Location hostility (station/structure) if opted in
+        if not hostile and (consider_structures or consider_npc):
             is_struct = is_player_structure(loc_id)
+            if get_hostile_state(loc_id, 'structure' if is_struct else 'station'):
+                hostile = True
 
-            if consider_structures and is_struct:
-                if oid is None or oid not in safe_entities:
-                    struct_flag = True
-
-            if consider_npc and not is_struct:
-                npc_flag = True
-
-        hostile = base_hostile or nullsec_flag or struct_flag or npc_flag
+        owner_info = get_system_owner({
+            "id": system_id or loc_id,
+            "name": display_name
+        })
+        oname = owner_info.get("owner_name") or "Unresolvable"
+        unresolvable = "Unresolvable" in oname
 
         rows.append(
             {
