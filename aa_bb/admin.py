@@ -169,7 +169,6 @@ class BB_ConfigAdmin(SingletonModelAdmin):
                     "bb_member_states",
                     "member_corporations",
                     "member_alliances",
-                    "ignored_corporations",
                 )
             },
         ),
@@ -179,13 +178,17 @@ class BB_ConfigAdmin(SingletonModelAdmin):
                 "fields": (
                     "hostile_alliances",
                     "hostile_corporations",
+                    "hostile_everyone_else",
                     "whitelist_alliances",
                     "whitelist_corporations",
+                    "ignored_corporations",
                     "consider_nullsec_hostile",
                     "consider_all_structures_hostile",
                     "consider_npc_stations_hostile",
                     "excluded_systems",
                     "excluded_stations",
+                    "exclude_high_sec",
+                    "exclude_low_sec",
                     "hostile_assets_ships_only",
                     # aa-contacts import (conditionally add fields)
                     *(

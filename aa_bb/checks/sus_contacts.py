@@ -19,7 +19,8 @@ from ..app_settings import (
     is_npc_character,
     get_entity_info,
     get_safe_entities,
-    aablacklist_active
+    aablacklist_active,
+    get_hostile_state,
 )
 from django.utils import timezone
 
@@ -144,24 +145,17 @@ def get_cell_style_for_row(cid: int, column: str, row: dict) -> str:
             return 'color: #FF0000;'
 
     # New fixed columns
-    safe_entities = get_safe_entities()
-    if aablacklist_active():
-        if column == 'character':  # Character column only highlights hostile chars.
-            if row.get('contact_type') == 'character' and cid not in safe_entities and check_char_add_to_bl(cid):  # Highlight hostile character contacts.
-                return 'color: red;'
-            return ''
-
-    if column == 'corporation':  # Corp column highlights hostile corporations.
+    if column == 'character':
+        if row.get('contact_type') == 'character' and get_hostile_state(cid, 'character'):
+            return 'color: red;'
+    elif column == 'corporation':
         coid = row.get("coid")
-        if coid and coid not in safe_entities and str(coid) in BigBrotherConfig.get_solo().hostile_corporations:  # Highlight hostile corps.
+        if coid and get_hostile_state(coid, 'corporation'):
             return 'color: red;'
-        return ''
-
-    if column == 'alliance':  # Alliance column highlights hostile alliances.
+    elif column == 'alliance':
         aid = row.get("aid")
-        if aid and aid not in safe_entities and str(aid) in BigBrotherConfig.get_solo().hostile_alliances:  # Highlight hostile alliances.
+        if aid and get_hostile_state(aid, 'alliance'):
             return 'color: red;'
-        return ''
 
     return ''
 
@@ -246,36 +240,43 @@ def get_user_hostile_notifications(user_id: int) -> dict[int, str]:
 
     for cid, info in contacts.items():
         ctype     = info['contact_type']      # 'character' | 'corporation' | 'alliance'
-        if ctype == 'character':  # Display actual character name for hostile characters.
+        if ctype == 'character':
             cname = info.get('character') or ''
-        elif ctype == 'corporation':  # Corporations show corp display name.
+        elif ctype == 'corporation':
             cname = info.get('corporation') or ''
-        elif ctype == 'alliance':  # Alliances show alliance display name.
+        elif ctype == 'alliance':
             cname = info.get('alliance') or ''
         else:
             cname = info.get('contact_name') or ''
         chars     = info.get('characters', set())
-        coid      = info.get('coid')          # corporation ID (int or None)
+        coid      = info.get('coid')
         corp_name = info.get('corporation')
-        aid       = info.get('aid')           # alliance ID (int or None)
+        aid       = info.get('aid')
         alli_name = info.get('alliance')
         s         = info.get('standing', 0)
 
         alerts: list[str] = []
-        logger.info(f"{cname},{aid},{alli_name}")
 
-        if aablacklist_active():
-            if ctype == 'character' and cid not in safe_entities and check_char_add_to_bl(cid):  # Character is on blacklist.
-                alerts.append(f"**{cname}** is on blacklist")
+        if get_hostile_state(cid, ctype):
+            if ctype == 'character':
+                if aablacklist_active() and check_char_add_to_bl(cid):
+                    alerts.append(f"**{cname}** is on blacklist")
+                else:
+                    alerts.append(f"**{cname}** is on hostile list")
+            else:
+                alerts.append(f"{ctype} **{cname}** is on hostile list")
 
-        if ctype in ('character', 'corporation') and coid != 0:  # Evaluate corp affiliation when present.
-            if coid not in safe_entities and str(coid) in hostile_corps:  # Corp matches hostile list.
+        # Even if the contact itself isn't hostile, its corp/alliance might be
+        if ctype == 'character':
+            if coid and get_hostile_state(coid, 'corporation'):
                 alerts.append(f"corporation **{corp_name}** is on hostile list")
+            if aid and get_hostile_state(aid, 'alliance'):
+                alerts.append(f"alliance **{alli_name}** is on hostile list")
+        elif ctype == 'corporation':
+            if aid and get_hostile_state(aid, 'alliance'):
+                alerts.append(f"alliance **{alli_name}** is on hostile list")
 
-        if aid != 0 and aid not in safe_entities and str(aid) in hostile_allis:  # Alliance belongs to hostile list.
-            alerts.append(f"alliance **{alli_name}** is on hostile list")
-
-        if alerts:  # Build notification only when this contact triggered alerts.
+        if alerts:
             char_list = ', '.join(sorted(chars)) if chars else 'no characters'
             message = (
                 f"- A {s} **{ctype}** type contact **{cname}** found on **{char_list}**, flags: "

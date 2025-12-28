@@ -6,7 +6,7 @@ live and highlight systems owned by alliances on the hostile list.
 """
 
 from allianceauth.eveonline.models import EveCorporationInfo
-from ..app_settings import get_system_owner, resolve_location_name, resolve_location_system_id
+from ..app_settings import get_system_owner, resolve_location_name, resolve_location_system_id, get_hostile_state
 from ..models import BigBrotherConfig
 from django.utils.html import format_html
 from typing import List, Optional, Dict
@@ -80,28 +80,18 @@ def get_corp_hostile_asset_locations(corp_id: int) -> Dict[str, str]:
     for system_id, system_name in systems.items():
         display_name = system_name or f"Unknown ({system_id})"
 
-        # build the dict that get_system_owner expects
-        owner_info = get_system_owner({
-            "id":   system_id,
-            "name": display_name
-        })
+        # Check hostility using mega-helper
+        if get_hostile_state(system_id, 'solar_system'):
+            # build the dict that get_system_owner expects
+            owner_info = get_system_owner({
+                "id":   system_id,
+                "name": display_name
+            })
 
-        if not owner_info:  # Treat missing sovereignty as an unresolved owner.
-            hostile_map[display_name] = "Unresolvable"
-            #logger.debug(f"No ownership info for assets in {display_name}; marked Unresolvable")
-            continue
+            oname = owner_info.get("owner_name") or "Unresolvable"
+            oid = owner_info.get("owner_id")
+            rname = owner_info.get("region_name")
 
-        # attempt to parse owner_id
-        try:
-            oid = int(owner_info["owner_id"])
-        except (ValueError, TypeError):
-            oid = None
-
-        oname = owner_info.get("owner_name") or (f"ID {oid}" if oid is not None else "Unresolvable")
-        rname = owner_info.get("region_name")
-
-        # include only hostile or unresolvable owners
-        if oid in hostile_ids or "Unresolvable" in oname:  # Persist only hostile or unresolved sovereignty holders.
             summary = oname
             if rname and rname != "Unknown Region":
                 summary = f"{oname} | Region: {rname}"
@@ -133,38 +123,24 @@ def render_assets(corp_id: int) -> Optional[str]:
 
     for system_id, system_name in systems.items():
         # build the dict your get_system_owner() wants:
+        display_name = system_name or f"Unknown ({system_id})"
         owner_info = get_system_owner({
             "id":   system_id,
-            "name": system_name or f"Unknown ({system_id})"
+            "name": display_name
         })
         rname = "—"
+        hostile = get_hostile_state(system_id, 'solar_system')
+        oname = "—"
+
         if owner_info:  # Only resolve sovereignty details when SDE returns something.
             rname = owner_info.get("region_name") or "—"
-            raw_owner_id = owner_info.get("owner_id")
-            if raw_owner_id:  # Convert IDs to ints when present.
-                try:
-                    oid = int(raw_owner_id)
-                except (ValueError, TypeError):
-                    oid = None
-            else:
-                oid = None
+            oname = owner_info.get("owner_name") or "—"
 
-            if oid is not None:  # Positive ID enables a name/hostile lookup.
-                oname = owner_info.get("owner_name") or f"ID {oid}"
-                hostile = oid in hostile_ids or "Unresolvable" in oname
-            else:  # Placeholder dash for missing owner IDs.
-                oname = "—"
-                hostile = False
-        else:  # Unresolvable owner data falls back to dashes.
-            oname = "—"
-            hostile = False
-
-        # ← THIS must be indented inside the loop!
         if hostile:  # Paint hostile ownership red for attention.
             row_tpl = '<tr><td>{}</td><td style="color: red;">{}</td><td>{}</td></tr>'
         else:  # Neutral owners get default styling.
             row_tpl = '<tr><td>{}</td><td>{}</td><td>{}</td></tr>'
-        html += format_html(row_tpl, system_name, oname, rname)
+        html += format_html(row_tpl, display_name, oname, rname)
 
     html += "</tbody></table>"
     return html

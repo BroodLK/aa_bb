@@ -1,4 +1,12 @@
 
+## [3.2.5] -
+- More robust hostile state handling, with the ability to add everyone who is not friendly to the hostile state.
+- More robust awox handling
+- Various visual improvements
+- Exclude low sec
+- Exclude high sec
+- Fix typo
+
 ## [3.2.4] - 2025-12-24
 
 ### Changed

@@ -784,6 +784,12 @@ class BigBrotherConfig(SingletonModel):
         verbose_name=_("Hostile Corporations")
     )
 
+    hostile_everyone_else = models.BooleanField(
+        default=False,
+        help_text=_("If enabled, any entity (character, corporation, or alliance) not explicitly on the member, white, or ignore lists will be treated as hostile."),
+        verbose_name=_("Treat all unknown entities as hostile")
+    )
+
     consider_nullsec_hostile = models.BooleanField(
         default=False,
         help_text=_("Consider all nullsec regions as hostile?"),
@@ -814,6 +820,18 @@ class BigBrotherConfig(SingletonModel):
         null=True,
         help_text=_("List of station/structure IDs excluded from hostile checks, separated by ','"),
         verbose_name=_("Excluded Stations")
+    )
+
+    exclude_high_sec = models.BooleanField(
+        default=False,
+        help_text=_("If enabled, activities in High-Sec (security 0.5 to 1.0) will be ignored."),
+        verbose_name=_("Exclude High-Sec")
+    )
+
+    exclude_low_sec = models.BooleanField(
+        default=False,
+        help_text=_("If enabled, activities in Low-Sec (security 0.01 to 0.49) will be ignored."),
+        verbose_name=_("Exclude Low-Sec")
     )
 
     hostile_assets_ships_only = models.BooleanField(
@@ -901,7 +919,7 @@ class BigBrotherConfig(SingletonModel):
         blank=True,
         null=True,
         help_text=_("Discord webhook for sending Leave of Absence"),
-        verbose_name=_("Leave of Absence Discord WebHhok")
+        verbose_name=_("Leave of Absence Discord WebHook")
     )
 
     dailywebhook = models.URLField(
