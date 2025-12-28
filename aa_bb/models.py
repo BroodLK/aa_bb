@@ -919,7 +919,7 @@ class BigBrotherConfig(SingletonModel):
         blank=True,
         null=True,
         help_text=_("Discord webhook for sending Leave of Absence"),
-        verbose_name=_("Leave of Absence Discord WebHhok")
+        verbose_name=_("Leave of Absence Discord WebHook")
     )
 
     dailywebhook = models.URLField(
