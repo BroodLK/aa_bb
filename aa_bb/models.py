@@ -822,6 +822,18 @@ class BigBrotherConfig(SingletonModel):
         verbose_name=_("Excluded Stations")
     )
 
+    exclude_high_sec = models.BooleanField(
+        default=False,
+        help_text=_("If enabled, activities in High-Sec (security 0.5 to 1.0) will be ignored."),
+        verbose_name=_("Exclude High-Sec")
+    )
+
+    exclude_low_sec = models.BooleanField(
+        default=False,
+        help_text=_("If enabled, activities in Low-Sec (security 0.01 to 0.49) will be ignored."),
+        verbose_name=_("Exclude Low-Sec")
+    )
+
     hostile_assets_ships_only = models.BooleanField(
         default=False,
         help_text=_("Only consider ship assets when checking and rendering hostile asset locations?"),

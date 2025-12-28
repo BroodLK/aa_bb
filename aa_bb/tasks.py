@@ -928,7 +928,7 @@ def BB_update_single_user(user_id, char_name):
                 # 1) Overall header – almost always a tiny single-chunk embed
                 header_lines = [f"‼️ Status change detected for {char_name}"]
 
-                # Calculate total combined length to see if we can merge everything into one embed
+                # Calculate the total combined length to see if we can merge everything into one embed
                 total_combined_len = len(header_lines[0]) + sum(len(c) for c in changes) + (len(changes) * 2)
 
                 if total_combined_len < 1000:
@@ -945,7 +945,7 @@ def BB_update_single_user(user_id, char_name):
 
                     all_chunks = _chunk_embed_lines(merged_lines, max_chars=1900)
                 else:
-                    # Separate embeds for header and each change block
+                    # Separate embeds for the header and each change block
                     for header_chunk in _chunk_embed_lines(header_lines, max_chars=1900):
                         all_chunks.append(header_chunk)
 

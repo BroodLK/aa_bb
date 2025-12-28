@@ -21,6 +21,8 @@ from ..app_settings import (
     is_player_structure,
     resolve_location_name,
     resolve_location_system_id,
+    is_highsec,
+    is_lowsec,
 )
 from ..models import BigBrotherConfig
 import logging
@@ -182,6 +184,11 @@ def get_hostile_clone_locations(user_id: int) -> Dict[str, str]:
 
     for system_id, data in sorted_systems:
         if system_id in excluded_system_ids:
+            continue
+
+        if cfg.exclude_high_sec and is_highsec(system_id):
+            continue
+        if cfg.exclude_low_sec and is_lowsec(system_id):
             continue
 
         system_name = data.get("name")

@@ -15,9 +15,12 @@ from ..app_settings import (
     get_safe_entities,
     aablacklist_active,
     resolve_location_name,
+    resolve_location_system_id,
     is_location_hostile,
     get_system_owner,
     get_hostile_state,
+    is_highsec,
+    is_lowsec,
 )
 from django.utils import timezone
 
@@ -177,6 +180,20 @@ def is_contract_row_hostile(row: dict) -> bool:
     if issuer_corp_id and assignee_corp_id and issuer_corp_id == assignee_corp_id:
         return False
 
+    cfg = BigBrotherConfig.get_solo()
+    start_loc = row.get("start_location_id")
+    end_loc = row.get("end_location_id")
+    start_sys = resolve_location_system_id(start_loc) if start_loc else None
+    end_sys = resolve_location_system_id(end_loc) if end_loc else None
+
+    # If all involved systems are excluded, ignore the contract entirely
+    start_excluded = start_sys and ((cfg.exclude_high_sec and is_highsec(start_sys)) or (cfg.exclude_low_sec and is_lowsec(start_sys)))
+    end_excluded = end_sys and ((cfg.exclude_high_sec and is_highsec(end_sys)) or (cfg.exclude_low_sec and is_lowsec(end_sys)))
+
+    # If both locations are excluded (or one is missing and the other is excluded), ignore.
+    if (start_excluded or not start_sys) and (end_excluded or not end_sys):
+        return False
+
     # Check issuer and assignee hostility
     issuer_hostile = get_hostile_state(issuer_id, when=when)
     assignee_hostile = get_hostile_state(assignee_id, when=when)
@@ -184,9 +201,9 @@ def is_contract_row_hostile(row: dict) -> bool:
     if issuer_hostile or assignee_hostile:
         return True
 
-    if is_location_hostile(row.get("start_location_id")):
+    if is_location_hostile(start_loc):
         return True
-    if is_location_hostile(row.get("end_location_id")):
+    if is_location_hostile(end_loc):
         return True
 
     return False

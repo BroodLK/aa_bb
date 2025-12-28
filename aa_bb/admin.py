@@ -187,6 +187,8 @@ class BB_ConfigAdmin(SingletonModelAdmin):
                     "consider_npc_stations_hostile",
                     "excluded_systems",
                     "excluded_stations",
+                    "exclude_high_sec",
+                    "exclude_low_sec",
                     "hostile_assets_ships_only",
                     # aa-contacts import (conditionally add fields)
                     *(

@@ -1220,6 +1220,13 @@ def is_location_hostile(location_id: int, system_id: int = None) -> bool:
 
     cfg = BigBrotherConfig.get_solo()
 
+    target_system = system_id or (resolve_location_system_id(location_id) if location_id else None)
+    if target_system:
+        if cfg.exclude_high_sec and is_highsec(target_system):
+            return False
+        if cfg.exclude_low_sec and is_lowsec(target_system):
+            return False
+
     # Resolve location owner
     owner_info = get_system_owner({"id": location_id or system_id})
     oid = 0
@@ -1343,6 +1350,22 @@ def is_nullsec(system_id):
         system_id = int(system_id)
         sys = EveSolarSystem.objects.get(id=system_id)
         return sys.security_status <= 0.0
+    except (EveSolarSystem.DoesNotExist, ValueError, TypeError):
+        return False
+
+def is_highsec(system_id):
+    try:
+        system_id = int(system_id)
+        sys = EveSolarSystem.objects.get(id=system_id)
+        return sys.security_status >= 0.45
+    except (EveSolarSystem.DoesNotExist, ValueError, TypeError):
+        return False
+
+def is_lowsec(system_id):
+    try:
+        system_id = int(system_id)
+        sys = EveSolarSystem.objects.get(id=system_id)
+        return 0.0 < sys.security_status < 0.45
     except (EveSolarSystem.DoesNotExist, ValueError, TypeError):
         return False
 

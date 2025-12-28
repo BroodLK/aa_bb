@@ -14,6 +14,8 @@ from ..app_settings import (
     get_safe_entities,
     resolve_location_name,
     resolve_location_system_id,
+    is_highsec,
+    is_lowsec,
 )
 from ..models import BigBrotherConfig
 from django.utils.html import format_html
@@ -177,6 +179,11 @@ def get_hostile_asset_locations(user_id: int) -> Dict[str, str]:
     for system_id, data in systems.items():
         # System whitelist – never mark these as hostile
         if system_id in excluded_system_ids:
+            continue
+
+        if cfg.exclude_high_sec and is_highsec(system_id):
+            continue
+        if cfg.exclude_low_sec and is_lowsec(system_id):
             continue
 
         system_name = data.get("name")
