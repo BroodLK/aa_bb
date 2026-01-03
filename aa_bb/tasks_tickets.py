@@ -6,6 +6,7 @@ logger = logging.getLogger(__name__)
 from typing import Optional
 
 from django.utils import timezone
+from django.conf import settings
 from django.contrib.auth import get_user_model
 
 from celery import shared_task
@@ -37,7 +38,7 @@ except ImportError:
         return []
 
 from .models import BigBrotherConfig, TicketToolConfig, PapCompliance, LeaveRequest, ComplianceTicket
-from .app_settings import get_user_profiles, get_character_id, send_status_embed, _chunk_embed_lines
+from .app_settings import get_user_profiles, get_character_id, send_status_embed, _chunk_embed_lines, send_message
 
 User = get_user_model()
 
@@ -370,7 +371,11 @@ def ensure_ticket(user, reason):
         "discord_check": (discord_check, tcfg.discord_check_reason),
     }
     try:
-        discord_id = get_discord_user_id(user)
+        if get_discord_user_id:
+            discord_id = get_discord_user_id(user)
+        else:
+            raise NotAuthenticated("aadiscordbot not installed")
+
         username = ""
         _, msg_template = reason_checkers[reason]
         if reason == "afk_check":  # AFK templates expect {days}.
@@ -443,26 +448,66 @@ def ensure_ticket(user, reason):
             color=0xf1c40f,  # Yellow
             hook=get_webhook_for_reason(reason)
         )
-        run_task_function.apply_async(
-            args=["aa_bb.tasks_bot.create_compliance_ticket"],
-            kwargs={
-                "task_args": [user.id, discord_id, reason, ticket_message],
-                "task_kwargs": {}
-            },
-            queue='aadiscordbot'
-        )
+
+        if tcfg.use_forum_threads and tcfg.hr_forum_webhook:
+            # Forced to use forum thread via toggle
+            self_use_forum = True
+        elif run_task_function:
+            # Use bot
+            self_use_forum = False
+        elif tcfg.hr_forum_webhook:
+            # Fallback for when aadiscordbot is missing: Forum thread via webhook
+            self_use_forum = True
+        else:
+            self_use_forum = False
+
+        if self_use_forum:
+            # Forum thread via webhook
+            main_char = getattr(user.profile, "main_character", None)
+            char_id = main_char.character_id if main_char else 0
+
+            # Append AA link as requested in the snippet
+            content = f"{ticket_message}\n\nAA Link: {settings.SITE_URL}/audit/r/{char_id}/account/status"
+
+            thread_body = {
+                "thread_name": user.username,
+                "content": content,
+            }
+            send_message(thread_body, hook=tcfg.hr_forum_webhook)
+
+            # Increment ticket counter
+            tcfg.ticket_counter += 1
+            tcfg.save()
+
+            # Create local record
+            ComplianceTicket.objects.create(
+                user=user,
+                discord_user_id=discord_id,
+                reason=reason,
+                ticket_id=tcfg.ticket_counter
+            )
+        elif run_task_function:
+            run_task_function.apply_async(
+                args=["aa_bb.tasks_bot.create_compliance_ticket"],
+                kwargs={
+                    "task_args": [user.id, discord_id, reason, ticket_message],
+                    "task_kwargs": {}
+                },
+                queue='aadiscordbot'
+            )
 
 
 def close_ticket(ticket):
     """Close the Discord compliance ticket and delete it locally."""
-    run_task_function.apply_async(
-        args=["aa_bb.tasks_bot.close_ticket_channel"],
-        kwargs={
-            "task_args": [ticket.discord_channel_id],
-            "task_kwargs": {}
-        },
-        queue='aadiscordbot'
-    )
+    if run_task_function:
+        run_task_function.apply_async(
+            args=["aa_bb.tasks_bot.close_ticket_channel"],
+            kwargs={
+                "task_args": [ticket.discord_channel_id],
+                "task_kwargs": {}
+            },
+            queue='aadiscordbot'
+        )
     ticket.delete()
 
 

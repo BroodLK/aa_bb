@@ -968,6 +968,40 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
             except Exception:
                 pass
 
+        # Check for individual location ownership (Structure or Station) BEFORE falling back to system SOV
+        if system_id:
+            # Player Structure
+            if is_player_structure(system_id):
+                try:
+                    from corptools.models import Structure
+                    struct = Structure.objects.filter(structure_id=system_id).select_related("corporation__corporation").first()
+                    if struct and struct.corporation and struct.corporation.corporation:
+                        return {
+                            "owner_id": str(struct.corporation.corporation.corporation_id),
+                            "owner_name": struct.corporation.corporation.corporation_name,
+                            "owner_type": "corporation",
+                            "region_id": region_id,
+                            "region_name": region_name
+                        }
+                except Exception:
+                    pass
+
+            # NPC Station
+            elif 60000000 <= system_id <= 64000000:
+                try:
+                    from eveuniverse.models import EveStation
+                    station_obj = EveStation.objects.get(id=system_id)
+                    if station_obj.owner_id:
+                        return {
+                            "owner_id": str(station_obj.owner_id),
+                            "owner_name": resolve_corporation_name(station_obj.owner_id),
+                            "owner_type": "corporation",
+                            "region_id": region_id,
+                            "region_name": region_name
+                        }
+                except Exception:
+                    pass
+
         sov_map = _get_sov_map()
         # If it's a structure or station, we want the system it's in for SOV
         target_sov_id = parent_system_id or system_id
@@ -989,37 +1023,9 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
                         }
                     except Exception:
                         pass
-                elif 60000000 <= target_sov_id <= 64000000:
-                    try:
-                        from eveuniverse.models import EveStation
-                        station_obj = EveStation.objects.get(id=target_sov_id)
-                        if station_obj.owner_id:
-                            return {
-                                "owner_id": str(station_obj.owner_id),
-                                "owner_name": resolve_corporation_name(station_obj.owner_id),
-                                "owner_type": "corporation",
-                                "region_id": region_id,
-                                "region_name": region_name
-                            }
-                    except Exception:
-                        pass
 
             # If it's specifically a player structure ID that we can't resolve owner for
             if system_id and is_player_structure(system_id):
-                try:
-                    from corptools.models import Structure
-                    struct = Structure.objects.filter(structure_id=system_id).select_related("corporation__corporation").first()
-                    if struct and struct.corporation and struct.corporation.corporation:
-                        return {
-                            "owner_id": str(struct.corporation.corporation.corporation_id),
-                            "owner_name": struct.corporation.corporation.corporation_name,
-                            "owner_type": "corporation",
-                            "region_id": region_id,
-                            "region_name": region_name
-                        }
-                except Exception:
-                    pass
-
                 return {
                     "owner_id": owner_id,
                     "owner_name": "Unresolvable structure due to lack of docking rights",

@@ -137,20 +137,39 @@ def get_next_ticket_number():
         cfg.save(update_fields=["ticket_counter"])
     return formatted
 
-class CharRemovedCommands(commands.Cog):
-    """Slash-command cog for operators handling character removal tickets."""
+class TicketCommands(commands.Cog):
+    """Cog for operators handling compliance tickets via commands or phrases."""
     def __init__(self, bot):
         self.bot = bot
 
+    @commands.Cog.listener("on_message")
+    async def ticket_message_listener(self, message: discord.Message):
+        if message.author.bot:
+            return
+
+        content = message.content.strip().lower()
+        if content in ["!resolved"]:
+            await self._handle_resolution(message)
+
     @slash_command(
-        name="resolve-char-removed",
-        description="Mark this channel's 'char_removed' ticket as resolved (no channel/DB deletion)."
+        name="resolve-ticket",
+        description="Mark this ticket as resolved and close/lock the channel."
     )
     @sender_is_admin()
-    async def resolve_char_removed(self, ctx: discord.ApplicationContext):
-        channel = ctx.channel
-        if not isinstance(channel, (discord.TextChannel, discord.Thread)):  # ensure the command is run inside a ticket channel
-            await ctx.respond("Use this in a ticket text channel.", ephemeral=True)
+    async def resolve_ticket_slash(self, ctx: discord.ApplicationContext):
+        await self._handle_resolution(ctx)
+
+    async def _handle_resolution(self, ctx_or_msg):
+        channel = ctx_or_msg.channel
+        author = ctx_or_msg.author if isinstance(ctx_or_msg, discord.Message) else ctx_or_msg.user
+
+        # Permission check: must be admin or have staff role
+        staff_roles = get_staff_roles()
+        is_staff = author.guild_permissions.administrator or any(role.id in staff_roles for role in author.roles)
+
+        if not is_staff:
+            if hasattr(ctx_or_msg, "respond"):
+                await ctx_or_msg.respond("You do not have permission to resolve tickets.", ephemeral=True)
             return
 
         ticket = ComplianceTicket.objects.filter(
@@ -158,24 +177,44 @@ class CharRemovedCommands(commands.Cog):
             is_resolved=False,
         ).first()
 
-        if not ticket:  # no matching ticket entry for this channel
-            await ctx.respond("No open ticket found for this channel.", ephemeral=True)
+        if not ticket:
+            if hasattr(ctx_or_msg, "respond"):
+                await ctx_or_msg.respond("No open ticket found for this channel.", ephemeral=True)
             return
 
-        if ticket.reason != "char_removed" and ticket.reason != "awox_kill":  # limit to supported ticket reasons
-            await ctx.respond("This command only works for 'char_removed' and 'awox_kill' tickets.", ephemeral=True)
-            return
+        # Handle different ticket reasons
+        if ticket.reason in ["char_removed", "awox_kill"]:
+            ticket.is_resolved = True
+            ticket.save(update_fields=["is_resolved"])
+            msg = f"✅ Ticket for <@{ticket.discord_user_id}> marked resolved by <@{author.id}>."
+            if hasattr(ctx_or_msg, "respond"):
+                await ctx_or_msg.respond(msg)
+            else:
+                await channel.send(msg)
+        else:
+            # For other reasons, we usually close/delete the channel if it's a private one,
+            # or lock/close if it's a thread.
+            msg = f"✅ Ticket for <@{ticket.discord_user_id}> resolved by <@{author.id}>. Closing channel..."
+            if hasattr(ctx_or_msg, "respond"):
+                await ctx_or_msg.respond(msg)
+            else:
+                await channel.send(msg)
 
-        ticket.is_resolved = True
-        ticket.save(update_fields=["is_resolved"])
+            # Use existing close_ticket_channel logic (which deletes the channel)
+            # If it's a thread, it might need different handling but channel.delete() works for threads too.
+            ticket.delete()
+            await channel.delete(reason=f"Resolved by {author}")
 
-        await ctx.respond(
-            f"✅ Ticket for <@{ticket.discord_user_id}> marked resolved by <@{ctx.author.id}>.",
-            ephemeral=True
-        )
+    @slash_command(
+        name="resolve-char-removed",
+        description="Mark this channel's 'char_removed' ticket as resolved (no channel/DB deletion)."
+    )
+    @sender_is_admin()
+    async def resolve_char_removed(self, ctx: discord.ApplicationContext):
+        await self.resolve_ticket_slash(ctx)
 
 def setup(bot):
-    bot.add_cog(CharRemovedCommands(bot))
+    bot.add_cog(TicketCommands(bot))
 
 # ---- Category overflow helpers ----
 

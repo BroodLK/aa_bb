@@ -255,6 +255,10 @@ def get_user_hostile_notifications(user_id: int) -> dict[int, str]:
         alli_name = info.get('alliance')
         s         = info.get('standing', 0)
 
+        # skip if user already has negative standing (redundant)
+        if s < 0:
+            continue
+
         alerts: list[str] = []
 
         if get_hostile_state(cid, ctype):

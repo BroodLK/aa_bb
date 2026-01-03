@@ -19,9 +19,9 @@ def BB_send_recurring_stats():
     if not cfg.is_active:
         return
 
-    webhook = cfg.stats_webhook
+    webhook = cfg.stats_webhook or cfg.webhook
     if not webhook:
-        logger.info("✅  [AA-BB] - [BB_send_recurring_stats] - Recurring stats enabled but no stats_webhook configured; skipping.")
+        logger.info("✅  [AA-BB] - [BB_send_recurring_stats] - Recurring stats enabled but no stats_webhook or main webhook configured; skipping.")
         return
 
     try:

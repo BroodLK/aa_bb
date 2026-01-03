@@ -1793,6 +1793,19 @@ class TicketToolConfig(SingletonModel):
         help_text="List of users to ignore when checking for compliance"
     )
 
+    hr_forum_webhook = models.URLField(
+        blank=True,
+        null=True,
+        help_text=_("Discord webhook for creating forum threads for compliance issues (Fallback if discordbot is not installed)"),
+        verbose_name=_("HR Forum Webhook")
+    )
+
+    use_forum_threads = models.BooleanField(
+        default=False,
+        help_text=_("If enabled, compliance tickets will be created as forum threads using the webhook above, even if aadiscordbot is installed."),
+        verbose_name=_("Use Forum Threads")
+    )
+
     class Meta:
         verbose_name = "Ticket Tool Configuration"
         verbose_name_plural = "Ticket Tool Configuration"

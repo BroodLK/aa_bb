@@ -1,5 +1,14 @@
 
-## [3.2.5] -
+## [3.2.6] -
+- Fix issue where users were reported for having hostile standings towards hostiles.
+- Fix issue where Recurring Stats Webhook did not fall back if left empty to the main webhook.
+- Added Discord Forum Webhook fallback for compliance tickets when `aadiscordbot` is not installed.
+- Added a toggle to allow users to force compliance tickets to be created as forum threads, even if `aadiscordbot` is installed.
+- Added a way to resolve and close tickets by responding with "!resolved", in the ticket channel/thread (requires staff permissions).
+- Added `/resolve-ticket` slash command for compliance tickets.
+- Fix issue where clones and assets in friendly citadels were incorrectly flagged as hostile in hostile systems.
+
+## [3.2.5] - 2025-12-28
 - More robust hostile state handling, with the ability to add everyone who is not friendly to the hostile state.
 - More robust awox handling
 - Various visual improvements
