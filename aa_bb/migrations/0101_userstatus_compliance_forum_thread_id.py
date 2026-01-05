@@ -62,7 +62,7 @@ class Migration(migrations.Migration):
             model_name='tickettoolconfig',
             name='ticket_type',
             field=models.CharField(
-                choices=[('private_channel', 'Private Channels (Legacy)'), ('private_thread', 'Private Threads (Bot)'),
+                choices=[('private_channel', 'Private Channels (Bot)'), ('private_thread', 'Private Threads (Bot)'),
                          ('forum_thread', 'Public Forum Threads (Webhook)'), ('auth_only', 'Auth Only (No Discord)')],
                 default='private_channel',
                 help_text="Choose how compliance tickets are created. 'Private Threads' requires aadiscordbot.",

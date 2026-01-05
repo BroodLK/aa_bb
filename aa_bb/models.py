@@ -1831,7 +1831,7 @@ class TicketToolConfig(SingletonModel):
     TICKET_TYPE_AUTH_ONLY = 'auth_only'
 
     TICKET_TYPE_CHOICES = [
-        (TICKET_TYPE_PRIVATE_CHANNEL, _('Private Channels (Legacy)')),
+        (TICKET_TYPE_PRIVATE_CHANNEL, _('Private Channels (Bot)')),
         (TICKET_TYPE_PRIVATE_THREAD, _('Private Threads (Bot)')),
         (TICKET_TYPE_FORUM_THREAD, _('Public Forum Threads (Webhook)')),
         (TICKET_TYPE_AUTH_ONLY, _('Auth Only (No Discord)')),
