@@ -289,6 +289,7 @@ class PapsConfigAdmin(SingletonModelAdmin):
 @admin.register(TicketToolConfig)
 class TicketToolConfigAdmin(SingletonModelAdmin):
     """Ticket automation thresholds + templates."""
+    readonly_fields = ("ticket_counter",)
     filter_horizontal = (
         "excluded_users",
     )
