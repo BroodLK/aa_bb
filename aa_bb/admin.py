@@ -9,7 +9,7 @@ and prevent accidental multi-row creation of what should be one-off configs.
 from solo.admin import SingletonModelAdmin
 
 from django.contrib import admin
-from .app_settings import afat_active
+from .app_settings import afat_active, discordbot_active
 from django.contrib.admin.sites import NotRegistered
 
 from .models import (
@@ -29,6 +29,7 @@ from .models import (
     PapCompliance,
     LeaveRequest,
     ComplianceTicket,
+    ComplianceThread,
     EveItemPrice,
 )
 
@@ -292,6 +293,63 @@ class TicketToolConfigAdmin(SingletonModelAdmin):
         "excluded_users",
     )
 
+    def get_fieldsets(self, request, obj=None):
+        fieldsets = [
+            (None, {
+                'fields': ('ticket_type', 'ticket_counter', 'excluded_users')
+            }),
+            ('Forum Webhook Settings', {
+                'fields': ('hr_forum_webhook', 'use_forum_threads')
+            }),
+            ('Corp Compliance Check', {
+                'fields': ('corp_check_enabled', 'corp_check', 'corp_check_frequency', 'corp_check_reason', 'corp_check_reminder')
+            }),
+            ('Inactivity Check', {
+                'fields': ('afk_check_enabled', 'Max_Afk_Days', 'afk_check', 'afk_check_frequency', 'afk_check_reason', 'afk_check_reminder')
+            }),
+            ('Other Event Checks', {
+                'fields': ('char_removed_enabled', 'char_removed_reason', 'awox_monitor_enabled', 'awox_kill_reason')
+            }),
+        ]
+
+        if discordbot_active():
+            fieldsets.insert(1, ('Private Channel Settings (Bot)', {
+                'fields': ('Category_ID', 'staff_roles', 'Role_ID')
+            }))
+            fieldsets.insert(2, ('Private Thread Settings (Bot)', {
+                'fields': ('Forum_Channel_ID',)
+            }))
+
+            # Find the index of Inactivity Check to insert Discord Link Check after it
+            idx = 0
+            for i, (name, _) in enumerate(fieldsets):
+                if name == 'Inactivity Check':
+                    idx = i + 1
+                    break
+
+            fieldsets.insert(idx, ('Discord Link Check', {
+                'fields': ('discord_check_enabled', 'discord_check', 'discord_check_frequency', 'discord_check_reason', 'discord_check_reminder')
+            }))
+
+        if afat_active():
+            fieldsets.append(('PAP Compliance Check', {
+                'fields': ('paps_check_enabled', 'max_months_without_pap_compliance', 'starting_pap_compliance', 'paps_check', 'paps_check_frequency', 'paps_check_reason', 'paps_check_reminder')
+            }))
+
+        return fieldsets
+
+    def get_form(self, request, obj=None, **kwargs):
+        form = super().get_form(request, obj, **kwargs)
+        if not discordbot_active():
+            from .models import TicketToolConfig
+            # Restrict choices if bot is not active
+            allowed_choices = [
+                (TicketToolConfig.TICKET_TYPE_FORUM_THREAD, 'Public Forum Threads (Webhook)'),
+                (TicketToolConfig.TICKET_TYPE_AUTH_ONLY, 'Auth Only (No Discord)'),
+            ]
+            form.base_fields['ticket_type'].choices = allowed_choices
+        return form
+
     def has_add_permission(self, request):
         """Prevent duplicate ticket config entries."""
         if TicketToolConfig.objects.exists():  # Ticket config should remain singleton.
@@ -365,10 +423,53 @@ class UserStatusConfig(admin.ModelAdmin):
     list_display = ["user", "updated"]
 
 
+class ReasonFilter(admin.SimpleListFilter):
+    title = 'reason'
+    parameter_name = 'reason'
+
+    def lookups(self, request, model_admin):
+        from .models import ComplianceTicket
+        reasons = list(ComplianceTicket.REASONS)
+        if not afat_active():
+            reasons = [r for r in reasons if r[0] != "paps_check"]
+        if not discordbot_active():
+            reasons = [r for r in reasons if r[0] != "discord_check"]
+        return reasons
+
+    def queryset(self, request, queryset):
+        if self.value():
+            return queryset.filter(reason=self.value())
+        return queryset
+
+
 @admin.register(ComplianceTicket)
 class ComplianceTicketConfig(admin.ModelAdmin):
     """History of tickets issued by the automation layer."""
-    list_display = ["user", "ticket_id", "reason"]
+    list_display = ["user", "ticket_id", "reason", "is_resolved"]
+    list_filter = ["is_resolved", ReasonFilter]
+
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        if not afat_active():
+            qs = qs.exclude(reason="paps_check")
+        if not discordbot_active():
+            qs = qs.exclude(reason="discord_check")
+        return qs
+
+
+@admin.register(ComplianceThread)
+class ComplianceThreadAdmin(admin.ModelAdmin):
+    """Mapping of user/reason to Discord thread IDs."""
+    list_display = ["user", "reason", "thread_id"]
+    list_filter = [ReasonFilter]
+
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        if not afat_active():
+            qs = qs.exclude(reason="paps_check")
+        if not discordbot_active():
+            qs = qs.exclude(reason="discord_check")
+        return qs
 
 
 @admin.register(LeaveRequest)

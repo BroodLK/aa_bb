@@ -24,7 +24,9 @@ try:
     from aadiscordbot.tasks import run_task_function
     from aadiscordbot.utils.auth import get_discord_user_id
 except ImportError:
-    logger.error("✅  [AA-BB] - [Signals] - aadiscordbot not installed, signaling won't work.")
+    run_task_function = None
+    get_discord_user_id = None
+    logger.info("✅  [AA-BB] - [Signals] - aadiscordbot not installed, signaling will use fallbacks.")
 
 @receiver(post_save, sender=BigBrotherConfig)
 @receiver(post_save, sender=TicketToolConfig)
@@ -43,7 +45,6 @@ def removed_character(sender, instance, **kwargs):
         return
     try:
         character = instance.character
-        discord_id = get_discord_user_id(instance.user)
         bb_cfg = BigBrotherConfig.get_solo()
         member_states = bb_cfg.bb_member_states.all()
         if instance.user.profile.state not in member_states:
@@ -56,26 +57,8 @@ def removed_character(sender, instance, **kwargs):
             if not main_char or main_char.corporation_id != bb_cfg.main_corporation_id:
                 return
 
-        tcfg = TicketToolConfig.get_solo()
-        ticket_message = (
-            f"<@&{tcfg.Role_ID}>,<@{discord_id}> Auth lost access to your character "
-            f"{character}, this happens when the token used expires, which usually happens "
-            f"when you change your PW. Please fix it ASAP and get yourself a PW manager so "
-            f"you don't forget it again. (you'll need to do so on all 3 auths)"
-        )
-        send_status_embed(
-            subject="Ticket Created",
-            lines=[f"Ticket for **{instance.user}** created, reason - **Character Removed**"],
-            color=0xf1c40f,  # Yellow
-            hook=get_webhook_for_reason("char_removed")
-        )
-        run_task_function.apply_async(
-            args=["aa_bb.tasks_bot.create_compliance_ticket"],
-            kwargs={
-                "task_args": [instance.user.id, discord_id, "char_removed", ticket_message],
-                "task_kwargs": {},
-            },
-        )
+        from .tasks_tickets import ensure_ticket
+        ensure_ticket(instance.user, "char_removed", details=str(character))
 
     except Exception as e:
         logger.error("✅  [AA-BB] - [Signals] - Failed to create character-removed ticket: %s", e)

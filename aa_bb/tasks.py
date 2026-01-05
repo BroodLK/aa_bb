@@ -352,26 +352,8 @@ def BB_update_single_user(user_id, char_name):
                         if not limit_notifications and tcfg.awox_monitor_enabled and time_in_corp(
                             user_id) >= 1:  # guardrail: only fire tickets for monitored corps
                             try:
-                                try:
-                                    discord_id = get_discord_user_id(user_obj)
-
-                                    ticket_message = f"<@&{tcfg.Role_ID}>,<@{discord_id}> detection indicates your involvement in an AWOX kill, please explain:\n{attacker_link_list}"
-                                    send_status_embed(
-                                        subject="Ticket Created",
-                                        lines=[f"Ticket for **{status.user}** created, reason - **AWOX Kill**"],
-                                        color=0xf1c40f,  # Yellow
-                                    )
-                                    run_task_function.apply_async(
-                                        args=["aa_bb.tasks_bot.create_compliance_ticket"],
-                                        kwargs={
-                                            "task_args": [status.user.id, discord_id, "awox_kill", ticket_message],
-                                            "task_kwargs": {}
-                                        }
-                                    )
-                                except Exception as e:
-                                    logger.error(f"ℹ️  [AA-BB] - [BB_update_single_user] - {e}")
-                                    pass
-
+                                from .tasks_tickets import ensure_ticket
+                                ensure_ticket(status.user, "awox_kill", details=attacker_link_list)
                             except Exception as e:
                                 logger.error(f"ℹ️  [AA-BB] - [BB_update_single_user] - {e}")
                                 pass

@@ -103,6 +103,7 @@ class General(models.Model):
             ("can_manage_loa", _("Can manage Leave Of Absence requests")),
             ("can_access_paps", _("Can access PAP Stats")),
             ("can_generate_paps", _("Can generate PAP Stats")),
+            ("ticket_manager", _("Can manage compliance tickets")),
         )
 
 class UserStatus(models.Model):
@@ -152,6 +153,7 @@ class UserStatus(models.Model):
     sus_trans = JSONField(default=dict, blank=True)
     sp_age_ratio_result = JSONField(default=dict, blank=True)
     clone_status = JSONField(default=dict, blank=True)
+    compliance_forum_thread_id = models.BigIntegerField(null=True, blank=True)
     updated = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -1636,10 +1638,24 @@ class TicketToolConfig(SingletonModel):
         help_text="Do you want to check for removed characters?"
     )
 
+    char_removed_reason = models.TextField(
+        default="<@&{role}>,<@{namee}> Auth lost access to your character {details}, please fix it ASAP.",
+        blank=True,
+        null=True,
+        help_text="Message to send with {role}, {namee} and {details} variables"
+    )
+
     awox_monitor_enabled = models.BooleanField(
         default=False,
         editable=True,
         help_text="Do you want to check for awox kills?"
+    )
+
+    awox_kill_reason = models.TextField(
+        default="<@&{role}>,<@{namee}> detection indicates your involvement in an AWOX kill, please explain:\n{details}",
+        blank=True,
+        null=True,
+        help_text="Message to send with {role}, {namee} and {details} variables"
     )
 
     corp_check_enabled = models.BooleanField(
@@ -1774,6 +1790,14 @@ class TicketToolConfig(SingletonModel):
         help_text="Category ID to create the tickets in"
     )
 
+    Forum_Channel_ID = models.PositiveBigIntegerField(
+        default=0,
+        null=True,
+        blank=True,
+        help_text=_("Channel ID to create threads in (for Bot-managed threads)"),
+        verbose_name=_("Forum/Thread Channel ID")
+    )
+
     staff_roles = models.TextField(
         blank=True,
         help_text="Comma-separated list of staff role IDs allowed on tickets"
@@ -1798,6 +1822,26 @@ class TicketToolConfig(SingletonModel):
         null=True,
         help_text=_("Discord webhook for creating forum threads for compliance issues (Fallback if discordbot is not installed)"),
         verbose_name=_("HR Forum Webhook")
+    )
+
+    TICKET_TYPE_PRIVATE_CHANNEL = 'private_channel'
+    TICKET_TYPE_PRIVATE_THREAD = 'private_thread'
+    TICKET_TYPE_FORUM_THREAD = 'forum_thread'
+    TICKET_TYPE_AUTH_ONLY = 'auth_only'
+
+    TICKET_TYPE_CHOICES = [
+        (TICKET_TYPE_PRIVATE_CHANNEL, _('Private Channels (Legacy)')),
+        (TICKET_TYPE_PRIVATE_THREAD, _('Private Threads (Bot)')),
+        (TICKET_TYPE_FORUM_THREAD, _('Public Forum Threads (Webhook)')),
+        (TICKET_TYPE_AUTH_ONLY, _('Auth Only (No Discord)')),
+    ]
+
+    ticket_type = models.CharField(
+        max_length=20,
+        choices=TICKET_TYPE_CHOICES,
+        default=TICKET_TYPE_PRIVATE_CHANNEL,
+        help_text=_("Choose how compliance tickets are created. 'Private Threads' requires aadiscordbot."),
+        verbose_name=_("Ticket Type")
     )
 
     use_forum_threads = models.BooleanField(
@@ -2026,6 +2070,20 @@ class CharacterAccountState(models.Model):
         return f"{self.char_id} - {self.state}"
 
 
+class ComplianceThread(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='compliance_threads')
+    reason = models.CharField(max_length=20)
+    thread_id = models.BigIntegerField()
+
+    class Meta:
+        unique_together = ('user', 'reason')
+        verbose_name = "Compliance Thread"
+        verbose_name_plural = "Compliance Threads"
+
+    def __str__(self):
+        return f"Thread for {self.user} ({self.reason}): {self.thread_id}"
+
+
 class ComplianceTicket(models.Model):
     """
     Discord ticket metadata for compliance automation.
@@ -2043,13 +2101,13 @@ class ComplianceTicket(models.Model):
         ("paps_check", "PAP Requirements"),
         ("afk_check", "Inactivity"),
         ("discord_check", "User is not on discord"),
-        {"char_removed", "Character removed"},
-        {"awox_kill", "AWOX kill found"},
+        ("char_removed", "Character removed"),
+        ("awox_kill", "AWOX kill found"),
     ]
 
     user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
     discord_user_id = models.BigIntegerField()
-    discord_channel_id = models.BigIntegerField(null=True, blank=True)
+    discord_channel_id = models.BigIntegerField(null=True, blank=True, db_index=True)
     ticket_id = models.BigIntegerField(null=True, blank=True)
 
     reason = models.CharField(max_length=20, choices=REASONS)
@@ -2065,3 +2123,18 @@ class ComplianceTicket(models.Model):
 
     def __str__(self):
         return f"Ticket for {self.user} ({self.reason})"
+
+
+class ComplianceTicketComment(models.Model):
+    ticket = models.ForeignKey(ComplianceTicket, on_delete=models.CASCADE, related_name='comments')
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
+    comment = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Ticket Comment"
+        verbose_name_plural = "Ticket Comments"
+        ordering = ['created_at']
+
+    def __str__(self):
+        return f"Comment by {self.user} on {self.ticket}"

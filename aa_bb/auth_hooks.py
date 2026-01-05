@@ -154,6 +154,39 @@ def register_loa_urls():
     return UrlHook(urls_loa, "loa", r"^loa/")
 
 
+class TicketManagerMenuItem(MenuItemHook):
+    """Sidebar entry for ticket managers."""
+    def __init__(self):
+        super().__init__(
+            _("Compliance Tickets"),
+            "fas fa-ticket-alt",
+            "aa_bb:ticket_list",
+            navactive=["aa_bb:ticket_list", "aa_bb:ticket_view"],
+        )
+
+    def render(self, request):
+        """Show only to ticket managers."""
+        if request.user.has_perm("aa_bb.ticket_manager"):
+            from .models import ComplianceTicket
+            from .app_settings import afat_active, discordbot_active
+            qs = ComplianceTicket.objects.filter(is_resolved=False)
+            if not afat_active():
+                qs = qs.exclude(reason="paps_check")
+            if not discordbot_active():
+                qs = qs.exclude(reason="discord_check")
+            count = qs.count()
+            if count:
+                self.count = count
+            return super().render(request)
+        return ""
+
+
+@hooks.register("menu_item_hook")
+def register_ticket_manager_menu():
+    """Register the ticket management menu entry."""
+    return TicketManagerMenuItem()
+
+
 class PapsMenuItem(MenuItemHook):
     """Menu entry for PAP statistics, only shown when the module is active."""
     def __init__(self):
@@ -188,4 +221,7 @@ if afat_active():
 @hooks.register('discord_cogs_hook')
 def register_cogs():
     """Ensure aa_bb's Discord tasks cog is loaded by the bot runner."""
-    return ["aa_bb.tasks_bot"]
+    from .app_settings import discordbot_active
+    if discordbot_active():
+        return ["aa_bb.tasks_bot"]
+    return []

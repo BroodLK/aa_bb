@@ -9,8 +9,34 @@
 
 <h1>{% translate "TicketToolConfig Fields" %}</h1>
 <p>
-  {% blocktrans %}<code>TicketToolConfig</code> powers automated compliance tickets created by the Discord bot and background tasks. Configure it from Django admin → BigBrother → TicketToolConfig before enabling the ticket pipeline.{% endblocktrans %}
+  {% blocktrans %}<code>TicketToolConfig</code> powers automated compliance tickets created by the Discord bot, webhooks or background tasks. Configure it from Django admin → BigBrother → TicketToolConfig before enabling the ticket pipeline.{% endblocktrans %}
 </p>
+
+<h2 class="mt-4">{% translate "Ticket Mode & Webhooks" %}</h2>
+<div class="table-responsive">
+  <table class="table table-striped">
+    <thead>
+      <tr>
+        <th>{% translate "Field" %}</th>
+        <th>{% translate "Description" %}</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>ticket_type</code></td>
+        <td>{% translate "Determines the delivery method for compliance tickets: Private Channels, Private Threads, Public Forum Threads (Webhook), or Auth Only." %}</td>
+      </tr>
+      <tr>
+        <td><code>hr_forum_webhook</code></td>
+        <td>{% translate "Discord webhook URL used for creating forum threads when 'Public Forum Threads' is selected or as a fallback if the bot is unavailable." %}</td>
+      </tr>
+      <tr>
+        <td><code>use_forum_threads</code></td>
+        <td>{% translate "Forces the use of forum threads via webhook even if the bot is installed." %}</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
 
 <h2 class="mt-4">{% translate "General Filters & Counters" %}</h2>
 <div class="table-responsive">
@@ -30,6 +56,7 @@
         <td><code>ticket_counter</code></td>
         <td>{% translate "Auto-incrementing number used in ticket channel names. Read-only in admin." %}</td>
       </tr>
+      {% if is_afat %}
       <tr>
         <td><code>max_months_without_pap_compliance</code></td>
         <td>{% translate "Upper bound on compliance points a pilot can accumulate. Falling to zero triggers a PAP ticket." %}</td>
@@ -38,13 +65,36 @@
         <td><code>starting_pap_compliance</code></td>
         <td>{% translate "Initial compliance points granted when someone joins the corp." %}</td>
       </tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>
+
+<h2 class="mt-4">{% translate "Other Event Checks" %}</h2>
+<div class="table-responsive">
+  <table class="table table-striped">
+    <thead>
+      <tr>
+        <th>{% translate "Field" %}</th>
+        <th>{% translate "Description" %}</th>
+      </tr>
+    </thead>
+    <tbody>
       <tr>
         <td><code>char_removed_enabled</code></td>
         <td>{% translate "Enable tickets when characters are removed from auth without being replaced." %}</td>
       </tr>
       <tr>
+        <td><code>char_removed_reason</code></td>
+        <td>{% translate "Initial message template for character removal. Supports <code>{role}</code>, <code>{namee}</code>, and <code>{details}</code>." %}</td>
+      </tr>
+      <tr>
         <td><code>awox_monitor_enabled</code></td>
         <td>{% translate "Create tickets if AWOX kills are detected for the user." %}</td>
+      </tr>
+      <tr>
+        <td><code>awox_kill_reason</code></td>
+        <td>{% translate "Initial message template for AWOX kills. Supports <code>{role}</code>, <code>{namee}</code>, and <code>{details}</code>." %}</td>
       </tr>
     </tbody>
   </table>
@@ -84,6 +134,7 @@
   </table>
 </div>
 
+{% if is_afat %}
 <h2 class="mt-4">{% translate "PAP Compliance Monitoring" %}</h2>
 <div class="table-responsive">
   <table class="table table-striped">
@@ -117,6 +168,7 @@
     </tbody>
   </table>
 </div>
+{% endif %}
 
 <h2 class="mt-4">{% translate "AFK Monitoring" %}</h2>
 <div class="table-responsive">
@@ -156,6 +208,7 @@
   </table>
 </div>
 
+{% if is_bot %}
 <h2 class="mt-4">{% translate "Discord Linking" %}</h2>
 <div class="table-responsive">
   <table class="table table-striped">
@@ -190,7 +243,7 @@
   </table>
 </div>
 
-<h2 class="mt-4">{% translate "Ticket Channel Settings" %}</h2>
+<h2 class="mt-4">{% translate "Ticket Bot Settings" %}</h2>
 <div class="table-responsive">
   <table class="table table-striped">
     <thead>
@@ -205,6 +258,10 @@
         <td>{% translate "Discord category ID where new ticket channels should be created." %}</td>
       </tr>
       <tr>
+        <td><code>Forum_Channel_ID</code></td>
+        <td>{% translate "Discord channel ID where bot-managed threads should be created." %}</td>
+      </tr>
+      <tr>
         <td><code>staff_roles</code></td>
         <td>{% translate "Comma-separated list of Discord role IDs allowed to view ticket channels." %}</td>
       </tr>
@@ -212,6 +269,21 @@
         <td><code>Role_ID</code></td>
         <td>{% translate "Optional role ID pinged in every new ticket alongside the pilot." %}</td>
       </tr>
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<h2 class="mt-4">{% translate "Exclusions" %}</h2>
+<div class="table-responsive">
+  <table class="table table-striped">
+    <thead>
+      <tr>
+        <th>{% translate "Field" %}</th>
+        <th>{% translate "Description" %}</th>
+      </tr>
+    </thead>
+    <tbody>
       <tr>
         <td><code>excluded_users</code></td>
         <td>{% translate "Users ignored by automated checks and never given tickets." %}</td>

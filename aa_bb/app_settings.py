@@ -1607,6 +1607,11 @@ def afat_active():
     return apps.is_installed("afat")
 
 
+def discordbot_active():
+    """Return True when the aadiscordbot plugin is loaded in this deployment."""
+    return apps.is_installed("aadiscordbot")
+
+
 _webhook_history = deque()  # stores timestamp floats of last webhook sends
 _channel_history = deque()  # stores timestamp floats of last channel sends
 
@@ -1711,7 +1716,7 @@ def send_message(message, hook: str = None):
                     )
 
                 response.raise_for_status()
-                return
+                return response
 
             except requests.exceptions.HTTPError:
                 if response.status_code == 429:
@@ -1752,8 +1757,7 @@ def send_message(message, hook: str = None):
                 "[WEBHOOK] sending embed payload | embeds=%d",
                 len(message.get("embeds", [])),
             )
-        _post_with_retries(message)
-        return
+        return _post_with_retries(message)
 
     # message is str
     if VERBOSE_WEBHOOK_LOGGING:
@@ -1763,8 +1767,7 @@ def send_message(message, hook: str = None):
         )
 
     if len(message) <= MAX_LEN:
-        _post_with_retries({"content": message})
-        return
+        return _post_with_retries({"content": message})
 
     # Chunking path
     logger.info(
@@ -1967,8 +1970,13 @@ def _chunk_embed_lines(lines, max_chars=1900):
         else:
             # Add segment to current chunk
             if current_chunk:
-                current_chunk.append("")  # ensure a blank line between segments
-                current_len += 1
+                # Add a blank line between segments, unless the next segment is a
+                # list item or we already have a spacer to avoid extra gaps.
+                if (current_chunk[-1] != ""
+                    and seg[0] != ""
+                    and not seg[0].startswith(("- ", "* ", "  - ", "  * "))):
+                    current_chunk.append("")
+                    current_len += 1
             current_chunk.extend(seg)
             current_len += len(seg_text)
 

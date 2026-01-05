@@ -1,12 +1,21 @@
 
 ## [3.2.6] -
-- Fix issue where users were reported for having hostile standings towards hostiles.
-- Fix issue where Recurring Stats Webhook did not fall back if left empty to the main webhook.
-- Added Discord Forum Webhook fallback for compliance tickets when `aadiscordbot` is not installed.
-- Added a toggle to allow users to force compliance tickets to be created as forum threads, even if `aadiscordbot` is installed.
-- Added a way to resolve and close tickets by responding with "!resolved", in the ticket channel/thread (requires staff permissions).
-- Added `/resolve-ticket` slash command for compliance tickets.
-- Fix issue where clones and assets in friendly citadels were incorrectly flagged as hostile in hostile systems.
+- Fixed issue where users were reported for having hostile standings towards hostiles.
+- Fixed issue where Recurring Stats Webhook did not fall back if left empty to the main webhook.
+- Fixed issue where clones and assets in friendly citadels were incorrectly flagged as hostile in hostile systems.
+- Improved Discord message formatting to remove redundant vertical space in bulleted lists.
+- Made `aadiscordbot` an optional dependency.
+   - Hidden `aa-afat` and `aadiscordbot` specific compliance settings and UI elements when the respective apps are not installed.
+- Tickets
+   - Added support for Private Channels (via Bot), Private Threads (via Bot), Public Forum Threads (via Webhook), and Auth-Only ticket modes.
+      - Threads persist and are not deleted, instead they are archived or closed.
+      - They are reopened if the same user has the same issue again.
+      - New threads are created per user and per issue, so one user may have multiple active issues.
+    - Auth based UI for managing tickets allows users who do not have `aadiscordbot` installed, or users who simply dont want to use Discord, to manage tickets
+       - Messages sent in Discord ticket channel/thread(s) are now relayed back to the Auth UI, and staff comments made in Auth are automatically forwarded to the corresponding Discord channel/thread(s). (via Bot)
+    - Added !resolved and /resolve-ticket commands to allow staff to archive or close ticket channels and threads directly from Discord. (via Bot)
+    - Added configurable message templates for AWOX kills and Character Removal events in the TicketToolConfig.
+    - Fixed an issue where ticket reminders were sent every hour; they now correctly respect the configured daily interval.
 
 ## [3.2.5] - 2025-12-28
 - More robust hostile state handling, with the ability to add everyone who is not friendly to the hostile state.

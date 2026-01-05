@@ -38,7 +38,7 @@ except ImportError:
         return []
 
 from .models import BigBrotherConfig, TicketToolConfig, PapCompliance, LeaveRequest, ComplianceTicket
-from .app_settings import get_user_profiles, get_character_id, send_status_embed, _chunk_embed_lines, send_message
+from .app_settings import get_user_profiles, get_character_id, send_status_embed, _chunk_embed_lines, send_message, afat_active, discordbot_active
 
 User = get_user_model()
 
@@ -79,7 +79,7 @@ def paps_check(user):
     Returns True when PAP checks are disabled, the user has an LoA pending, or
     their PapCompliance row indicates compliance.
     """
-    if not TicketToolConfig.get_solo().paps_check_enabled:  # Globally disabled -> compliant.
+    if not afat_active() or not TicketToolConfig.get_solo().paps_check_enabled:  # Globally disabled -> compliant.
         return True
     lr_qs = LeaveRequest.objects.filter(
             user=user,
@@ -151,7 +151,7 @@ def discord_check(user):
     """
     Ensure the user has authenticated a Discord account if the feature is enabled.
     """
-    if not TicketToolConfig.get_solo().discord_check_enabled:  # Disabled toggle permits everyone.
+    if not discordbot_active() or not TicketToolConfig.get_solo().discord_check_enabled:  # Disabled toggle permits everyone.
         return True
     try:
         discord_id = get_discord_user_id(user)
@@ -195,17 +195,19 @@ def hourly_compliance_check():
 
     reason_checkers = {
         "corp_check": (corp_check, t_cfg.corp_check_reason),
-        "paps_check": (paps_check, t_cfg.paps_check_reason),
         "afk_check": (afk_check, t_cfg.afk_check_reason),
         "discord_check": (discord_check, t_cfg.discord_check_reason),
     }
 
     reminder_messages = {
         "corp_check": t_cfg.corp_check_reminder,
-        "paps_check": t_cfg.paps_check_reminder,
         "afk_check": t_cfg.afk_check_reminder,
         "discord_check": t_cfg.discord_check_reminder,
     }
+
+    if afat_active():
+        reason_checkers["paps_check"] = (paps_check, t_cfg.paps_check_reason)
+        reminder_messages["paps_check"] = t_cfg.paps_check_reminder
 
     now = timezone.now()
 
@@ -239,7 +241,7 @@ def hourly_compliance_check():
             notifications_by_hook[hook_url] = []
         notifications_by_hook[hook_url].append(msg)
 
-    tickets_qs = ComplianceTicket.objects.all()
+    tickets_qs = ComplianceTicket.objects.filter(is_resolved=False)
     if bb_cfg.limit_to_main_corp:
         tickets_qs = tickets_qs.filter(user__profile__main_character__corporation_id=bb_cfg.main_corporation_id)
 
@@ -247,13 +249,8 @@ def hourly_compliance_check():
         reason = ticket.reason
         hook = get_webhook_for_reason(reason)
 
-        if reason == "char_removed" or reason == "awox_kill":  # These rely on manual resolution flow.
-            logger.info(f"✅  [AA-BB] - [hourly_compliance_check] - reason:{reason}, resolved:{ticket.is_resolved}")
-            if ticket.is_resolved:  # Completed ticket can be closed out and announced.
-                logger.info(f"✅  [AA-BB] - [hourly_compliance_check] - reason:{reason}")
-                close_ticket(ticket)
-                if ticket_resolved_manually_notify:
-                    add_notification(hook, f"✅ Ticket for <@{ticket.discord_user_id}> (**{reason}**) resolved")
+        if reason == "char_removed" or reason == "awox_kill":
+            # These rely on manual resolution flow and currently have no automated reminders
             continue
 
         checker, _ = reason_checkers[reason]
@@ -282,6 +279,12 @@ def hourly_compliance_check():
         if days_elapsed <= 0:  # Do not send reminders on the same day ticket was created.
             continue  # don't ping on creation day
 
+        # Check frequency BEFORE checking escalation or sending reminders
+        freq_days = reminder_frequency.get(reason, 1)
+        last_day_pinged = ticket.last_reminder_sent or 0
+        if (days_elapsed - last_day_pinged) < freq_days:
+            continue
+
         max_dayss = max_days.get(reason, 30)
         if days_elapsed > max_dayss:  # Escalate when overdue beyond max window.
             # escalation: ping staff role to kick the user
@@ -291,22 +294,22 @@ def hourly_compliance_check():
                    f"Issue **{reason}** has exceeded {max_dayss} days without resolution. "
                    f"Consider kicking this user.")
 
-            run_task_function.apply_async(
-                args=["aa_bb.tasks_bot.send_ticket_reminder"],
-                kwargs={
-                    "task_args": [ticket.discord_channel_id, ticket.discord_user_id, msg],
-                    "task_kwargs": {}
-                }
-            )
+            if run_task_function:
+                run_task_function.apply_async(
+                    args=["aa_bb.tasks_bot.send_ticket_reminder"],
+                    kwargs={
+                        "task_args": [ticket.discord_channel_id, ticket.discord_user_id, msg],
+                        "task_kwargs": {}
+                    },
+                    queue='aadiscordbot'
+                )
+
+            # Mark as reminded
+            ticket.last_reminder_sent = days_elapsed
+            ticket.save(update_fields=["last_reminder_sent"])
             continue
 
-        # last_reminder_sent stores the last day number that was pinged
-        freq_days = reminder_frequency.get(reason, 1)
-        last_day_pinged = ticket.last_reminder_sent or 0
-        if (days_elapsed - last_day_pinged) < freq_days:  # Respect reminder spacing.
-            continue  # not time to remind yet
-
-        # Build the message: mention the user + role + days left
+        # Build the normal reminder message: mention the user + role + days left
         days_left = max_dayss - days_elapsed
         mention = f"{ticket.discord_user_id}"
         template = reminder_messages[reason]  # must support {namee}, {role}, {days}
@@ -316,14 +319,15 @@ def hourly_compliance_check():
             msg = template.format(namee=mention, role=t_cfg.Role_ID, days=days_left)
 
         # Queue the bot-side reminder (ensure task_kwargs is present)
-        run_task_function.apply_async(
-            args=["aa_bb.tasks_bot.send_ticket_reminder"],
-            kwargs={
-                "task_args": [ticket.discord_channel_id, ticket.discord_user_id, msg],
-                "task_kwargs": {}
-            },
-            queue='aadiscordbot'
-        )
+        if run_task_function:
+            run_task_function.apply_async(
+                args=["aa_bb.tasks_bot.send_ticket_reminder"],
+                kwargs={
+                    "task_args": [ticket.discord_channel_id, ticket.discord_user_id, msg],
+                    "task_kwargs": {}
+                },
+                queue='aadiscordbot'
+            )
 
         # Mark today as reminded so the system does not ping again today
         ticket.last_reminder_sent = days_elapsed
@@ -355,7 +359,7 @@ def hourly_compliance_check():
         pass
 
 
-def ensure_ticket(user, reason):
+def ensure_ticket(user, reason, details=None):
     """
     Guarantee there is an open compliance ticket for the given user/reason pair.
 
@@ -366,10 +370,18 @@ def ensure_ticket(user, reason):
     max_afk_days = tcfg.Max_Afk_Days
     reason_checkers = {
         "corp_check": (corp_check, tcfg.corp_check_reason),
-        "paps_check": (paps_check, tcfg.paps_check_reason),
         "afk_check": (afk_check, tcfg.afk_check_reason),
         "discord_check": (discord_check, tcfg.discord_check_reason),
+        "char_removed": (None, tcfg.char_removed_reason),
+        "awox_kill": (None, tcfg.awox_kill_reason),
     }
+    if afat_active():
+        reason_checkers["paps_check"] = (paps_check, tcfg.paps_check_reason)
+
+    if reason == "paps_check" and not afat_active():
+        logger.warning(f"Attempted to create PAPs ticket but afat is not active.")
+        return
+
     try:
         if get_discord_user_id:
             discord_id = get_discord_user_id(user)
@@ -383,6 +395,8 @@ def ensure_ticket(user, reason):
         elif reason == "discord_check":  # Discord-specific template uses username, not Discord mention.
             username = user.username
             ticket_message = msg_template.format(namee=username, role=tcfg.Role_ID, days=max_afk_days)
+        elif reason in ["char_removed", "awox_kill"]:
+            ticket_message = msg_template.format(namee=discord_id, role=tcfg.Role_ID, details=details)
         else:
             ticket_message = msg_template.format(namee=discord_id, role=tcfg.Role_ID)
     except NotAuthenticated:
@@ -430,6 +444,12 @@ def ensure_ticket(user, reason):
                 f"(no Discord linked!)\n\n"
                 f"{msg_template.format(namee=user.username, role=tcfg.Role_ID, days=max_afk_days)}"
             )
+        elif reason in ["char_removed", "awox_kill"]:
+            ticket_message = (
+                f"⚠️ Compliance issue for **{user.username}** "
+                f"(no Discord linked!)\n\n"
+                f"{msg_template.format(namee=user.username, role=tcfg.Role_ID, details=details)}"
+            )
         else:
             ticket_message = (
                 f"⚠️ Compliance issue for **{user.username}** "
@@ -449,44 +469,103 @@ def ensure_ticket(user, reason):
             hook=get_webhook_for_reason(reason)
         )
 
-        if tcfg.use_forum_threads and tcfg.hr_forum_webhook:
-            # Forced to use forum thread via toggle
-            self_use_forum = True
-        elif run_task_function:
-            # Use bot
-            self_use_forum = False
-        elif tcfg.hr_forum_webhook:
-            # Fallback for when aadiscordbot is missing: Forum thread via webhook
-            self_use_forum = True
-        else:
-            self_use_forum = False
+        ticket_type = tcfg.ticket_type
 
-        if self_use_forum:
-            # Forum thread via webhook
-            main_char = getattr(user.profile, "main_character", None)
-            char_id = main_char.character_id if main_char else 0
+        # Fallback logic if bot is missing
+        if not run_task_function and ticket_type in [TicketToolConfig.TICKET_TYPE_PRIVATE_CHANNEL, TicketToolConfig.TICKET_TYPE_PRIVATE_THREAD]:
+            if tcfg.hr_forum_webhook:
+                ticket_type = TicketToolConfig.TICKET_TYPE_FORUM_THREAD
+            else:
+                ticket_type = TicketToolConfig.TICKET_TYPE_AUTH_ONLY
 
-            # Append AA link as requested in the snippet
-            content = f"{ticket_message}\n\nAA Link: {settings.SITE_URL}/audit/r/{char_id}/account/status"
-
-            thread_body = {
-                "thread_name": user.username,
-                "content": content,
-            }
-            send_message(thread_body, hook=tcfg.hr_forum_webhook)
-
-            # Increment ticket counter
+        if ticket_type == TicketToolConfig.TICKET_TYPE_AUTH_ONLY:
+            # Create local record only
+            ComplianceTicket.objects.create(
+                user=user,
+                discord_user_id=0,
+                discord_channel_id=None,
+                reason=reason,
+                ticket_id=tcfg.ticket_counter
+            )
             tcfg.ticket_counter += 1
             tcfg.save()
+            return
+
+        from .models import ComplianceThread
+        thread_obj = ComplianceThread.objects.filter(user=user, reason=reason).first()
+        thread_id = thread_obj.thread_id if thread_obj else None
+
+        main_char = getattr(user.profile, "main_character", None)
+        char_name = main_char.character_name if main_char else user.username
+        char_id = main_char.character_id if main_char else 0
+
+        # Build thread name: Main Character - Reason (prettified)
+        reason_display = dict(ComplianceTicket.REASONS).get(reason, reason)
+        thread_name = f"{char_name} - {reason_display}"
+
+        content = f"{ticket_message}\n\nAA Link: {settings.SITE_URL}/audit/r/{char_id}/account/status"
+
+        if ticket_type == TicketToolConfig.TICKET_TYPE_FORUM_THREAD:
+            # Forum thread via webhook
+            if thread_id:
+                # Reuse existing thread
+                webhook_url = f"{tcfg.hr_forum_webhook}?thread_id={thread_id}"
+                send_message({"content": content}, hook=webhook_url)
+            else:
+                # Create new thread
+                thread_body = {
+                    "thread_name": thread_name,
+                    "content": content,
+                }
+                response = send_message(thread_body, hook=f"{tcfg.hr_forum_webhook}?wait=true")
+                if response:
+                    try:
+                        data = response.json()
+                        thread_id = data.get('id') or data.get('channel_id')
+                        if thread_id:
+                            ComplianceThread.objects.update_or_create(
+                                user=user, reason=reason,
+                                defaults={'thread_id': thread_id}
+                            )
+                    except Exception:
+                        logger.exception("Failed to parse thread ID from webhook")
 
             # Create local record
             ComplianceTicket.objects.create(
                 user=user,
                 discord_user_id=discord_id,
+                discord_channel_id=thread_id,
                 reason=reason,
                 ticket_id=tcfg.ticket_counter
             )
-        elif run_task_function:
+            tcfg.ticket_counter += 1
+            tcfg.save()
+
+            if run_task_function and thread_id:
+                run_task_function.apply_async(
+                    args=["aa_bb.tasks_bot.unarchive_thread"],
+                    kwargs={
+                        "task_args": [thread_id],
+                        "task_kwargs": {}
+                    },
+                    queue='aadiscordbot'
+                )
+
+        elif ticket_type == TicketToolConfig.TICKET_TYPE_PRIVATE_THREAD:
+            # Private thread via bot
+            run_task_function.apply_async(
+                args=["aa_bb.tasks_bot.create_compliance_thread"],
+                kwargs={
+                    "task_args": [user.id, discord_id, reason, ticket_message, thread_name, thread_id],
+                    "task_kwargs": {}
+                },
+                queue='aadiscordbot'
+            )
+            tcfg.ticket_counter += 1
+            tcfg.save()
+
+        elif ticket_type == TicketToolConfig.TICKET_TYPE_PRIVATE_CHANNEL:
+            # Legacy Private Channel
             run_task_function.apply_async(
                 args=["aa_bb.tasks_bot.create_compliance_ticket"],
                 kwargs={
@@ -495,11 +574,13 @@ def ensure_ticket(user, reason):
                 },
                 queue='aadiscordbot'
             )
+            tcfg.ticket_counter += 1
+            tcfg.save()
 
 
 def close_ticket(ticket):
-    """Close the Discord compliance ticket and delete it locally."""
-    if run_task_function:
+    """Close the Discord compliance ticket and mark it resolved locally."""
+    if run_task_function and ticket.discord_channel_id:
         run_task_function.apply_async(
             args=["aa_bb.tasks_bot.close_ticket_channel"],
             kwargs={
@@ -508,7 +589,8 @@ def close_ticket(ticket):
             },
             queue='aadiscordbot'
         )
-    ticket.delete()
+    ticket.is_resolved = True
+    ticket.save(update_fields=["is_resolved"])
 
 
 def close_char_removed_ticket(ticket):
