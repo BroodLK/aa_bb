@@ -18,8 +18,7 @@
     - Fixed an issue where ticket reminders were sent every hour; they now correctly respect the configured daily interval.
     - Added a background tracker that monitors the last message sent by users on Discord.
     - Discord Inactivity Check: New compliance check that can trigger tickets if a user has not spoken on Discord for a configured number of days.
-    - Improved TicketToolConfig admin layout with conditional field visibility and better descriptions for all compliance checks.
-
+    - Ability to either include, or not, the offending users in all tickets.
 ## [3.2.5] - 2025-12-28
 - More robust hostile state handling, with the ability to add everyone who is not friendly to the hostile state.
 - More robust awox handling

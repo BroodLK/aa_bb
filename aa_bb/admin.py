@@ -297,7 +297,7 @@ class TicketToolConfigAdmin(SingletonModelAdmin):
     def get_fieldsets(self, request, obj=None):
         fieldsets = [
             (None, {
-                'fields': ('ticket_type', 'hr_forum_webhook', 'Forum_Channel_ID', 'ticket_counter', 'excluded_users')
+                'fields': ('ticket_type', 'Role_ID', 'hr_forum_webhook', 'Forum_Channel_ID', 'ticket_counter', 'excluded_users')
             }),
             ('Corp Compliance Check', {
                 'fields': ('corp_check_enabled', 'corp_check_include_user', 'corp_check', 'corp_check_frequency', 'corp_check_reason', 'corp_check_reminder')
@@ -308,14 +308,17 @@ class TicketToolConfigAdmin(SingletonModelAdmin):
             ('Discord Inactivity Check', {
                 'fields': ('discord_inactivity_enabled', 'discord_inactivity_include_user', 'discord_inactivity_days', 'discord_inactivity_reason')
             }),
-            ('Other Event Checks', {
-                'fields': ('char_removed_enabled', 'char_removed_include_user', 'char_removed_reason', 'awox_monitor_enabled', 'awox_kill_include_user', 'awox_kill_reason')
+            ('Character Removal Check', {
+                'fields': ('char_removed_enabled', 'char_removed_include_user', 'char_removed_reason')
+            }),
+            ('AWOX Check', {
+                'fields': ('awox_monitor_enabled', 'awox_kill_include_user', 'awox_kill_reason')
             }),
         ]
 
         if discordbot_active():
             fieldsets.insert(1, ('Private Channel Settings (Bot)', {
-                'fields': ('Category_ID', 'staff_roles', 'Role_ID')
+                'fields': ('Category_ID', 'staff_roles')
             }))
 
             # Find the index of Inactivity Check to insert Discord Link Check after it

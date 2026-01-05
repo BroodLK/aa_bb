@@ -27,6 +27,10 @@
         <td>{% translate "Determines the delivery method for compliance tickets: Private Channels, Private Threads, Public Forum Threads (Webhook), or Auth Only." %}</td>
       </tr>
       <tr>
+        <td><code>Role_ID</code></td>
+        <td>{% translate "Optional role ID pinged in every new ticket alongside the pilot." %}</td>
+      </tr>
+      <tr>
         <td><code>hr_forum_webhook</code></td>
         <td>{% translate "Discord webhook URL used for creating forum threads when 'Public Forum Threads' is selected or as a fallback if the bot is unavailable." %}</td>
       </tr>
@@ -42,10 +46,6 @@
       <tr>
         <td><code>staff_roles</code></td>
         <td>{% translate "Comma-separated list of Discord role IDs allowed to view ticket channels and resolve threads." %}</td>
-      </tr>
-      <tr>
-        <td><code>Role_ID</code></td>
-        <td>{% translate "Optional role ID pinged in every new ticket alongside the pilot." %}</td>
       </tr>
       {% endif %}
     </tbody>
@@ -260,7 +260,7 @@
 </div>
 {% endif %}
 
-<h2 class="mt-4">{% translate "Other Event Checks" %}</h2>
+<h2 class="mt-4">{% translate "Character Removal Check" %}</h2>
 <div class="table-responsive">
   <table class="table table-striped">
     <thead>
@@ -282,6 +282,20 @@
         <td><code>char_removed_reason</code></td>
         <td>{% translate "Initial message template for character removal. Supports <code>{role}</code>, <code>{namee}</code>, and <code>{details}</code>." %}</td>
       </tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 class="mt-4">{% translate "AWOX Check" %}</h2>
+<div class="table-responsive">
+  <table class="table table-striped">
+    <thead>
+      <tr>
+        <th>{% translate "Field" %}</th>
+        <th>{% translate "Description" %}</th>
+      </tr>
+    </thead>
+    <tbody>
       <tr>
         <td><code>awox_monitor_enabled</code></td>
         <td>{% translate "Create tickets if AWOX kills are detected for the user." %}</td>
