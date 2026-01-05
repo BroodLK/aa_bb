@@ -416,6 +416,17 @@ def ensure_ticket(user, reason, details=None):
         logger.warning(f"Attempted to create PAPs ticket but afat is not active.")
         return
 
+    include_user_flags = {
+        "corp_check": tcfg.corp_check_include_user,
+        "afk_check": tcfg.afk_check_include_user,
+        "discord_check": tcfg.discord_check_include_user,
+        "char_removed": tcfg.char_removed_include_user,
+        "awox_kill": tcfg.awox_kill_include_user,
+        "paps_check": getattr(tcfg, "paps_check_include_user", True) if afat_active() else True,
+        "discord_inactivity": tcfg.discord_inactivity_include_user,
+    }
+    include_user = include_user_flags.get(reason, True)
+
     try:
         if get_discord_user_id:
             discord_id = get_discord_user_id(user)
@@ -424,17 +435,22 @@ def ensure_ticket(user, reason, details=None):
 
         username = ""
         _, msg_template = reason_checkers[reason]
+        if not include_user:
+            msg_template = msg_template.replace("<@{namee}>", "{namee}")
+
+        namee_val = discord_id if include_user else user.username
+
         if reason == "afk_check":  # AFK templates expect {days}.
-            ticket_message = msg_template.format(namee=discord_id, role=tcfg.Role_ID, days=max_afk_days)
+            ticket_message = msg_template.format(namee=namee_val, role=tcfg.Role_ID, days=max_afk_days)
         elif reason == "discord_inactivity":
-            ticket_message = msg_template.format(namee=discord_id, role=tcfg.Role_ID, days=tcfg.discord_inactivity_days)
+            ticket_message = msg_template.format(namee=namee_val, role=tcfg.Role_ID, days=tcfg.discord_inactivity_days)
         elif reason == "discord_check":  # Discord-specific template uses username, not Discord mention.
             username = user.username
             ticket_message = msg_template.format(namee=username, role=tcfg.Role_ID, days=max_afk_days)
         elif reason in ["char_removed", "awox_kill"]:
-            ticket_message = msg_template.format(namee=discord_id, role=tcfg.Role_ID, details=details)
+            ticket_message = msg_template.format(namee=namee_val, role=tcfg.Role_ID, details=details)
         else:
-            ticket_message = msg_template.format(namee=discord_id, role=tcfg.Role_ID)
+            ticket_message = msg_template.format(namee=namee_val, role=tcfg.Role_ID)
     except NotAuthenticated:
         # User has no Discord → fall back to first superuser with Discord linked
         superusers = User.objects.filter(is_superuser=True)
@@ -598,7 +614,7 @@ def ensure_ticket(user, reason, details=None):
             run_task_function.apply_async(
                 args=["aa_bb.tasks_bot.create_compliance_thread"],
                 kwargs={
-                    "task_args": [user.id, discord_id, reason, ticket_message, thread_name, thread_id],
+                    "task_args": [user.id, discord_id, reason, ticket_message, thread_name, thread_id, include_user],
                     "task_kwargs": {}
                 },
                 queue='aadiscordbot'
@@ -611,7 +627,7 @@ def ensure_ticket(user, reason, details=None):
             run_task_function.apply_async(
                 args=["aa_bb.tasks_bot.create_compliance_ticket"],
                 kwargs={
-                    "task_args": [user.id, discord_id, reason, ticket_message],
+                    "task_args": [user.id, discord_id, reason, ticket_message, include_user],
                     "task_kwargs": {}
                 },
                 queue='aadiscordbot'

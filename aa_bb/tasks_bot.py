@@ -83,7 +83,7 @@ def get_staff_roles():
         return []
     return [int(r.strip()) for r in cfg.staff_roles.split(",") if r.strip().isdigit()]
 
-async def create_compliance_ticket(bot, user_id, discord_user_id: int, reason: str, message: str):
+async def create_compliance_ticket(bot, user_id, discord_user_id: int, reason: str, message: str, include_user: bool = True):
     category_id = TicketToolConfig.get_solo().Category_ID
     guild = bot.guilds[0]  # or use a known guild_id if multi-guild
     # Find or create a category with capacity (auto-clone with -2/-3 if needed)
@@ -97,9 +97,11 @@ async def create_compliance_ticket(bot, user_id, discord_user_id: int, reason: s
 
     overwrites = {
         guild.default_role: discord.PermissionOverwrite(view_channel=False),
-        member: discord.PermissionOverwrite(view_channel=True, send_messages=True),
         guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, manage_channels=True),
     }
+
+    if include_user and member:
+        overwrites[member] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
 
     for rid in staff_roles:
         role = guild.get_role(rid)
@@ -128,7 +130,8 @@ async def create_compliance_ticket(bot, user_id, discord_user_id: int, reason: s
             color=discord.Color.from_rgb(241, 196, 15)  # Gold
         )
         if i == 0:
-            await channel.send(content=f"<@{discord_user_id}>", embed=embed)
+            content = f"<@{discord_user_id}>" if include_user and discord_user_id else None
+            await channel.send(content=content, embed=embed)
         else:
             await channel.send(embed=embed)
 
@@ -141,7 +144,7 @@ async def create_compliance_ticket(bot, user_id, discord_user_id: int, reason: s
     )
 
 
-async def create_compliance_thread(bot, user_id, discord_user_id: int, reason: str, message: str, thread_name: str, thread_id: int = None):
+async def create_compliance_thread(bot, user_id, discord_user_id: int, reason: str, message: str, thread_name: str, thread_id: int = None, include_user: bool = True):
     tcfg = TicketToolConfig.get_solo()
     parent_channel_id = tcfg.Forum_Channel_ID
     if not parent_channel_id:
@@ -189,7 +192,7 @@ async def create_compliance_thread(bot, user_id, discord_user_id: int, reason: s
 
             thread_with_msg = await parent_channel.create_thread(
                 name=thread_name,
-                content=f"<@{discord_user_id}>" if discord_user_id else None,
+                content=f"<@{discord_user_id}>" if include_user and discord_user_id else None,
                 embed=embed,
                 reason="Compliance ticket creation"
             )
@@ -222,7 +225,7 @@ async def create_compliance_thread(bot, user_id, discord_user_id: int, reason: s
                     color=discord.Color.from_rgb(241, 196, 15)  # Gold
                 )
                 if i == 0:
-                    await thread.send(content=f"<@{discord_user_id}>" if discord_user_id else None, embed=embed)
+                    await thread.send(content=f"<@{discord_user_id}>" if include_user and discord_user_id else None, embed=embed)
                 else:
                     await thread.send(embed=embed)
 
@@ -234,8 +237,8 @@ async def create_compliance_thread(bot, user_id, discord_user_id: int, reason: s
         )
         thread_id = thread.id
 
-    # Ensure user is in the thread if it's a private thread
-    if thread.type == discord.ChannelType.private_thread:
+    # Ensure user is in the thread if it's a private thread and included
+    if include_user and thread.type == discord.ChannelType.private_thread:
         try:
             member = guild.get_member(discord_user_id) or await guild.fetch_member(discord_user_id)
             if member:

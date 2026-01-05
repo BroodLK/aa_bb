@@ -1639,6 +1639,11 @@ class TicketToolConfig(SingletonModel):
         help_text="Do you want to check for removed characters?"
     )
 
+    char_removed_include_user = models.BooleanField(
+        default=True,
+        help_text=_("Include the user in the ticket (Discord channel/thread).")
+    )
+
     char_removed_reason = models.TextField(
         default="<@&{role}>,<@{namee}> Auth lost access to your character {details}, please fix it ASAP.",
         blank=True,
@@ -1652,6 +1657,11 @@ class TicketToolConfig(SingletonModel):
         help_text="Do you want to check for awox kills?"
     )
 
+    awox_kill_include_user = models.BooleanField(
+        default=True,
+        help_text=_("Include the user in the ticket (Discord channel/thread).")
+    )
+
     awox_kill_reason = models.TextField(
         default="<@&{role}>,<@{namee}> detection indicates your involvement in an AWOX kill, please explain:\n{details}",
         blank=True,
@@ -1663,6 +1673,11 @@ class TicketToolConfig(SingletonModel):
         default=False,
         editable=True,
         help_text=_("If enabled, checks if all of a user's characters have the required ESI tokens for the corporation compliance filter.")
+    )
+
+    corp_check_include_user = models.BooleanField(
+        default=True,
+        help_text=_("Include the user in the ticket (Discord channel/thread).")
     )
 
     corp_check = models.PositiveIntegerField(
@@ -1695,6 +1710,11 @@ class TicketToolConfig(SingletonModel):
         help_text=_("If enabled, checks if the user has met the minimum PAP/AFAT requirements (Integration with aa-afat).")
     )
 
+    paps_check_include_user = models.BooleanField(
+        default=True,
+        help_text=_("Include the user in the ticket (Discord channel/thread).")
+    )
+
     paps_check = models.PositiveIntegerField(
         default=45,
         help_text="How many days can a user not meet the PAP requirements before he should get kicked?"
@@ -1723,6 +1743,11 @@ class TicketToolConfig(SingletonModel):
         default=False,
         editable=True,
         help_text=_("If enabled, checks if any character on the user's account has logged into the game within the allowed timeframe.")
+    )
+
+    afk_check_include_user = models.BooleanField(
+        default=True,
+        help_text=_("Include the user in the ticket (Discord channel/thread).")
     )
 
     Max_Afk_Days = models.PositiveIntegerField(
@@ -1758,6 +1783,11 @@ class TicketToolConfig(SingletonModel):
         default=False,
         editable=True,
         help_text=_("If enabled, checks if the user has a Discord account linked to their Alliance Auth profile.")
+    )
+
+    discord_check_include_user = models.BooleanField(
+        default=True,
+        help_text=_("Include the user in the ticket (Discord channel/thread).")
     )
 
     discord_check = models.PositiveIntegerField(
@@ -1848,6 +1878,11 @@ class TicketToolConfig(SingletonModel):
     discord_inactivity_enabled = models.BooleanField(
         default=False,
         help_text=_("If enabled, a ticket will be created if a user hasn't sent a message on Discord for a certain number of days.")
+    )
+
+    discord_inactivity_include_user = models.BooleanField(
+        default=True,
+        help_text=_("Include the user in the ticket (Discord channel/thread).")
     )
 
     discord_inactivity_days = models.PositiveIntegerField(

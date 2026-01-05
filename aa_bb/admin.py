@@ -300,16 +300,16 @@ class TicketToolConfigAdmin(SingletonModelAdmin):
                 'fields': ('ticket_type', 'hr_forum_webhook', 'Forum_Channel_ID', 'ticket_counter', 'excluded_users')
             }),
             ('Corp Compliance Check', {
-                'fields': ('corp_check_enabled', 'corp_check', 'corp_check_frequency', 'corp_check_reason', 'corp_check_reminder')
+                'fields': ('corp_check_enabled', 'corp_check_include_user', 'corp_check', 'corp_check_frequency', 'corp_check_reason', 'corp_check_reminder')
             }),
             ('Inactivity Check', {
-                'fields': ('afk_check_enabled', 'Max_Afk_Days', 'afk_check', 'afk_check_frequency', 'afk_check_reason', 'afk_check_reminder')
+                'fields': ('afk_check_enabled', 'afk_check_include_user', 'Max_Afk_Days', 'afk_check', 'afk_check_frequency', 'afk_check_reason', 'afk_check_reminder')
             }),
             ('Discord Inactivity Check', {
-                'fields': ('discord_inactivity_enabled', 'discord_inactivity_days', 'discord_inactivity_reason')
+                'fields': ('discord_inactivity_enabled', 'discord_inactivity_include_user', 'discord_inactivity_days', 'discord_inactivity_reason')
             }),
             ('Other Event Checks', {
-                'fields': ('char_removed_enabled', 'char_removed_reason', 'awox_monitor_enabled', 'awox_kill_reason')
+                'fields': ('char_removed_enabled', 'char_removed_include_user', 'char_removed_reason', 'awox_monitor_enabled', 'awox_kill_include_user', 'awox_kill_reason')
             }),
         ]
 
@@ -326,12 +326,12 @@ class TicketToolConfigAdmin(SingletonModelAdmin):
                     break
 
             fieldsets.insert(idx, ('Discord Link Check', {
-                'fields': ('discord_check_enabled', 'discord_check', 'discord_check_frequency', 'discord_check_reason', 'discord_check_reminder')
+                'fields': ('discord_check_enabled', 'discord_check_include_user', 'discord_check', 'discord_check_frequency', 'discord_check_reason', 'discord_check_reminder')
             }))
 
         if afat_active():
             fieldsets.append(('PAP Compliance Check', {
-                'fields': ('paps_check_enabled', 'max_months_without_pap_compliance', 'starting_pap_compliance', 'paps_check', 'paps_check_frequency', 'paps_check_reason', 'paps_check_reminder')
+                'fields': ('paps_check_enabled', 'paps_check_include_user', 'max_months_without_pap_compliance', 'starting_pap_compliance', 'paps_check', 'paps_check_frequency', 'paps_check_reason', 'paps_check_reminder')
             }))
 
         return fieldsets
