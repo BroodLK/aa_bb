@@ -11,6 +11,8 @@ import logging
 from allianceauth.authentication.models import UserProfile
 
 from django.db import transaction
+from django.core.cache import cache
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
@@ -335,6 +337,9 @@ class TicketCommands(commands.Cog):
         if message.author.bot or not message.guild:
             return
 
+        # Track Discord activity quietly
+        await self._track_activity(message)
+
         # Check if this is a ticket channel/thread
         tickets = ComplianceTicket.objects.filter(
             discord_channel_id=message.channel.id,
@@ -373,6 +378,28 @@ class TicketCommands(commands.Cog):
                 user=auth_user,
                 comment=relay_content
             )
+
+    async def _track_activity(self, message: discord.Message):
+        """Update last_discord_message_at for the author, throttled to 1h."""
+        uid = message.author.id
+        cache_key = f"aa_bb_discord_activity_{uid}"
+
+        if not cache.get(cache_key):
+            from allianceauth.services.modules.discord.models import DiscordUser
+            from .models import UserStatus
+            try:
+                du = DiscordUser.objects.select_related('user').get(uid=uid)
+                UserStatus.objects.update_or_create(
+                    user=du.user,
+                    defaults={'last_discord_message_at': timezone.now()}
+                )
+                # Cache for 1 hour to avoid excessive DB writes
+                cache.set(cache_key, True, 3600)
+            except DiscordUser.DoesNotExist:
+                # Not a linked user, ignore
+                pass
+            except Exception:
+                logger.exception("Failed to track Discord activity for UID %s", uid)
 
     @slash_command(
         name="resolve-ticket",

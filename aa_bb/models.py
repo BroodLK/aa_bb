@@ -154,6 +154,7 @@ class UserStatus(models.Model):
     sp_age_ratio_result = JSONField(default=dict, blank=True)
     clone_status = JSONField(default=dict, blank=True)
     compliance_forum_thread_id = models.BigIntegerField(null=True, blank=True)
+    last_discord_message_at = models.DateTimeField(null=True, blank=True)
     updated = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -1661,7 +1662,7 @@ class TicketToolConfig(SingletonModel):
     corp_check_enabled = models.BooleanField(
         default=False,
         editable=True,
-        help_text="Do you want to check for corp auth compliance?"
+        help_text=_("If enabled, checks if all of a user's characters have the required ESI tokens for the corporation compliance filter.")
     )
 
     corp_check = models.PositiveIntegerField(
@@ -1691,7 +1692,7 @@ class TicketToolConfig(SingletonModel):
     paps_check_enabled = models.BooleanField(
         default=False,
         editable=True,
-        help_text="Do you want to check for pap requirement compliance?"
+        help_text=_("If enabled, checks if the user has met the minimum PAP/AFAT requirements (Integration with aa-afat).")
     )
 
     paps_check = models.PositiveIntegerField(
@@ -1721,7 +1722,7 @@ class TicketToolConfig(SingletonModel):
     afk_check_enabled = models.BooleanField(
         default=False,
         editable=True,
-        help_text="Do you want to check if the user logs into the game??"
+        help_text=_("If enabled, checks if any character on the user's account has logged into the game within the allowed timeframe.")
     )
 
     Max_Afk_Days = models.PositiveIntegerField(
@@ -1756,7 +1757,7 @@ class TicketToolConfig(SingletonModel):
     discord_check_enabled = models.BooleanField(
         default=False,
         editable=True,
-        help_text="Do you want to check for discord activity?"
+        help_text=_("If enabled, checks if the user has a Discord account linked to their Alliance Auth profile.")
     )
 
     discord_check = models.PositiveIntegerField(
@@ -1795,7 +1796,7 @@ class TicketToolConfig(SingletonModel):
         null=True,
         blank=True,
         help_text=_("Channel ID to create threads in (for Bot-managed threads)"),
-        verbose_name=_("Forum/Thread Channel ID")
+        verbose_name=_("Channel/Thread ID")
     )
 
     staff_roles = models.TextField(
@@ -1844,10 +1845,21 @@ class TicketToolConfig(SingletonModel):
         verbose_name=_("Ticket Type")
     )
 
-    use_forum_threads = models.BooleanField(
+    discord_inactivity_enabled = models.BooleanField(
         default=False,
-        help_text=_("If enabled, compliance tickets will be created as forum threads using the webhook above, even if aadiscordbot is installed."),
-        verbose_name=_("Use Forum Threads")
+        help_text=_("If enabled, a ticket will be created if a user hasn't sent a message on Discord for a certain number of days.")
+    )
+
+    discord_inactivity_days = models.PositiveIntegerField(
+        default=30,
+        help_text=_("Number of days of Discord inactivity before a ticket is created.")
+    )
+
+    discord_inactivity_reason = models.TextField(
+        default="<@&{role}>,{namee}, has been inactive on Discord for over {days} day(s).",
+        blank=True,
+        null=True,
+        help_text=_("Message to send with {role}, {namee} and {days} variables")
     )
 
     class Meta:
@@ -2103,6 +2115,7 @@ class ComplianceTicket(models.Model):
         ("discord_check", "User is not on discord"),
         ("char_removed", "Character removed"),
         ("awox_kill", "AWOX kill found"),
+        ("discord_inactivity", "Discord Inactivity"),
     ]
 
     user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)

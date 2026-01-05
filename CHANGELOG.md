@@ -16,6 +16,9 @@
     - Added !resolved and /resolve-ticket commands to allow staff to archive or close ticket channels and threads directly from Discord. (via Bot)
     - Added configurable message templates for AWOX kills and Character Removal events in the TicketToolConfig.
     - Fixed an issue where ticket reminders were sent every hour; they now correctly respect the configured daily interval.
+    - Added a background tracker that monitors the last message sent by users on Discord.
+    - Discord Inactivity Check: New compliance check that can trigger tickets if a user has not spoken on Discord for a configured number of days.
+    - Improved TicketToolConfig admin layout with conditional field visibility and better descriptions for all compliance checks.
 
 ## [3.2.5] - 2025-12-28
 - More robust hostile state handling, with the ability to add everyone who is not friendly to the hostile state.

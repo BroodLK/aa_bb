@@ -160,6 +160,35 @@ def discord_check(user):
     return True
 
 
+def discord_inactivity_check(user):
+    """
+    Check if the user has spoken on Discord within the configured timeframe.
+    """
+    tcfg = TicketToolConfig.get_solo()
+    if not discordbot_active() or not tcfg.discord_inactivity_enabled:
+        return True
+
+    from .models import UserStatus
+    status, _ = UserStatus.objects.get_or_create(user=user)
+
+    if not status.last_discord_message_at:
+        # If no message recorded, they might be inactive or we just started tracking.
+        # Initialize to now to avoid mass ticketing on feature activation.
+        try:
+            get_discord_user_id(user)
+            status.last_discord_message_at = timezone.now()
+            status.save(update_fields=['last_discord_message_at'])
+            return True
+        except Exception:
+            # Not on Discord, skip this check
+            return True
+
+    days_since = (timezone.now() - status.last_discord_message_at).days
+    if days_since >= tcfg.discord_inactivity_days:
+        return False
+    return True
+
+
 
 def get_webhook_for_reason(reason: str) -> Optional[str]:
     """Resolve which webhook URL to use based on the ticket reason."""
@@ -183,6 +212,7 @@ def hourly_compliance_check():
         "paps_check": t_cfg.paps_check,
         "afk_check": t_cfg.afk_check,
         "discord_check": t_cfg.discord_check,
+        "discord_inactivity": t_cfg.discord_inactivity_days,
     }
 
     # Per-reason reminder frequency (in days)
@@ -191,18 +221,21 @@ def hourly_compliance_check():
         "paps_check": t_cfg.paps_check_frequency,
         "afk_check": t_cfg.afk_check_frequency,
         "discord_check": t_cfg.discord_check_frequency,
+        "discord_inactivity": 1, # Default to 1 day
     }
 
     reason_checkers = {
         "corp_check": (corp_check, t_cfg.corp_check_reason),
         "afk_check": (afk_check, t_cfg.afk_check_reason),
         "discord_check": (discord_check, t_cfg.discord_check_reason),
+        "discord_inactivity": (discord_inactivity_check, t_cfg.discord_inactivity_reason),
     }
 
     reminder_messages = {
         "corp_check": t_cfg.corp_check_reminder,
         "afk_check": t_cfg.afk_check_reminder,
         "discord_check": t_cfg.discord_check_reminder,
+        "discord_inactivity": t_cfg.discord_inactivity_reason, # Use reason msg as reminder too if no dedicated field
     }
 
     if afat_active():
@@ -374,6 +407,7 @@ def ensure_ticket(user, reason, details=None):
         "discord_check": (discord_check, tcfg.discord_check_reason),
         "char_removed": (None, tcfg.char_removed_reason),
         "awox_kill": (None, tcfg.awox_kill_reason),
+        "discord_inactivity": (discord_inactivity_check, tcfg.discord_inactivity_reason),
     }
     if afat_active():
         reason_checkers["paps_check"] = (paps_check, tcfg.paps_check_reason)
@@ -392,6 +426,8 @@ def ensure_ticket(user, reason, details=None):
         _, msg_template = reason_checkers[reason]
         if reason == "afk_check":  # AFK templates expect {days}.
             ticket_message = msg_template.format(namee=discord_id, role=tcfg.Role_ID, days=max_afk_days)
+        elif reason == "discord_inactivity":
+            ticket_message = msg_template.format(namee=discord_id, role=tcfg.Role_ID, days=tcfg.discord_inactivity_days)
         elif reason == "discord_check":  # Discord-specific template uses username, not Discord mention.
             username = user.username
             ticket_message = msg_template.format(namee=username, role=tcfg.Role_ID, days=max_afk_days)
@@ -437,6 +473,12 @@ def ensure_ticket(user, reason, details=None):
                 f"⚠️ Compliance issue for **{user.username}** "
                 f"(no Discord linked!)\n\n"
                 f"{msg_template.format(namee=user.username, role=tcfg.Role_ID, days=max_afk_days)}"
+            )
+        elif reason == "discord_inactivity":
+            ticket_message = (
+                f"⚠️ Compliance issue for **{user.username}** "
+                f"(no Discord activity!)\n\n"
+                f"{msg_template.format(namee=user.username, role=tcfg.Role_ID, days=tcfg.discord_inactivity_days)}"
             )
         elif reason == "discord_check":  # Discord issues share the same format as AFK fallback.
             ticket_message = (
