@@ -39,8 +39,13 @@ try:
             Structure,
         )
     else:
-        raise ImportError("Corptools not installed")
+        CorporationAudit = None
+        CorporationWalletJournalEntry = None
+        CorporationMarketTransaction = None
+        Structure = None
 except ImportError:
+    CorporationAudit = None
+    CorporationWalletJournalEntry = None
     CorporationMarketTransaction = None
     Structure = None
 
@@ -250,7 +255,7 @@ def gather_user_transactions(corp_id: int):
 
     Parameter mirrors the member helper naming but expects a corporation id.
     """
-    if not corptools_active():
+    if not corptools_active() or CorporationWalletJournalEntry is None:
         from ..models import ProcessedTransaction
         return ProcessedTransaction.objects.none()
     try:

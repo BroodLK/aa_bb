@@ -66,9 +66,19 @@ try:
             CorporationWalletJournalEntry,
         )
     else:
-        raise ImportError("Corptools not installed")
+        get_alts_queryset = None
+        Contract = None
+        MailMessage = None
+        CorporateContract = None
+        CharacterWalletJournalEntry = None
+        CorporationWalletJournalEntry = None
 except ImportError:
-    pass
+    get_alts_queryset = None
+    Contract = None
+    MailMessage = None
+    CorporateContract = None
+    CharacterWalletJournalEntry = None
+    CorporationWalletJournalEntry = None
 
 from django.db import transaction, OperationalError
 from allianceauth.services.hooks import get_extension_logger

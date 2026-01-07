@@ -57,8 +57,10 @@ if aablacklist_active():
 try:
     if corptools_active():
         from corptools.models import Contract
+    else:
+        Contract = None
 except ImportError:
-    pass
+    Contract = None
 
 
 

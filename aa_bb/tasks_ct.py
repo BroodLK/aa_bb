@@ -51,9 +51,9 @@ try:
             update_char_location,
         )
     else:
-        raise ImportError("Corptools not installed")
+        CharacterAudit = None
 except ImportError:
-    pass
+    CharacterAudit = None
 
 
 @dataclass(frozen=True)
@@ -261,9 +261,9 @@ def kickstart_stale_ct_modules(days_stale: int = 2, limit: Optional[int] = None,
     Returns:
         Summary string announcing what was queued (and optionally posted to chat).
     """
-    if not corptools_active():
-        logger.error("✅  [AA-BB] - [kickstart_stale_ct_modules] - Corptools not installed, skipping.")
-        return "Corptools not installed"
+    if not corptools_active() or CharacterAudit is None:
+        logger.error("✅  [AA-BB] - [kickstart_stale_ct_modules] - Corptools not installed or models missing, skipping.")
+        return "Corptools not installed or models missing"
     instance = BigBrotherConfig.get_solo()
     if not instance.is_active:
         return "Big Brother is inactive."

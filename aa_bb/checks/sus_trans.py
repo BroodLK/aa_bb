@@ -42,7 +42,9 @@ try:
             Structure,
         )
     else:
-        raise ImportError("Corptools not installed")
+        WalletJournalEntry = None
+        CharacterMarketTransaction = None
+        Structure = None
 except ImportError:
     WalletJournalEntry = None
     CharacterMarketTransaction = None
@@ -267,7 +269,7 @@ def _find_alliance_at(history: list, date: datetime) -> Optional[int]:
 
 
 def gather_user_transactions(user_id: int):
-    if not corptools_active():
+    if not corptools_active() or WalletJournalEntry is None:
         from ..models import ProcessedTransaction
         return ProcessedTransaction.objects.none()
     user_chars = get_user_characters(user_id)

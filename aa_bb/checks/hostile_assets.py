@@ -29,8 +29,14 @@ logger = logging.getLogger(__name__)
 try:
     if corptools_active():
         from corptools.models import CharacterAudit, CharacterAsset, EveLocation
+    else:
+        CharacterAudit = None
+        CharacterAsset = None
+        EveLocation = None
 except ImportError:
-    pass
+    CharacterAudit = None
+    CharacterAsset = None
+    EveLocation = None
 
 
 def _parse_id_list(value: Optional[str]) -> set[int]:
@@ -44,7 +50,7 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
     Return a dict mapping system IDs to a dict containing their name and a list of locations
     (stations/structures) where any of the given user's characters has one or more assets.
     """
-    if not corptools_active():
+    if not corptools_active() or CharacterAudit is None:
         return {}
     try:
         user = User.objects.get(pk=user_id)

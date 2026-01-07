@@ -20,8 +20,16 @@ logger.setLevel(logging.DEBUG)
 try:
     if corptools_active():
         from corptools.models import CharacterAudit, Skill, SkillTotals, CorporationHistory
+    else:
+        CharacterAudit = None
+        Skill = None
+        SkillTotals = None
+        CorporationHistory = None
 except ImportError:
-    pass
+    CharacterAudit = None
+    Skill = None
+    SkillTotals = None
+    CorporationHistory = None
 
 _SKILLS_JSON_PATH = os.path.join(os.path.dirname(__file__), "skills.json")
 
@@ -75,7 +83,7 @@ def get_user_skill_info(user_id: int, skill_id: int) -> dict:
 
     Characters without the given skill will show levels = 0.
     """
-    if not corptools_active():
+    if not corptools_active() or CharacterAudit is None:
         return {}
     ownership_map = get_user_characters(user_id)
 
@@ -267,7 +275,7 @@ def get_char_age(char_id: int) -> int | None:
     based on the first recorded CorporationHistory.start_date.
     If the character audit or history is missing, returns None.
     """
-    if not corptools_active():
+    if not corptools_active() or CorporationHistory is None:
         return None
     try:
         # 1) Find the audit record for this EVE character ID

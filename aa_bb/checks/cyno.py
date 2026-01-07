@@ -20,8 +20,12 @@ logger.setLevel(logging.DEBUG)
 try:
     if corptools_active():
         from corptools.models import CharacterAudit, CharacterAsset
+    else:
+        CharacterAudit = None
+        CharacterAsset = None
 except ImportError:
-    pass
+    CharacterAudit = None
+    CharacterAsset = None
 
 skill_ids = {
     "cyno":     21603,  # Cynosural Field Theory
@@ -66,7 +70,7 @@ def get_user_cyno_info(user_id: int) -> dict:
     `required_levels` is an optional dict mapping skill keys ("cyno", "recon", etc.) to the minimum trained/active level required.
     If not provided, defaults to 1 for all skills.
     """
-    if not corptools_active():
+    if not corptools_active() or CharacterAudit is None:
         return {}
     # default required levels
     required_levels = {
@@ -276,7 +280,7 @@ def owns_items_in_group(cid, gid):
     Return True when the character has at least one hull in the given
     EVE group id (e.g. recon ships). Used to gauge practical readiness.
     """
-    if not corptools_active():
+    if not corptools_active() or CharacterAsset is None:
         return False
     exists = CharacterAsset.objects.filter(
         character__character__character_id=cid,

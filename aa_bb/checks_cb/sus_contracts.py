@@ -35,8 +35,12 @@ if aablacklist_active():
 try:
     if corptools_active():
         from corptools.models import CorporateContract, CorporationAudit
+    else:
+        CorporateContract = None
+        CorporationAudit = None
 except ImportError:
-    pass
+    CorporateContract = None
+    CorporationAudit = None
 from ..models import BigBrotherConfig, ProcessedContract, SusContractNote
 from django.utils import timezone
 
@@ -69,7 +73,7 @@ def gather_user_contracts(corp_id: int):
     """
     Fetch every CorporateContract row for the given corporation id.
     """
-    if not corptools_active():
+    if not corptools_active() or CorporateContract is None:
         from ..models import ProcessedContract
         return ProcessedContract.objects.none()
     try:

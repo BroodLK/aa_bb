@@ -17,15 +17,21 @@ logger = logging.getLogger(__name__)
 try:
     if corptools_active():
         from corptools.models import CorporationAudit, CorpAsset, EveLocation
+    else:
+        CorporationAudit = None
+        CorpAsset = None
+        EveLocation = None
 except ImportError:
-    pass
+    CorporationAudit = None
+    CorpAsset = None
+    EveLocation = None
 
 def get_asset_locations(corp_id: int) -> Dict[int, Optional[str]]:
     """
     Return a dict mapping system IDs to their names (or None if unnamed)
     where the given corporation has one or more assets in space.
     """
-    if not corptools_active():
+    if not corptools_active() or CorporationAudit is None:
         return {}
     try:
         corp_info = EveCorporationInfo.objects.get(corporation_id=corp_id)

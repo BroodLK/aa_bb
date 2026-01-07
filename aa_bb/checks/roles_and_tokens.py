@@ -18,8 +18,12 @@ logger = logging.getLogger(__name__)
 try:
     if corptools_active():
         from corptools.models import CharacterRoles, CharacterAudit
+    else:
+        CharacterRoles = None
+        CharacterAudit = None
 except ImportError:
-    pass
+    CharacterRoles = None
+    CharacterAudit = None
 
 def get_user_roles(user_id):
     """
@@ -28,7 +32,7 @@ def get_user_roles(user_id):
     Pulling the CharacterRoles info once here keeps the template logic simple
     and avoids doing additional DB hits while rendering a table per user.
     """
-    if not corptools_active():
+    if not corptools_active() or CharacterAudit is None:
         return {}
     characters = CharacterOwnership.objects.filter(user__id=user_id).select_related("character")
 
@@ -67,7 +71,7 @@ def get_user_tokens(user_id):
     We track both character audit availability and the presence of the
     configured corporation scopes so staff can quickly spot gaps.
     """
-    if not corptools_active():
+    if not corptools_active() or CharacterAudit is None:
         return {}
     from esi.models import Token, Scope
 

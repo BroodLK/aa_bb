@@ -80,8 +80,10 @@ logging.basicConfig(level=logging.DEBUG)
 try:
     if corptools_active():
         from corptools.models import Contract
+    else:
+        Contract = None
 except ImportError:
-    pass
+    Contract = None
 
 
 def get_allowed_alliance_id():

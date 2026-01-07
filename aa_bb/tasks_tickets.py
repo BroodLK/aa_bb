@@ -37,8 +37,11 @@ try:
     if corptools_active():
         from corptools.api.helpers import get_alts_queryset
     else:
-        raise ImportError("corptools not installed")
+        get_alts_queryset = None
 except ImportError:
+    get_alts_queryset = None
+
+if get_alts_queryset is None:
     def get_alts_queryset(*args, **kwargs):
         return []
 

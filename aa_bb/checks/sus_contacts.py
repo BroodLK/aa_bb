@@ -31,8 +31,10 @@ if aablacklist_active():
 try:
     if corptools_active():
         from corptools.models import CharacterContact
+    else:
+        CharacterContact = None
 except ImportError:
-    pass
+    CharacterContact = None
 
 from ..models import BigBrotherConfig
 
@@ -42,7 +44,7 @@ def get_user_contacts(user_id: int) -> dict[int, dict]:
     Fetch and filter contacts for a user, excluding NPCs and self-contacts,
     and annotate each with standing, grouping support.
     """
-    if not corptools_active():
+    if not corptools_active() or CharacterContact is None:
         return {}
     user_chars = get_user_characters(user_id)
     user_char_ids = set(user_chars.keys())

@@ -33,8 +33,16 @@ logger = logging.getLogger(__name__)
 try:
     if corptools_active():
         from corptools.models import CharacterAudit, Clone, JumpClone, Implant
+    else:
+        CharacterAudit = None
+        Clone = None
+        JumpClone = None
+        Implant = None
 except ImportError:
-    pass
+    CharacterAudit = None
+    Clone = None
+    JumpClone = None
+    Implant = None
 
 
 def get_clones(user_id: int) -> Dict[int, Optional[str]]:
@@ -42,7 +50,7 @@ def get_clones(user_id: int) -> Dict[int, Optional[str]]:
     Return a dict mapping system IDs to their names (or None if unnamed)
     where this user has clones.
     """
-    if not corptools_active():
+    if not corptools_active() or CharacterAudit is None:
         return {}
     try:
         user = User.objects.get(pk=user_id)
@@ -105,7 +113,7 @@ def get_hostile_clone_locations(user_id: int) -> Dict[str, str]:
         return {}
 
     # Ensure corptools models are available (imported at module level)
-    if not corptools_active():
+    if not corptools_active() or CharacterAudit is None:
         return {}
 
     # Build a map of system_id -> { "name": name, "locations": { loc_id: set(char_names) } }

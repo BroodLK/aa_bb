@@ -39,8 +39,10 @@ logger.setLevel(logging.DEBUG)
 try:
     if corptools_active():
         from corptools.models import Contract
+    else:
+        Contract = None
 except ImportError:
-    pass
+    Contract = None
 
 
 def _find_employment_at(employment: list, date: datetime) -> Optional[dict]:
@@ -62,7 +64,7 @@ def _find_alliance_at(history: list, date: datetime) -> Optional[int]:
 
 
 def gather_user_contracts(user_id: int):
-    if not corptools_active():
+    if not corptools_active() or Contract is None:
         from ..models import ProcessedContract
         return ProcessedContract.objects.none()
     user_chars = get_user_characters(user_id)
