@@ -1,9 +1,10 @@
 
-## [3.2.6] -
+## [3.2.6] - 2026-01-07
 - Fixed issue where users were reported for having hostile standings towards hostiles.
 - Fixed issue where Recurring Stats Webhook did not fall back if left empty to the main webhook.
 - Fixed issue where clones and assets in friendly citadels were incorrectly flagged as hostile in hostile systems.
 - Improved Discord message formatting to remove redundant vertical space in bulleted lists.
+- Improved logging to track down module conflicts.
 - Made `aadiscordbot` an optional dependency.
    - Hidden `aa-afat` and `aadiscordbot` specific compliance settings and UI elements when the respective apps are not installed.
 - Tickets
@@ -19,6 +20,7 @@
     - Added a background tracker that monitors the last message sent by users on Discord.
     - Discord Inactivity Check: New compliance check that can trigger tickets if a user has not spoken on Discord for a configured number of days.
     - Ability to either include, or not, the offending users in all tickets.
+
 ## [3.2.5] - 2025-12-28
 - More robust hostile state handling, with the ability to add everyone who is not friendly to the hostile state.
 - More robust awox handling

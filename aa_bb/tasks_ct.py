@@ -19,39 +19,41 @@ from allianceauth.services.hooks import get_extension_logger
 from esi.errors import TokenExpiredError, TokenError, TokenInvalidError
 from esi.models import Token
 
-from .app_settings import send_message, send_status_embed, _chunk_embed_lines
+from .app_settings import send_message, send_status_embed, _chunk_embed_lines, corptools_active
 from .models import BigBrotherConfig
 
 logger = get_extension_logger(__name__)
 
 try:
-    from corptools.models import EveCharacter
-    from corptools import app_settings
-    from corptools.models import CharacterAudit, CorptoolsConfiguration
+    if corptools_active():
+        from corptools.models import EveCharacter
+        from corptools import app_settings
+        from corptools.models import CharacterAudit, CorptoolsConfiguration
 
-    from corptools.tasks.character import (
-        update_char_assets,
-        update_char_contacts,
-        update_char_notifications,
-        update_char_roles,
-        update_char_titles,
-        update_char_mining_ledger,
-        update_char_wallet,
-        update_char_transactions,
-        update_char_orders,
-        update_char_order_history,
-        update_char_contracts,
-        update_char_skill_list,
-        update_char_skill_queue,
-        update_char_clones,
-        update_char_mail,
-        update_char_loyaltypoints,
-        update_char_industry_jobs,
-        update_char_location,
-    )
+        from corptools.tasks.character import (
+            update_char_assets,
+            update_char_contacts,
+            update_char_notifications,
+            update_char_roles,
+            update_char_titles,
+            update_char_mining_ledger,
+            update_char_wallet,
+            update_char_transactions,
+            update_char_orders,
+            update_char_order_history,
+            update_char_contracts,
+            update_char_skill_list,
+            update_char_skill_queue,
+            update_char_clones,
+            update_char_mail,
+            update_char_loyaltypoints,
+            update_char_industry_jobs,
+            update_char_location,
+        )
+    else:
+        raise ImportError("Corptools not installed")
 except ImportError:
-
-    logger.error("✅  [AA-BB] - [Tasks_CT] - Corptools not installed, CT tasks will not be available.")
+    pass
 
 
 @dataclass(frozen=True)
@@ -259,6 +261,9 @@ def kickstart_stale_ct_modules(days_stale: int = 2, limit: Optional[int] = None,
     Returns:
         Summary string announcing what was queued (and optionally posted to chat).
     """
+    if not corptools_active():
+        logger.error("✅  [AA-BB] - [kickstart_stale_ct_modules] - Corptools not installed, skipping.")
+        return "Corptools not installed"
     instance = BigBrotherConfig.get_solo()
     if not instance.is_active:
         return "Big Brother is inactive."

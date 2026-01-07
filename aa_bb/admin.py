@@ -233,7 +233,6 @@ class BB_ConfigAdmin(SingletonModelAdmin):
         "main_alliance",
         "main_corporation_id",
         "main_alliance_id",
-        "is_active",
         "update_last_dispatch_count",
     )
     filter_horizontal = (

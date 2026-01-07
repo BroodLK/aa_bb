@@ -23,6 +23,7 @@ from ..app_settings import (
     resolve_location_system_id,
     is_highsec,
     is_lowsec,
+    corptools_active,
 )
 from ..models import BigBrotherConfig
 import logging
@@ -30,9 +31,10 @@ import logging
 logger = logging.getLogger(__name__)
 
 try:
-    from corptools.models import CharacterAudit, Clone, JumpClone, Implant
+    if corptools_active():
+        from corptools.models import CharacterAudit, Clone, JumpClone, Implant
 except ImportError:
-    logger.error("Corptools not installed, clone checks will not work.")
+    pass
 
 
 def get_clones(user_id: int) -> Dict[int, Optional[str]]:
@@ -40,6 +42,8 @@ def get_clones(user_id: int) -> Dict[int, Optional[str]]:
     Return a dict mapping system IDs to their names (or None if unnamed)
     where this user has clones.
     """
+    if not corptools_active():
+        return {}
     try:
         user = User.objects.get(pk=user_id)
     except User.DoesNotExist:
@@ -101,12 +105,7 @@ def get_hostile_clone_locations(user_id: int) -> Dict[str, str]:
         return {}
 
     # Ensure corptools models are available (imported at module level)
-    try:
-        CharacterAudit  # type: ignore[name-defined]
-        Clone           # type: ignore[name-defined]
-        JumpClone       # type: ignore[name-defined]
-    except NameError:
-        logger.error("Corptools not installed, clone checks will not work.")
+    if not corptools_active():
         return {}
 
     # Build a map of system_id -> { "name": name, "locations": { loc_id: set(char_names) } }

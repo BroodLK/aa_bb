@@ -30,7 +30,7 @@ from .forms import LeaveRequestForm
 from .app_settings import (
     get_user_characters, get_entity_info, get_main_character_name,
     get_character_id, get_pings, aablacklist_active, send_status_embed,
-    resolve_location_name, afat_active, discordbot_active
+    resolve_location_name, afat_active, discordbot_active, corptools_active
 )
 from .models import BigBrotherConfig, WarmProgress, LeaveRequest, ComplianceTicket, ComplianceTicketComment
 
@@ -78,9 +78,10 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
 
 try:
-    from corptools.models import Contract
+    if corptools_active():
+        from corptools.models import Contract
 except ImportError:
-    logger.error("Corptools not not installed")
+    pass
 
 
 def get_allowed_alliance_id():

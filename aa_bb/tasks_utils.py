@@ -319,6 +319,15 @@ def sync_periodic_tasks():
         if task_info["active_attr"] == "is_active":
             enabled = master_active
 
+        # Log deactivation reason if it's currently enabled but about to be disabled
+        from django_celery_beat.models import PeriodicTask
+        existing_task = PeriodicTask.objects.filter(name=format_task_name(name)).first()
+        if existing_task and existing_task.enabled and not enabled:
+            if not master_active:
+                logger.warning(f"ℹ️  [AA-BB] - [Tasks] - '{name}' will be DISABLED because Big Brother is globally inactive.")
+            elif not feature_enabled:
+                logger.warning(f"ℹ️  [AA-BB] - [Tasks] - '{name}' will be DISABLED because its feature toggle '{task_info['active_attr']}' is False.")
+
         setup_periodic_task(
             name=name,
             task_path=task_path,

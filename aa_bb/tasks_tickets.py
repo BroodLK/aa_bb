@@ -15,13 +15,17 @@ from allianceauth.authentication.models import UserProfile
 from allianceauth.eveonline.models import EveCharacter
 from allianceauth.services.modules.discord.models import DiscordUser
 
+from .app_settings import get_user_profiles, get_character_id, send_status_embed, _chunk_embed_lines, send_message, afat_active, discordbot_active, corptools_active
+
 try:
-    from aadiscordbot.tasks import run_task_function
-    from aadiscordbot.utils.auth import get_discord_user_id
-    from aadiscordbot.cogs.utils.exceptions import NotAuthenticated
-    from aadiscordbot.app_settings import get_admins
+    if discordbot_active():
+        from aadiscordbot.tasks import run_task_function
+        from aadiscordbot.utils.auth import get_discord_user_id
+        from aadiscordbot.cogs.utils.exceptions import NotAuthenticated
+        from aadiscordbot.app_settings import get_admins
+    else:
+        raise ImportError("aadiscordbot not installed")
 except ImportError:
-    logger.error("✅  [AA-BB] - [Tasks_Tickets] - aadiscordbot not installed; compliance checks will not work.")
     run_task_function = None
     get_discord_user_id = None
 
@@ -30,15 +34,15 @@ except ImportError:
     get_admins = None
 
 try:
-    from corptools.api.helpers import get_alts_queryset
+    if corptools_active():
+        from corptools.api.helpers import get_alts_queryset
+    else:
+        raise ImportError("corptools not installed")
 except ImportError:
-    logger.error("✅  [AA-BB] - [Tasks_Tickets] - corptools not installed; compliance checks will not work.")
-
     def get_alts_queryset(*args, **kwargs):
         return []
 
 from .models import BigBrotherConfig, TicketToolConfig, PapCompliance, LeaveRequest, ComplianceTicket
-from .app_settings import get_user_profiles, get_character_id, send_status_embed, _chunk_embed_lines, send_message, afat_active, discordbot_active
 
 User = get_user_model()
 
@@ -205,6 +209,7 @@ def hourly_compliance_check():
     """Run the top-of-hour audit that enforces compliance rules and reminders."""
     bb_cfg = BigBrotherConfig.get_solo()
     if not bb_cfg.is_active:
+        logger.warning("ℹ️  [AA-BB] - [hourly_compliance_check] - Plugin is disabled (is_active=False), skipping compliance check.")
         return
     t_cfg = TicketToolConfig.get_solo()
     max_days = {

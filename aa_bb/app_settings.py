@@ -1612,6 +1612,11 @@ def discordbot_active():
     return apps.is_installed("aadiscordbot")
 
 
+def corptools_active():
+    """Return True when the Corptools plugin is loaded in this deployment."""
+    return apps.is_installed("corptools")
+
+
 _webhook_history = deque()  # stores timestamp floats of last webhook sends
 _channel_history = deque()  # stores timestamp floats of last channel sends
 

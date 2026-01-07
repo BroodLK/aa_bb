@@ -44,7 +44,8 @@ from aa_bb.checks_cb.sus_contracts import (
 
 from .app_settings import (
     get_user_characters, get_entity_info, get_character_id,
-    resolve_corporation_name, aablacklist_active, resolve_location_name
+    resolve_corporation_name, aablacklist_active, resolve_location_name,
+    corptools_active
 )
 from .models import BigBrotherConfig, WarmProgress
 
@@ -54,9 +55,10 @@ if aablacklist_active():
 )
 
 try:
-    from corptools.models import Contract
+    if corptools_active():
+        from corptools.models import Contract
 except ImportError:
-    logger.error("Corptools not not installed")
+    pass
 
 
 

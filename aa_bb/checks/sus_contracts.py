@@ -21,6 +21,7 @@ from ..app_settings import (
     get_hostile_state,
     is_highsec,
     is_lowsec,
+    corptools_active,
 )
 from django.utils import timezone
 
@@ -36,9 +37,10 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 try:
-    from corptools.models import Contract
+    if corptools_active():
+        from corptools.models import Contract
 except ImportError:
-    logger.error("Corptools not installed, corp checks will not work.")
+    pass
 
 
 def _find_employment_at(employment: list, date: datetime) -> Optional[dict]:
@@ -60,6 +62,9 @@ def _find_alliance_at(history: list, date: datetime) -> Optional[int]:
 
 
 def gather_user_contracts(user_id: int):
+    if not corptools_active():
+        from ..models import ProcessedContract
+        return ProcessedContract.objects.none()
     user_chars = get_user_characters(user_id)
     user_ids = set(user_chars.keys())
     return Contract.objects.filter(

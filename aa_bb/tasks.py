@@ -1126,6 +1126,8 @@ def BB_run_regular_updates():
                     args=(user_id, char_name),
                     eta=eta,
                 )
+        else:
+            logger.warning("ℹ️  [AA-BB] - [BB_run_regular_updates] - Plugin is disabled (is_active=False), skipping user updates.")
 
     except Exception as e:
         logger.error("ℹ️  [AA-BB] - [BB_run_regular_updates] - Task failed", exc_info=True)

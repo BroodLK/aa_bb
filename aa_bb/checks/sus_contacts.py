@@ -21,6 +21,7 @@ from ..app_settings import (
     get_safe_entities,
     aablacklist_active,
     get_hostile_state,
+    corptools_active,
 )
 from django.utils import timezone
 
@@ -28,9 +29,10 @@ if aablacklist_active():
     from .add_to_blacklist import check_char_add_to_bl
 
 try:
-    from corptools.models import CharacterContact
+    if corptools_active():
+        from corptools.models import CharacterContact
 except ImportError:
-    logger.error("Corptools not installed, corp checks will not work.")
+    pass
 
 from ..models import BigBrotherConfig
 
@@ -40,6 +42,8 @@ def get_user_contacts(user_id: int) -> dict[int, dict]:
     Fetch and filter contacts for a user, excluding NPCs and self-contacts,
     and annotate each with standing, grouping support.
     """
+    if not corptools_active():
+        return {}
     user_chars = get_user_characters(user_id)
     user_char_ids = set(user_chars.keys())
 

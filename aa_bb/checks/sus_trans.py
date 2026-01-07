@@ -25,6 +25,7 @@ from ..app_settings import (
     get_hostile_state,
     is_highsec,
     is_lowsec,
+    corptools_active,
 )
 
 if aablacklist_active():
@@ -34,13 +35,16 @@ else:
         return False
 
 try:
-    from corptools.models import (
-        CharacterWalletJournalEntry as WalletJournalEntry,
-        CharacterMarketTransaction,
-        Structure,
-    )
+    if corptools_active():
+        from corptools.models import (
+            CharacterWalletJournalEntry as WalletJournalEntry,
+            CharacterMarketTransaction,
+            Structure,
+        )
+    else:
+        raise ImportError("Corptools not installed")
 except ImportError:
-    logger.error("Corptools not installed, corp checks will not work.")
+    WalletJournalEntry = None
     CharacterMarketTransaction = None
     Structure = None
 
@@ -263,6 +267,9 @@ def _find_alliance_at(history: list, date: datetime) -> Optional[int]:
 
 
 def gather_user_transactions(user_id: int):
+    if not corptools_active():
+        from ..models import ProcessedTransaction
+        return ProcessedTransaction.objects.none()
     user_chars = get_user_characters(user_id)
     user_ids = set(user_chars.keys())
     qs = WalletJournalEntry.objects.filter(second_party_id__in=user_ids)

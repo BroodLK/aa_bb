@@ -22,7 +22,7 @@ if afat_active():
         from afat.models import Fat
         AFAT_INSTALLED = True
     except ImportError:
-        logger.error("afat not installed; PAP generation will not work.")
+        pass
 
 @login_required
 @permission_required("aa_bb.can_generate_paps")
