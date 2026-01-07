@@ -79,16 +79,25 @@ except ImportError:
 def get_staff_roles():
     """Parse the comma-separated list of Discord role IDs allowed on tickets."""
     cfg = TicketToolConfig.get_solo()
-    if not cfg.staff_roles:  # no staff roles configured → return empty list
-        return []
-    return [int(r.strip()) for r in cfg.staff_roles.split(",") if r.strip().isdigit()]
+    roles = []
+    if cfg.staff_roles:
+        roles = [int(r.strip()) for r in cfg.staff_roles.split(",") if r.strip().isdigit()]
+    if cfg.Role_ID and cfg.Role_ID not in roles:
+        roles.append(cfg.Role_ID)
+    return roles
 
 async def create_compliance_ticket(bot, user_id, discord_user_id: int, reason: str, message: str, include_user: bool = True):
-    category_id = TicketToolConfig.get_solo().Category_ID
+    tcfg = TicketToolConfig.get_solo()
+    category_id = tcfg.Category_ID
+    if not bot.guilds:
+        logger.error("Bot is not in any guilds")
+        return
     guild = bot.guilds[0]  # or use a known guild_id if multi-guild
     # Find or create a category with capacity (auto-clone with -2/-3 if needed)
     category = await ensure_ticket_category_with_capacity(guild, category_id)
-    member = guild.get_member(discord_user_id) or await guild.fetch_member(discord_user_id)
+    member = None
+    if discord_user_id:
+        member = guild.get_member(discord_user_id) or await guild.fetch_member(discord_user_id)
     User = get_user_model()
     user = User.objects.get(id=user_id)
     profile = UserProfile.objects.get(user=user)
@@ -123,6 +132,13 @@ async def create_compliance_ticket(bot, user_id, discord_user_id: int, reason: s
     lines = message.split("\n")
     chunks = _chunk_embed_lines(lines)
 
+    pings = []
+    if include_user and discord_user_id:
+        pings.append(f"<@{discord_user_id}>")
+    if tcfg.Role_ID:
+        pings.append(f"<@&{tcfg.Role_ID}>")
+    content = " ".join(pings) if pings else None
+
     for i, chunk in enumerate(chunks):
         embed = discord.Embed(
             title=f"Compliance Ticket - {reason}" if i == 0 else None,
@@ -130,14 +146,13 @@ async def create_compliance_ticket(bot, user_id, discord_user_id: int, reason: s
             color=discord.Color.from_rgb(241, 196, 15)  # Gold
         )
         if i == 0:
-            content = f"<@{discord_user_id}>" if include_user and discord_user_id else None
             await channel.send(content=content, embed=embed)
         else:
             await channel.send(embed=embed)
 
     ComplianceTicket.objects.create(
         user=user,
-        discord_user_id=member.id,
+        discord_user_id=discord_user_id or 0,
         discord_channel_id=channel.id,
         reason=reason,
         ticket_id=ticket_number,
@@ -151,6 +166,9 @@ async def create_compliance_thread(bot, user_id, discord_user_id: int, reason: s
         logger.error("Forum/Thread parent channel ID not configured")
         return
 
+    if not bot.guilds:
+        logger.error("Bot is not in any guilds")
+        return
     guild = bot.guilds[0]
     parent_channel = bot.get_channel(parent_channel_id)
     if not parent_channel:
@@ -159,6 +177,10 @@ async def create_compliance_thread(bot, user_id, discord_user_id: int, reason: s
         except Exception:
             logger.error(f"Could not find parent channel {parent_channel_id}")
             return
+
+    # Truncate thread name to Discord limit of 100
+    if len(thread_name) > 100:
+        thread_name = thread_name[:97] + "..."
 
     User = get_user_model()
     user = User.objects.get(id=user_id)
@@ -177,6 +199,13 @@ async def create_compliance_thread(bot, user_id, discord_user_id: int, reason: s
 
     if not thread:
         # Create new thread
+        pings = []
+        if include_user and discord_user_id:
+            pings.append(f"<@{discord_user_id}>")
+        if tcfg.Role_ID:
+            pings.append(f"<@&{tcfg.Role_ID}>")
+        content = " ".join(pings) if pings else None
+
         if isinstance(parent_channel, discord.ForumChannel):
             # Forum threads are created with a starting message
             from .app_settings import _chunk_embed_lines
@@ -192,7 +221,7 @@ async def create_compliance_thread(bot, user_id, discord_user_id: int, reason: s
 
             thread_with_msg = await parent_channel.create_thread(
                 name=thread_name,
-                content=f"<@{discord_user_id}>" if include_user and discord_user_id else None,
+                content=content,
                 embed=embed,
                 reason="Compliance ticket creation"
             )
@@ -225,7 +254,7 @@ async def create_compliance_thread(bot, user_id, discord_user_id: int, reason: s
                     color=discord.Color.from_rgb(241, 196, 15)  # Gold
                 )
                 if i == 0:
-                    await thread.send(content=f"<@{discord_user_id}>" if include_user and discord_user_id else None, embed=embed)
+                    await thread.send(content=content, embed=embed)
                 else:
                     await thread.send(embed=embed)
 
@@ -237,14 +266,27 @@ async def create_compliance_thread(bot, user_id, discord_user_id: int, reason: s
         )
         thread_id = thread.id
 
-    # Ensure user is in the thread if it's a private thread and included
-    if include_user and thread.type == discord.ChannelType.private_thread:
-        try:
-            member = guild.get_member(discord_user_id) or await guild.fetch_member(discord_user_id)
-            if member:
-                await thread.add_user(member)
-        except Exception:
-            pass
+    # Ensure user and staff are in the thread if it's a private thread
+    if thread.type == discord.ChannelType.private_thread:
+        # User
+        if include_user and discord_user_id:
+            try:
+                member = guild.get_member(discord_user_id) or await guild.fetch_member(discord_user_id)
+                if member:
+                    await thread.add_user(member)
+            except Exception:
+                pass
+
+        # Staff
+        staff_roles = get_staff_roles()
+        for rid in staff_roles:
+            role = guild.get_role(rid)
+            if role:
+                for member in role.members:
+                    try:
+                        await thread.add_user(member)
+                    except Exception:
+                        pass
 
     # Create local ticket record
     ComplianceTicket.objects.create(
