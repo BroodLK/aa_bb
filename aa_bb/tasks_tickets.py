@@ -627,8 +627,6 @@ def ensure_ticket(user, reason, details=None):
                 },
                 queue='aadiscordbot'
             )
-            tcfg.ticket_counter += 1
-            tcfg.save()
 
         elif ticket_type == TicketToolConfig.TICKET_TYPE_PRIVATE_CHANNEL:
             # Legacy Private Channel
@@ -640,8 +638,6 @@ def ensure_ticket(user, reason, details=None):
                 },
                 queue='aadiscordbot'
             )
-            tcfg.ticket_counter += 1
-            tcfg.save()
 
 
 def close_ticket(ticket):

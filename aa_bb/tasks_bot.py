@@ -89,15 +89,28 @@ def get_staff_roles():
 async def create_compliance_ticket(bot, user_id, discord_user_id: int, reason: str, message: str, include_user: bool = True):
     tcfg = TicketToolConfig.get_solo()
     category_id = tcfg.Category_ID
-    if not bot.guilds:
-        logger.error("Bot is not in any guilds")
+    if not category_id:
+        logger.error("Compliance ticket category ID not configured")
         return
-    guild = bot.guilds[0]  # or use a known guild_id if multi-guild
+
+    base_category = bot.get_channel(category_id)
+    if not base_category:
+        try:
+            base_category = await bot.fetch_channel(category_id)
+        except Exception:
+            logger.error(f"Could not find category {category_id}")
+            return
+    guild = base_category.guild
+
     # Find or create a category with capacity (auto-clone with -2/-3 if needed)
     category = await ensure_ticket_category_with_capacity(guild, category_id)
+
     member = None
     if discord_user_id:
-        member = guild.get_member(discord_user_id) or await guild.fetch_member(discord_user_id)
+        try:
+            member = guild.get_member(discord_user_id) or await guild.fetch_member(discord_user_id)
+        except Exception:
+            logger.warning(f"Could not find member {discord_user_id} in guild {guild.id}")
     User = get_user_model()
     user = User.objects.get(id=user_id)
     profile = UserProfile.objects.get(user=user)
@@ -114,6 +127,11 @@ async def create_compliance_ticket(bot, user_id, discord_user_id: int, reason: s
 
     for rid in staff_roles:
         role = guild.get_role(rid)
+        if not role:
+            try:
+                role = await guild.fetch_role(rid)
+            except Exception:
+                continue
         if role:
             overwrites[role] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
 
@@ -166,10 +184,6 @@ async def create_compliance_thread(bot, user_id, discord_user_id: int, reason: s
         logger.error("Forum/Thread parent channel ID not configured")
         return
 
-    if not bot.guilds:
-        logger.error("Bot is not in any guilds")
-        return
-    guild = bot.guilds[0]
     parent_channel = bot.get_channel(parent_channel_id)
     if not parent_channel:
         try:
@@ -177,6 +191,7 @@ async def create_compliance_thread(bot, user_id, discord_user_id: int, reason: s
         except Exception:
             logger.error(f"Could not find parent channel {parent_channel_id}")
             return
+    guild = parent_channel.guild
 
     # Truncate thread name to Discord limit of 100
     if len(thread_name) > 100:
@@ -195,7 +210,10 @@ async def create_compliance_thread(bot, user_id, discord_user_id: int, reason: s
                 pass
 
         if thread and thread.archived:
-            await thread.edit(archived=False)
+            try:
+                await thread.edit(archived=False)
+            except Exception:
+                logger.exception(f"Failed to unarchive thread {thread_id}")
 
     if not thread:
         # Create new thread
@@ -266,25 +284,41 @@ async def create_compliance_thread(bot, user_id, discord_user_id: int, reason: s
         )
         thread_id = thread.id
 
-    # Ensure user and staff are in the thread if it's a private thread
-    if thread.type == discord.ChannelType.private_thread:
-        # User
-        if include_user and discord_user_id:
-            try:
-                member = guild.get_member(discord_user_id) or await guild.fetch_member(discord_user_id)
-                if member:
-                    await thread.add_user(member)
-            except Exception:
-                pass
+    # Ensure user and staff are in the thread
+    # User
+    if include_user and discord_user_id:
+        try:
+            # Using fetch_member to ensure we get the member object even if not in cache
+            target_member = guild.get_member(discord_user_id) or await guild.fetch_member(discord_user_id)
+            if target_member:
+                await thread.add_user(target_member)
+                logger.info(f"Added user {target_member} to thread {thread.id}")
+        except Exception:
+            logger.warning(f"Failed to add user {discord_user_id} to thread {thread.id}")
 
-        # Staff
-        staff_roles = get_staff_roles()
+    # Staff
+    staff_roles = get_staff_roles()
+    if staff_roles:
+        # Try to ensure members are cached for staff roles
+        try:
+            first_role = guild.get_role(staff_roles[0])
+            if first_role and not first_role.members and guild.member_count < 3000:
+                logger.info(f"Staff role cache empty, fetching members for guild {guild.id}")
+                await guild.fetch_members(limit=None)
+        except Exception:
+            pass
+
         for rid in staff_roles:
             role = guild.get_role(rid)
+            if not role:
+                try:
+                    role = await guild.fetch_role(rid)
+                except Exception:
+                    continue
             if role:
-                for member in role.members:
+                for m in role.members:
                     try:
-                        await thread.add_user(member)
+                        await thread.add_user(m)
                     except Exception:
                         pass
 
