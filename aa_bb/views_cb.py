@@ -636,11 +636,15 @@ def stream_transactions_sse(request):
         qs    = gather_user_transactions(user_id)
         total = qs.count()
         connection.close()
-        if total == 0:  # No transactions -> return short HTML.
-            return StreamingHttpResponse(
-                "<p>No transactions found.</p>",
-                content_type="text/html"
-            )
+        if total == 0:  # No transactions -> return SSE stream with no data message
+            def empty_generator():
+                yield ": ok\n\n"
+                yield "event: message\ndata:No transactions found.\n\n"
+                yield "event: done\ndata:bye\n\n"
+            resp = StreamingHttpResponse(empty_generator(), content_type='text/event-stream')
+            resp["Cache-Control"] = "no-cache"
+            resp["X-Accel-Buffering"] = "no"
+            return resp
 
         # Determine headers from a single hydrated row
         sample = qs[:1]
