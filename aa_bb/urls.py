@@ -59,5 +59,7 @@ urlpatterns = [
     path("tickets/<int:pk>/", views.ticket_view, name="ticket_view"),
     path("tickets/<int:pk>/resolve/", views.ticket_resolve, name="ticket_resolve"),
     path("tickets/<int:pk>/reopen/", views.ticket_reopen, name="ticket_reopen"),
+    path("tickets/<int:pk>/mark_exception/", views.ticket_mark_exception, name="ticket_mark_exception"),
+    path("tickets/<int:pk>/clear_exception/", views.ticket_clear_exception, name="ticket_clear_exception"),
     path("tickets/<int:pk>/comment/", views.ticket_add_comment, name="ticket_add_comment"),
 ]

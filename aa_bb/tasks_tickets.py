@@ -288,13 +288,17 @@ def hourly_compliance_check():
             notifications_by_hook[hook_url] = []
         notifications_by_hook[hook_url].append(msg)
 
-    tickets_qs = ComplianceTicket.objects.filter(is_resolved=False)
+    tickets_qs = ComplianceTicket.objects.filter(is_resolved=False, is_exception=False)
     if bb_cfg.limit_to_main_corp:
         tickets_qs = tickets_qs.filter(user__profile__main_character__corporation_id=bb_cfg.main_corporation_id)
 
     for ticket in tickets_qs:
         reason = ticket.reason
         hook = get_webhook_for_reason(reason)
+
+        # Skip exception tickets
+        if ticket.is_exception:
+            continue
 
         if reason == "char_removed" or reason == "awox_kill":
             # These rely on manual resolution flow and currently have no automated reminders
@@ -507,11 +511,21 @@ def ensure_ticket(user, reason, details=None):
                 f"{msg_template.format(namee=user.username, role=tcfg.Role_ID)}"
             )
 
-    # prevent duplicates
-    exists = ComplianceTicket.objects.filter(
+    # prevent duplicates and check for exceptions
+    existing = ComplianceTicket.objects.filter(
         user=user, reason=reason, is_resolved=False
+    ).first()
+
+    # If an exception exists for this user/reason, don't create a new ticket
+    exception_exists = ComplianceTicket.objects.filter(
+        user=user, reason=reason, is_exception=True
     ).exists()
-    if not exists:  # Only emit side effects when a new ticket is needed.
+
+    if exception_exists:
+        logger.info(f"Skipping ticket creation for {user.username} ({reason}) - exception exists")
+        return
+
+    if not existing:  # Only emit side effects when a new ticket is needed.
         # Add 2 second delay to avoid Discord API rate limiting when creating multiple tickets
         time.sleep(2)
 

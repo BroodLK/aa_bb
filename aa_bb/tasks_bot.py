@@ -108,11 +108,11 @@ except ImportError:
     logger.info("discord service not installed; Discord commands will not work.")
 
 def get_staff_roles():
-    """Parse the comma-separated list of Discord role IDs or names allowed on tickets."""
+    """Parse the comma-separated list of Discord role IDs to add to ticket channels/threads."""
     cfg = TicketToolConfig.get_solo()
     roles = []
-    if cfg.staff_roles:
-        for r in cfg.staff_roles.split(","):
+    if cfg.role_id:
+        for r in cfg.role_id.split(","):
             r = r.strip()
             if not r:
                 continue
@@ -120,8 +120,6 @@ def get_staff_roles():
                 roles.append(int(r))
             else:
                 roles.append(r)
-    if cfg.Role_ID and cfg.Role_ID not in roles:
-        roles.append(int(cfg.Role_ID))
     return roles
 
 async def create_compliance_ticket(bot, user_id, discord_user_id: int, reason: str, message: str, include_user: bool = True, **kwargs):
@@ -197,8 +195,6 @@ async def create_compliance_ticket(bot, user_id, discord_user_id: int, reason: s
     pings = []
     if include_user and discord_user_id:
         pings.append(f"<@{discord_user_id}>")
-    if tcfg.Role_ID:
-        pings.append(f"<@&{tcfg.Role_ID}>")
     content = " ".join(pings) if pings else None
 
     for i, chunk in enumerate(chunks):
@@ -629,6 +625,107 @@ class TicketCommands(commands.Cog):
     @sender_is_admin()
     async def resolve_char_removed(self, ctx: discord.ApplicationContext):
         await self.resolve_ticket_slash(ctx)
+
+    @slash_command(
+        name="mark-ticket-as-exception",
+        description="Mark this ticket as an exception (won't receive reminders or be recreated)."
+    )
+    @sender_is_admin()
+    async def mark_ticket_as_exception(
+        self,
+        ctx: discord.ApplicationContext,
+        reason: str = None
+    ):
+        """Mark a ticket as an exception with an optional reason."""
+        close_old_connections()
+        channel = ctx.channel
+        author = ctx.user
+
+        # Permission check: must be admin or have staff role
+        staff_roles = await sync_to_async(get_staff_roles)()
+        is_staff = author.guild_permissions.administrator or any(role.id in staff_roles for role in author.roles)
+
+        # Check AA permissions if DiscordUser is linked
+        if not is_staff:
+            try:
+                from allianceauth.services.modules.discord.models import DiscordUser
+                du_qs = DiscordUser.objects.select_related('user').filter(uid=author.id)
+                discord_user = await sync_to_async(du_qs.get)()
+
+                def check_perms(user):
+                    return user.has_perm("aa_bb.ticket_manager") or user.is_superuser
+
+                if await sync_to_async(check_perms)(discord_user.user):
+                    is_staff = True
+            except Exception:
+                pass
+
+        if not is_staff:
+            await ctx.respond("You do not have permission to mark tickets as exceptions.", ephemeral=True)
+            return
+
+        tickets_qs = ComplianceTicket.objects.filter(
+            discord_channel_id=channel.id,
+            is_resolved=False,
+        )
+        tickets = await sync_to_async(list)(tickets_qs)
+
+        if not tickets:
+            await ctx.respond("No open ticket found for this channel.", ephemeral=True)
+            return
+
+        # Mark all tickets in this channel as exceptions
+        for ticket in tickets:
+            ticket.is_exception = True
+            ticket.exception_reason = reason or f"Marked as exception by {author.display_name}"
+            await sync_to_async(ticket.save)(update_fields=["is_exception", "exception_reason"])
+
+        exception_msg = f"✅ Ticket(s) marked as exception by <@{author.id}>."
+        if reason:
+            exception_msg += f"\nReason: {reason}"
+
+        await ctx.respond(exception_msg)
+        await channel.send(f"ℹ️ This ticket has been marked as an exception and will not receive reminders or be recreated.")
+
+    @commands.Cog.listener("on_guild_channel_delete")
+    async def on_channel_delete(self, channel: discord.abc.GuildChannel):
+        """Mark tickets as resolved when a channel is manually deleted."""
+        close_old_connections()
+        tickets_qs = ComplianceTicket.objects.filter(
+            discord_channel_id=channel.id,
+            is_resolved=False
+        )
+        tickets = await sync_to_async(list)(tickets_qs)
+
+        for ticket in tickets:
+            if ticket.reason in ["char_removed", "awox_kill"]:
+                ticket.is_resolved = True
+                await sync_to_async(ticket.save)(update_fields=["is_resolved"])
+            else:
+                await sync_to_async(ticket.delete)()
+
+        if tickets:
+            logger.info(f"Marked {len(tickets)} ticket(s) as resolved due to channel deletion: {channel.id}")
+
+    @commands.Cog.listener("on_thread_delete")
+    async def on_thread_delete(self, thread: discord.Thread):
+        """Mark tickets as resolved when a thread is manually deleted or archived."""
+        close_old_connections()
+        tickets_qs = ComplianceTicket.objects.filter(
+            discord_channel_id=thread.id,
+            is_resolved=False
+        )
+        tickets = await sync_to_async(list)(tickets_qs)
+
+        for ticket in tickets:
+            if ticket.reason in ["char_removed", "awox_kill"]:
+                ticket.is_resolved = True
+                await sync_to_async(ticket.save)(update_fields=["is_resolved"])
+            else:
+                await sync_to_async(ticket.delete)()
+
+        if tickets:
+            logger.info(f"Marked {len(tickets)} ticket(s) as resolved due to thread deletion: {thread.id}")
 
 def setup(bot):
     bot.add_cog(TicketCommands(bot))

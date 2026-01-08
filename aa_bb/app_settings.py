@@ -6,6 +6,7 @@ the codebase can fetch character/corp data, resolve names, and emit Discord
 messages without duplicating all the plumbing.
 """
 from collections import deque
+from functools import lru_cache
 
 from allianceauth.authentication.models import UserProfile, CharacterOwnership
 import logging
@@ -1155,6 +1156,13 @@ def get_hostile_state(entity_id: int, entity_type: str = None, system_id: int = 
 def is_entity_hostile(entity_id: int, entity_type: str = None, when: datetime = None) -> bool:
     """
     Logic for entity (char, corp, alliance, faction) hostility.
+    Follows priority order:
+    1. Safe entities (members, whitelist, ignored) -> False
+    19. Blacklist check -> True
+    20. Explicitly hostile -> True
+    21. NPC entities -> False
+    22. Hostile everyone else -> True
+    23. Default -> False
     """
     if not entity_id:
         return False
@@ -1166,53 +1174,54 @@ def is_entity_hostile(entity_id: int, entity_type: str = None, when: datetime = 
     cfg = BigBrotherConfig.get_solo()
     safe_entities = get_safe_entities()
 
-    # Explicitly Safe
-    if entity_id in safe_entities:
-        return False
-
     if not entity_type:
         entity_type = get_eve_entity_type(entity_id)
 
-    # Explicitly Hostile
-    hostile_corps = {int(s) for s in (cfg.hostile_corporations or "").split(",") if s.strip().isdigit()}
-    hostile_allis = {int(s) for s in (cfg.hostile_alliances or "").split(",") if s.strip().isdigit()}
+    # Priority 1: Explicitly Safe (members, whitelist, ignored)
+    if entity_id in safe_entities:
+        return False
+
+    # For characters, get corp/alliance info once and reuse
+    char_info = None
+    if entity_type == 'character':
+        char_info = get_entity_info(entity_id, when or timezone.now())
+        if char_info:
+            if char_info.get('corp_id') in safe_entities or char_info.get('alli_id') in safe_entities:
+                return False
+
+    # Priority 19: Blacklist check
+    if entity_type == 'character':
+        if aablacklist_active():
+            from aa_bb.checks.add_to_blacklist import check_char_add_to_bl
+            if check_char_add_to_bl(entity_id):
+                return True
+
+    # Priority 20: Explicitly Hostile (use cached hostile entities)
+    hostile_corps, hostile_allis = get_hostile_entities()
 
     if entity_type == 'corporation' and entity_id in hostile_corps:
         return True
     if entity_type in ('alliance', 'faction') and entity_id in hostile_allis:
         return True
 
-    if entity_type == 'character':
-        # Blacklist check
-        if aablacklist_active():
-            from aa_bb.checks.add_to_blacklist import check_char_add_to_bl
-            if check_char_add_to_bl(entity_id):
-                return True
+    # For characters, check their corp/alliance context (reuse char_info from above)
+    if entity_type == 'character' and char_info:
+        if char_info.get('corp_id') in hostile_corps:
+            return True
+        if char_info.get('alli_id') in hostile_allis:
+            return True
 
-        # Check corporation and alliance context for this character
-        # Use get_entity_info to get (potentially historical) corp/alli
-        info = get_entity_info(entity_id, when or timezone.now())
-        if info:
-            # 1. Safe context (whitelist/member) wins
-            if info.get('corp_id') in safe_entities or info.get('alli_id') in safe_entities:
-                return False
-            # 2. Hostile context
-            if info.get('corp_id') in hostile_corps:
-                return True
-            if info.get('alli_id') in hostile_allis:
-                return True
+    # Priority 21: NPC entities are safe
+    if entity_type == 'character' and is_npc_character(entity_id):
+        return False
+    if entity_type == 'corporation' and is_npc_corporation(entity_id):
+        return False
 
-    # Hostile Everyone Else
+    # Priority 22: Hostile Everyone Else
     if cfg.hostile_everyone_else:
-        # Ignore NPCs
-        if entity_type == 'character' and is_npc_character(entity_id):
-            return False
-        if entity_type == 'corporation' and is_npc_corporation(entity_id):
-            return False
-
-        # Characters belong to corps/alliances (already checked above if character)
         return True
 
+    # Priority 23: Default safe
     return False
 
 
@@ -1220,93 +1229,247 @@ def is_location_hostile(location_id: int, system_id: int = None) -> bool:
     """
     Determines if a given location (structure, station, or system) is considered hostile.
     Returns True if hostile, False if safe.
+
+    Follows priority order (location-specific checks):
+    2. Citadel owned by safe entity -> False
+    3. Station owned by safe entity -> False
+    4. System owned by safe entity -> False
+    5. Excluded system -> False
+    6. Excluded station -> False
+    7. High-sec excluded -> False
+    8. Low-sec excluded -> False
+    15. Null-sec considered hostile -> True
+    16. Low-sec considered hostile -> True
+    17. Citadels considered hostile -> True
+    18. NPC stations considered hostile -> True
     """
     if not location_id and not system_id:
         return False
 
     cfg = BigBrotherConfig.get_solo()
+    safe_entities = get_safe_entities()
 
+    # Resolve the target system
     target_system = system_id or (resolve_location_system_id(location_id) if location_id else None)
+
+    # Resolve location owner (structure/station owner)
+    location_owner_info = get_system_owner({"id": location_id or system_id})
+    location_oid = 0
+    location_oname = ""
+    location_otype = None
+    if location_owner_info:
+        try:
+            location_oid = int(location_owner_info.get("owner_id", 0))
+        except (ValueError, TypeError):
+            location_oid = 0
+        location_oname = location_owner_info.get("owner_name", "")
+        location_otype = location_owner_info.get("owner_type")
+
+    # Resolve system owner (sovereignty)
+    system_oid = 0
+    system_otype = None
+    if target_system and target_system != location_id:
+        sys_owner_info = get_system_owner({"id": target_system})
+        if sys_owner_info:
+            try:
+                system_oid = int(sys_owner_info.get("owner_id", 0))
+            except (ValueError, TypeError):
+                system_oid = 0
+            system_otype = sys_owner_info.get("owner_type")
+    else:
+        # Location IS the system
+        system_oid = location_oid
+        system_otype = location_otype
+
+    # Priority 2: Citadel owned by safe entity
+    if location_id and is_player_structure(location_id):
+        if location_oid and location_oid in safe_entities:
+            return False
+
+    # Priority 3: Station owned by safe entity
+    if location_id and 60000000 <= int(location_id) < 64000000:
+        if location_oid and location_oid in safe_entities:
+            return False
+
+    # Priority 4: System owned by safe entity
+    if target_system:
+        if system_oid and system_oid in safe_entities:
+            return False
+
+    # Priority 5: Excluded system
+    if target_system and cfg.excluded_systems:
+        excluded_sys_ids = {int(s.strip()) for s in cfg.excluded_systems.split(",") if s.strip().isdigit()}
+        if int(target_system) in excluded_sys_ids:
+            return False
+
+    # Priority 6: Excluded station
+    if location_id and cfg.excluded_stations:
+        excluded_sta_ids = {int(s.strip()) for s in cfg.excluded_stations.split(",") if s.strip().isdigit()}
+        if int(location_id) in excluded_sta_ids:
+            return False
+
+    # Priority 7: High-sec excluded
     if target_system:
         if cfg.exclude_high_sec and is_highsec(target_system):
             return False
+
+    # Priority 8: Low-sec excluded
+    if target_system:
         if cfg.exclude_low_sec and is_lowsec(target_system):
             return False
 
-    # Resolve location owner
-    owner_info = get_system_owner({"id": location_id or system_id})
-    oid = 0
-    oname = ""
-    otype = None
-    if owner_info:
-        try:
-            oid = int(owner_info.get("owner_id", 0))
-        except (ValueError, TypeError):
-            oid = 0
-        oname = owner_info.get("owner_name", "")
-        otype = owner_info.get("owner_type")
-
-    # If it's a structure
-    if location_id and is_player_structure(location_id):
-        # Friendly structure overrides system hostility
-        if oid and not is_entity_hostile(oid, otype):
-            return False
-        # Hostile structure
-        if oid and is_entity_hostile(oid, otype):
+    # Priority 15: Null-sec considered hostile
+    if target_system:
+        if cfg.consider_nullsec_hostile and is_nullsec(target_system):
             return True
 
+    # Priority 16: Low-sec considered hostile
+    if target_system:
+        if cfg.consider_lowsec_hostile and is_lowsec(target_system):
+            return True
+
+    # Priority 17: Citadels considered hostile
+    if location_id and is_player_structure(location_id):
         if cfg.consider_all_structures_hostile:
             return True
-
-        if "Unresolvable" in oname:
+        # Also check if structure owner is hostile entity
+        if location_oid and is_entity_hostile(location_oid, location_otype):
+            return True
+        if "Unresolvable" in location_oname:
             return True
 
-    # If it's an NPC station
+    # Priority 18: NPC stations considered hostile
     if location_id and 60000000 <= int(location_id) < 64000000:
         if cfg.consider_npc_stations_hostile:
             return True
 
-    # Check system-level hostility
-    target_system = system_id or (resolve_location_system_id(location_id) if location_id else None)
-    if target_system:
-        # If the location we checked was a structure, oid is structure owner.
-        # We might also need to check system (sov) owner for nullsec flags.
-        if target_system != location_id:
-            sys_owner_info = get_system_owner({"id": target_system})
-            try:
-                soid = int(sys_owner_info.get("owner_id", 0))
-                sotype = sys_owner_info.get("owner_type")
-            except (ValueError, TypeError):
-                soid = 0
-                sotype = None
-        else:
-            soid = oid
-            sotype = otype
-
-        # Base hostility from system owner
-        if soid and is_entity_hostile(soid, sotype):
-            return True
-
-        # Consider nullsec hostile
-        if cfg.consider_nullsec_hostile and is_nullsec(target_system):
-            # Safe if system is owned by us/allies
-            if soid and not is_entity_hostile(soid, sotype):
-                return False
-            # Otherwise, if we are in a friendly structure (handled above), it's safe.
-            # If we are here, it's either an NPC station or a hostile/unknown structure.
-            return True
-
-    # General fallback for hostile lists if not already caught
-    if oid and is_entity_hostile(oid, otype):
+    # Fallback: Check if system owner is hostile
+    if system_oid and is_entity_hostile(system_oid, system_otype):
         return True
 
-    if "Unresolvable" in oname:
-        return True
-
+    # Default safe
     return False
 
 
 
+
+
+
+
+def get_hostile_state_comprehensive(
+    entity_id: int = None,
+    entity_type: str = None,
+    location_id: int = None,
+    system_id: int = None,
+    when: datetime = None,
+    is_asset: bool = False,
+    asset_item_category_id: int = None,
+    is_market_transaction: bool = False,
+    transaction_item_id: int = None,
+    transaction_unit_price: float = None,
+    transaction_quantity: int = None,
+    transaction_is_buy: bool = None,
+) -> bool:
+    """
+    Comprehensive hostile state check following the complete 23-point priority order.
+    Integrates entity checks, location checks, asset logic, and market transaction logic.
+    """
+    cfg = BigBrotherConfig.get_solo()
+    safe_entities = get_safe_entities()
+
+    # Priority 1: Safe entities
+    if entity_id and entity_id in safe_entities:
+        return False
+
+    # Priorities 2-8: Location safety checks
+    if location_id or system_id:
+        target_system = system_id or (resolve_location_system_id(location_id) if location_id else None)
+
+        if location_id:
+            owner_info = get_system_owner({"id": location_id})
+            if owner_info:
+                try:
+                    oid = int(owner_info.get("owner_id", 0))
+                    if oid and oid in safe_entities:
+                        return False
+                except (ValueError, TypeError):
+                    pass
+
+        if target_system:
+            sys_owner_info = get_system_owner({"id": target_system})
+            if sys_owner_info:
+                try:
+                    soid = int(sys_owner_info.get("owner_id", 0))
+                    if soid and soid in safe_entities:
+                        return False
+                except (ValueError, TypeError):
+                    pass
+
+            if cfg.excluded_systems:
+                excluded_sys_ids = {int(s.strip()) for s in cfg.excluded_systems.split(",") if s.strip().isdigit()}
+                if int(target_system) in excluded_sys_ids:
+                    return False
+
+            if cfg.exclude_high_sec and is_highsec(target_system):
+                return False
+
+            if cfg.exclude_low_sec and is_lowsec(target_system):
+                return False
+
+        if location_id and cfg.excluded_stations:
+            excluded_sta_ids = {int(s.strip()) for s in cfg.excluded_stations.split(",") if s.strip().isdigit()}
+            if int(location_id) in excluded_sta_ids:
+                return False
+
+    # Priority 9: Asset ships only filter
+    if is_asset and cfg.hostile_assets_ships_only:
+        if asset_item_category_id and asset_item_category_id != 6:
+            return False
+
+    # Priorities 10-14: Market transaction logic
+    if is_market_transaction:
+        target_system = system_id or (resolve_location_system_id(location_id) if location_id else None)
+        MAJOR_HUBS = {30000142, 30002187, 30002659, 30002510, 30002053}
+        SECONDARY_HUBS = {30002661, 30003733, 30001389, 30000144}
+
+        if not cfg.market_transactions_show_major_hubs and target_system and int(target_system) in MAJOR_HUBS:
+            return False
+
+        if not cfg.market_transactions_show_secondary_hubs and target_system and int(target_system) in SECONDARY_HUBS:
+            return False
+
+        if target_system and cfg.market_transactions_excluded_systems:
+            excluded_sys_ids = {int(s.strip()) for s in cfg.market_transactions_excluded_systems.split(",") if s.strip().isdigit()}
+            if int(target_system) in excluded_sys_ids:
+                return False
+
+        if cfg.market_transactions_threshold_alert and cfg.market_transactions_threshold_percent > 0:
+            if transaction_item_id and transaction_unit_price is not None:
+                from aa_bb.models import EveItemPrice
+                from datetime import timedelta
+
+                try:
+                    price_obj = EveItemPrice.objects.get(eve_type_id=transaction_item_id)
+                except EveItemPrice.DoesNotExist:
+                    pass
+                else:
+                    market_price = price_obj.buy if transaction_is_buy else price_obj.sell
+                    if market_price and market_price > 0:
+                        threshold_multiplier = 1 + (cfg.market_transactions_threshold_percent / 100)
+                        if transaction_unit_price <= market_price * threshold_multiplier:
+                            return False
+
+    # Priorities 15-18: Location hostility
+    if location_id or system_id:
+        if is_location_hostile(location_id, system_id):
+            return True
+
+    # Priorities 19-23: Entity hostility
+    if entity_id:
+        if is_entity_hostile(entity_id, entity_type, when):
+            return True
+
+    return False
 
 
 def get_users():
@@ -1484,11 +1647,50 @@ def is_ship(type_id):
     """Checks if a type_id belongs to a ship."""
     return False
 
+# Cache for safe and hostile entities with timestamp
+_safe_entities_cache = {'data': None, 'timestamp': 0}
+_hostile_entities_cache = {'corps': None, 'allis': None, 'timestamp': 0}
+_CACHE_TTL = 60  # Cache for 60 seconds
+
+def get_hostile_entities():
+    """
+    Returns tuple of (hostile_corps set, hostile_allis set).
+    Cached for 60 seconds to improve performance during bulk operations.
+    """
+    import time
+    from .models import BigBrotherConfig
+
+    # Check cache validity
+    now = time.time()
+    if (_hostile_entities_cache['corps'] is not None and
+        (now - _hostile_entities_cache['timestamp']) < _CACHE_TTL):
+        return (_hostile_entities_cache['corps'], _hostile_entities_cache['allis'])
+
+    cfg = BigBrotherConfig.get_solo()
+
+    hostile_corps = {int(s) for s in (cfg.hostile_corporations or "").split(",") if s.strip().isdigit()}
+    hostile_allis = {int(s) for s in (cfg.hostile_alliances or "").split(",") if s.strip().isdigit()}
+
+    # Update cache
+    _hostile_entities_cache['corps'] = hostile_corps
+    _hostile_entities_cache['allis'] = hostile_allis
+    _hostile_entities_cache['timestamp'] = now
+
+    return (hostile_corps, hostile_allis)
+
 def get_safe_entities():
     """
     Returns a set of safe entity IDs (whitelist, ignored, members).
+    Cached for 60 seconds to improve performance during bulk operations.
     """
+    import time
     from .models import BigBrotherConfig
+
+    # Check cache validity
+    now = time.time()
+    if _safe_entities_cache['data'] is not None and (now - _safe_entities_cache['timestamp']) < _CACHE_TTL:
+        return _safe_entities_cache['data']
+
     cfg = BigBrotherConfig.get_solo()
 
     ids = set()
@@ -1514,6 +1716,10 @@ def get_safe_entities():
         ids.add(cfg.main_corporation_id)
     if cfg.main_alliance_id:
         ids.add(cfg.main_alliance_id)
+
+    # Update cache
+    _safe_entities_cache['data'] = ids
+    _safe_entities_cache['timestamp'] = now
 
     return ids
 

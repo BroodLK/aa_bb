@@ -184,6 +184,7 @@ class BB_ConfigAdmin(SingletonModelAdmin):
                     "whitelist_corporations",
                     "ignored_corporations",
                     "consider_nullsec_hostile",
+                    "consider_lowsec_hostile",
                     "consider_all_structures_hostile",
                     "consider_npc_stations_hostile",
                     "excluded_systems",
@@ -327,7 +328,7 @@ class TicketToolConfigAdmin(SingletonModelAdmin):
 
         if discordbot_active():
             fieldsets.insert(1, ('Private Channel Settings (Bot)', {
-                'fields': ('Category_ID', 'staff_roles')
+                'fields': ('Category_ID', 'role_id')
             }))
 
             # Find the index of Inactivity Check to insert Discord Link Check after it
@@ -352,7 +353,13 @@ class TicketToolConfigAdmin(SingletonModelAdmin):
         js = ("aa_bb/js/admin_ticket_type_toggle.js",)
 
     def get_form(self, request, obj=None, **kwargs):
+        from django import forms
         form = super().get_form(request, obj, **kwargs)
+
+        # Make role_id a textarea
+        if 'role_id' in form.base_fields:
+            form.base_fields['role_id'].widget = forms.Textarea(attrs={'rows': 3, 'cols': 40})
+
         if not discordbot_active():
             from .models import TicketToolConfig
             # Restrict choices if bot is not active
@@ -458,8 +465,35 @@ class ReasonFilter(admin.SimpleListFilter):
 @admin.register(ComplianceTicket)
 class ComplianceTicketConfig(admin.ModelAdmin):
     """History of tickets issued by the automation layer."""
-    list_display = ["user", "ticket_id", "reason", "is_resolved"]
-    list_filter = ["is_resolved", ReasonFilter]
+    list_display = ["user", "ticket_id", "reason", "is_resolved", "is_exception"]
+    list_filter = ["is_resolved", "is_exception", ReasonFilter]
+    readonly_fields = ["created_at"]
+
+    actions = ["mark_as_exception", "clear_exception", "mark_as_resolved", "mark_as_open"]
+
+    def mark_as_exception(self, request, queryset):
+        """Mark selected tickets as exceptions."""
+        count = queryset.update(is_exception=True, exception_reason=f"Marked as exception by {request.user.username}")
+        self.message_user(request, f"{count} ticket(s) marked as exception.")
+    mark_as_exception.short_description = "Mark selected tickets as exception"
+
+    def clear_exception(self, request, queryset):
+        """Clear exception status from selected tickets."""
+        count = queryset.update(is_exception=False, exception_reason=None)
+        self.message_user(request, f"{count} ticket(s) exception status cleared.")
+    clear_exception.short_description = "Clear exception status"
+
+    def mark_as_resolved(self, request, queryset):
+        """Mark selected tickets as resolved."""
+        count = queryset.update(is_resolved=True)
+        self.message_user(request, f"{count} ticket(s) marked as resolved.")
+    mark_as_resolved.short_description = "Mark selected tickets as resolved"
+
+    def mark_as_open(self, request, queryset):
+        """Mark selected tickets as open."""
+        count = queryset.update(is_resolved=False, is_exception=False)
+        self.message_user(request, f"{count} ticket(s) marked as open.")
+    mark_as_open.short_description = "Mark selected tickets as open"
 
     def get_queryset(self, request):
         qs = super().get_queryset(request)

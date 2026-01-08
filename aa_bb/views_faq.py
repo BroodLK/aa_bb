@@ -519,8 +519,8 @@ def manual_modules(request: WSGIRequest):
             format_html("{} is not set.", code("TicketToolConfig.Category_ID")),
             format_html("Provide the Discord category ID where tickets should be created."),
         )
-        if ticket_cfg.staff_roles:
-            ticket_info.append(format_html("Staff roles: {}", ticket_cfg.staff_roles))
+        if ticket_cfg.role_id:
+            ticket_info.append(format_html("Role IDs: {}", ticket_cfg.role_id))
         else:
             register_issue(
                 ticket_issues,
@@ -528,9 +528,9 @@ def manual_modules(request: WSGIRequest):
                 True,
                 format_html(
                     "{} has not been defined; only the bot will see tickets.",
-                    code("TicketToolConfig.staff_roles"),
+                    code("TicketToolConfig.role_id"),
                 ),
-                format_html("Configure staff roles in TicketToolConfig so humans see tickets."),
+                format_html("Configure role_id in TicketToolConfig so staff roles see tickets."),
             )
         if not charlink_installed:
             register_issue(

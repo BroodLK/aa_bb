@@ -14,12 +14,18 @@
                         <dl>
                             <dt>{% translate "Status" %}</dt>
                             <dd>
-                                {% if ticket.is_resolved %}
+                                {% if ticket.is_exception %}
+                                    <span class="badge bg-info">{% translate "Exception" %}</span>
+                                {% elif ticket.is_resolved %}
                                     <span class="badge bg-success">{% translate "Resolved" %}</span>
                                 {% else %}
                                     <span class="badge bg-warning text-dark">{% translate "Open" %}</span>
                                 {% endif %}
                             </dd>
+                            {% if ticket.is_exception and ticket.exception_reason %}
+                            <dt>{% translate "Exception Reason" %}</dt>
+                            <dd>{{ ticket.exception_reason }}</dd>
+                            {% endif %}
                             <dt>{% translate "User" %}</dt>
                             <dd>{{ ticket.user.profile.main_character.character_name|default:ticket.user.username }}</dd>
                             <dt>{% translate "Reason" %}</dt>
@@ -27,7 +33,29 @@
                             <dt>{% translate "Created At" %}</dt>
                             <dd>{{ ticket.created_at|date:"Y-m-d H:i" }}</dd>
                         </dl>
-                        {% if not ticket.is_resolved %}
+                        {% if ticket.is_exception %}
+                            <form action="{% url 'aa_bb:ticket_clear_exception' ticket.pk %}" method="post" class="mb-2">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-primary w-100">
+                                    {% translate "Clear Exception Status" %}
+                                </button>
+                            </form>
+                            <form action="{% url 'aa_bb:ticket_resolve' ticket.pk %}" method="post">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-success w-100">
+                                    {% translate "Mark as Resolved" %}
+                                </button>
+                            </form>
+                        {% elif not ticket.is_resolved %}
+                            <form action="{% url 'aa_bb:ticket_mark_exception' ticket.pk %}" method="post" class="mb-2">
+                                {% csrf_token %}
+                                <div class="mb-2">
+                                    <input type="text" name="reason" class="form-control form-control-sm" placeholder="{% translate 'Exception reason (optional)' %}">
+                                </div>
+                                <button type="submit" class="btn btn-info w-100">
+                                    {% translate "Mark as Exception" %}
+                                </button>
+                            </form>
                             <form action="{% url 'aa_bb:ticket_resolve' ticket.pk %}" method="post">
                                 {% csrf_token %}
                                 <button type="submit" class="btn btn-success w-100">

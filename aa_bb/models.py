@@ -795,6 +795,12 @@ class BigBrotherConfig(SingletonModel):
         verbose_name=_("Consider Nullsec as Hostile")
     )
 
+    consider_lowsec_hostile = models.BooleanField(
+        default=False,
+        help_text=_("Consider all lowsec regions as hostile?"),
+        verbose_name=_("Consider Lowsec as Hostile")
+    )
+
     consider_all_structures_hostile = models.BooleanField(
         default=False,
         help_text=_("Consider all player owned structures that are not listed as 'whitelist, ignored or member' as hostile?"),
@@ -1816,16 +1822,9 @@ class TicketToolConfig(SingletonModel):
         verbose_name=_("Channel/Thread ID")
     )
 
-    staff_roles = models.TextField(
+    role_id = models.TextField(
         blank=True,
-        help_text="Comma-separated list of staff role IDs or names allowed on tickets"
-    )
-
-    Role_ID = models.PositiveBigIntegerField(
-        default=0,
-        null=True,
-        blank=True,
-        help_text="Role ID to get pinged alongside the non compliant user"
+        help_text="Comma-separated list of role IDs to add to ticket channels/threads"
     )
 
     excluded_users = models.ManyToManyField(
@@ -2165,6 +2164,8 @@ class ComplianceTicket(models.Model):
     last_reminder_sent = models.IntegerField(default=0)
 
     is_resolved = models.BooleanField(default=False)
+    is_exception = models.BooleanField(default=False, help_text="Ticket is marked as an exception and won't receive reminders or be recreated")
+    exception_reason = models.TextField(blank=True, null=True, help_text="Reason why this ticket was marked as an exception")
 
     class Meta:
         verbose_name = "Compliance Ticket"

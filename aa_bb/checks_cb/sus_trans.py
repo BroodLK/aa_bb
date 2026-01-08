@@ -24,6 +24,8 @@ from ..app_settings import (
     is_location_hostile,
     get_system_owner,
     get_hostile_state,
+    is_highsec,
+    is_lowsec,
     corptools_active,
 )
 
@@ -389,6 +391,14 @@ def is_transaction_hostile(tx: dict) -> bool:
         return False
 
     cfg = BigBrotherConfig.get_solo()
+
+    # System Exclusion Check (must be before hostile checks)
+    sys_id = tx.get("system_id") or resolve_location_system_id(tx.get("location_id"))
+    if sys_id:
+        if cfg.exclude_high_sec and is_highsec(sys_id):
+            return False
+        if cfg.exclude_low_sec and is_lowsec(sys_id):
+            return False
 
     # Determine if either party is hostile using mega-helper
     fp_hostile = get_hostile_state(fpid, when=when)

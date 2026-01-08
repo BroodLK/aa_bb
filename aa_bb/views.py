@@ -1228,11 +1228,14 @@ def ticket_list(request):
     """List compliance tickets."""
     from django.db.models import Count
 
-    show_all = request.GET.get('all') == '1'
-    if show_all:
+    tab = request.GET.get('tab', 'open')
+
+    if tab == 'all':
         tickets = ComplianceTicket.objects.all()
-    else:
-        tickets = ComplianceTicket.objects.filter(is_resolved=False)
+    elif tab == 'exceptions':
+        tickets = ComplianceTicket.objects.filter(is_exception=True)
+    else:  # 'open' is default
+        tickets = ComplianceTicket.objects.filter(is_resolved=False, is_exception=False)
 
     if not afat_active():
         tickets = tickets.exclude(reason="paps_check")
@@ -1241,7 +1244,7 @@ def ticket_list(request):
         tickets = tickets.exclude(reason="discord_check")
 
     tickets = tickets.select_related('user__profile__main_character').annotate(comment_count=Count('comments'))
-    return render(request, 'aa_bb/ticket_list.html', {'tickets': tickets, 'show_all': show_all})
+    return render(request, 'aa_bb/ticket_list.html', {'tickets': tickets, 'current_tab': tab})
 
 
 @login_required
@@ -1292,6 +1295,35 @@ def ticket_reopen(request, pk):
                 },
                 queue='aadiscordbot'
             )
+
+    return redirect('aa_bb:ticket_view', pk=pk)
+
+
+@login_required
+@permission_required("aa_bb.ticket_manager")
+@require_POST
+def ticket_mark_exception(request, pk):
+    """Mark a ticket as an exception."""
+    ticket = get_object_or_404(ComplianceTicket, pk=pk)
+    reason = request.POST.get('reason', '').strip()
+
+    ticket.is_exception = True
+    ticket.exception_reason = reason or f"Marked as exception by {request.user.username}"
+    ticket.save(update_fields=["is_exception", "exception_reason"])
+
+    return redirect('aa_bb:ticket_view', pk=pk)
+
+
+@login_required
+@permission_required("aa_bb.ticket_manager")
+@require_POST
+def ticket_clear_exception(request, pk):
+    """Clear exception status from a ticket."""
+    ticket = get_object_or_404(ComplianceTicket, pk=pk)
+
+    ticket.is_exception = False
+    ticket.exception_reason = None
+    ticket.save(update_fields=["is_exception", "exception_reason"])
 
     return redirect('aa_bb:ticket_view', pk=pk)
 
