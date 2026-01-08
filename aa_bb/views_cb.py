@@ -632,98 +632,111 @@ def stream_transactions_sse(request):
     if not user_id:  # Need a corp selection for SSE.
         return HttpResponseBadRequest("Unknown account")
 
-    qs    = gather_user_transactions(user_id)
-    total = qs.count()
-    connection.close()
-    if total == 0:  # No transactions -> return short HTML.
-        return StreamingHttpResponse(
-            "<p>No transactions found.</p>",
-            content_type="text/html"
-        )
+    try:
+        qs    = gather_user_transactions(user_id)
+        total = qs.count()
+        connection.close()
+        if total == 0:  # No transactions -> return short HTML.
+            return StreamingHttpResponse(
+                "<p>No transactions found.</p>",
+                content_type="text/html"
+            )
 
-    # Determine headers from a single hydrated row
-    sample = qs[:1]
-    sample_map    = get_user_transactions(sample)
-    sample_row    = next(iter(sample_map.values()))
-    HIDDEN        = {
-        'first_party_id','second_party_id',
-        'first_party_corporation_id','second_party_corporation_id',
-        'first_party_alliance_id','second_party_alliance_id',
-        'entry_id'
-    }
-    headers = [h for h in sample_row.keys() if h not in HIDDEN]
+        # Determine headers from a single hydrated row
+        sample = qs[:1]
+        sample_map    = get_user_transactions(sample)
+        sample_row    = next(iter(sample_map.values()))
+        HIDDEN        = {
+            'first_party_id','second_party_id',
+            'first_party_corporation_id','second_party_corporation_id',
+            'first_party_alliance_id','second_party_alliance_id',
+            'entry_id'
+        }
+        headers = [h for h in sample_row.keys() if h not in HIDDEN]
+    except Exception as e:
+        logger.error(f"Error in stream_transactions_sse setup: {e}", exc_info=True)
+        return HttpResponseBadRequest(f"Error loading transactions: {str(e)}")
 
     def generator():
-        yield ": ok\n\n"                # initial heartbeat
-        processed = hostile_count = 0
+        try:
+            yield ": ok\n\n"                # initial heartbeat
+            processed = hostile_count = 0
 
-        # Emit table header row once
-        header_html = (
-            "<tr>" +
-            "".join(f"<th>{html.escape(h.replace('_',' ').title())}</th>" for h in headers) +
-            "</tr>"
-        )
-        yield f"event: header\ndata:{json.dumps(header_html)}\n\n"
-
-        cfg = BigBrotherConfig.get_solo()
-        hostile_corps = set((cfg.hostile_corporations or "").split(","))
-        hostile_allis = set((cfg.hostile_alliances or "").split(","))
-
-        for entry in qs:
-            processed += 1
-            yield ": ping\n\n"         # keep‐alive
-
-            # hydrate this one entry
-            row = get_user_transactions([entry])[entry.entry_id]
-
-            if is_transaction_hostile(row):  # Emit rows matching suspicious checks.
-                hostile_count += 1
-
-                # build the <tr> using same style logic as render_transactions()
-                cells = []
-                for col in headers:
-                    val = row.get(col, "")
-                    text = html.escape(str(val))
-                    style = ""
-                    # type‐based red
-                    if col == 'type':
-                        if any(st in row['type'] for st in SUS_TYPES):
-                            style = 'color:red;'
-                        if cfg.show_market_transactions:
-                            if "market_escrow" in row['type'] or "market_transaction" in row['type']:
-                                style = 'color:red;'
-                    # first/second party name
-                    if aablacklist_active():
-                        if col in ('first_party_name','second_party_name'):
-                            id_col = col.replace("_name", "_id")
-                            pid = row[id_col]
-                            if check_char_add_to_bl(pid):
-                                style = 'color:red;'
-                    # corps & alliances
-                    if col.endswith('corporation'):
-                        cid = row[f"{col}_id"]
-                        if cid and str(cid) in hostile_corps:
-                            style = 'color:red;'
-                    if col.endswith('alliance'):
-                        aid = row[f"{col}_id"]
-                        if aid and str(aid) in hostile_allis:
-                            style = 'color:red;'
-                    def make_td(text, style=""):
-                        style_attr = f' style="{style}"' if style else ""
-                        return f"<td{style_attr}>{text}</td>"
-                    cells.append(make_td(text, style))
-                tr_html = "<tr>" + "".join(cells) + "</tr>"
-                yield f"event: transaction\ndata:{json.dumps(tr_html)}\n\n"
-
-            # progress update
-            yield (
-                "event: progress\n"
-                f"data:{processed},{total},{hostile_count}\n\n"
+            # Emit table header row once
+            header_html = (
+                "<tr>" +
+                "".join(f"<th>{html.escape(h.replace('_',' ').title())}</th>" for h in headers) +
+                "</tr>"
             )
-            connection.close()
+            yield f"event: header\ndata:{json.dumps(header_html)}\n\n"
 
-        # Done
-        yield "event: done\ndata:bye\n\n"
+            cfg = BigBrotherConfig.get_solo()
+            hostile_corps = set((cfg.hostile_corporations or "").split(","))
+            hostile_allis = set((cfg.hostile_alliances or "").split(","))
+
+            for entry in qs:
+                try:
+                    processed += 1
+                    yield ": ping\n\n"         # keep‐alive
+
+                    # hydrate this one entry
+                    row = get_user_transactions([entry])[entry.entry_id]
+
+                    if is_transaction_hostile(row):  # Emit rows matching suspicious checks.
+                        hostile_count += 1
+
+                        # build the <tr> using same style logic as render_transactions()
+                        cells = []
+                        for col in headers:
+                            val = row.get(col, "")
+                            text = html.escape(str(val))
+                            style = ""
+                            # type‐based red
+                            if col == 'type':
+                                if any(st in row['type'] for st in SUS_TYPES):
+                                    style = 'color:red;'
+                                if cfg.show_market_transactions:
+                                    if "market_escrow" in row['type'] or "market_transaction" in row['type']:
+                                        style = 'color:red;'
+                            # first/second party name
+                            if aablacklist_active():
+                                if col in ('first_party_name','second_party_name'):
+                                    id_col = col.replace("_name", "_id")
+                                    pid = row[id_col]
+                                    if check_char_add_to_bl(pid):
+                                        style = 'color:red;'
+                            # corps & alliances
+                            if col.endswith('corporation'):
+                                cid = row[f"{col}_id"]
+                                if cid and str(cid) in hostile_corps:
+                                    style = 'color:red;'
+                            if col.endswith('alliance'):
+                                aid = row[f"{col}_id"]
+                                if aid and str(aid) in hostile_allis:
+                                    style = 'color:red;'
+                            def make_td(text, style=""):
+                                style_attr = f' style="{style}"' if style else ""
+                                return f"<td{style_attr}>{text}</td>"
+                            cells.append(make_td(text, style))
+                        tr_html = "<tr>" + "".join(cells) + "</tr>"
+                        yield f"event: transaction\ndata:{json.dumps(tr_html)}\n\n"
+
+                    # progress update
+                    yield (
+                        "event: progress\n"
+                        f"data:{processed},{total},{hostile_count}\n\n"
+                    )
+                    connection.close()
+                except Exception as e:
+                    logger.error(f"Error processing transaction entry {entry.entry_id}: {e}", exc_info=True)
+                    yield f"event: error\ndata:{json.dumps(str(e))}\n\n"
+                    continue
+
+            # Done
+            yield "event: done\ndata:bye\n\n"
+        except Exception as e:
+            logger.error(f"Error in transaction stream generator: {e}", exc_info=True)
+            yield f"event: error\ndata:{json.dumps(f'Stream error: {str(e)}')}\n\n"
 
 
 
