@@ -1,6 +1,7 @@
 """Celery tasks and helpers that manage compliance tickets and reminders."""
 
 import logging
+import time
 logger = logging.getLogger(__name__)
 
 from typing import Optional
@@ -64,6 +65,11 @@ def corp_check(user) -> bool:
     except Exception:
         # If the singleton isn't set up yet, be lenient.
         logger.warning("✅  [AA-BB] - [corp_check] - TicketToolConfig.get_solo() failed; treating user as compliant.")
+        return True
+
+    # Check if compliance_filter field exists (charlink installed)
+    if not hasattr(cfg, 'compliance_filter'):
+        logger.warning("✅  [AA-BB] - [corp_check] - charlink not installed, compliance_filter unavailable; treating user as compliant.")
         return True
 
     if not cfg or not cfg.compliance_filter:  # Missing configuration leaves everyone compliant.
@@ -506,6 +512,9 @@ def ensure_ticket(user, reason, details=None):
         user=user, reason=reason, is_resolved=False
     ).exists()
     if not exists:  # Only emit side effects when a new ticket is needed.
+        # Add 2 second delay to avoid Discord API rate limiting when creating multiple tickets
+        time.sleep(2)
+
         send_status_embed(
             subject="Ticket Created",
             lines=[f"Ticket for **{user.username}** created, reason - **{reason}**"],

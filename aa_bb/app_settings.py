@@ -1617,6 +1617,11 @@ def corptools_active():
     return apps.is_installed("corptools")
 
 
+def charlink_active():
+    """Return True when the charlink plugin is loaded in this deployment."""
+    return apps.is_installed("charlink")
+
+
 _webhook_history = deque()  # stores timestamp floats of last webhook sends
 _channel_history = deque()  # stores timestamp floats of last channel sends
 

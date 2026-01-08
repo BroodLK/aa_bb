@@ -38,12 +38,9 @@ dynamic = [
     "version",
 ]
 dependencies = [
-    "psycopg2-binary>=2.9.9",
     "matplotlib>=3.7.2",
     "allianceauth>=4.3.1",
     "allianceauth-corptools>=2.12.0",
-    "allianceauth-discordbot >= 4.1.0",
-    "aa-charlink >= 1.11.1",
     "django-esi >= 8.2.0"
 ]
 urls.Changelog = "https://github.com/BroodLK/aa_bb/blob/main/CHANGELOG.md"
