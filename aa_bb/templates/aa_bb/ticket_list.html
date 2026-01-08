@@ -43,6 +43,7 @@
                         <td>
                             <a href="{% url 'aa_bb:ticket_view' ticket.pk %}" class="btn btn-primary btn-sm">
                                 {% translate "View" %}
+                                <span class="badge bg-info">{{ ticket.comment_count }}</span>
                             </a>
                         </td>
                     </tr>

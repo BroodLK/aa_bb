@@ -403,7 +403,7 @@ async def send_ticket_reminder(bot, channel_id: int, user_id: int, message: str,
 
         for i, chunk in enumerate(chunks):
             embed = discord.Embed(
-                title="Ticket Reminder" if i == 0 else None,
+                title="Ticket Comment" if i == 0 else None,
                 description="\n".join(chunk),
                 color=discord.Color.orange()
             )

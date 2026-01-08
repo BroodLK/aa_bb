@@ -1226,6 +1226,8 @@ def deny_request(request, pk):
 @permission_required("aa_bb.ticket_manager")
 def ticket_list(request):
     """List compliance tickets."""
+    from django.db.models import Count
+
     show_all = request.GET.get('all') == '1'
     if show_all:
         tickets = ComplianceTicket.objects.all()
@@ -1238,7 +1240,7 @@ def ticket_list(request):
     if not discordbot_active():
         tickets = tickets.exclude(reason="discord_check")
 
-    tickets = tickets.select_related('user__profile__main_character')
+    tickets = tickets.select_related('user__profile__main_character').annotate(comment_count=Count('comments'))
     return render(request, 'aa_bb/ticket_list.html', {'tickets': tickets, 'show_all': show_all})
 
 
