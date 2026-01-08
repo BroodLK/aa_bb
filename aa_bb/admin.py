@@ -299,7 +299,7 @@ class TicketToolConfigAdmin(SingletonModelAdmin):
                 'fields': ('ticket_type', 'Role_ID', 'hr_forum_webhook', 'Forum_Channel_ID', 'ticket_counter', 'excluded_users')
             }),
             ('Corp Compliance Check', {
-                'fields': ('corp_check_enabled', 'corp_check_include_user', 'corp_check', 'corp_check_frequency', 'corp_check_reason', 'corp_check_reminder')
+                'fields': ('compliance_filter', 'corp_check_enabled', 'corp_check_include_user', 'corp_check', 'corp_check_frequency', 'corp_check_reason', 'corp_check_reminder')
             }),
             ('Inactivity Check', {
                 'fields': ('afk_check_enabled', 'afk_check_include_user', 'Max_Afk_Days', 'afk_check', 'afk_check_frequency', 'afk_check_reason', 'afk_check_reminder')
@@ -328,7 +328,7 @@ class TicketToolConfigAdmin(SingletonModelAdmin):
                     break
 
             fieldsets.insert(idx, ('Discord Link Check', {
-                'fields': ('discord_check_enabled', 'discord_check_include_user', 'discord_check', 'discord_check_frequency', 'discord_check_reason', 'discord_check_reminder')
+                'fields': ('discord_check_enabled', 'discord_check', 'discord_check_frequency', 'discord_check_reason', 'discord_check_reminder')
             }))
 
         if afat_active():
