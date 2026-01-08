@@ -1,3 +1,6 @@
+## [3.2.7] - 2026-01-8
+- Removed `Charlink`, `allianceauth-discordbot` and `psycopg2-binary` as required dependencies
+- Added rate limiting to Discord thread/channel creation.
 
 ## [3.2.6] - 2026-01-08
 - ** Fixed an issue that prevented fresh installations from working.**
