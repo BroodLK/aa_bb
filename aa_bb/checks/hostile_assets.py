@@ -16,6 +16,7 @@ from ..app_settings import (
     resolve_location_system_id,
     is_highsec,
     is_lowsec,
+    corptools_active,
 )
 from ..models import BigBrotherConfig
 from django.utils.html import format_html
@@ -26,9 +27,16 @@ import logging
 logger = logging.getLogger(__name__)
 
 try:
-    from corptools.models import CharacterAudit, CharacterAsset, EveLocation
+    if corptools_active():
+        from corptools.models import CharacterAudit, CharacterAsset, EveLocation
+    else:
+        CharacterAudit = None
+        CharacterAsset = None
+        EveLocation = None
 except ImportError:
-    logger.error("Corptools not installed, asset checks will not work.")
+    CharacterAudit = None
+    CharacterAsset = None
+    EveLocation = None
 
 
 def _parse_id_list(value: Optional[str]) -> set[int]:
@@ -41,21 +49,9 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
     """
     Return a dict mapping system IDs to a dict containing their name and a list of locations
     (stations/structures) where any of the given user's characters has one or more assets.
-    Structure:
-    {
-        system_id: {
-            "name": system_name,
-            "locations": {
-                location_id: {
-                    "name": location_name,
-                    "characters": {
-                        char_name: [ship_names...]
-                    }
-                }
-            }
-        }
-    }
     """
+    if not corptools_active() or CharacterAudit is None:
+        return {}
     try:
         user = User.objects.get(pk=user_id)
     except User.DoesNotExist:

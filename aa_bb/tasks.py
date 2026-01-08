@@ -352,26 +352,8 @@ def BB_update_single_user(user_id, char_name):
                         if not limit_notifications and tcfg.awox_monitor_enabled and time_in_corp(
                             user_id) >= 1:  # guardrail: only fire tickets for monitored corps
                             try:
-                                try:
-                                    discord_id = get_discord_user_id(user_obj)
-
-                                    ticket_message = f"<@&{tcfg.Role_ID}>,<@{discord_id}> detection indicates your involvement in an AWOX kill, please explain:\n{attacker_link_list}"
-                                    send_status_embed(
-                                        subject="Ticket Created",
-                                        lines=[f"Ticket for **{status.user}** created, reason - **AWOX Kill**"],
-                                        color=0xf1c40f,  # Yellow
-                                    )
-                                    run_task_function.apply_async(
-                                        args=["aa_bb.tasks_bot.create_compliance_ticket"],
-                                        kwargs={
-                                            "task_args": [status.user.id, discord_id, "awox_kill", ticket_message],
-                                            "task_kwargs": {}
-                                        }
-                                    )
-                                except Exception as e:
-                                    logger.error(f"ℹ️  [AA-BB] - [BB_update_single_user] - {e}")
-                                    pass
-
+                                from .tasks_tickets import ensure_ticket
+                                ensure_ticket(status.user, "awox_kill", details=attacker_link_list)
                             except Exception as e:
                                 logger.error(f"ℹ️  [AA-BB] - [BB_update_single_user] - {e}")
                                 pass
@@ -904,11 +886,10 @@ def BB_update_single_user(user_id, char_name):
                 status.sus_trans = sus_trans_result
 
             if not status.baseline_initialized:
-                if not instance.new_user_notify:
-                    send_notifications = False
-                else:
-                    send_notifications = True
+                # First time auditing this user - respect new_user_notify setting
+                send_notifications = instance.new_user_notify
             else:
+                # Existing user - always send notifications for changes
                 send_notifications = True
 
             if not limit_notifications and send_notifications and changes:
@@ -1046,7 +1027,7 @@ def BB_run_regular_updates():
             instance.main_alliance_id = alliance_id
             instance.main_alliance = alliance_name
 
-        instance.save()
+        instance.save(update_fields=["main_corporation_id", "main_corporation", "main_alliance_id", "main_alliance"])
 
         # walk each eligible user and rebuild their status snapshot
         if instance.is_active:  # skip user iteration entirely when plugin disabled/unlicensed
@@ -1099,7 +1080,7 @@ def BB_run_regular_updates():
                     logger.error(f"ℹ️  [AA-BB] - [BB_run_regular_updates] - Failed to check for update backlog: {e}", exc_info=True)
 
             instance.update_last_dispatch_count = total_users
-            instance.save()
+            instance.save(update_fields=["update_last_dispatch_count"])
 
             if total_users == 0:
                 return
@@ -1144,11 +1125,11 @@ def BB_run_regular_updates():
                     args=(user_id, char_name),
                     eta=eta,
                 )
+        else:
+            logger.warning("ℹ️  [AA-BB] - [BB_run_regular_updates] - Plugin is disabled (is_active=False), skipping user updates.")
 
     except Exception as e:
         logger.error("ℹ️  [AA-BB] - [BB_run_regular_updates] - Task failed", exc_info=True)
-        instance.is_active = True
-        instance.save()
         tb_str = traceback.format_exc()
         tb_lines = [f"{get_pings('Error')} Big Brother encountered an unexpected error", "```python"] + tb_str.split("\n") + ["```"]
         for chunk in _chunk_embed_lines(tb_lines):
@@ -1478,4 +1459,9 @@ def BB_sync_contacts_from_aa_contacts(self):
         changed = True
 
     if changed:
-        cfg.save()
+        cfg.save(update_fields=[
+            "member_alliances", "member_corporations",
+            "hostile_alliances", "hostile_corporations",
+            "whitelist_alliances", "whitelist_corporations",
+            "contacts_import_cache"
+        ])

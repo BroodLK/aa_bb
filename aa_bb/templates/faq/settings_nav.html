@@ -26,12 +26,14 @@
       href="{% url 'aa_bb:manual_settings' %}"
     >{% translate "BigBrotherConfig" %}</a>
   </li>
+  {% if is_afat %}
   <li class="nav-item">
     <a
       class="nav-link{% if request.resolver_match.url_name == 'manual_settings_paps' %} active{% endif %}"
       href="{% url 'aa_bb:manual_settings_paps' %}"
     >{% translate "PapsConfig" %}</a>
   </li>
+  {% endif %}
   <li class="nav-item">
     <a
       class="nav-link{% if request.resolver_match.url_name == 'manual_settings_tickets' %} active{% endif %}"

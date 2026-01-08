@@ -30,9 +30,9 @@ from .forms import LeaveRequestForm
 from .app_settings import (
     get_user_characters, get_entity_info, get_main_character_name,
     get_character_id, get_pings, aablacklist_active, send_status_embed,
-    resolve_location_name
+    resolve_location_name, afat_active, discordbot_active, corptools_active
 )
-from .models import BigBrotherConfig, WarmProgress, LeaveRequest
+from .models import BigBrotherConfig, WarmProgress, LeaveRequest, ComplianceTicket, ComplianceTicketComment
 
 from aa_bb.checks.awox import render_awox_kills_html
 from aa_bb.checks.corp_changes import get_frequent_corp_changes
@@ -78,9 +78,12 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
 
 try:
-    from corptools.models import Contract
+    if corptools_active():
+        from corptools.models import Contract
+    else:
+        Contract = None
 except ImportError:
-    logger.error("Corptools not not installed")
+    Contract = None
 
 
 def get_allowed_alliance_id():
@@ -1217,3 +1220,121 @@ def deny_request(request, pk):
             hook=hook
         )
     return redirect('loa:admin')
+
+
+@login_required
+@permission_required("aa_bb.ticket_manager")
+def ticket_list(request):
+    """List compliance tickets."""
+    show_all = request.GET.get('all') == '1'
+    if show_all:
+        tickets = ComplianceTicket.objects.all()
+    else:
+        tickets = ComplianceTicket.objects.filter(is_resolved=False)
+
+    if not afat_active():
+        tickets = tickets.exclude(reason="paps_check")
+
+    if not discordbot_active():
+        tickets = tickets.exclude(reason="discord_check")
+
+    tickets = tickets.select_related('user__profile__main_character')
+    return render(request, 'aa_bb/ticket_list.html', {'tickets': tickets, 'show_all': show_all})
+
+
+@login_required
+@permission_required("aa_bb.ticket_manager")
+def ticket_view(request, pk):
+    """View details and comments for a specific ticket."""
+    ticket = get_object_or_404(ComplianceTicket, pk=pk)
+    if ticket.reason == "paps_check" and not afat_active():
+        return HttpResponseForbidden("PAP compliance tickets are hidden as afat is not active.")
+    comments = ticket.comments.all().select_related('user__profile__main_character')
+    return render(request, 'aa_bb/ticket_view.html', {'ticket': ticket, 'comments': comments})
+
+
+@login_required
+@permission_required("aa_bb.ticket_manager")
+@require_POST
+def ticket_resolve(request, pk):
+    """Resolve a ticket via the UI."""
+    ticket = get_object_or_404(ComplianceTicket, pk=pk)
+    from .tasks_tickets import close_ticket, close_char_removed_ticket
+
+    if ticket.reason in ["char_removed", "awox_kill"]:
+        close_char_removed_ticket(ticket)
+    else:
+        close_ticket(ticket)
+
+    return redirect('aa_bb:ticket_view', pk=pk)
+
+
+@login_required
+@permission_required("aa_bb.ticket_manager")
+@require_POST
+def ticket_reopen(request, pk):
+    """Reopen a resolved ticket."""
+    ticket = get_object_or_404(ComplianceTicket, pk=pk)
+    ticket.is_resolved = False
+    ticket.save(update_fields=["is_resolved"])
+
+    # Unarchive Discord thread if bot is available and channel_id exists
+    if ticket.discord_channel_id:
+        from aa_bb.tasks_tickets import run_task_function
+        if run_task_function:
+            run_task_function.apply_async(
+                args=["aa_bb.tasks_bot.unarchive_thread"],
+                kwargs={
+                    "task_args": [ticket.discord_channel_id],
+                    "task_kwargs": {}
+                },
+                queue='aadiscordbot'
+            )
+
+    return redirect('aa_bb:ticket_view', pk=pk)
+
+
+@login_required
+@permission_required("aa_bb.ticket_manager")
+@require_POST
+def ticket_add_comment(request, pk):
+    """Add a comment to a ticket and optionally post to Discord."""
+    ticket = get_object_or_404(ComplianceTicket, pk=pk)
+    comment_text = request.POST.get('comment')
+    if comment_text:
+        ComplianceTicketComment.objects.create(
+            ticket=ticket,
+            user=request.user,
+            comment=comment_text
+        )
+
+        # Post to Discord if channel/thread ID exists
+        if ticket.discord_channel_id:
+            from .models import TicketToolConfig
+            tcfg = TicketToolConfig.get_solo()
+
+            # Forward to Discord if it's a thread/forum
+            if tcfg.ticket_type in [TicketToolConfig.TICKET_TYPE_FORUM_THREAD, TicketToolConfig.TICKET_TYPE_PRIVATE_THREAD]:
+                from .app_settings import send_message
+                main_char = getattr(request.user.profile, "main_character", None)
+                char_name = main_char.character_name if main_char else request.user.username
+
+                content = f"**{char_name}**: {comment_text}"
+
+                if tcfg.ticket_type == TicketToolConfig.TICKET_TYPE_FORUM_THREAD and tcfg.hr_forum_webhook:
+                    webhook_url = f"{tcfg.hr_forum_webhook}?thread_id={ticket.discord_channel_id}"
+                    send_message({"content": content}, hook=webhook_url)
+                else:
+                    # For bot-managed threads
+                    from aa_bb.tasks_tickets import run_task_function
+                    if run_task_function:
+                        run_task_function.apply_async(
+                            args=["aa_bb.tasks_bot.send_ticket_reminder"], # Reuse reminder task to post msg
+                            kwargs={
+                                "task_args": [ticket.discord_channel_id, 0, content], # user_id=0 means no mention
+                                "task_kwargs": {}
+                            },
+                            queue='aadiscordbot'
+                        )
+
+    return redirect('aa_bb:ticket_view', pk=pk)

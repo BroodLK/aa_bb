@@ -17,6 +17,7 @@ from ..app_settings import (
     get_safe_entities,
     aablacklist_active,
     get_hostile_state,
+    corptools_active,
 )
 
 if aablacklist_active():
@@ -31,9 +32,14 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 try:
-    from corptools.models import MailMessage, MailRecipient
+    if corptools_active():
+        from corptools.models import MailMessage, MailRecipient
+    else:
+        MailMessage = None
+        MailRecipient = None
 except ImportError:
-    logger.error("Corptools not installed, corp checks will not work.")
+    MailMessage = None
+    MailRecipient = None
 
 
 def _find_employment_at(employment: List[dict], date: datetime) -> Optional[dict]:
@@ -55,6 +61,9 @@ def _find_alliance_at(history: List[dict], date: datetime) -> Optional[int]:
 
 
 def gather_user_mails(user_id: int):
+    if not corptools_active() or MailMessage is None:
+        from ..models import ProcessedMail
+        return ProcessedMail.objects.none()
     user_chars = get_user_characters(user_id)
     user_ids = set(user_chars.keys())
     return MailMessage.objects.filter(

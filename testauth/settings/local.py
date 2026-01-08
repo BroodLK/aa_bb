@@ -65,6 +65,7 @@ INSTALLED_APPS += [
     "eveuniverse",
     "corptools",
     "charlink",
+    "allianceauth.services.modules.discord",
     PACKAGE,
 ]
 

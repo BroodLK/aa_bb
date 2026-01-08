@@ -7,7 +7,7 @@ heavy lifting happens here so templates only need to call render helpers.
 """
 
 from .skills import get_user_skill_info, get_char_age
-from ..app_settings import get_user_characters, get_character_id
+from ..app_settings import get_user_characters, get_character_id, corptools_active
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 from .corp_changes import get_current_stint_days_in_corp
@@ -18,9 +18,14 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 try:
-    from corptools.models import CharacterAudit, CharacterAsset
+    if corptools_active():
+        from corptools.models import CharacterAudit, CharacterAsset
+    else:
+        CharacterAudit = None
+        CharacterAsset = None
 except ImportError:
-    logger.error("Corptools not installed, corp checks will not work.")
+    CharacterAudit = None
+    CharacterAsset = None
 
 skill_ids = {
     "cyno":     21603,  # Cynosural Field Theory
@@ -65,6 +70,8 @@ def get_user_cyno_info(user_id: int) -> dict:
     `required_levels` is an optional dict mapping skill keys ("cyno", "recon", etc.) to the minimum trained/active level required.
     If not provided, defaults to 1 for all skills.
     """
+    if not corptools_active() or CharacterAudit is None:
+        return {}
     # default required levels
     required_levels = {
         "cyno":      1,  # Cynosural Field Theory
@@ -273,6 +280,8 @@ def owns_items_in_group(cid, gid):
     Return True when the character has at least one hull in the given
     EVE group id (e.g. recon ships). Used to gauge practical readiness.
     """
+    if not corptools_active() or CharacterAsset is None:
+        return False
     exists = CharacterAsset.objects.filter(
         character__character__character_id=cid,
         type_name__group_id=gid

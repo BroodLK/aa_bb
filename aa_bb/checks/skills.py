@@ -6,7 +6,7 @@ generic routines (get_user_skill_info) that other check modules import.
 """
 
 from django.utils.html import format_html
-from ..app_settings import get_user_characters, format_int, get_character_id
+from ..app_settings import get_user_characters, format_int, get_character_id, corptools_active
 import logging
 import json
 import os
@@ -18,9 +18,18 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 try:
-    from corptools.models import CharacterAudit, Skill, SkillTotals, CorporationHistory
+    if corptools_active():
+        from corptools.models import CharacterAudit, Skill, SkillTotals, CorporationHistory
+    else:
+        CharacterAudit = None
+        Skill = None
+        SkillTotals = None
+        CorporationHistory = None
 except ImportError:
-    logger.error("Corptools not installed, corp checks will not work.")
+    CharacterAudit = None
+    Skill = None
+    SkillTotals = None
+    CorporationHistory = None
 
 _SKILLS_JSON_PATH = os.path.join(os.path.dirname(__file__), "skills.json")
 
@@ -74,6 +83,8 @@ def get_user_skill_info(user_id: int, skill_id: int) -> dict:
 
     Characters without the given skill will show levels = 0.
     """
+    if not corptools_active() or CharacterAudit is None:
+        return {}
     ownership_map = get_user_characters(user_id)
 
     # 2) fetch audits only for those character IDs
@@ -264,6 +275,8 @@ def get_char_age(char_id: int) -> int | None:
     based on the first recorded CorporationHistory.start_date.
     If the character audit or history is missing, returns None.
     """
+    if not corptools_active() or CorporationHistory is None:
+        return None
     try:
         # 1) Find the audit record for this EVE character ID
         audit = CharacterAudit.objects.get(

@@ -6,7 +6,7 @@ live and highlight systems owned by alliances on the hostile list.
 """
 
 from allianceauth.eveonline.models import EveCorporationInfo
-from ..app_settings import get_system_owner, resolve_location_name, resolve_location_system_id, get_hostile_state
+from ..app_settings import get_system_owner, resolve_location_name, resolve_location_system_id, get_hostile_state, corptools_active
 from ..models import BigBrotherConfig
 from django.utils.html import format_html
 from typing import List, Optional, Dict
@@ -15,15 +15,24 @@ import logging
 logger = logging.getLogger(__name__)
 
 try:
-    from corptools.models import CorporationAudit, CorpAsset, EveLocation
+    if corptools_active():
+        from corptools.models import CorporationAudit, CorpAsset, EveLocation
+    else:
+        CorporationAudit = None
+        CorpAsset = None
+        EveLocation = None
 except ImportError:
-    logger.error("Corptools not installed, corp checks will not work.")
+    CorporationAudit = None
+    CorpAsset = None
+    EveLocation = None
 
 def get_asset_locations(corp_id: int) -> Dict[int, Optional[str]]:
     """
     Return a dict mapping system IDs to their names (or None if unnamed)
     where the given corporation has one or more assets in space.
     """
+    if not corptools_active() or CorporationAudit is None:
+        return {}
     try:
         corp_info = EveCorporationInfo.objects.get(corporation_id=corp_id)
         corp_audit = CorporationAudit.objects.get(corporation=corp_info)

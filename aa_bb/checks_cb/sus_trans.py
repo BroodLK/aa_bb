@@ -24,20 +24,28 @@ from ..app_settings import (
     is_location_hostile,
     get_system_owner,
     get_hostile_state,
+    corptools_active,
 )
 
 if aablacklist_active():
     from aa_bb.checks.add_to_blacklist import check_char_add_to_bl
 
 try:
-    from corptools.models import (
-        CorporationAudit,
-        CorporationWalletJournalEntry,
-        CorporationMarketTransaction,
-        Structure,
-    )
+    if corptools_active():
+        from corptools.models import (
+            CorporationAudit,
+            CorporationWalletJournalEntry,
+            CorporationMarketTransaction,
+            Structure,
+        )
+    else:
+        CorporationAudit = None
+        CorporationWalletJournalEntry = None
+        CorporationMarketTransaction = None
+        Structure = None
 except ImportError:
-    logger.error("Corptools not installed, corp checks will not work.")
+    CorporationAudit = None
+    CorporationWalletJournalEntry = None
     CorporationMarketTransaction = None
     Structure = None
 
@@ -247,8 +255,15 @@ def gather_user_transactions(corp_id: int):
 
     Parameter mirrors the member helper naming but expects a corporation id.
     """
-    corp_info = EveCorporationInfo.objects.get(corporation_id=corp_id)
-    corp_audit = CorporationAudit.objects.get(corporation=corp_info)
+    if not corptools_active() or CorporationWalletJournalEntry is None:
+        from ..models import ProcessedTransaction
+        return ProcessedTransaction.objects.none()
+    try:
+        corp_info = EveCorporationInfo.objects.get(corporation_id=corp_id)
+        corp_audit = CorporationAudit.objects.get(corporation=corp_info)
+    except (EveCorporationInfo.DoesNotExist, CorporationAudit.DoesNotExist):
+        from ..models import ProcessedTransaction
+        return ProcessedTransaction.objects.none()
 
     qs = CorporationWalletJournalEntry.objects.filter(division__corporation=corp_audit)
     logger.info(f"qs:{qs.count()}")

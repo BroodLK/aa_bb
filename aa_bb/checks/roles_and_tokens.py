@@ -10,14 +10,20 @@ from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 from aa_bb.models import BigBrotherConfig
 
+from ..app_settings import corptools_active
 import logging
 
 logger = logging.getLogger(__name__)
 
 try:
-    from corptools.models import CharacterRoles, CharacterAudit
+    if corptools_active():
+        from corptools.models import CharacterRoles, CharacterAudit
+    else:
+        CharacterRoles = None
+        CharacterAudit = None
 except ImportError:
-    logger.error("Corptools not installed, corp checks will not work.")
+    CharacterRoles = None
+    CharacterAudit = None
 
 def get_user_roles(user_id):
     """
@@ -26,6 +32,8 @@ def get_user_roles(user_id):
     Pulling the CharacterRoles info once here keeps the template logic simple
     and avoids doing additional DB hits while rendering a table per user.
     """
+    if not corptools_active() or CharacterAudit is None:
+        return {}
     characters = CharacterOwnership.objects.filter(user__id=user_id).select_related("character")
 
     roles_dict = {}
@@ -63,6 +71,8 @@ def get_user_tokens(user_id):
     We track both character audit availability and the presence of the
     configured corporation scopes so staff can quickly spot gaps.
     """
+    if not corptools_active() or CharacterAudit is None:
+        return {}
     from esi.models import Token, Scope
 
     CHARACTER_SCOPES = BigBrotherConfig.get_solo().character_scopes.split(",")
