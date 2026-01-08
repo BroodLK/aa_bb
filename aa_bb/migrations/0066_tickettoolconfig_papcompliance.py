@@ -8,7 +8,6 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('authentication', '0024_alter_userprofile_language'),
-        ('charlink', '0003_compliancefilter'),
         ('aa_bb', '0065_alter_complianceticket_reason_and_more'),
     ]
 
