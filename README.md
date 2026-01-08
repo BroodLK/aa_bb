@@ -35,16 +35,19 @@ All while invisible to the general membership unless you choose to expose it to 
 ```md
 allianceauth >= 4.3.1
 allianceauth-corptools >= 2.12.0
-allianceauth-discordbot >= 4.1.0
-aa-charlink >= 1.11.1
 django-esi >= 8.2.0
 django-eveuniverse >= 1.5.9
 ```
+### Recommended plugins
+```md
+allianceauth-discordbot >= 4.1.0  # Required for Discord notifications and ticket system
+aa-charlink >= 1.11.1              # Required for corp compliance filter checks
+```
 ### Optional plugins
 ```md
-allianceauth-afat >= 4.1.1
-allianceauth-blacklist >= 0.1.1
-aa-contacts >= 0.10.2
+allianceauth-afat >= 4.1.1         # Required for PAP/Fleet participation compliance
+allianceauth-blacklist >= 0.1.1    # Enhanced blacklist integration
+aa-contacts >= 0.10.2              # Automatic hostile/friendly contact syncing
 ```
 
 ## Install Instructions

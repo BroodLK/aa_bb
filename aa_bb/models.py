@@ -21,6 +21,10 @@ try:
     from charlink.models import ComplianceFilter
 except ImportError:
     logger.warning("✅  [AA-BB] - [Models] - charlink not installed")
+    # Create a dummy model for when charlink is not installed
+    class ComplianceFilter(models.Model):
+        class Meta:
+            abstract = True
 
 from django.utils.translation import gettext_lazy as _
 from django.apps import apps

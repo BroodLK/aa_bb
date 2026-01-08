@@ -9,7 +9,7 @@ and prevent accidental multi-row creation of what should be one-off configs.
 from solo.admin import SingletonModelAdmin
 
 from django.contrib import admin
-from .app_settings import afat_active, discordbot_active
+from .app_settings import afat_active, discordbot_active, charlink_active
 from django.contrib.admin.sites import NotRegistered
 
 from .models import (
@@ -298,9 +298,18 @@ class TicketToolConfigAdmin(SingletonModelAdmin):
             (None, {
                 'fields': ('ticket_type', 'Role_ID', 'hr_forum_webhook', 'Forum_Channel_ID', 'ticket_counter', 'excluded_users')
             }),
-            ('Corp Compliance Check', {
-                'fields': ('compliance_filter', 'corp_check_enabled', 'corp_check_include_user', 'corp_check', 'corp_check_frequency', 'corp_check_reason', 'corp_check_reminder')
-            }),
+        ]
+
+        # Corp Compliance Check - only show compliance_filter if charlink is installed
+        corp_check_fields = ['corp_check_enabled', 'corp_check_include_user', 'corp_check', 'corp_check_frequency', 'corp_check_reason', 'corp_check_reminder']
+        if charlink_active():
+            corp_check_fields.insert(0, 'compliance_filter')
+
+        fieldsets.append(('Corp Compliance Check', {
+            'fields': tuple(corp_check_fields)
+        }))
+
+        fieldsets.extend([
             ('Inactivity Check', {
                 'fields': ('afk_check_enabled', 'afk_check_include_user', 'Max_Afk_Days', 'afk_check', 'afk_check_frequency', 'afk_check_reason', 'afk_check_reminder')
             }),
@@ -313,7 +322,7 @@ class TicketToolConfigAdmin(SingletonModelAdmin):
             ('AWOX Check', {
                 'fields': ('awox_monitor_enabled', 'awox_kill_include_user', 'awox_kill_reason')
             }),
-        ]
+        ])
 
         if discordbot_active():
             fieldsets.insert(1, ('Private Channel Settings (Bot)', {
