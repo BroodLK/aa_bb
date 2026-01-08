@@ -66,6 +66,11 @@ def corp_check(user) -> bool:
         logger.warning("✅  [AA-BB] - [corp_check] - TicketToolConfig.get_solo() failed; treating user as compliant.")
         return True
 
+    # Check if compliance_filter field exists (charlink installed)
+    if not hasattr(cfg, 'compliance_filter'):
+        logger.warning("✅  [AA-BB] - [corp_check] - charlink not installed, compliance_filter unavailable; treating user as compliant.")
+        return True
+
     if not cfg or not cfg.compliance_filter:  # Missing configuration leaves everyone compliant.
         return True
 

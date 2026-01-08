@@ -17,18 +17,10 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-try:
-    from charlink.models import ComplianceFilter
-except ImportError:
-    logger.warning("✅  [AA-BB] - [Models] - charlink not installed")
-    # Create a dummy model for when charlink is not installed
-    class ComplianceFilter(models.Model):
-        class Meta:
-            abstract = True
-
 from django.utils.translation import gettext_lazy as _
 from django.apps import apps
 AA_CONTACTS_INSTALLED = apps.is_installed("aa_contacts")
+CHARLINK_INSTALLED = apps.is_installed("charlink")
 
 
 DEFAULT_CHARACTER_SCOPES = ",".join([
@@ -1616,15 +1608,6 @@ class TicketToolConfig(SingletonModel):
       category hosts the ticket, which roles gain access, and which role is pinged.
     - excluded_users: AllianceAuth users that should never receive automated tickets.
     """
-    compliance_filter = models.ForeignKey(
-        ComplianceFilter,
-        related_name="compliance_filter",
-        blank=True,
-        null=True,
-        on_delete=models.SET_NULL,
-        help_text="Select your compliance filter"
-    )
-
     ticket_counter = models.PositiveIntegerField(default=0, help_text="Rolling counter for ticket channel names", editable=False)
 
     max_months_without_pap_compliance = models.PositiveIntegerField(
@@ -1904,6 +1887,21 @@ class TicketToolConfig(SingletonModel):
     class Meta:
         verbose_name = "Ticket Tool Configuration"
         verbose_name_plural = "Ticket Tool Configuration"
+
+
+# Dynamically add compliance_filter field if charlink is installed
+if CHARLINK_INSTALLED:
+    TicketToolConfig.add_to_class(
+        'compliance_filter',
+        models.ForeignKey(
+            "charlink.ComplianceFilter",
+            related_name="compliance_filter",
+            blank=True,
+            null=True,
+            on_delete=models.SET_NULL,
+            help_text="Select your compliance filter"
+        )
+    )
 
 
 class BBUpdateState(SingletonModel):

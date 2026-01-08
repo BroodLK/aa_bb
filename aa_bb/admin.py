@@ -301,9 +301,10 @@ class TicketToolConfigAdmin(SingletonModelAdmin):
         ]
 
         # Corp Compliance Check - only show compliance_filter if charlink is installed
-        corp_check_fields = ['corp_check_enabled', 'corp_check_include_user', 'corp_check', 'corp_check_frequency', 'corp_check_reason', 'corp_check_reminder']
+        corp_check_fields = []
         if charlink_active():
-            corp_check_fields.insert(0, 'compliance_filter')
+            corp_check_fields.append('compliance_filter')
+        corp_check_fields.extend(['corp_check_enabled', 'corp_check_include_user', 'corp_check', 'corp_check_frequency', 'corp_check_reason', 'corp_check_reminder'])
 
         fieldsets.append(('Corp Compliance Check', {
             'fields': tuple(corp_check_fields)
