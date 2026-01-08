@@ -1,6 +1,7 @@
 """Celery tasks and helpers that manage compliance tickets and reminders."""
 
 import logging
+import time
 logger = logging.getLogger(__name__)
 
 from typing import Optional
@@ -511,6 +512,9 @@ def ensure_ticket(user, reason, details=None):
         user=user, reason=reason, is_resolved=False
     ).exists()
     if not exists:  # Only emit side effects when a new ticket is needed.
+        # Add 2 second delay to avoid Discord API rate limiting when creating multiple tickets
+        time.sleep(2)
+
         send_status_embed(
             subject="Ticket Created",
             lines=[f"Ticket for **{user.username}** created, reason - **{reason}**"],

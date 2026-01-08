@@ -40,13 +40,13 @@ django-eveuniverse >= 1.5.9
 ```
 ### Recommended plugins
 ```md
-allianceauth-discordbot >= 4.1.0  # Required for Discord notifications and ticket system
+allianceauth-discordbot >= 4.1.0   # Required for Discord notifications and ticket system
 aa-charlink >= 1.11.1              # Required for corp compliance filter checks
 ```
 ### Optional plugins
 ```md
 allianceauth-afat >= 4.1.1         # Required for PAP/Fleet participation compliance
-allianceauth-blacklist >= 0.1.1    # Enhanced blacklist integration
+allianceauth-blacklist >= 0.1.1    # Add / check for blacklisted characters
 aa-contacts >= 0.10.2              # Automatic hostile/friendly contact syncing
 ```
 

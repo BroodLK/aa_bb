@@ -12,7 +12,7 @@ import logging
 
 from allianceauth.authentication.models import UserProfile
 
-from django.db import transaction
+from django.db import transaction, close_old_connections
 from django.core.cache import cache
 from django.utils import timezone
 from asgiref.sync import sync_to_async
@@ -125,6 +125,7 @@ def get_staff_roles():
     return roles
 
 async def create_compliance_ticket(bot, user_id, discord_user_id: int, reason: str, message: str, include_user: bool = True, **kwargs):
+    close_old_connections()
     tcfg = await sync_to_async(TicketToolConfig.get_solo)()
     category_id = tcfg.Category_ID
     if not category_id:
@@ -221,6 +222,7 @@ async def create_compliance_ticket(bot, user_id, discord_user_id: int, reason: s
 
 
 async def create_compliance_thread(bot, user_id, discord_user_id: int, reason: str, message: str, thread_name: str, thread_id: int = None, include_user: bool = True, **kwargs):
+    close_old_connections()
     tcfg = await sync_to_async(TicketToolConfig.get_solo)()
     parent_channel_id = tcfg.Forum_Channel_ID
     if not parent_channel_id:
@@ -411,6 +413,7 @@ async def send_ticket_reminder(bot, channel_id: int, user_id: int, message: str,
                 await channel.send(embed=embed)
 
 async def close_ticket_channel(bot, channel_id: int, **kwargs):
+    close_old_connections()
     channel = bot.get_channel(channel_id)
     if not channel and hasattr(bot, 'fetch_channel'):
         try:
@@ -475,6 +478,8 @@ class TicketCommands(commands.Cog):
     async def ticket_message_listener(self, message: discord.Message):
         if message.author.bot or not message.guild:
             return
+
+        close_old_connections()
 
         # Track Discord activity quietly
         await self._track_activity(message)
@@ -550,6 +555,7 @@ class TicketCommands(commands.Cog):
         await self._handle_resolution(ctx)
 
     async def _handle_resolution(self, ctx_or_msg):
+        close_old_connections()
         channel = ctx_or_msg.channel
         author = ctx_or_msg.author if isinstance(ctx_or_msg, discord.Message) else ctx_or_msg.user
 
@@ -715,6 +721,7 @@ async def rebalance_ticket_categories(bot, **kwargs):
     Try to keep earlier categories in the ticket family as full as possible by moving
     ticket channels leftwards. Delete empty overflow categories (suffix >= 2).
     """
+    close_old_connections()
     cfg = TicketToolConfig.get_solo()
     if not cfg.Category_ID:  # nothing configured → nothing to rebalance
         return
