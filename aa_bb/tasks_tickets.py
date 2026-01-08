@@ -554,7 +554,7 @@ def ensure_ticket(user, reason, details=None):
                 ticket_id=tcfg.ticket_counter
             )
             tcfg.ticket_counter += 1
-            tcfg.save()
+            tcfg.save(update_fields=["ticket_counter"])
             return
 
         from .models import ComplianceThread
@@ -605,7 +605,7 @@ def ensure_ticket(user, reason, details=None):
                 ticket_id=tcfg.ticket_counter
             )
             tcfg.ticket_counter += 1
-            tcfg.save()
+            tcfg.save(update_fields=["ticket_counter"])
 
             if run_task_function and thread_id:
                 run_task_function.apply_async(

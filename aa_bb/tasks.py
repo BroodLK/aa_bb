@@ -1028,7 +1028,7 @@ def BB_run_regular_updates():
             instance.main_alliance_id = alliance_id
             instance.main_alliance = alliance_name
 
-        instance.save()
+        instance.save(update_fields=["main_corporation_id", "main_corporation", "main_alliance_id", "main_alliance"])
 
         # walk each eligible user and rebuild their status snapshot
         if instance.is_active:  # skip user iteration entirely when plugin disabled/unlicensed
@@ -1081,7 +1081,7 @@ def BB_run_regular_updates():
                     logger.error(f"ℹ️  [AA-BB] - [BB_run_regular_updates] - Failed to check for update backlog: {e}", exc_info=True)
 
             instance.update_last_dispatch_count = total_users
-            instance.save()
+            instance.save(update_fields=["update_last_dispatch_count"])
 
             if total_users == 0:
                 return
@@ -1131,8 +1131,6 @@ def BB_run_regular_updates():
 
     except Exception as e:
         logger.error("ℹ️  [AA-BB] - [BB_run_regular_updates] - Task failed", exc_info=True)
-        instance.is_active = True
-        instance.save()
         tb_str = traceback.format_exc()
         tb_lines = [f"{get_pings('Error')} Big Brother encountered an unexpected error", "```python"] + tb_str.split("\n") + ["```"]
         for chunk in _chunk_embed_lines(tb_lines):
@@ -1462,4 +1460,9 @@ def BB_sync_contacts_from_aa_contacts(self):
         changed = True
 
     if changed:
-        cfg.save()
+        cfg.save(update_fields=[
+            "member_alliances", "member_corporations",
+            "hostile_alliances", "hostile_corporations",
+            "whitelist_alliances", "whitelist_corporations",
+            "contacts_import_cache"
+        ])
