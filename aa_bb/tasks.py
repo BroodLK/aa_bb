@@ -886,11 +886,10 @@ def BB_update_single_user(user_id, char_name):
                 status.sus_trans = sus_trans_result
 
             if not status.baseline_initialized:
-                if not instance.new_user_notify:
-                    send_notifications = False
-                else:
-                    send_notifications = True
+                # First time auditing this user - respect new_user_notify setting
+                send_notifications = instance.new_user_notify
             else:
+                # Existing user - always send notifications for changes
                 send_notifications = True
 
             if not limit_notifications and send_notifications and changes:
