@@ -7,7 +7,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required, permission_required
 from django.core.handlers.wsgi import WSGIRequest
 from django.db import OperationalError, ProgrammingError
-from django.http import HttpResponseBadRequest
+from django.http import HttpResponseBadRequest, HttpResponseForbidden
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -15,6 +15,7 @@ from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
 from django_celery_beat.models import PeriodicTask
 
+from .app_settings import afat_active, discordbot_active
 from .models import (
     BigBrotherConfig,
     PapsConfig,
@@ -33,35 +34,37 @@ def manual_cards(request: WSGIRequest):
 @permission_required("aa_bb.basic_access")
 def manual_settings(request: WSGIRequest):
     """Manual tab: BigBrotherConfig settings."""
-    return render(request, "faq/settings_bigbrother.html")
+    return render(request, "faq/settings_bigbrother.html", {"is_afat": afat_active(), "is_bot": discordbot_active()})
 
 
 @login_required
 @permission_required("aa_bb.basic_access")
 def manual_settings_bb(request: WSGIRequest):
     """Alias for BigBrotherConfig settings."""
-    return render(request, "faq/settings_bigbrother.html")
+    return render(request, "faq/settings_bigbrother.html", {"is_afat": afat_active(), "is_bot": discordbot_active()})
 
 
 @login_required
 @permission_required("aa_bb.basic_access")
 def manual_settings_paps(request: WSGIRequest):
     """Manual tab: PapsConfig settings."""
-    return render(request, "faq/settings_paps.html")
+    if not afat_active():
+        return HttpResponseForbidden("PAP compliance manual is hidden as afat is not active.")
+    return render(request, "faq/settings_paps.html", {"is_afat": afat_active(), "is_bot": discordbot_active()})
 
 
 @login_required
 @permission_required("aa_bb.basic_access")
 def manual_settings_tickets(request: WSGIRequest):
     """Manual tab: TicketToolConfig settings."""
-    return render(request, "faq/settings_tickets.html")
+    return render(request, "faq/settings_tickets.html", {"is_afat": afat_active(), "is_bot": discordbot_active()})
 
 
 @login_required
 @permission_required("aa_bb.basic_access")
 def manual_settings_stats(request: WSGIRequest):
     """Manual tab: RecurringStatsConfig settings."""
-    return render(request, "faq/settings_stats.html")
+    return render(request, "faq/settings_stats.html", {"is_afat": afat_active(), "is_bot": discordbot_active()})
 
 
 @login_required
@@ -247,35 +250,36 @@ def manual_modules(request: WSGIRequest):
     )
 
     # PAP Statistics
-    pap_issues, pap_actions, pap_info = [], [], []
+    if afat_active():
+        pap_issues, pap_actions, pap_info = [], [], []
 
-    register_issue(
-        pap_issues,
-        pap_actions,
-        not cfg.is_paps_active,
-        format_html("{} is disabled.", code("BigBrotherConfig.is_paps_active")),
-        format_html("Enable PAPs in BigBrotherConfig and restart AllianceAuth."),
-    )
-    register_issue(
-        pap_issues,
-        pap_actions,
-        not django_apps.is_installed("afat"),
-        format_html("{} app is not installed.", code("afat")),
-        format_html("Install allianceauth-afat and run migrations."),
-    )
-
-    if django_apps.is_installed("afat"):
-        pap_info.append(format_html("{} detected.", code("afat")))
-
-    modules.append(
-        make_module(
-            _("PAP Statistics"),
-            _("Participation statistics integration and summaries."),
+        register_issue(
             pap_issues,
             pap_actions,
-            info=pap_info,
+            not cfg.is_paps_active,
+            format_html("{} is disabled.", code("BigBrotherConfig.is_paps_active")),
+            format_html("Enable PAPs in BigBrotherConfig and restart AllianceAuth."),
         )
-    )
+        register_issue(
+            pap_issues,
+            pap_actions,
+            not django_apps.is_installed("afat"),
+            format_html("{} app is not installed.", code("afat")),
+            format_html("Install allianceauth-afat and run migrations."),
+        )
+
+        if django_apps.is_installed("afat"):
+            pap_info.append(format_html("{} detected.", code("afat")))
+
+        modules.append(
+            make_module(
+                _("PAP Statistics"),
+                _("Participation statistics integration and summaries."),
+                pap_issues,
+                pap_actions,
+                info=pap_info,
+            )
+        )
 
     # Recurring Stats
     stats_issues, stats_actions, stats_info = [], [], []

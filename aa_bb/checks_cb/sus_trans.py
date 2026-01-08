@@ -17,25 +17,35 @@ logger.setLevel(logging.DEBUG)
 from ..app_settings import (
     get_eve_entity_type,
     get_entity_info,
+    get_safe_entities,
     aablacklist_active,
     resolve_location_name,
     resolve_location_system_id,
     is_location_hostile,
     get_system_owner,
+    get_hostile_state,
+    corptools_active,
 )
 
 if aablacklist_active():
     from aa_bb.checks.add_to_blacklist import check_char_add_to_bl
 
 try:
-    from corptools.models import (
-        CorporationAudit,
-        CorporationWalletJournalEntry,
-        CorporationMarketTransaction,
-        Structure,
-    )
+    if corptools_active():
+        from corptools.models import (
+            CorporationAudit,
+            CorporationWalletJournalEntry,
+            CorporationMarketTransaction,
+            Structure,
+        )
+    else:
+        CorporationAudit = None
+        CorporationWalletJournalEntry = None
+        CorporationMarketTransaction = None
+        Structure = None
 except ImportError:
-    logger.error("Corptools not installed, corp checks will not work.")
+    CorporationAudit = None
+    CorporationWalletJournalEntry = None
     CorporationMarketTransaction = None
     Structure = None
 
@@ -245,8 +255,15 @@ def gather_user_transactions(corp_id: int):
 
     Parameter mirrors the member helper naming but expects a corporation id.
     """
-    corp_info = EveCorporationInfo.objects.get(corporation_id=corp_id)
-    corp_audit = CorporationAudit.objects.get(corporation=corp_info)
+    if not corptools_active() or CorporationWalletJournalEntry is None:
+        from ..models import ProcessedTransaction
+        return ProcessedTransaction.objects.none()
+    try:
+        corp_info = EveCorporationInfo.objects.get(corporation_id=corp_id)
+        corp_audit = CorporationAudit.objects.get(corporation=corp_info)
+    except (EveCorporationInfo.DoesNotExist, CorporationAudit.DoesNotExist):
+        from ..models import ProcessedTransaction
+        return ProcessedTransaction.objects.none()
 
     qs = CorporationWalletJournalEntry.objects.filter(division__corporation=corp_audit)
     logger.info(f"qs:{qs.count()}")
@@ -351,44 +368,45 @@ def is_transaction_hostile(tx: dict) -> bool:
     if not (is_sus_type or is_market):
         return False
 
-    cfg = BigBrotherConfig.get_solo()
-    if aablacklist_active():
-        if check_char_add_to_bl(tx.get('first_party_id')) or check_char_add_to_bl(tx.get('second_party_id')):  # Either party is on the blacklist.
-            return True
-    wlcorp = {s.strip() for s in (cfg.whitelist_corporations or "").split(',') if s.strip()}
-    wlali = {s.strip() for s in (cfg.whitelist_alliances or "").split(',') if s.strip()}
-    fpcorp = str(tx.get('first_party_corporation_id') or '')
-    spcorp = str(tx.get('second_party_corporation_id') or '')
-    fpali = str(tx.get('first_party_alliance_id') or '')
-    spali = str(tx.get('second_party_alliance_id') or '')
-    # Check if both parties are whitelisted (corp OR alliance)
-    fp_whitelisted = fpcorp in wlcorp or fpali in wlali
-    sp_whitelisted = spcorp in wlcorp or spali in wlali
-    # logger.info(f"first party:{tx.get('first_party_id')}, cid:{fpcorp}, aid:{fpali}, fpwl:{fp_whitelisted}, 2nd: {tx.get('second_party_id')}, cid:{spcorp}, aid:{spali}, spwl:{sp_whitelisted}, wlali:{wlali}")
+    def _to_int(val):
+        try:
+            return int(val) if val is not None else None
+        except (ValueError, TypeError):
+            return None
 
-    if fp_whitelisted and sp_whitelisted:  # Both parties are whitelisted, so skip hostility.
+    fpid = _to_int(tx.get("first_party_id"))
+    spid = _to_int(tx.get("second_party_id"))
+    fp_corp = _to_int(tx.get("first_party_corporation_id"))
+    sp_corp = _to_int(tx.get("second_party_corporation_id"))
+    fp_alli = _to_int(tx.get("first_party_alliance_id"))
+    sp_alli = _to_int(tx.get("second_party_alliance_id"))
+    when = tx.get("date")
+
+    if fp_corp and sp_corp and fp_corp == sp_corp:
         return False
-    if "market_escrow" in tx.get('type') or "market_transaction" in tx.get('type'):
-        if not cfg.market_transactions_show_major_hubs and is_major_hub(tx):
-            return False
-        if not cfg.market_transactions_show_secondary_hubs and is_secondary_hub(tx):
-            return False
-        if is_excluded_system(tx, cfg.market_transactions_excluded_systems):
-            return False
 
-        if cfg.market_transactions_threshold_alert and cfg.market_transactions_threshold_percent > 0:
-            if not is_above_threshold(tx, cfg.market_transactions_threshold_percent):
+    if fp_alli and sp_alli and fp_alli == sp_alli:
+        return False
+
+    cfg = BigBrotherConfig.get_solo()
+
+    # Determine if either party is hostile using mega-helper
+    fp_hostile = get_hostile_state(fpid, when=when)
+    sp_hostile = get_hostile_state(spid, when=when)
+
+    if fp_hostile or sp_hostile:
+        if is_market:
+            if not cfg.market_transactions_show_major_hubs and is_major_hub(tx):
+                return False
+            if not cfg.market_transactions_show_secondary_hubs and is_secondary_hub(tx):
+                return False
+            if is_excluded_system(tx, cfg.market_transactions_excluded_systems):
                 return False
 
-    hostile_corps = {s.strip() for s in (cfg.hostile_corporations or "").split(",") if s.strip()}
-    hostile_allis = {s.strip() for s in (cfg.hostile_alliances or "").split(",") if s.strip()}
-
-    for key in ('first_party_corporation_id', 'second_party_corporation_id'):
-        if tx.get(key) and str(tx[key]) in hostile_corps:  # Hostile corp on either side.
-            return True
-    for key in ('first_party_alliance_id', 'second_party_alliance_id'):
-        if tx.get(key) and str(tx[key]) in hostile_allis:  # Hostile alliance on either side.
-            return True
+            if cfg.market_transactions_threshold_alert and cfg.market_transactions_threshold_percent > 0:
+                if not is_above_threshold(tx, cfg.market_transactions_threshold_percent):
+                    return False
+        return True
 
     return False
 
@@ -444,13 +462,18 @@ def render_transactions(corp_id: int) -> str:
                 if cfg.show_market_transactions:
                     if "market_escrow" in t['type'] or "market_transaction" in t['type']:
                         style = 'color: red;'
-            if aablacklist_active():
-                if col in ('first_party_name', 'second_party_name') and check_char_add_to_bl(t.get(col + '_id', -1)):  # Parties on blacklist.
+            if col in ('first_party_name', 'second_party_name'):
+                pid = t.get(col + '_id')
+                if get_hostile_state(pid, 'character'):
                     style = 'color: red;'
-            if col.endswith('corporation') and t.get(col + '_id') and str(t[col + '_id']) in hostile_corps:  # Hostile corps.
-                style = 'color: red;'
-            if col.endswith('alliance') and t.get(col + '_id') and str(t[col + '_id']) in hostile_allis:  # Hostile alliances.
-                style = 'color: red;'
+            if col.endswith('corporation'):
+                cid = t.get(col + '_id')
+                if get_hostile_state(cid, 'corporation'):
+                    style = 'color: red;'
+            if col.endswith('alliance'):
+                aid = t.get(col + '_id')
+                if get_hostile_state(aid, 'alliance'):
+                    style = 'color: red;'
             def make_td(val, style=""):
                 """Render a TD with optional inline style for hostile cues."""
                 style_attr = f' style="{style}"' if style else ""
@@ -500,23 +523,14 @@ def get_corp_hostile_transactions(corp_id: int) -> Dict[int, str]:
                     if "market_escrow" in tx['type'] or "market_transaction" in tx['type']:
                         flags.append(f"Transaction type is **{tx['type']}**")
             cfg = BigBrotherConfig.get_solo()
-            hostile_corps = {s.strip() for s in (cfg.hostile_corporations or "").split(",") if s.strip()}
-            hostile_allis = {s.strip() for s in (cfg.hostile_alliances or "").split(",") if s.strip()}
 
-            if aablacklist_active():
-                if tx['first_party_id'] and check_char_add_to_bl(tx['first_party_id']):  # First party on blacklist.
-                    flags.append(f"first_party **{tx['first_party_name']}** is on blacklist")
-            if str(tx['first_party_corporation_id']) in hostile_corps:  # First-party corporation is flagged hostile.
-                flags.append(f"first_party corp **{tx['first_party_corporation']}** is hostile")
-            if str(tx['first_party_alliance_id']) in hostile_allis:  # First-party alliance is flagged hostile.
-                flags.append(f"first_party alliance **{tx['first_party_alliance']}** is hostile")
-            if aablacklist_active():
-                if tx['second_party_id'] and check_char_add_to_bl(tx['second_party_id']):  # Counterparty character is hostile.
-                    flags.append(f"second_party **{tx['second_party_name']}** is on blacklist")
-            if str(tx['second_party_corporation_id']) in hostile_corps:  # Counterparty corporation is hostile.
-                flags.append(f"second_party corp **{tx['second_party_corporation']}** is hostile")
-            if str(tx['second_party_alliance_id']) in hostile_allis:  # Counterparty alliance is hostile.
-                flags.append(f"second_party alliance **{tx['second_party_alliance']}** is hostile")
+            fpid = tx.get("first_party_id")
+            if get_hostile_state(fpid, 'character'):
+                flags.append(f"first_party **{tx['first_party_name']}** is hostile/blacklisted")
+
+            spid = tx.get("second_party_id")
+            if get_hostile_state(spid, 'character'):
+                flags.append(f"second_party **{tx['second_party_name']}** is hostile/blacklisted")
 
             loc_id = tx.get('location_id') or tx.get('system_id')
             if loc_id and is_location_hostile(tx.get('location_id'), tx.get('system_id')):

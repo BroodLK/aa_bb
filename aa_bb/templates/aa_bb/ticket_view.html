@@ -1,0 +1,89 @@
+{% extends "aa_bb/base.html" %}
+{% load i18n %}
+
+{% block details %}
+<div class="card mb-4">
+    <div class="card-header">
+        <h3 class="card-title">{% translate "Ticket" %} #{{ ticket.ticket_id }} - {{ ticket.get_reason_display }}</h3>
+    </div>
+    <div class="card-body">
+        <div class="row">
+            <div class="col-md-4 mb-4">
+                <div class="card">
+                    <div class="card-body">
+                        <dl>
+                            <dt>{% translate "Status" %}</dt>
+                            <dd>
+                                {% if ticket.is_resolved %}
+                                    <span class="badge bg-success">{% translate "Resolved" %}</span>
+                                {% else %}
+                                    <span class="badge bg-warning text-dark">{% translate "Open" %}</span>
+                                {% endif %}
+                            </dd>
+                            <dt>{% translate "User" %}</dt>
+                            <dd>{{ ticket.user.profile.main_character.character_name|default:ticket.user.username }}</dd>
+                            <dt>{% translate "Reason" %}</dt>
+                            <dd>{{ ticket.get_reason_display }}</dd>
+                            <dt>{% translate "Created At" %}</dt>
+                            <dd>{{ ticket.created_at|date:"Y-m-d H:i" }}</dd>
+                        </dl>
+                        {% if not ticket.is_resolved %}
+                            <form action="{% url 'aa_bb:ticket_resolve' ticket.pk %}" method="post">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-success w-100">
+                                    {% translate "Mark as Resolved" %}
+                                </button>
+                            </form>
+                        {% else %}
+                            <form action="{% url 'aa_bb:ticket_reopen' ticket.pk %}" method="post">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-warning w-100">
+                                    {% translate "Reopen Ticket" %}
+                                </button>
+                            </form>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-8">
+                <h4>{% translate "Comments" %}</h4>
+                <div class="list-group mb-3">
+                    {% for comment in comments %}
+                    <div class="list-group-item">
+                        <div class="d-flex w-100 justify-content-between">
+                            <h5 class="mb-1">{{ comment.user.profile.main_character.character_name|default:comment.user.username }}</h5>
+                            <small>{{ comment.created_at|date:"Y-m-d H:i" }}</small>
+                        </div>
+                        <p class="mb-1 text-break">{{ comment.comment|linebreaksbr }}</p>
+                    </div>
+                    {% empty %}
+                    <p class="text-muted">{% translate "No comments yet." %}</p>
+                    {% endfor %}
+                </div>
+
+                <div class="card">
+                    <div class="card-body">
+                        <form action="{% url 'aa_bb:ticket_add_comment' ticket.pk %}" method="post">
+                            {% csrf_token %}
+                            <div class="mb-3">
+                                <label for="comment" class="form-label">{% translate "Add a comment" %}</label>
+                                <textarea id="comment" name="comment" class="form-control" rows="3" required></textarea>
+                            </div>
+                            <div class="text-end">
+                                <button type="submit" class="btn btn-primary">
+                                    {% translate "Post Comment" %}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="mt-4">
+            <a href="{% url 'aa_bb:ticket_list' %}" class="btn btn-secondary">
+                {% translate "Back to List" %}
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}

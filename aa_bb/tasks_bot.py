@@ -5,66 +5,180 @@ The functions here are called from Celery tasks as well as slash commands to
 create/rebalance compliance ticket channels.
 """
 
+from __future__ import annotations
+
 import re
 import logging
 
 from allianceauth.authentication.models import UserProfile
 
 from django.db import transaction
+from django.core.cache import cache
+from django.utils import timezone
+from asgiref.sync import sync_to_async
 
 logger = logging.getLogger(__name__)
+logger.info("✅ [AA-BB] - [Tasks Bot] - Module loading from %s", __file__)
+
+__all__ = [
+    "create_compliance_ticket",
+    "create_compliance_thread",
+    "send_ticket_reminder",
+    "close_ticket_channel",
+    "join_thread",
+    "unarchive_thread",
+    "rebalance_ticket_categories",
+    "TicketCommands",
+    "setup",
+]
 
 try:
     import discord
+    try:
+        import discord.abc
+    except ImportError:
+        pass
+    try:
+        import discord.utils
+    except ImportError:
+        pass
 except ImportError:
-    logger.error("discord service not installed; compliance checks will not work.")
+    class discord:
+        class Message: pass
+        class Embed: pass
+        class Color:
+            @classmethod
+            def from_rgb(cls, *args): pass
+            @classmethod
+            def orange(cls): pass
+        class PermissionOverwrite: pass
+        class ChannelType:
+            private_thread = 1
+            public_thread = 2
+        class Thread: pass
+        class TextChannel: pass
+        class CategoryChannel: pass
+        class ForumChannel: pass
+        class ApplicationContext: pass
+        class Guild: pass
+        class abc:
+            class GuildChannel: pass
+        class utils:
+            @staticmethod
+            def get(*args, **kwargs): pass
+        class HTTPException(Exception): pass
+    logger.info("discord service not installed; using dummy classes for type hinting.")
 
-from .models import TicketToolConfig, ComplianceTicket
-from .app_settings import get_user_model
+from aa_bb.models import TicketToolConfig, ComplianceTicket, ComplianceTicketComment
+from aa_bb.app_settings import get_user_model
 
 try:
     from aadiscordbot.cogs.utils.decorators import sender_is_admin
 except ImportError:
-    logger.error("aadiscordbot not installed; compliance checks will not work.")
+    def sender_is_admin():
+        def wrapper(func):
+            return func
+        return wrapper
+    logger.info("aadiscordbot not installed; Discord commands will not be registered.")
 
 try:
     from discord.commands import slash_command
     from discord.commands import SlashCommandGroup
     from discord.ext import commands
 except ImportError:
-    logger.error("discord service not installed; compliance checks will not work.")
+    # Fallback for environments without discord.py (e.g. during migrations or when not using bot)
+    class commands:
+        class Cog:
+            def __init__(self, *args, **kwargs): pass
+            @classmethod
+            def listener(cls, *args, **kwargs):
+                def wrapper(func): return func
+                return wrapper
+
+    def slash_command(*args, **kwargs):
+        def wrapper(func): return func
+        return wrapper
+
+    class SlashCommandGroup:
+        def __init__(self, *args, **kwargs): pass
+        def command(self, *args, **kwargs):
+            def wrapper(func): return func
+            return wrapper
+
+    logger.info("discord service not installed; Discord commands will not work.")
 
 def get_staff_roles():
-    """Parse the comma-separated list of Discord role IDs allowed on tickets."""
+    """Parse the comma-separated list of Discord role IDs or names allowed on tickets."""
     cfg = TicketToolConfig.get_solo()
-    if not cfg.staff_roles:  # no staff roles configured → return empty list
-        return []
-    return [int(r.strip()) for r in cfg.staff_roles.split(",") if r.strip().isdigit()]
+    roles = []
+    if cfg.staff_roles:
+        for r in cfg.staff_roles.split(","):
+            r = r.strip()
+            if not r:
+                continue
+            if r.isdigit():
+                roles.append(int(r))
+            else:
+                roles.append(r)
+    if cfg.Role_ID and cfg.Role_ID not in roles:
+        roles.append(int(cfg.Role_ID))
+    return roles
 
-async def create_compliance_ticket(bot, user_id, discord_user_id: int, reason: str, message: str):
-    category_id = TicketToolConfig.get_solo().Category_ID
-    guild = bot.guilds[0]  # or use a known guild_id if multi-guild
+async def create_compliance_ticket(bot, user_id, discord_user_id: int, reason: str, message: str, include_user: bool = True, **kwargs):
+    tcfg = await sync_to_async(TicketToolConfig.get_solo)()
+    category_id = tcfg.Category_ID
+    if not category_id:
+        logger.error("Compliance ticket category ID not configured")
+        return
+
+    base_category = bot.get_channel(category_id)
+    if not base_category:
+        try:
+            base_category = await bot.fetch_channel(category_id)
+        except Exception:
+            logger.error(f"Could not find category {category_id}")
+            return
+    guild = base_category.guild
+
     # Find or create a category with capacity (auto-clone with -2/-3 if needed)
     category = await ensure_ticket_category_with_capacity(guild, category_id)
-    member = guild.get_member(discord_user_id) or await guild.fetch_member(discord_user_id)
-    User = get_user_model()
-    user = User.objects.get(id=user_id)
-    profile = UserProfile.objects.get(user=user)
 
-    staff_roles = get_staff_roles()
+    member = None
+    if discord_user_id:
+        try:
+            member = guild.get_member(discord_user_id) or await guild.fetch_member(discord_user_id)
+        except Exception:
+            logger.warning(f"Could not find member {discord_user_id} in guild {guild.id}")
+    User = get_user_model()
+    user = await sync_to_async(User.objects.get)(id=user_id)
+    profile = await sync_to_async(UserProfile.objects.get)(user=user)
+
+    staff_roles = await sync_to_async(get_staff_roles)()
 
     overwrites = {
         guild.default_role: discord.PermissionOverwrite(view_channel=False),
-        member: discord.PermissionOverwrite(view_channel=True, send_messages=True),
         guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, manage_channels=True),
     }
 
-    for rid in staff_roles:
-        role = guild.get_role(rid)
+    if include_user and member:
+        overwrites[member] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
+
+    for r_val in staff_roles:
+        role = None
+        if isinstance(r_val, int):
+            role = guild.get_role(r_val)
+            if not role:
+                try:
+                    role = await guild.fetch_role(r_val)
+                except Exception:
+                    continue
+        else:
+            role = discord.utils.get(guild.roles, name=r_val)
+
         if role:
             overwrites[role] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
 
-    ticket_number = get_next_ticket_number()
+    ticket_number = await sync_to_async(get_next_ticket_number)()
 
     channel = await guild.create_text_channel(
         name=f"ticket-{ticket_number}",
@@ -75,9 +189,16 @@ async def create_compliance_ticket(bot, user_id, discord_user_id: int, reason: s
     )
 
     # Use embeds and chunking for the initial message
-    from .app_settings import _chunk_embed_lines
+    from aa_bb.app_settings import _chunk_embed_lines
     lines = message.split("\n")
     chunks = _chunk_embed_lines(lines)
+
+    pings = []
+    if include_user and discord_user_id:
+        pings.append(f"<@{discord_user_id}>")
+    if tcfg.Role_ID:
+        pings.append(f"<@&{tcfg.Role_ID}>")
+    content = " ".join(pings) if pings else None
 
     for i, chunk in enumerate(chunks):
         embed = discord.Embed(
@@ -86,26 +207,197 @@ async def create_compliance_ticket(bot, user_id, discord_user_id: int, reason: s
             color=discord.Color.from_rgb(241, 196, 15)  # Gold
         )
         if i == 0:
-            await channel.send(content=f"<@{discord_user_id}>", embed=embed)
+            await channel.send(content=content, embed=embed)
         else:
             await channel.send(embed=embed)
 
-    ComplianceTicket.objects.create(
+    await sync_to_async(ComplianceTicket.objects.create)(
         user=user,
-        discord_user_id=member.id,
+        discord_user_id=discord_user_id or 0,
         discord_channel_id=channel.id,
         reason=reason,
         ticket_id=ticket_number,
     )
 
 
-async def send_ticket_reminder(bot, channel_id: int, user_id: int, message: str):
+async def create_compliance_thread(bot, user_id, discord_user_id: int, reason: str, message: str, thread_name: str, thread_id: int = None, include_user: bool = True, **kwargs):
+    tcfg = await sync_to_async(TicketToolConfig.get_solo)()
+    parent_channel_id = tcfg.Forum_Channel_ID
+    if not parent_channel_id:
+        logger.error("Forum/Thread parent channel ID not configured")
+        return
+
+    parent_channel = bot.get_channel(parent_channel_id)
+    if not parent_channel:
+        try:
+            parent_channel = await bot.fetch_channel(parent_channel_id)
+        except Exception:
+            logger.error(f"Could not find parent channel {parent_channel_id}")
+            return
+    guild = parent_channel.guild
+
+    # Truncate thread name to Discord limit of 100
+    if len(thread_name) > 100:
+        thread_name = thread_name[:97] + "..."
+
+    User = get_user_model()
+    user = await sync_to_async(User.objects.get)(id=user_id)
+
+    thread = None
+    if thread_id:
+        thread = bot.get_channel(thread_id)
+        if not thread:
+            try:
+                thread = await bot.fetch_channel(thread_id)
+            except Exception:
+                pass
+
+        if thread and thread.archived:
+            try:
+                await thread.edit(archived=False)
+            except Exception:
+                logger.exception(f"Failed to unarchive thread {thread_id}")
+
+    if not thread:
+        # Create new thread
+        pings = []
+        if include_user and discord_user_id:
+            pings.append(f"<@{discord_user_id}>")
+        if tcfg.Role_ID:
+            pings.append(f"<@&{tcfg.Role_ID}>")
+        content = " ".join(pings) if pings else None
+
+        if isinstance(parent_channel, discord.ForumChannel):
+            # Forum threads are created with a starting message
+            from aa_bb.app_settings import _chunk_embed_lines
+            lines = message.split("\n")
+            chunks = _chunk_embed_lines(lines)
+
+            # Initial message for the thread
+            embed = discord.Embed(
+                title=f"Compliance Ticket - {reason}",
+                description="\n".join(chunks[0]),
+                color=discord.Color.from_rgb(241, 196, 15)  # Gold
+            )
+
+            thread_response = await parent_channel.create_thread(
+                name=thread_name,
+                content=content,
+                embed=embed,
+                reason="Compliance ticket creation"
+            )
+            thread = getattr(thread_response, 'thread', thread_response)
+
+            # Send remaining chunks if any
+            if len(chunks) > 1:
+                for chunk in chunks[1:]:
+                    await thread.send(embed=discord.Embed(description="\n".join(chunk), color=discord.Color.from_rgb(241, 196, 15)))
+        else:
+            # TextChannel: Create private or public thread
+            # User requested Option 1: Private threads in a channel
+            thread_type = discord.ChannelType.private_thread if tcfg.ticket_type == TicketToolConfig.TICKET_TYPE_PRIVATE_THREAD else discord.ChannelType.public_thread
+
+            thread = await parent_channel.create_thread(
+                name=thread_name,
+                type=thread_type,
+                reason="Compliance ticket creation"
+            )
+
+            # Initial message
+            from aa_bb.app_settings import _chunk_embed_lines
+            lines = message.split("\n")
+            chunks = _chunk_embed_lines(lines)
+
+            for i, chunk in enumerate(chunks):
+                embed = discord.Embed(
+                    title=f"Compliance Ticket - {reason}" if i == 0 else None,
+                    description="\n".join(chunk),
+                    color=discord.Color.from_rgb(241, 196, 15)  # Gold
+                )
+                if i == 0:
+                    await thread.send(content=content, embed=embed)
+                else:
+                    await thread.send(embed=embed)
+
+        # Save thread mapping
+        from aa_bb.models import ComplianceThread
+        await sync_to_async(ComplianceThread.objects.update_or_create)(
+            user=user, reason=reason,
+            defaults={'thread_id': thread.id}
+        )
+        thread_id = thread.id
+
+    # Ensure user and staff are in the thread
+    # User
+    if include_user and discord_user_id:
+        try:
+            # Using fetch_member to ensure we get the member object even if not in cache
+            target_member = guild.get_member(discord_user_id) or await guild.fetch_member(discord_user_id)
+            if target_member:
+                await thread.add_user(target_member)
+                logger.info(f"Added user {target_member} to thread {thread.id}")
+        except Exception:
+            logger.warning(f"Failed to add user {discord_user_id} to thread {thread.id}")
+
+    # Staff
+    staff_roles = await sync_to_async(get_staff_roles)()
+    if staff_roles:
+        # Try to ensure members are cached for staff roles
+        try:
+            first_role_val = staff_roles[0]
+            first_role = None
+            if isinstance(first_role_val, int):
+                first_role = guild.get_role(first_role_val)
+            else:
+                first_role = discord.utils.get(guild.roles, name=first_role_val)
+
+            if first_role and not first_role.members and guild.member_count < 3000:
+                logger.info(f"Staff role cache empty, fetching members for guild {guild.id}")
+                await guild.fetch_members(limit=None)
+        except Exception:
+            pass
+
+        for r_val in staff_roles:
+            role = None
+            if isinstance(r_val, int):
+                role = guild.get_role(r_val)
+                if not role:
+                    try: role = await guild.fetch_role(r_val)
+                    except: pass
+            else:
+                role = discord.utils.get(guild.roles, name=r_val)
+
+            if role:
+                for m in role.members:
+                    try:
+                        await thread.add_user(m)
+                    except Exception:
+                        pass
+
+    # Create local ticket record
+    await sync_to_async(ComplianceTicket.objects.create)(
+        user=user,
+        discord_user_id=discord_user_id or 0,
+        discord_channel_id=thread.id,
+        reason=reason,
+        ticket_id=await sync_to_async(get_next_ticket_number)(),
+    )
+
+
+async def send_ticket_reminder(bot, channel_id: int, user_id: int, message: str, **kwargs):
     channel = bot.get_channel(channel_id)
-    member = channel.guild.get_member(user_id)
-    if channel and member:  # only send reminders when both channel and member resolve
-        from .app_settings import _chunk_embed_lines
+    if not channel and hasattr(bot, 'fetch_channel'):
+        try:
+            channel = await bot.fetch_channel(channel_id)
+        except Exception:
+            pass
+
+    if channel:
+        from aa_bb.app_settings import _chunk_embed_lines
         lines = message.split("\n")
         chunks = _chunk_embed_lines(lines)
+
+        content = f"<@{user_id}>" if user_id else None
 
         for i, chunk in enumerate(chunks):
             embed = discord.Embed(
@@ -114,14 +406,51 @@ async def send_ticket_reminder(bot, channel_id: int, user_id: int, message: str)
                 color=discord.Color.orange()
             )
             if i == 0:
-                await channel.send(content=f"<@{user_id}>", embed=embed)
+                await channel.send(content=content, embed=embed)
             else:
                 await channel.send(embed=embed)
 
-async def close_ticket_channel(bot, channel_id: int):
+async def close_ticket_channel(bot, channel_id: int, **kwargs):
     channel = bot.get_channel(channel_id)
+    if not channel and hasattr(bot, 'fetch_channel'):
+        try:
+            channel = await bot.fetch_channel(channel_id)
+        except Exception:
+            pass
+
     if channel:
-        await channel.delete(reason="Compliance issue resolved")
+        qs = ComplianceTicket.objects.filter(discord_channel_id=channel_id, is_resolved=False)
+        if await sync_to_async(qs.exists)():
+            return
+
+        if isinstance(channel, discord.Thread):
+            await channel.edit(archived=True, locked=True, reason="Compliance issue resolved")
+        else:
+            await channel.delete(reason="Compliance issue resolved")
+
+async def join_thread(bot, thread_id: int, **kwargs):
+    channel = bot.get_channel(thread_id)
+    if not channel and hasattr(bot, 'fetch_channel'):
+        try:
+            channel = await bot.fetch_channel(thread_id)
+        except Exception:
+            pass
+
+    if channel and isinstance(channel, discord.Thread):
+        await channel.join()
+
+async def unarchive_thread(bot, thread_id: int, **kwargs):
+    channel = bot.get_channel(thread_id)
+    if not channel and hasattr(bot, 'fetch_channel'):
+        try:
+            channel = await bot.fetch_channel(thread_id)
+        except Exception:
+            pass
+
+    if channel and isinstance(channel, discord.Thread):
+        if channel.archived:
+            await channel.edit(archived=False)
+        await channel.join()
 
 def get_next_ticket_number():
     """
@@ -137,10 +466,155 @@ def get_next_ticket_number():
         cfg.save(update_fields=["ticket_counter"])
     return formatted
 
-class CharRemovedCommands(commands.Cog):
-    """Slash-command cog for operators handling character removal tickets."""
+class TicketCommands(commands.Cog):
+    """Cog for operators handling compliance tickets via commands or phrases."""
     def __init__(self, bot):
         self.bot = bot
+
+    @commands.Cog.listener("on_message")
+    async def ticket_message_listener(self, message: discord.Message):
+        if message.author.bot or not message.guild:
+            return
+
+        # Track Discord activity quietly
+        await self._track_activity(message)
+
+        # Check if this is a ticket channel/thread
+        tickets_qs = ComplianceTicket.objects.filter(
+            discord_channel_id=message.channel.id,
+            is_resolved=False
+        )
+        tickets = await sync_to_async(list)(tickets_qs)
+
+        if not tickets:
+            return
+
+        content = message.content.strip()
+        if not content:
+            return
+
+        # Handle resolution command
+        if content.lower() == "!resolved":
+            await self._handle_resolution(message)
+            return
+
+        # Relay message as comment
+        from allianceauth.services.modules.discord.models import DiscordUser
+        auth_user = None
+        try:
+            du = await sync_to_async(DiscordUser.objects.select_related('user').get)(uid=message.author.id)
+            auth_user = du.user
+        except DiscordUser.DoesNotExist:
+            pass
+
+        # If no auth user, prefix the comment with the Discord name
+        relay_content = content
+        if not auth_user:
+            relay_content = f"[{message.author.display_name} on Discord]: {content}"
+
+        for ticket in tickets:
+            await sync_to_async(ComplianceTicketComment.objects.create)(
+                ticket=ticket,
+                user=auth_user,
+                comment=relay_content
+            )
+
+    async def _track_activity(self, message: discord.Message):
+        """Update last_discord_message_at for the author, throttled to 1h."""
+        uid = message.author.id
+        cache_key = f"aa_bb_discord_activity_{uid}"
+
+        if not cache.get(cache_key):
+            from allianceauth.services.modules.discord.models import DiscordUser
+            from aa_bb.models import UserStatus
+            try:
+                du = await sync_to_async(DiscordUser.objects.select_related('user').get)(uid=uid)
+                await sync_to_async(UserStatus.objects.update_or_create)(
+                    user=du.user,
+                    defaults={'last_discord_message_at': timezone.now()}
+                )
+                # Cache for 1 hour to avoid excessive DB writes
+                cache.set(cache_key, True, 3600)
+            except DiscordUser.DoesNotExist:
+                # Not a linked user, ignore
+                pass
+            except Exception:
+                logger.exception("Failed to track Discord activity for UID %s", uid)
+
+    @slash_command(
+        name="resolve-ticket",
+        description="Mark this ticket as resolved and close/lock the channel."
+    )
+    @sender_is_admin()
+    async def resolve_ticket_slash(self, ctx: discord.ApplicationContext):
+        await self._handle_resolution(ctx)
+
+    async def _handle_resolution(self, ctx_or_msg):
+        channel = ctx_or_msg.channel
+        author = ctx_or_msg.author if isinstance(ctx_or_msg, discord.Message) else ctx_or_msg.user
+
+        # Permission check: must be admin or have staff role
+        staff_roles = await sync_to_async(get_staff_roles)()
+        is_staff = author.guild_permissions.administrator or any(role.id in staff_roles for role in author.roles)
+
+        # Check AA permissions if DiscordUser is linked
+        if not is_staff:
+            try:
+                from allianceauth.services.modules.discord.models import DiscordUser
+                du_qs = DiscordUser.objects.select_related('user').filter(uid=author.id)
+                discord_user = await sync_to_async(du_qs.get)()
+
+                def check_perms(user):
+                    return user.has_perm("aa_bb.ticket_manager") or user.is_superuser
+
+                if await sync_to_async(check_perms)(discord_user.user):
+                    is_staff = True
+            except Exception:
+                pass
+
+        if not is_staff:
+            if hasattr(ctx_or_msg, "respond"):
+                await ctx_or_msg.respond("You do not have permission to resolve tickets.", ephemeral=True)
+            return
+
+        tickets_qs = ComplianceTicket.objects.filter(
+            discord_channel_id=channel.id,
+            is_resolved=False,
+        )
+        tickets = await sync_to_async(list)(tickets_qs)
+
+        if not tickets:
+            if hasattr(ctx_or_msg, "respond"):
+                await ctx_or_msg.respond("No open ticket found for this channel.", ephemeral=True)
+            return
+
+        # Resolve all tickets in this channel
+        for ticket in tickets:
+            if ticket.reason in ["char_removed", "awox_kill"]:
+                ticket.is_resolved = True
+                await sync_to_async(ticket.save)(update_fields=["is_resolved"])
+            else:
+                await sync_to_async(ticket.delete)()
+
+        # If no more active tickets in this channel, close it
+        remaining_qs = ComplianceTicket.objects.filter(discord_channel_id=channel.id, is_resolved=False)
+        if not await sync_to_async(remaining_qs.exists)():
+            msg = f"✅ All issues resolved by <@{author.id}>. Closing channel..."
+            if hasattr(ctx_or_msg, "respond"):
+                await ctx_or_msg.respond(msg)
+            else:
+                await channel.send(msg)
+
+            if isinstance(channel, discord.Thread):
+                await channel.edit(archived=True, locked=True)
+            else:
+                await channel.delete(reason=f"Resolved by {author}")
+        else:
+            msg = f"✅ Ticket(s) resolved by <@{author.id}>. (Remaining active tickets exist in this channel)"
+            if hasattr(ctx_or_msg, "respond"):
+                await ctx_or_msg.respond(msg)
+            else:
+                await channel.send(msg)
 
     @slash_command(
         name="resolve-char-removed",
@@ -148,34 +622,10 @@ class CharRemovedCommands(commands.Cog):
     )
     @sender_is_admin()
     async def resolve_char_removed(self, ctx: discord.ApplicationContext):
-        channel = ctx.channel
-        if not isinstance(channel, (discord.TextChannel, discord.Thread)):  # ensure the command is run inside a ticket channel
-            await ctx.respond("Use this in a ticket text channel.", ephemeral=True)
-            return
-
-        ticket = ComplianceTicket.objects.filter(
-            discord_channel_id=channel.id,
-            is_resolved=False,
-        ).first()
-
-        if not ticket:  # no matching ticket entry for this channel
-            await ctx.respond("No open ticket found for this channel.", ephemeral=True)
-            return
-
-        if ticket.reason != "char_removed" and ticket.reason != "awox_kill":  # limit to supported ticket reasons
-            await ctx.respond("This command only works for 'char_removed' and 'awox_kill' tickets.", ephemeral=True)
-            return
-
-        ticket.is_resolved = True
-        ticket.save(update_fields=["is_resolved"])
-
-        await ctx.respond(
-            f"✅ Ticket for <@{ticket.discord_user_id}> marked resolved by <@{ctx.author.id}>.",
-            ephemeral=True
-        )
+        await self.resolve_ticket_slash(ctx)
 
 def setup(bot):
-    bot.add_cog(CharRemovedCommands(bot))
+    bot.add_cog(TicketCommands(bot))
 
 # ---- Category overflow helpers ----
 
@@ -221,6 +671,12 @@ async def ensure_ticket_category_with_capacity(guild: discord.Guild, base_catego
     - If all are full, create next clone suffixed category and return it.
     """
     base = guild.get_channel(base_category_id)
+    if not base:
+        try:
+            base = await guild.fetch_channel(base_category_id)
+        except Exception:
+            pass
+
     if not isinstance(base, discord.CategoryChannel):
         raise RuntimeError("Configured Category_ID is not a valid category")
 
@@ -254,7 +710,7 @@ def _is_ticket_channel(ch: discord.abc.GuildChannel) -> bool:
         )
     )
 
-async def rebalance_ticket_categories(bot):
+async def rebalance_ticket_categories(bot, **kwargs):
     """
     Try to keep earlier categories in the ticket family as full as possible by moving
     ticket channels leftwards. Delete empty overflow categories (suffix >= 2).
@@ -266,6 +722,12 @@ async def rebalance_ticket_categories(bot):
         return
     guild = bot.guilds[0]
     base = guild.get_channel(int(cfg.Category_ID))
+    if not base:
+        try:
+            base = await guild.fetch_channel(int(cfg.Category_ID))
+        except Exception:
+            pass
+
     if not isinstance(base, discord.CategoryChannel):  # invalid configuration
         return
 

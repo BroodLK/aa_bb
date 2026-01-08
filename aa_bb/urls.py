@@ -53,4 +53,11 @@ urlpatterns = [
 
     # Blacklist management
     path("blacklist/add/", views.add_blacklist_view, name="add_blacklist"),  # Simple UI to add entries to corp blacklist.
+
+    # Ticket Management UI
+    path("tickets/", views.ticket_list, name="ticket_list"),
+    path("tickets/<int:pk>/", views.ticket_view, name="ticket_view"),
+    path("tickets/<int:pk>/resolve/", views.ticket_resolve, name="ticket_resolve"),
+    path("tickets/<int:pk>/reopen/", views.ticket_reopen, name="ticket_reopen"),
+    path("tickets/<int:pk>/comment/", views.ticket_add_comment, name="ticket_add_comment"),
 ]

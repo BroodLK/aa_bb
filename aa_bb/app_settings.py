@@ -968,6 +968,40 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
             except Exception:
                 pass
 
+        # Check for individual location ownership (Structure or Station) BEFORE falling back to system SOV
+        if system_id:
+            # Player Structure
+            if is_player_structure(system_id):
+                try:
+                    from corptools.models import Structure
+                    struct = Structure.objects.filter(structure_id=system_id).select_related("corporation__corporation").first()
+                    if struct and struct.corporation and struct.corporation.corporation:
+                        return {
+                            "owner_id": str(struct.corporation.corporation.corporation_id),
+                            "owner_name": struct.corporation.corporation.corporation_name,
+                            "owner_type": "corporation",
+                            "region_id": region_id,
+                            "region_name": region_name
+                        }
+                except Exception:
+                    pass
+
+            # NPC Station
+            elif 60000000 <= system_id <= 64000000:
+                try:
+                    from eveuniverse.models import EveStation
+                    station_obj = EveStation.objects.get(id=system_id)
+                    if station_obj.owner_id:
+                        return {
+                            "owner_id": str(station_obj.owner_id),
+                            "owner_name": resolve_corporation_name(station_obj.owner_id),
+                            "owner_type": "corporation",
+                            "region_id": region_id,
+                            "region_name": region_name
+                        }
+                except Exception:
+                    pass
+
         sov_map = _get_sov_map()
         # If it's a structure or station, we want the system it's in for SOV
         target_sov_id = parent_system_id or system_id
@@ -989,37 +1023,9 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
                         }
                     except Exception:
                         pass
-                elif 60000000 <= target_sov_id <= 64000000:
-                    try:
-                        from eveuniverse.models import EveStation
-                        station_obj = EveStation.objects.get(id=target_sov_id)
-                        if station_obj.owner_id:
-                            return {
-                                "owner_id": str(station_obj.owner_id),
-                                "owner_name": resolve_corporation_name(station_obj.owner_id),
-                                "owner_type": "corporation",
-                                "region_id": region_id,
-                                "region_name": region_name
-                            }
-                    except Exception:
-                        pass
 
             # If it's specifically a player structure ID that we can't resolve owner for
             if system_id and is_player_structure(system_id):
-                try:
-                    from corptools.models import Structure
-                    struct = Structure.objects.filter(structure_id=system_id).select_related("corporation__corporation").first()
-                    if struct and struct.corporation and struct.corporation.corporation:
-                        return {
-                            "owner_id": str(struct.corporation.corporation.corporation_id),
-                            "owner_name": struct.corporation.corporation.corporation_name,
-                            "owner_type": "corporation",
-                            "region_id": region_id,
-                            "region_name": region_name
-                        }
-                except Exception:
-                    pass
-
                 return {
                     "owner_id": owner_id,
                     "owner_name": "Unresolvable structure due to lack of docking rights",
@@ -1083,6 +1089,133 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
     }
 
 
+def get_id_hostile_state(entity_id: int, when: datetime = None) -> bool:
+    """
+    Mega-helper function to determine if an ID is considered hostile.
+    Automatically resolves if the ID is a Character, Corporation, Alliance,
+    Solar System, Station, or Structure.
+    """
+    if not entity_id:
+        return False
+
+    try:
+        entity_id = int(entity_id)
+    except (ValueError, TypeError):
+        return False
+
+    # 1. Quick check for known location ID ranges
+    if (30000000 <= entity_id < 40000000) or \
+       (60000000 <= entity_id < 64000000) or \
+       is_player_structure(entity_id):
+        return is_location_hostile(entity_id)
+
+    # 2. Resolve entity type via ESI/Cache
+    entity_type = get_eve_entity_type(entity_id)
+
+    # 3. Handle based on resolved type
+    if entity_type in ('solar_system', 'station', 'structure'):
+        return is_location_hostile(entity_id)
+
+    # 4. Default to entity hostility (Character, Corp, Alliance, Faction)
+    return is_entity_hostile(entity_id, entity_type, when=when)
+
+
+def get_hostile_state(entity_id: int, entity_type: str = None, system_id: int = None, when: datetime = None) -> bool:
+    """
+    Determine the hostile state of an entity or location.
+    Returns True if hostile, False if safe.
+
+    If it's a location (solar_system, station, structure), it uses location-specific
+    hostility logic including sovereignty and structure overrides.
+    """
+    if not entity_id:
+        return False
+
+    try:
+        entity_id = int(entity_id)
+    except (ValueError, TypeError):
+        return False
+
+    # If we have extra info (type or system), we can optimize.
+    # Otherwise, use the mega-helper.
+    if not entity_type and not system_id:
+        return get_id_hostile_state(entity_id, when=when)
+
+    # Location Hostility (System, Station, Structure)
+    if entity_type in ('solar_system', 'station', 'structure') or \
+       (30000000 <= entity_id < 40000000) or \
+       (60000000 <= entity_id < 64000000) or \
+       is_player_structure(entity_id):
+        return is_location_hostile(entity_id, system_id)
+
+    # Entity Hostility (Character, Corporation, Alliance, Faction)
+    return is_entity_hostile(entity_id, entity_type, when=when)
+
+
+def is_entity_hostile(entity_id: int, entity_type: str = None, when: datetime = None) -> bool:
+    """
+    Logic for entity (char, corp, alliance, faction) hostility.
+    """
+    if not entity_id:
+        return False
+    try:
+        entity_id = int(entity_id)
+    except (ValueError, TypeError):
+        return False
+
+    cfg = BigBrotherConfig.get_solo()
+    safe_entities = get_safe_entities()
+
+    # Explicitly Safe
+    if entity_id in safe_entities:
+        return False
+
+    if not entity_type:
+        entity_type = get_eve_entity_type(entity_id)
+
+    # Explicitly Hostile
+    hostile_corps = {int(s) for s in (cfg.hostile_corporations or "").split(",") if s.strip().isdigit()}
+    hostile_allis = {int(s) for s in (cfg.hostile_alliances or "").split(",") if s.strip().isdigit()}
+
+    if entity_type == 'corporation' and entity_id in hostile_corps:
+        return True
+    if entity_type in ('alliance', 'faction') and entity_id in hostile_allis:
+        return True
+
+    if entity_type == 'character':
+        # Blacklist check
+        if aablacklist_active():
+            from aa_bb.checks.add_to_blacklist import check_char_add_to_bl
+            if check_char_add_to_bl(entity_id):
+                return True
+
+        # Check corporation and alliance context for this character
+        # Use get_entity_info to get (potentially historical) corp/alli
+        info = get_entity_info(entity_id, when or timezone.now())
+        if info:
+            # 1. Safe context (whitelist/member) wins
+            if info.get('corp_id') in safe_entities or info.get('alli_id') in safe_entities:
+                return False
+            # 2. Hostile context
+            if info.get('corp_id') in hostile_corps:
+                return True
+            if info.get('alli_id') in hostile_allis:
+                return True
+
+    # Hostile Everyone Else
+    if cfg.hostile_everyone_else:
+        # Ignore NPCs
+        if entity_type == 'character' and is_npc_character(entity_id):
+            return False
+        if entity_type == 'corporation' and is_npc_corporation(entity_id):
+            return False
+
+        # Characters belong to corps/alliances (already checked above if character)
+        return True
+
+    return False
+
+
 def is_location_hostile(location_id: int, system_id: int = None) -> bool:
     """
     Determines if a given location (structure, station, or system) is considered hostile.
@@ -1092,30 +1225,45 @@ def is_location_hostile(location_id: int, system_id: int = None) -> bool:
         return False
 
     cfg = BigBrotherConfig.get_solo()
-    safe_entities = get_safe_entities()
-    hostile_alli_ids = {int(s) for s in (cfg.hostile_alliances or "").split(",") if s.strip().isdigit()}
-    hostile_corp_ids = {int(s) for s in (cfg.hostile_corporations or "").split(",") if s.strip().isdigit()}
+
+    target_system = system_id or (resolve_location_system_id(location_id) if location_id else None)
+    if target_system:
+        if cfg.exclude_high_sec and is_highsec(target_system):
+            return False
+        if cfg.exclude_low_sec and is_lowsec(target_system):
+            return False
 
     # Resolve location owner
     owner_info = get_system_owner({"id": location_id or system_id})
-    oid = None
+    oid = 0
     oname = ""
+    otype = None
     if owner_info:
         try:
             oid = int(owner_info.get("owner_id", 0))
         except (ValueError, TypeError):
-            oid = None
+            oid = 0
         oname = owner_info.get("owner_name", "")
+        otype = owner_info.get("owner_type")
 
     # If it's a structure
     if location_id and is_player_structure(location_id):
         # Friendly structure overrides system hostility
-        if oid and oid in safe_entities:
+        if oid and not is_entity_hostile(oid, otype):
             return False
         # Hostile structure
-        if oid and (oid in hostile_alli_ids or oid in hostile_corp_ids):
+        if oid and is_entity_hostile(oid, otype):
             return True
+
+        if cfg.consider_all_structures_hostile:
+            return True
+
         if "Unresolvable" in oname:
+            return True
+
+    # If it's an NPC station
+    if location_id and 60000000 <= int(location_id) < 64000000:
+        if cfg.consider_npc_stations_hostile:
             return True
 
     # Check system-level hostility
@@ -1127,29 +1275,30 @@ def is_location_hostile(location_id: int, system_id: int = None) -> bool:
             sys_owner_info = get_system_owner({"id": target_system})
             try:
                 soid = int(sys_owner_info.get("owner_id", 0))
+                sotype = sys_owner_info.get("owner_type")
             except (ValueError, TypeError):
-                soid = None
+                soid = 0
+                sotype = None
         else:
             soid = oid
+            sotype = otype
 
         # Base hostility from system owner
-        if soid:
-            if soid in hostile_alli_ids or soid in hostile_corp_ids:
-                return True
+        if soid and is_entity_hostile(soid, sotype):
+            return True
 
         # Consider nullsec hostile
         if cfg.consider_nullsec_hostile and is_nullsec(target_system):
             # Safe if system is owned by us/allies
-            if soid is not None and soid in safe_entities:
+            if soid and not is_entity_hostile(soid, sotype):
                 return False
             # Otherwise, if we are in a friendly structure (handled above), it's safe.
             # If we are here, it's either an NPC station or a hostile/unknown structure.
             return True
 
     # General fallback for hostile lists if not already caught
-    if oid:
-        if oid in hostile_alli_ids or oid in hostile_corp_ids:
-            return True
+    if oid and is_entity_hostile(oid, otype):
+        return True
 
     if "Unresolvable" in oname:
         return True
@@ -1207,6 +1356,22 @@ def is_nullsec(system_id):
         system_id = int(system_id)
         sys = EveSolarSystem.objects.get(id=system_id)
         return sys.security_status <= 0.0
+    except (EveSolarSystem.DoesNotExist, ValueError, TypeError):
+        return False
+
+def is_highsec(system_id):
+    try:
+        system_id = int(system_id)
+        sys = EveSolarSystem.objects.get(id=system_id)
+        return sys.security_status >= 0.45
+    except (EveSolarSystem.DoesNotExist, ValueError, TypeError):
+        return False
+
+def is_lowsec(system_id):
+    try:
+        system_id = int(system_id)
+        sys = EveSolarSystem.objects.get(id=system_id)
+        return 0.0 < sys.security_status < 0.45
     except (EveSolarSystem.DoesNotExist, ValueError, TypeError):
         return False
 
@@ -1442,6 +1607,16 @@ def afat_active():
     return apps.is_installed("afat")
 
 
+def discordbot_active():
+    """Return True when the aadiscordbot plugin is loaded in this deployment."""
+    return apps.is_installed("aadiscordbot")
+
+
+def corptools_active():
+    """Return True when the Corptools plugin is loaded in this deployment."""
+    return apps.is_installed("corptools")
+
+
 _webhook_history = deque()  # stores timestamp floats of last webhook sends
 _channel_history = deque()  # stores timestamp floats of last channel sends
 
@@ -1546,7 +1721,7 @@ def send_message(message, hook: str = None):
                     )
 
                 response.raise_for_status()
-                return
+                return response
 
             except requests.exceptions.HTTPError:
                 if response.status_code == 429:
@@ -1587,8 +1762,7 @@ def send_message(message, hook: str = None):
                 "[WEBHOOK] sending embed payload | embeds=%d",
                 len(message.get("embeds", [])),
             )
-        _post_with_retries(message)
-        return
+        return _post_with_retries(message)
 
     # message is str
     if VERBOSE_WEBHOOK_LOGGING:
@@ -1598,8 +1772,7 @@ def send_message(message, hook: str = None):
         )
 
     if len(message) <= MAX_LEN:
-        _post_with_retries({"content": message})
-        return
+        return _post_with_retries({"content": message})
 
     # Chunking path
     logger.info(
@@ -1802,8 +1975,13 @@ def _chunk_embed_lines(lines, max_chars=1900):
         else:
             # Add segment to current chunk
             if current_chunk:
-                current_chunk.append("")  # ensure a blank line between segments
-                current_len += 1
+                # Add a blank line between segments, unless the next segment is a
+                # list item or we already have a spacer to avoid extra gaps.
+                if (current_chunk[-1] != ""
+                    and seg[0] != ""
+                    and not seg[0].startswith(("- ", "* ", "  - ", "  * "))):
+                    current_chunk.append("")
+                    current_len += 1
             current_chunk.extend(seg)
             current_len += len(seg_text)
 

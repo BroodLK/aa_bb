@@ -48,6 +48,7 @@ from .app_settings import (
     get_user_profiles,
     send_status_embed,
     _chunk_embed_lines,
+    corptools_active,
 )
 from aa_bb.checks_cb.hostile_assets import get_corp_hostile_asset_locations
 from aa_bb.checks_cb.sus_contracts import get_corp_hostile_contracts
@@ -55,16 +56,29 @@ from aa_bb.checks_cb.sus_trans import get_corp_hostile_transactions
 from aa_bb.checks.roles_and_tokens import get_user_roles_and_tokens
 
 try:
-    from corptools.api.helpers import get_alts_queryset
-    from corptools.models import (
-        Contract,
-        MailMessage,
-        CorporateContract,
-        CharacterWalletJournalEntry,
-        CorporationWalletJournalEntry,
-    )
+    if corptools_active():
+        from corptools.api.helpers import get_alts_queryset
+        from corptools.models import (
+            Contract,
+            MailMessage,
+            CorporateContract,
+            CharacterWalletJournalEntry,
+            CorporationWalletJournalEntry,
+        )
+    else:
+        get_alts_queryset = None
+        Contract = None
+        MailMessage = None
+        CorporateContract = None
+        CharacterWalletJournalEntry = None
+        CorporationWalletJournalEntry = None
 except ImportError:
-    logger.error("ℹ️  [AA-BB] - [Tasks_CB] - corptools not installed, CB tasks will not be available.")
+    get_alts_queryset = None
+    Contract = None
+    MailMessage = None
+    CorporateContract = None
+    CharacterWalletJournalEntry = None
+    CorporationWalletJournalEntry = None
 
 from django.db import transaction, OperationalError
 from allianceauth.services.hooks import get_extension_logger
@@ -258,6 +272,7 @@ def CB_run_regular_updates():
     Update CorpBrother caches: hostile assets, contracts, transactions, LoA, and PAPs.
     """
     instance = BigBrotherConfig.get_solo()
+    instance.refresh_from_db()
 
     try:
         if instance.is_active:
@@ -318,6 +333,8 @@ def CB_run_regular_updates():
 
             for corp_id in corps:
                 CB_update_single_corp.delay(corp_id)
+        else:
+            logger.warning("ℹ️  [AA-BB] - [CB_run_regular_updates] - Plugin is disabled (is_active=False), skipping corp updates.")
 
     except Exception as e:
         logger.error("ℹ️  [AA-BB] - [CB_run_regular_updates] - Task failed", exc_info=True)
@@ -350,7 +367,9 @@ def check_member_compliance():
       • Sends a single consolidated Discord message with all findings.
     """
     instance = BigBrotherConfig.get_solo()
+    instance.refresh_from_db()
     if not instance.is_active:  # plugin disabled → skip expensive checks
+        logger.warning("ℹ️  [AA-BB] - [check_member_compliance] - Plugin is disabled (is_active=False), skipping compliance sweep.")
         return
     profiles_qs = get_user_profiles()
     if instance.limit_to_main_corp:
@@ -708,6 +727,7 @@ def BB_run_regular_loa_updates():
     """
     cfg = BigBrotherConfig.get_solo()
     if not cfg.is_active:
+        logger.warning("ℹ️  [AA-BB] - [BB_run_regular_loa_updates] - Plugin is disabled.")
         return
     qs_profiles = get_user_profiles()
     if not qs_profiles.exists():  # No members matching filters, so nothing to process.
@@ -798,6 +818,7 @@ def BB_daily_DB_cleanup():
     entries that no longer have backing data, and non-member PAP compliance rows.
     """
     if not BigBrotherConfig.get_solo().is_active:
+        logger.warning("ℹ️  [AA-BB] - [BB_daily_DB_cleanup] - Plugin is disabled (is_active=False), skipping DB cleanup.")
         return
     from .models import (
         Alliance_names, Character_names, Corporation_names, UserStatus, EntityInfoCache,

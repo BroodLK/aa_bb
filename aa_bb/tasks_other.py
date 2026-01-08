@@ -19,9 +19,9 @@ def BB_send_recurring_stats():
     if not cfg.is_active:
         return
 
-    webhook = cfg.stats_webhook
+    webhook = cfg.stats_webhook or cfg.webhook
     if not webhook:
-        logger.info("✅  [AA-BB] - [BB_send_recurring_stats] - Recurring stats enabled but no stats_webhook configured; skipping.")
+        logger.info("✅  [AA-BB] - [BB_send_recurring_stats] - Recurring stats enabled but no stats_webhook or main webhook configured; skipping.")
         return
 
     try:
@@ -74,10 +74,6 @@ def BB_send_recurring_stats():
     # --- AUTH USERS ---
     if stats_cfg.include_auth_users:
         profiles_qs = UserProfile.objects.all()
-        member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
-        member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
-        if member_corps or member_allis:
-            profiles_qs = profiles_qs.filter(Q(main_character__corporation_id__in=member_corps) | Q(main_character__alliance_id__in=member_allis))
 
         auth_total = profiles_qs.count()
         snapshot["auth_total"] = auth_total
@@ -89,10 +85,6 @@ def BB_send_recurring_stats():
     # --- DISCORD USERS ---
     if stats_cfg.include_discord_users and DiscordUser is not None:
         dq = DiscordUser.objects.select_related("user__profile__state")
-        member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
-        member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
-        if member_corps or member_allis:
-            dq = dq.filter(Q(user__profile__main_character__corporation_id__in=member_corps) | Q(user__profile__main_character__alliance_id__in=member_allis))
 
         discord_total = dq.count()
         snapshot["discord_total"] = discord_total
@@ -104,10 +96,6 @@ def BB_send_recurring_stats():
     # --- MUMBLE USERS ---
     if stats_cfg.include_mumble_users and MumbleUser is not None:
         mq = MumbleUser.objects.select_related("user__profile__state")
-        member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
-        member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
-        if member_corps or member_allis:
-            mq = mq.filter(Q(user__profile__main_character__corporation_id__in=member_corps) | Q(user__profile__main_character__alliance_id__in=member_allis))
 
         mumble_total = mq.count()
         snapshot["mumble_total"] = mumble_total
@@ -119,37 +107,22 @@ def BB_send_recurring_stats():
     # --- EVE OBJECT COUNTS ---
     if stats_cfg.include_characters:
         char_qs = EveCharacter.objects.all()
-        member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
-        member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
-        if member_corps or member_allis:
-            char_qs = char_qs.filter(Q(corporation_id__in=member_corps) | Q(alliance_id__in=member_allis))
 
         snapshot["characters_total"] = char_qs.count()
 
     if stats_cfg.include_corporations:
         corp_qs = EveCorporationInfo.objects.all()
-        member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
-        member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
-        if member_corps or member_allis:
-            corp_qs = corp_qs.filter(Q(corporation_id__in=member_corps) | Q(alliance_id__in=member_allis))
 
         snapshot["corporations_total"] = corp_qs.count()
 
     if stats_cfg.include_alliances:
         ali_qs = EveAllianceInfo.objects.all()
-        member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
-        if member_allis:
-            ali_qs = ali_qs.filter(alliance_id__in=member_allis)
 
         snapshot["alliances_total"] = ali_qs.count()
 
     # --- TOKENS ---
     if Token is not None:
         token_qs = Token.objects.all()
-        member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
-        member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
-        if member_corps or member_allis:
-            token_qs = token_qs.filter(character_id__in=EveCharacter.objects.filter(Q(corporation_id__in=member_corps) | Q(alliance_id__in=member_allis)).values("character_id"))
 
         if stats_cfg.include_tokens:
             snapshot["tokens_total"] = token_qs.count()
@@ -161,19 +134,11 @@ def BB_send_recurring_stats():
     # --- AUDITS (corptools) ---
     if CharacterAudit is not None and stats_cfg.include_character_audits:
         ca_qs = CharacterAudit.objects.all()
-        member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
-        member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
-        if member_corps or member_allis:
-            ca_qs = ca_qs.filter(Q(character__corporation_id__in=member_corps) | Q(character__alliance_id__in=member_allis))
 
         snapshot["character_audits_total"] = ca_qs.count()
 
     if CorporationAudit is not None and stats_cfg.include_corporation_audits:
         cpa_qs = CorporationAudit.objects.all()
-        member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
-        member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
-        if member_corps or member_allis:
-            cpa_qs = cpa_qs.filter(Q(corporation__corporation_id__in=member_corps) | Q(corporation__alliance_id__in=member_allis))
 
         snapshot["corporation_audits_total"] = cpa_qs.count()
 

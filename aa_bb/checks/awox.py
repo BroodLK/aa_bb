@@ -6,6 +6,7 @@ cache management, and rendering helpers so the calling views do not have to
 care about throttling or HTML generation.
 """
 
+import html
 import time
 from functools import lru_cache
 
@@ -227,22 +228,27 @@ def fetch_awox_kills(user_id, delay=0.2):
 
             victim = full_kill.get("victim", {})
             victim_id = victim.get("character_id")
+            victim_is_user = victim_id in char_ids
 
             attackers = full_kill.get("attackers", []) or []
-            involved_user_char_names = []
+            attacker_ids_user = [
+                a.get("character_id") for a in attackers
+                if a.get("character_id") and a.get("character_id") in char_ids
+            ]
 
-            if victim_id in char_ids:
+            involved_user_char_names = []
+            if victim_is_user:
                 involved_user_char_names.append(char_id_to_name[victim_id])
 
-            for a in attackers:
-                a_id = a.get("character_id")
-                if a_id and a_id in char_ids:
-                    name = char_id_to_name[a_id]
-                    if name not in involved_user_char_names:
-                        involved_user_char_names.append(name)
+            for a_id in attacker_ids_user:
+                name = char_id_to_name[a_id]
+                if name not in involved_user_char_names:
+                    involved_user_char_names.append(name)
 
             if not involved_user_char_names:
                 continue
+
+            is_attacker = len(attacker_ids_user) > 0
 
             # Resolve names for display
             vic_name = resolve_character_name(victim_id) if victim_id else "Unknown"
@@ -262,6 +268,7 @@ def fetch_awox_kills(user_id, delay=0.2):
                 "value": int(value) if value is not None else 0,
                 "link": f"https://zkillboard.com/kill/{kill_id}/",
                 "chars": involved_user_char_names,
+                "is_attacker": is_attacker,
                 "att_name": att_name,
                 "att_corp": att_corp,
                 "att_alli": att_alli,
@@ -316,7 +323,11 @@ def render_awox_kills_html(userID):
     html += '<thead><tr><th>Date</th><th>Character(s)</th><th>Attacker</th><th>Victim</th><th>Value</th><th>Link</th></tr></thead><tbody>'
 
     for kill in kills:
-        chars = ", ".join(sorted(kill.get("chars", [])))
+        chars_list = sorted(kill.get("chars", []))
+        if kill.get("is_attacker", False):
+            chars = mark_safe(f'<span style="color: red;">{html.escape(", ".join(chars_list))}</span>')
+        else:
+            chars = ", ".join(chars_list)
         value = "{:,}".format(kill.get("value", 0))
         link = kill.get("link", "#")
 
@@ -365,7 +376,8 @@ def get_awox_kill_links(user_id):
         results.append({
             "link": kill["link"],
             "date": date_str,
-            "value": "{:,}".format(kill.get("value", 0))
+            "value": "{:,}".format(kill.get("value", 0)),
+            "is_attacker": kill.get("is_attacker", False)
         })
 
     return results

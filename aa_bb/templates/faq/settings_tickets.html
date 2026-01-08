@@ -9,8 +9,48 @@
 
 <h1>{% translate "TicketToolConfig Fields" %}</h1>
 <p>
-  {% blocktrans %}<code>TicketToolConfig</code> powers automated compliance tickets created by the Discord bot and background tasks. Configure it from Django admin → BigBrother → TicketToolConfig before enabling the ticket pipeline.{% endblocktrans %}
+  {% blocktrans %}<code>TicketToolConfig</code> powers automated compliance tickets created by the Discord bot, webhooks or background tasks. Configure it from Django admin → BigBrother → TicketToolConfig before enabling the ticket pipeline.{% endblocktrans %}
 </p>
+
+<h2 class="mt-4">{% translate "Ticket Mode & Discord Integration" %}</h2>
+<div class="table-responsive">
+  <table class="table table-striped">
+    <thead>
+      <tr>
+        <th>{% translate "Field" %}</th>
+        <th>{% translate "Description" %}</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>ticket_type</code></td>
+        <td>{% translate "Determines the delivery method for compliance tickets: Private Channels, Private Threads, Public Forum Threads (Webhook), or Auth Only." %}</td>
+      </tr>
+      <tr>
+        <td><code>Role_ID</code></td>
+        <td>{% translate "Optional role ID pinged in every new ticket alongside the pilot." %}</td>
+      </tr>
+      <tr>
+        <td><code>hr_forum_webhook</code></td>
+        <td>{% translate "Discord webhook URL used for creating forum threads when 'Public Forum Threads' is selected or as a fallback if the bot is unavailable." %}</td>
+      </tr>
+      {% if is_bot %}
+      <tr>
+        <td><code>Category_ID</code></td>
+        <td>{% translate "Discord category ID where new ticket channels should be created (for 'Private Channels' mode)." %}</td>
+      </tr>
+      <tr>
+        <td><code>Forum_Channel_ID</code></td>
+        <td>{% translate "Discord channel ID where bot-managed threads should be created (for 'Private Threads' mode)." %}</td>
+      </tr>
+      <tr>
+        <td><code>staff_roles</code></td>
+        <td>{% translate "Comma-separated list of Discord role IDs allowed to view ticket channels and resolve threads." %}</td>
+      </tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>
 
 <h2 class="mt-4">{% translate "General Filters & Counters" %}</h2>
 <div class="table-responsive">
@@ -30,6 +70,7 @@
         <td><code>ticket_counter</code></td>
         <td>{% translate "Auto-incrementing number used in ticket channel names. Read-only in admin." %}</td>
       </tr>
+      {% if is_afat %}
       <tr>
         <td><code>max_months_without_pap_compliance</code></td>
         <td>{% translate "Upper bound on compliance points a pilot can accumulate. Falling to zero triggers a PAP ticket." %}</td>
@@ -38,14 +79,7 @@
         <td><code>starting_pap_compliance</code></td>
         <td>{% translate "Initial compliance points granted when someone joins the corp." %}</td>
       </tr>
-      <tr>
-        <td><code>char_removed_enabled</code></td>
-        <td>{% translate "Enable tickets when characters are removed from auth without being replaced." %}</td>
-      </tr>
-      <tr>
-        <td><code>awox_monitor_enabled</code></td>
-        <td>{% translate "Create tickets if AWOX kills are detected for the user." %}</td>
-      </tr>
+      {% endif %}
     </tbody>
   </table>
 </div>
@@ -62,7 +96,11 @@
     <tbody>
       <tr>
         <td><code>corp_check_enabled</code></td>
-        <td>{% translate "Turns on tickets for pilots missing corp auth tokens." %}</td>
+        <td>{% translate "If enabled, checks if all of a user's characters have the required ESI tokens for the corporation compliance filter." %}</td>
+      </tr>
+      <tr>
+        <td><code>corp_check_include_user</code></td>
+        <td>{% translate "Include the user in the ticket (Discord channel/thread). Useful for debugging." %}</td>
       </tr>
       <tr>
         <td><code>corp_check</code></td>
@@ -84,6 +122,7 @@
   </table>
 </div>
 
+{% if is_afat %}
 <h2 class="mt-4">{% translate "PAP Compliance Monitoring" %}</h2>
 <div class="table-responsive">
   <table class="table table-striped">
@@ -96,7 +135,11 @@
     <tbody>
       <tr>
         <td><code>paps_check_enabled</code></td>
-        <td>{% translate "Enable tickets for pilots who fall below the PAP compliance threshold." %}</td>
+        <td>{% translate "If enabled, checks if the user has met the minimum PAP requirements (Integration with aa-afat)." %}</td>
+      </tr>
+      <tr>
+        <td><code>paps_check_include_user</code></td>
+        <td>{% translate "Include the user in the ticket (Discord channel/thread)." %}</td>
       </tr>
       <tr>
         <td><code>paps_check</code></td>
@@ -117,8 +160,9 @@
     </tbody>
   </table>
 </div>
+{% endif %}
 
-<h2 class="mt-4">{% translate "AFK Monitoring" %}</h2>
+<h2 class="mt-4">{% translate "In-Game Activity Monitoring" %}</h2>
 <div class="table-responsive">
   <table class="table table-striped">
     <thead>
@@ -130,7 +174,11 @@
     <tbody>
       <tr>
         <td><code>afk_check_enabled</code></td>
-        <td>{% translate "Enable inactivity tickets based on login activity." %}</td>
+        <td>{% translate "If enabled, checks if any character on the user's account has logged into the game within the allowed timeframe." %}</td>
+      </tr>
+      <tr>
+        <td><code>afk_check_include_user</code></td>
+        <td>{% translate "Include the user in the ticket (Discord channel/thread)." %}</td>
       </tr>
       <tr>
         <td><code>Max_Afk_Days</code></td>
@@ -156,7 +204,8 @@
   </table>
 </div>
 
-<h2 class="mt-4">{% translate "Discord Linking" %}</h2>
+{% if is_bot %}
+<h2 class="mt-4">{% translate "Discord Link & Activity" %}</h2>
 <div class="table-responsive">
   <table class="table table-striped">
     <thead>
@@ -168,7 +217,11 @@
     <tbody>
       <tr>
         <td><code>discord_check_enabled</code></td>
-        <td>{% translate "Creates tickets for pilots who have not linked their Discord account in Auth." %}</td>
+        <td>{% translate "If enabled, checks if the user has a Discord account linked to their Alliance Auth profile." %}</td>
+      </tr>
+      <tr>
+        <td><code>discord_check_include_user</code></td>
+        <td>{% translate "Include the user in the ticket (Discord channel/thread)." %}</td>
       </tr>
       <tr>
         <td><code>discord_check</code></td>
@@ -186,11 +239,28 @@
         <td><code>discord_check_reminder</code></td>
         <td>{% translate "Reminder template using <code>{role}</code>, <code>{namee}</code>, and <code>{days}</code> placeholders." %}</td>
       </tr>
+      <tr>
+        <td><code>discord_inactivity_enabled</code></td>
+        <td>{% translate "If enabled, creates a ticket if a linked Discord user has not sent a message for a certain number of days." %}</td>
+      </tr>
+      <tr>
+        <td><code>discord_inactivity_include_user</code></td>
+        <td>{% translate "Include the user in the ticket (Discord channel/thread)." %}</td>
+      </tr>
+      <tr>
+        <td><code>discord_inactivity_days</code></td>
+        <td>{% translate "Threshold of days for Discord message inactivity." %}</td>
+      </tr>
+      <tr>
+        <td><code>discord_inactivity_reason</code></td>
+        <td>{% translate "Initial message template for Discord inactivity tickets." %}</td>
+      </tr>
     </tbody>
   </table>
 </div>
+{% endif %}
 
-<h2 class="mt-4">{% translate "Ticket Channel Settings" %}</h2>
+<h2 class="mt-4">{% translate "Character Removal Check" %}</h2>
 <div class="table-responsive">
   <table class="table table-striped">
     <thead>
@@ -201,17 +271,57 @@
     </thead>
     <tbody>
       <tr>
-        <td><code>Category_ID</code></td>
-        <td>{% translate "Discord category ID where new ticket channels should be created." %}</td>
+        <td><code>char_removed_enabled</code></td>
+        <td>{% translate "Enable tickets when characters are removed from auth without being replaced." %}</td>
       </tr>
       <tr>
-        <td><code>staff_roles</code></td>
-        <td>{% translate "Comma-separated list of Discord role IDs allowed to view ticket channels." %}</td>
+        <td><code>char_removed_include_user</code></td>
+        <td>{% translate "Include the user in the ticket (Discord channel/thread)." %}</td>
       </tr>
       <tr>
-        <td><code>Role_ID</code></td>
-        <td>{% translate "Optional role ID pinged in every new ticket alongside the pilot." %}</td>
+        <td><code>char_removed_reason</code></td>
+        <td>{% translate "Initial message template for character removal. Supports <code>{role}</code>, <code>{namee}</code>, and <code>{details}</code>." %}</td>
       </tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 class="mt-4">{% translate "AWOX Check" %}</h2>
+<div class="table-responsive">
+  <table class="table table-striped">
+    <thead>
+      <tr>
+        <th>{% translate "Field" %}</th>
+        <th>{% translate "Description" %}</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>awox_monitor_enabled</code></td>
+        <td>{% translate "Create tickets if AWOX kills are detected for the user." %}</td>
+      </tr>
+      <tr>
+        <td><code>awox_kill_include_user</code></td>
+        <td>{% translate "Include the user in the ticket (Discord channel/thread)." %}</td>
+      </tr>
+      <tr>
+        <td><code>awox_kill_reason</code></td>
+        <td>{% translate "Initial message template for AWOX kills. Supports <code>{role}</code>, <code>{namee}</code>, and <code>{details}</code>." %}</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 class="mt-4">{% translate "Exclusions" %}</h2>
+<div class="table-responsive">
+  <table class="table table-striped">
+    <thead>
+      <tr>
+        <th>{% translate "Field" %}</th>
+        <th>{% translate "Description" %}</th>
+      </tr>
+    </thead>
+    <tbody>
       <tr>
         <td><code>excluded_users</code></td>
         <td>{% translate "Users ignored by automated checks and never given tickets." %}</td>

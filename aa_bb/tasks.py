@@ -207,7 +207,8 @@ def BB_update_single_user(user_id, char_name):
                 for entry in skills_result.values()
                 for sid in skill_ids
             )
-            has_awox = bool(awox_links)
+
+            has_awox = any(awox_map.get(link, {}).get("is_attacker", False) for link in awox_links)
             has_hostile_clones = bool(hostile_clones_result)
             has_hostile_assets = bool(hostile_assets_result)
             has_sus_contacts = bool(sus_contacts_result)
@@ -319,8 +320,8 @@ def BB_update_single_user(user_id, char_name):
                     details = awox_map.get(link)
                     if details:
                         return (f"- {link}\n"
-                                f"  - Date: {details.get('date')}\n"
-                                f"  - Value: {details.get('value')} ISK")
+                                f"   - Date: {details.get('date')}\n"
+                                f"   - Value: {details.get('value')} ISK")
                     return f"- {link}"
 
                 link_list = "\n".join(format_awox_line(link) for link in new_links)
@@ -336,36 +337,26 @@ def BB_update_single_user(user_id, char_name):
                     status.has_awox_kills = has_awox
                     logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} changed")
                 if new_links:  # send notifications only for links not yet alerted on
-                    if instance.awox_notify:
-                        changes.append(f"###{get_pings('AwoX')} New AWOX Kill(s):\n{link_list}")
-                    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} new links")
-                    tcfg = TicketToolConfig.get_solo()
-                    if not limit_notifications and tcfg.awox_monitor_enabled and time_in_corp(
-                        user_id) >= 1:  # guardrail: only fire tickets for monitored corps
-                        try:
-                            try:
-                                discord_id = get_discord_user_id(user_obj)
+                    # Identify which of the new links the user was an attacker in
+                    attacker_links = [
+                        link for link in new_links
+                        if awox_map.get(link, {}).get("is_attacker", False)
+                    ]
+                    attacker_link_list = "\n".join(format_awox_line(link) for link in attacker_links)
 
-                                ticket_message = f"<@&{tcfg.Role_ID}>,<@{discord_id}> detection indicates your involvement in an AWOX kill, please explain:\n{link_list}"
-                                send_status_embed(
-                                    subject="Ticket Created",
-                                    lines=[f"Ticket for **{status.user}** created, reason - **AWOX Kill**"],
-                                    color=0xf1c40f,  # Yellow
-                                )
-                                run_task_function.apply_async(
-                                    args=["aa_bb.tasks_bot.create_compliance_ticket"],
-                                    kwargs={
-                                        "task_args": [status.user.id, discord_id, "awox_kill", ticket_message],
-                                        "task_kwargs": {}
-                                    }
-                                )
+                    if attacker_links:  # send notifications only when the user is the aggressor
+                        if instance.awox_notify:
+                            changes.append(f"###{get_pings('AwoX')} New AWOX Kill(s):\n{attacker_link_list}")
+                        logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} new attacker links")
+                        tcfg = TicketToolConfig.get_solo()
+                        if not limit_notifications and tcfg.awox_monitor_enabled and time_in_corp(
+                            user_id) >= 1:  # guardrail: only fire tickets for monitored corps
+                            try:
+                                from .tasks_tickets import ensure_ticket
+                                ensure_ticket(status.user, "awox_kill", details=attacker_link_list)
                             except Exception as e:
                                 logger.error(f"ℹ️  [AA-BB] - [BB_update_single_user] - {e}")
                                 pass
-
-                        except Exception as e:
-                            logger.error(f"ℹ️  [AA-BB] - [BB_update_single_user] - {e}")
-                            pass
                 old = set(status.awox_kill_links or [])
                 new = set(awox_links) - old
                 if new:  # merge newly seen links into the cached list
@@ -669,7 +660,7 @@ def BB_update_single_user(user_id, char_name):
                         info = f"{system} ({owner})"
                         if region:
                             info = f"{system} ({owner} | {region})"
-                        lines.append(f"  - {info}")
+                        lines.append(f"   - {info}")
                         if ships:
                             lines.append(f"    - {ships}")
 
@@ -721,7 +712,7 @@ def BB_update_single_user(user_id, char_name):
                         info = f"{system} ({owner})"
                         if region:
                             info = f"{system} ({owner} | {region})"
-                        lines.append(f"  - {info}")
+                        lines.append(f"   - {info}")
 
                 if lines:
                     link_list = "\n".join(lines)
@@ -895,11 +886,10 @@ def BB_update_single_user(user_id, char_name):
                 status.sus_trans = sus_trans_result
 
             if not status.baseline_initialized:
-                if not instance.new_user_notify:
-                    send_notifications = False
-                else:
-                    send_notifications = True
+                # First time auditing this user - respect new_user_notify setting
+                send_notifications = instance.new_user_notify
             else:
+                # Existing user - always send notifications for changes
                 send_notifications = True
 
             if not limit_notifications and send_notifications and changes:
@@ -918,20 +908,34 @@ def BB_update_single_user(user_id, char_name):
 
                 # 1) Overall header – almost always a tiny single-chunk embed
                 header_lines = [f"‼️ Status change detected for {char_name}"]
-                for header_chunk in _chunk_embed_lines(header_lines, max_chars=1900):
-                    all_chunks.append(header_chunk)
 
-                # 2) One or more embeds per change block, chunked by char count
-                for chunk in changes:
-                    raw_lines = [ln for ln in chunk.split("\n") if ln.strip()]
+                # Calculate the total combined length to see if we can merge everything into one embed
+                total_combined_len = len(header_lines[0]) + sum(len(c) for c in changes) + (len(changes) * 2)
 
-                    for body_chunk in _chunk_embed_lines(raw_lines, max_chars=1900):
-                        logger.info(
-                            "✅  [AA-BB] - [BB_update_single_user] - [%s] Prepared embed chunk with %d lines",
-                            char_name,
-                            len(body_chunk),
-                        )
-                        all_chunks.append(body_chunk)
+                if total_combined_len < 1000:
+                    logger.info(
+                        "✅  [AA-BB] - [BB_update_single_user] - [%s] Merging %d changes into a single status embed (%d chars)",
+                        char_name,
+                        len(changes),
+                        total_combined_len
+                    )
+                    merged_lines = header_lines + [""]
+                    for chunk in changes:
+                        merged_lines.extend([ln for ln in chunk.split("\n") if ln.strip()])
+                        merged_lines.append("") # spacer
+
+                    all_chunks = _chunk_embed_lines(merged_lines, max_chars=1900)
+                else:
+                    # Separate embeds for the header and each change block
+                    for header_chunk in _chunk_embed_lines(header_lines, max_chars=1900):
+                        all_chunks.append(header_chunk)
+
+                    # 2) One or more embeds per change block, chunked by char count
+                    for chunk in changes:
+                        raw_lines = [ln for ln in chunk.split("\n") if ln.strip()]
+
+                        for body_chunk in _chunk_embed_lines(raw_lines, max_chars=1900):
+                            all_chunks.append(body_chunk)
 
                 if all_chunks:
                     logger.info(
@@ -1023,7 +1027,7 @@ def BB_run_regular_updates():
             instance.main_alliance_id = alliance_id
             instance.main_alliance = alliance_name
 
-        instance.save()
+        instance.save(update_fields=["main_corporation_id", "main_corporation", "main_alliance_id", "main_alliance"])
 
         # walk each eligible user and rebuild their status snapshot
         if instance.is_active:  # skip user iteration entirely when plugin disabled/unlicensed
@@ -1076,7 +1080,7 @@ def BB_run_regular_updates():
                     logger.error(f"ℹ️  [AA-BB] - [BB_run_regular_updates] - Failed to check for update backlog: {e}", exc_info=True)
 
             instance.update_last_dispatch_count = total_users
-            instance.save()
+            instance.save(update_fields=["update_last_dispatch_count"])
 
             if total_users == 0:
                 return
@@ -1121,11 +1125,11 @@ def BB_run_regular_updates():
                     args=(user_id, char_name),
                     eta=eta,
                 )
+        else:
+            logger.warning("ℹ️  [AA-BB] - [BB_run_regular_updates] - Plugin is disabled (is_active=False), skipping user updates.")
 
     except Exception as e:
         logger.error("ℹ️  [AA-BB] - [BB_run_regular_updates] - Task failed", exc_info=True)
-        instance.is_active = True
-        instance.save()
         tb_str = traceback.format_exc()
         tb_lines = [f"{get_pings('Error')} Big Brother encountered an unexpected error", "```python"] + tb_str.split("\n") + ["```"]
         for chunk in _chunk_embed_lines(tb_lines):
@@ -1455,4 +1459,9 @@ def BB_sync_contacts_from_aa_contacts(self):
         changed = True
 
     if changed:
-        cfg.save()
+        cfg.save(update_fields=[
+            "member_alliances", "member_corporations",
+            "hostile_alliances", "hostile_corporations",
+            "whitelist_alliances", "whitelist_corporations",
+            "contacts_import_cache"
+        ])

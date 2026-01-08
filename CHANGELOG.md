@@ -1,4 +1,36 @@
 
+## [3.2.6] - 2026-01-08
+- ** Fixed an issue that prevented fresh installations from working.**
+- Fixed an issue where users were reported for having hostile standings towards hostile entities.
+- Fixed an issue where Recurring Stats Webhook did not fall back if left empty to the main webhook.
+- Fixed an issue where clones and assets in friendly citadels were incorrectly flagged as hostile in hostile systems.
+- Improved Discord message formatting to remove redundant vertical space in bulleted lists.
+- Improved logging to track down module conflicts.
+- Made `aadiscordbot` an optional dependency.
+   - Hidden `aa-afat` and `aadiscordbot` specific ticket settings when the respective apps are not installed.
+- Tickets
+   - Added support for Private Channels (via Bot), Private Threads (via Bot), Public Forum Threads (via Webhook), and Auth-Only ticket modes.
+      - Threads persist and are not deleted, instead they are archived or closed.
+      - They are reopened if the same user has the same issue again.
+      - New threads are created per user and per issue, so one user may have multiple active issues.
+    - Auth based UI for managing tickets allows users who do not have `aadiscordbot` installed, or users who simply don't want to use Discord, to manage tickets
+       - Messages sent in Discord ticket channel/thread(s) are now relayed back to the Auth UI, and staff comments made in Auth are automatically forwarded to the corresponding Discord channel/thread(s). (via Bot)
+       - Tickets can be resolved via the management UI
+    - Added configurable message templates for AWOX kills and Character Removal events in the TicketToolConfig.
+    - Fixed an issue where ticket reminders were sent every hour; they now correctly respect the configured daily interval.
+    - Added a background tracker that monitors the last message sent time (not the contents of the message) by users on Discord.
+       - Discord Inactivity Check: New compliance check that can trigger tickets if a user has not spoken on Discord for a configured number of days.
+    - Ability to either include, or not, the offending users in all tickets. (with exception to the discord not linked tickets)
+    - Fixed an issue where after a set amount of time of the ticket not being resolved, the app would send a hardcoded message. This message was removed as it is redundant.
+
+## [3.2.5] - 2025-12-28
+- More robust hostile state handling, with the ability to add everyone who is not friendly to the hostile state.
+- More robust awox handling
+- Various visual improvements
+- Exclude low sec
+- Exclude high sec
+- Fix typo
+
 ## [3.2.4] - 2025-12-24
 
 ### Changed
