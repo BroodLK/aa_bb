@@ -1080,7 +1080,7 @@ class BigBrotherConfig(SingletonModel):
     )
 
     is_active = models.BooleanField(
-        default=False,
+        default=True,
         editable=True,
         help_text=_("has the plugin been activated/deactivated?"),
         verbose_name=_("Active?")
@@ -1831,7 +1831,7 @@ class TicketToolConfig(SingletonModel):
 
     staff_roles = models.TextField(
         blank=True,
-        help_text="Comma-separated list of staff role IDs allowed on tickets"
+        help_text="Comma-separated list of staff role IDs or names allowed on tickets"
     )
 
     Role_ID = models.PositiveBigIntegerField(

@@ -272,6 +272,7 @@ def CB_run_regular_updates():
     Update CorpBrother caches: hostile assets, contracts, transactions, LoA, and PAPs.
     """
     instance = BigBrotherConfig.get_solo()
+    instance.refresh_from_db()
 
     try:
         if instance.is_active:
@@ -366,6 +367,7 @@ def check_member_compliance():
       • Sends a single consolidated Discord message with all findings.
     """
     instance = BigBrotherConfig.get_solo()
+    instance.refresh_from_db()
     if not instance.is_active:  # plugin disabled → skip expensive checks
         logger.warning("ℹ️  [AA-BB] - [check_member_compliance] - Plugin is disabled (is_active=False), skipping compliance sweep.")
         return
@@ -725,7 +727,7 @@ def BB_run_regular_loa_updates():
     """
     cfg = BigBrotherConfig.get_solo()
     if not cfg.is_active:
-        logger.warning("ℹ️  [AA-BB] - [BB_run_regular_loa_updates] - Plugin is disabled (is_active=False), skipping LoA updates.")
+        logger.warning("ℹ️  [AA-BB] - [BB_run_regular_loa_updates] - Plugin is disabled.")
         return
     qs_profiles = get_user_profiles()
     if not qs_profiles.exists():  # No members matching filters, so nothing to process.

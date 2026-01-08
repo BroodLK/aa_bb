@@ -320,38 +320,16 @@ def hourly_compliance_check():
         if days_elapsed <= 0:  # Do not send reminders on the same day ticket was created.
             continue  # don't ping on creation day
 
-        # Check frequency BEFORE checking escalation or sending reminders
+        # Check frequency BEFORE sending reminders
         freq_days = reminder_frequency.get(reason, 1)
         last_day_pinged = ticket.last_reminder_sent or 0
         if (days_elapsed - last_day_pinged) < freq_days:
             continue
 
         max_dayss = max_days.get(reason, 30)
-        if days_elapsed > max_dayss:  # Escalate when overdue beyond max window.
-            # escalation: ping staff role to kick the user
-            mention = f"<@&{t_cfg.Role_ID}>"           # role mention
-            user_mention = f"<@{ticket.discord_user_id}>"
-            msg = (f"⚠️ {mention} please review compliance ticket for {user_mention}. "
-                   f"Issue **{reason}** has exceeded {max_dayss} days without resolution. "
-                   f"Consider kicking this user.")
-
-            if run_task_function:
-                run_task_function.apply_async(
-                    args=["aa_bb.tasks_bot.send_ticket_reminder"],
-                    kwargs={
-                        "task_args": [ticket.discord_channel_id, ticket.discord_user_id, msg],
-                        "task_kwargs": {}
-                    },
-                    queue='aadiscordbot'
-                )
-
-            # Mark as reminded
-            ticket.last_reminder_sent = days_elapsed
-            ticket.save(update_fields=["last_reminder_sent"])
-            continue
 
         # Build the normal reminder message: mention the user + role + days left
-        days_left = max_dayss - days_elapsed
+        days_left = max(0, max_dayss - days_elapsed)
         mention = f"{ticket.discord_user_id}"
         template = reminder_messages[reason]  # must support {namee}, {role}, {days}
         if reason == "paps_check":  # PAP reminder template only uses {days}.

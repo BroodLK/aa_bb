@@ -265,6 +265,7 @@ def kickstart_stale_ct_modules(days_stale: int = 2, limit: Optional[int] = None,
         logger.error("✅  [AA-BB] - [kickstart_stale_ct_modules] - Corptools not installed or models missing, skipping.")
         return "Corptools not installed or models missing"
     instance = BigBrotherConfig.get_solo()
+    instance.refresh_from_db()
     if not instance.is_active:
         return "Big Brother is inactive."
     conf = CorptoolsConfiguration.get_solo()
