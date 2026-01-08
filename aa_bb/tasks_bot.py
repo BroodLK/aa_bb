@@ -103,7 +103,7 @@ def get_staff_roles():
         roles.append(int(cfg.Role_ID))
     return roles
 
-async def create_compliance_ticket(bot, user_id, discord_user_id: int, reason: str, message: str, include_user: bool = True):
+async def create_compliance_ticket(bot, user_id, discord_user_id: int, reason: str, message: str, include_user: bool = True, **kwargs):
     tcfg = await sync_to_async(TicketToolConfig.get_solo)()
     category_id = tcfg.Category_ID
     if not category_id:
@@ -199,7 +199,7 @@ async def create_compliance_ticket(bot, user_id, discord_user_id: int, reason: s
     )
 
 
-async def create_compliance_thread(bot, user_id, discord_user_id: int, reason: str, message: str, thread_name: str, thread_id: int = None, include_user: bool = True):
+async def create_compliance_thread(bot, user_id, discord_user_id: int, reason: str, message: str, thread_name: str, thread_id: int = None, include_user: bool = True, **kwargs):
     tcfg = await sync_to_async(TicketToolConfig.get_solo)()
     parent_channel_id = tcfg.Forum_Channel_ID
     if not parent_channel_id:
@@ -363,13 +363,20 @@ async def create_compliance_thread(bot, user_id, discord_user_id: int, reason: s
     )
 
 
-async def send_ticket_reminder(bot, channel_id: int, user_id: int, message: str):
+async def send_ticket_reminder(bot, channel_id: int, user_id: int, message: str, **kwargs):
     channel = bot.get_channel(channel_id)
-    member = channel.guild.get_member(user_id)
-    if channel and member:  # only send reminders when both channel and member resolve
+    if not channel and hasattr(bot, 'fetch_channel'):
+        try:
+            channel = await bot.fetch_channel(channel_id)
+        except Exception:
+            pass
+
+    if channel:
         from .app_settings import _chunk_embed_lines
         lines = message.split("\n")
         chunks = _chunk_embed_lines(lines)
+
+        content = f"<@{user_id}>" if user_id else None
 
         for i, chunk in enumerate(chunks):
             embed = discord.Embed(
@@ -378,11 +385,11 @@ async def send_ticket_reminder(bot, channel_id: int, user_id: int, message: str)
                 color=discord.Color.orange()
             )
             if i == 0:
-                await channel.send(content=f"<@{user_id}>", embed=embed)
+                await channel.send(content=content, embed=embed)
             else:
                 await channel.send(embed=embed)
 
-async def close_ticket_channel(bot, channel_id: int):
+async def close_ticket_channel(bot, channel_id: int, **kwargs):
     channel = bot.get_channel(channel_id)
     if not channel and hasattr(bot, 'fetch_channel'):
         try:
@@ -400,7 +407,7 @@ async def close_ticket_channel(bot, channel_id: int):
         else:
             await channel.delete(reason="Compliance issue resolved")
 
-async def join_thread(bot, thread_id: int):
+async def join_thread(bot, thread_id: int, **kwargs):
     channel = bot.get_channel(thread_id)
     if not channel and hasattr(bot, 'fetch_channel'):
         try:
@@ -411,7 +418,7 @@ async def join_thread(bot, thread_id: int):
     if channel and isinstance(channel, discord.Thread):
         await channel.join()
 
-async def unarchive_thread(bot, thread_id: int):
+async def unarchive_thread(bot, thread_id: int, **kwargs):
     channel = bot.get_channel(thread_id)
     if not channel and hasattr(bot, 'fetch_channel'):
         try:
@@ -682,7 +689,7 @@ def _is_ticket_channel(ch: discord.abc.GuildChannel) -> bool:
         )
     )
 
-async def rebalance_ticket_categories(bot):
+async def rebalance_ticket_categories(bot, **kwargs):
     """
     Try to keep earlier categories in the ticket family as full as possible by moving
     ticket channels leftwards. Delete empty overflow categories (suffix >= 2).
