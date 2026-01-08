@@ -5,6 +5,8 @@ The functions here are called from Celery tasks as well as slash commands to
 create/rebalance compliance ticket channels.
 """
 
+from __future__ import annotations
+
 import re
 import logging
 
@@ -37,6 +39,13 @@ except ImportError:
         class CategoryChannel: pass
         class ForumChannel: pass
         class ApplicationContext: pass
+        class Guild: pass
+        class abc:
+            class GuildChannel: pass
+        class utils:
+            @staticmethod
+            def get(*args, **kwargs): pass
+        class HTTPException(Exception): pass
     logger.info("discord service not installed; using dummy classes for type hinting.")
 
 from .models import TicketToolConfig, ComplianceTicket, ComplianceTicketComment

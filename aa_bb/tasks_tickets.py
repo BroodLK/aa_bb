@@ -600,8 +600,8 @@ def ensure_ticket(user, reason, details=None):
             run_task_function.apply_async(
                 args=["aa_bb.tasks_bot.create_compliance_thread"],
                 kwargs={
-                    "task_args": [user.id, discord_id, reason, ticket_message, thread_name, thread_id, include_user],
-                    "task_kwargs": {}
+                    "task_args": [user.id, discord_id, reason, ticket_message, thread_name],
+                    "task_kwargs": {"thread_id": thread_id, "include_user": include_user}
                 },
                 queue='aadiscordbot'
             )
@@ -611,8 +611,8 @@ def ensure_ticket(user, reason, details=None):
             run_task_function.apply_async(
                 args=["aa_bb.tasks_bot.create_compliance_ticket"],
                 kwargs={
-                    "task_args": [user.id, discord_id, reason, ticket_message, include_user],
-                    "task_kwargs": {}
+                    "task_args": [user.id, discord_id, reason, ticket_message],
+                    "task_kwargs": {"include_user": include_user}
                 },
                 queue='aadiscordbot'
             )
