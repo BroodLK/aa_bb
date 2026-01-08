@@ -1280,7 +1280,7 @@ def ticket_reopen(request, pk):
 
     # Unarchive Discord thread if bot is available and channel_id exists
     if ticket.discord_channel_id:
-        from .tasks_tickets import run_task_function
+        from aa_bb.tasks_tickets import run_task_function
         if run_task_function:
             run_task_function.apply_async(
                 args=["aa_bb.tasks_bot.unarchive_thread"],
@@ -1326,7 +1326,7 @@ def ticket_add_comment(request, pk):
                     send_message({"content": content}, hook=webhook_url)
                 else:
                     # For bot-managed threads
-                    from .tasks_tickets import run_task_function
+                    from aa_bb.tasks_tickets import run_task_function
                     if run_task_function:
                         run_task_function.apply_async(
                             args=["aa_bb.tasks_bot.send_ticket_reminder"], # Reuse reminder task to post msg

@@ -18,9 +18,30 @@ from django.utils import timezone
 from asgiref.sync import sync_to_async
 
 logger = logging.getLogger(__name__)
+logger.info("✅ [AA-BB] - [Tasks Bot] - Module loading from %s", __file__)
+
+__all__ = [
+    "create_compliance_ticket",
+    "create_compliance_thread",
+    "send_ticket_reminder",
+    "close_ticket_channel",
+    "join_thread",
+    "unarchive_thread",
+    "rebalance_ticket_categories",
+    "TicketCommands",
+    "setup",
+]
 
 try:
     import discord
+    try:
+        import discord.abc
+    except ImportError:
+        pass
+    try:
+        import discord.utils
+    except ImportError:
+        pass
 except ImportError:
     class discord:
         class Message: pass
@@ -48,8 +69,8 @@ except ImportError:
         class HTTPException(Exception): pass
     logger.info("discord service not installed; using dummy classes for type hinting.")
 
-from .models import TicketToolConfig, ComplianceTicket, ComplianceTicketComment
-from .app_settings import get_user_model
+from aa_bb.models import TicketToolConfig, ComplianceTicket, ComplianceTicketComment
+from aa_bb.app_settings import get_user_model
 
 try:
     from aadiscordbot.cogs.utils.decorators import sender_is_admin
@@ -168,7 +189,7 @@ async def create_compliance_ticket(bot, user_id, discord_user_id: int, reason: s
     )
 
     # Use embeds and chunking for the initial message
-    from .app_settings import _chunk_embed_lines
+    from aa_bb.app_settings import _chunk_embed_lines
     lines = message.split("\n")
     chunks = _chunk_embed_lines(lines)
 
@@ -248,7 +269,7 @@ async def create_compliance_thread(bot, user_id, discord_user_id: int, reason: s
 
         if isinstance(parent_channel, discord.ForumChannel):
             # Forum threads are created with a starting message
-            from .app_settings import _chunk_embed_lines
+            from aa_bb.app_settings import _chunk_embed_lines
             lines = message.split("\n")
             chunks = _chunk_embed_lines(lines)
 
@@ -283,7 +304,7 @@ async def create_compliance_thread(bot, user_id, discord_user_id: int, reason: s
             )
 
             # Initial message
-            from .app_settings import _chunk_embed_lines
+            from aa_bb.app_settings import _chunk_embed_lines
             lines = message.split("\n")
             chunks = _chunk_embed_lines(lines)
 
@@ -299,7 +320,7 @@ async def create_compliance_thread(bot, user_id, discord_user_id: int, reason: s
                     await thread.send(embed=embed)
 
         # Save thread mapping
-        from .models import ComplianceThread
+        from aa_bb.models import ComplianceThread
         await sync_to_async(ComplianceThread.objects.update_or_create)(
             user=user, reason=reason,
             defaults={'thread_id': thread.id}
@@ -372,7 +393,7 @@ async def send_ticket_reminder(bot, channel_id: int, user_id: int, message: str,
             pass
 
     if channel:
-        from .app_settings import _chunk_embed_lines
+        from aa_bb.app_settings import _chunk_embed_lines
         lines = message.split("\n")
         chunks = _chunk_embed_lines(lines)
 
@@ -505,7 +526,7 @@ class TicketCommands(commands.Cog):
 
         if not cache.get(cache_key):
             from allianceauth.services.modules.discord.models import DiscordUser
-            from .models import UserStatus
+            from aa_bb.models import UserStatus
             try:
                 du = await sync_to_async(DiscordUser.objects.select_related('user').get)(uid=uid)
                 await sync_to_async(UserStatus.objects.update_or_create)(
