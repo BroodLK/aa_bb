@@ -421,13 +421,25 @@ def is_transaction_hostile(tx: dict, user_ids: set = None) -> bool:
     sp_alli = _to_int(tx.get("second_party_alliance_id"))
     when = tx.get("date")
 
+    # Debug specific transaction
+    if spid == 2117320267 or fpid == 2117320267:
+        logger.info(f"DEBUG TX with char 2117320267: type={ttype}, is_market={is_market}, is_sus={is_sus_type}")
+        logger.info(f"  fpid={fpid}, spid={spid}, fp_corp={fp_corp}, sp_corp={sp_corp}")
+        logger.info(f"  user_ids={user_ids}")
+
     if user_ids and fpid in user_ids and spid in user_ids:
+        if spid == 2117320267 or fpid == 2117320267:
+            logger.info(f"  FILTERED: Both parties are user (fpid in user_ids and spid in user_ids)")
         return False
 
     if fp_corp and sp_corp and fp_corp == sp_corp:
+        if spid == 2117320267 or fpid == 2117320267:
+            logger.info(f"  FILTERED: Same corp (fp_corp={fp_corp}, sp_corp={sp_corp})")
         return False
 
     if fp_alli and sp_alli and fp_alli == sp_alli:
+        if spid == 2117320267 or fpid == 2117320267:
+            logger.info(f"  FILTERED: Same alliance (fp_alli={fp_alli}, sp_alli={sp_alli})")
         return False
 
     cfg = BigBrotherConfig.get_solo()
@@ -436,31 +448,53 @@ def is_transaction_hostile(tx: dict, user_ids: set = None) -> bool:
     sys_id = tx.get("system_id") or resolve_location_system_id(tx.get("location_id"))
     if sys_id:
         if cfg.exclude_high_sec and is_highsec(sys_id):
+            if spid == 2117320267 or fpid == 2117320267:
+                logger.info(f"  FILTERED: Highsec excluded (sys_id={sys_id})")
             return False
         if cfg.exclude_low_sec and is_lowsec(sys_id):
+            if spid == 2117320267 or fpid == 2117320267:
+                logger.info(f"  FILTERED: Lowsec excluded (sys_id={sys_id})")
             return False
 
     if is_location_hostile(tx.get("location_id"), tx.get("system_id")):
+        if spid == 2117320267 or fpid == 2117320267:
+            logger.info(f"  HOSTILE: Location is hostile")
         return True
 
     # Determine if either party is hostile using mega-helper
     fp_hostile = fpid not in (user_ids or set()) and get_hostile_state(fpid, when=when)
     sp_hostile = spid not in (user_ids or set()) and get_hostile_state(spid, when=when)
 
+    if spid == 2117320267 or fpid == 2117320267:
+        logger.info(f"  Hostility check: fp_hostile={fp_hostile}, sp_hostile={sp_hostile}")
+        logger.info(f"  fpid in user_ids: {fpid in (user_ids or set())}, spid in user_ids: {spid in (user_ids or set())}")
+
     if fp_hostile or sp_hostile:
         if is_market:
             if not cfg.market_transactions_show_major_hubs and is_major_hub(tx):
+                if spid == 2117320267 or fpid == 2117320267:
+                    logger.info(f"  FILTERED: Major hub excluded")
                 return False
             if not cfg.market_transactions_show_secondary_hubs and is_secondary_hub(tx):
+                if spid == 2117320267 or fpid == 2117320267:
+                    logger.info(f"  FILTERED: Secondary hub excluded")
                 return False
             if is_excluded_system(tx, cfg.market_transactions_excluded_systems):
+                if spid == 2117320267 or fpid == 2117320267:
+                    logger.info(f"  FILTERED: System excluded")
                 return False
 
             if cfg.market_transactions_threshold_alert and cfg.market_transactions_threshold_percent > 0:
                 if not is_above_threshold(tx, cfg.market_transactions_threshold_percent):
+                    if spid == 2117320267 or fpid == 2117320267:
+                        logger.info(f"  FILTERED: Below price threshold")
                     return False
+        if spid == 2117320267 or fpid == 2117320267:
+            logger.info(f"  HOSTILE: Passed all checks")
         return True
 
+    if spid == 2117320267 or fpid == 2117320267:
+        logger.info(f"  NOT HOSTILE: Neither party flagged as hostile")
     return False
 
 
