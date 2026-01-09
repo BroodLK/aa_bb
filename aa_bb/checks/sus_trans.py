@@ -35,12 +35,20 @@ else:
         return False
 
 try:
-    from corptools.models import (
-        CharacterWalletJournalEntry as WalletJournalEntry,
-        CharacterMarketTransaction,
-        Structure,
-    )
-except ImportError:
+    if corptools_active():
+        from corptools.models import (
+            CharacterWalletJournalEntry as WalletJournalEntry,
+            CharacterMarketTransaction,
+            Structure,
+        )
+        logger.info(f"Successfully imported WalletJournalEntry: {WalletJournalEntry}")
+    else:
+        logger.warning("corptools_active() returned False at import time")
+        WalletJournalEntry = None
+        CharacterMarketTransaction = None
+        Structure = None
+except ImportError as e:
+    logger.error(f"Failed to import corptools models: {e}")
     WalletJournalEntry = None
     CharacterMarketTransaction = None
     Structure = None
