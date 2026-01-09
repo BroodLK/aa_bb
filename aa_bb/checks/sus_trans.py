@@ -38,9 +38,15 @@ try:
     if corptools_active():
         from corptools.models import (
             CharacterWalletJournalEntry as WalletJournalEntry,
-            CharacterMarketTransaction,
             Structure,
         )
+        # Try to import CharacterMarketTransaction, but don't fail if it doesn't exist
+        try:
+            from corptools.models import CharacterMarketTransaction
+        except ImportError:
+            CharacterMarketTransaction = None
+            logger.warning("CharacterMarketTransaction not available in corptools")
+
         logger.info(f"Successfully imported WalletJournalEntry: {WalletJournalEntry}")
     else:
         logger.warning("corptools_active() returned False at import time")
