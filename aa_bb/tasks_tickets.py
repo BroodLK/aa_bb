@@ -1,8 +1,6 @@
 """Celery tasks and helpers that manage compliance tickets and reminders."""
 
 import time
-logger = get_extension_logger(__name__)
-
 from typing import Optional
 
 from django.utils import timezone
@@ -15,6 +13,8 @@ from allianceauth.authentication.models import UserProfile
 from allianceauth.eveonline.models import EveCharacter
 from allianceauth.services.modules.discord.models import DiscordUser
 from allianceauth.services.hooks import get_extension_logger
+
+logger = get_extension_logger(__name__)
 
 from .app_settings import get_user_profiles, get_character_id, send_status_embed, _chunk_embed_lines, send_message, afat_active, discordbot_active, corptools_active
 

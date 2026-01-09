@@ -6,6 +6,7 @@ from django.apps import apps
 from django.db.models import Q
 
 from celery import shared_task
+from allianceauth.services.hooks import get_extension_logger
 
 logger = get_extension_logger(__name__)
 
