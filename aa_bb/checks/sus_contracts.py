@@ -169,7 +169,7 @@ def get_cell_style_for_contract_row(column: str, row: dict) -> str:
     return ""
 
 
-def is_contract_row_hostile(row: dict) -> bool:
+def is_contract_row_hostile(row: dict, safe_entities: set = None) -> bool:
     """
     Checks if a contract is considered hostile using the unified processor.
     Checks both start and end locations.
@@ -182,11 +182,11 @@ def is_contract_row_hostile(row: dict) -> bool:
 
     # Unified check handles Rule 1 (Safe entities), location rules, and entity rules.
     # Check start location
-    if is_hostile_unified(involved_ids=[issuer_id, assignee_id], location_id=start_loc, when=when):
+    if is_hostile_unified(involved_ids=[issuer_id, assignee_id], location_id=start_loc, when=when, safe_entities=safe_entities):
         return True
 
     # Check end location
-    if is_hostile_unified(involved_ids=[issuer_id, assignee_id], location_id=end_loc, when=when):
+    if is_hostile_unified(involved_ids=[issuer_id, assignee_id], location_id=end_loc, when=when, safe_entities=safe_entities):
         return True
 
     return False
@@ -194,8 +194,8 @@ def is_contract_row_hostile(row: dict) -> bool:
 
 def get_user_hostile_contracts(user_id: int) -> Dict[int, str]:
     cfg = BigBrotherConfig.get_solo()
-    hostile_corps = cfg.hostile_corporations
-    hostile_allis = cfg.hostile_alliances
+    from ..app_settings import get_safe_entities
+    safe_entities = get_safe_entities()
 
     all_qs = gather_user_contracts(user_id)
     all_ids = list(all_qs.values_list("contract_id", flat=True))
@@ -211,7 +211,7 @@ def get_user_hostile_contracts(user_id: int) -> Dict[int, str]:
         new_qs = all_qs.filter(contract_id__in=new_ids)
         new_rows = get_user_contracts(new_qs)
 
-        hostile_rows: dict[int, dict] = {cid: c for cid, c in new_rows.items() if is_contract_row_hostile(c)}
+        hostile_rows: dict[int, dict] = {cid: c for cid, c in new_rows.items() if is_contract_row_hostile(c, safe_entities=safe_entities)}
         if hostile_rows:
             ProcessedContract.objects.bulk_create(
                 [ProcessedContract(contract_id=cid) for cid in hostile_rows.keys()],

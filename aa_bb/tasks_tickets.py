@@ -11,7 +11,6 @@ from celery import shared_task
 
 from allianceauth.authentication.models import UserProfile
 from allianceauth.eveonline.models import EveCharacter
-from allianceauth.services.modules.discord.models import DiscordUser
 from allianceauth.services.hooks import get_extension_logger
 
 logger = get_extension_logger(__name__)
@@ -452,6 +451,8 @@ def ensure_ticket(user, reason, details=None):
         superusers = User.objects.filter(is_superuser=True)
         username = user.username
         discord_user = None
+
+        from allianceauth.services.modules.discord.models import DiscordUser
 
         # Prefer a superuser with a linked Discord account
         if superusers.exists():  # Only check DiscordUser table when any superuser exists.

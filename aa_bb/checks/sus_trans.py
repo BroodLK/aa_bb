@@ -211,7 +211,7 @@ def get_user_transactions(qs) -> Dict[int, Dict]:
     return result
 
 
-def is_transaction_hostile(tx: dict, user_ids: set = None) -> bool:
+def is_transaction_hostile(tx: dict, user_ids: set = None, safe_entities: set = None) -> bool:
     """
     Checks if a wallet transaction is considered hostile using the unified processor.
     """
@@ -234,7 +234,8 @@ def is_transaction_hostile(tx: dict, user_ids: set = None) -> bool:
         is_market=is_market,
         market_item_id=tx.get("type_id"),
         market_unit_price=abs(tx.get("raw_amount")) / (tx.get("quantity") or 1) if tx.get("raw_amount") is not None else None,
-        when=tx.get("date")
+        when=tx.get("date"),
+        safe_entities=safe_entities
     )
 
 
@@ -248,9 +249,12 @@ def render_transactions(user_id: int) -> str:
     user_chars = get_user_characters(user_id)
     user_ids = set(user_chars.keys())
 
+    from ..app_settings import get_safe_entities
+    safe_entities = get_safe_entities()
+
     # sort by date desc
     all_list = sorted(txs.values(), key=lambda x: x['date'], reverse=True)
-    hostile = [t for t in all_list if is_transaction_hostile(t, user_ids)]
+    hostile = [t for t in all_list if is_transaction_hostile(t, user_ids, safe_entities=safe_entities)]
     if not hostile:  # No transactions require attention.
         return '<p>No hostile transactions found.</p>'
 
@@ -330,7 +334,10 @@ def get_user_hostile_transactions(user_id: int) -> Dict[int, str]:
         user_chars = get_user_characters(user_id)
         user_ids = set(user_chars.keys())
 
-        hostile_rows: dict[int, dict] = {eid: tx for eid, tx in rows.items() if is_transaction_hostile(tx, user_ids)}
+        from ..app_settings import get_safe_entities
+        safe_entities = get_safe_entities()
+
+        hostile_rows: dict[int, dict] = {eid: tx for eid, tx in rows.items() if is_transaction_hostile(tx, user_ids, safe_entities=safe_entities)}
         if hostile_rows:
             ProcessedTransaction.objects.bulk_create(
                 [ProcessedTransaction(entry_id=eid) for eid in hostile_rows.keys()],
@@ -340,6 +347,9 @@ def get_user_hostile_transactions(user_id: int) -> Dict[int, str]:
                 pt.entry_id: pt
                 for pt in ProcessedTransaction.objects.filter(entry_id__in=hostile_rows.keys())
             }
+
+            cfg = BigBrotherConfig.get_solo()
+            show_market = cfg.show_market_transactions
 
             for eid, tx in hostile_rows.items():
                 pt = pts.get(eid)
@@ -352,11 +362,9 @@ def get_user_hostile_transactions(user_id: int) -> Dict[int, str]:
                     if key in ttype:
                         flags.append(f"Transaction type is **{ttype}**")
 
-                if BigBrotherConfig.get_solo().show_market_transactions:
+                if show_market:
                     if "market_escrow" in ttype or "market_transaction" in ttype:
                         flags.append(f"Transaction type is **{ttype}**")
-
-                cfg = BigBrotherConfig.get_solo()
 
                 fpid = tx.get("first_party_id")
                 if get_hostile_state(fpid, 'character'):

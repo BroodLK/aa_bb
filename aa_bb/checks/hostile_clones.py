@@ -64,6 +64,8 @@ def get_clones(user_id: int) -> Dict[int, dict]:
         return {}
 
     system_map: Dict[int, dict] = {}
+    _loc_sys_cache = {}
+    _loc_name_cache = {}
 
     def add_location(system_obj, loc_id, char_id, char_name, implants=None, jump_clone_name=None):
         """Helper to safely extract system ID and name from various types."""
@@ -74,9 +76,18 @@ def get_clones(user_id: int) -> Dict[int, dict]:
             sid = getattr(system_obj, "pk", None)
             sys_name = system_obj.name
         elif loc_id is not None:
-            sid = resolve_location_system_id(loc_id)
+            if loc_id in _loc_sys_cache:
+                sid = _loc_sys_cache[loc_id]
+            else:
+                sid = resolve_location_system_id(loc_id)
+                _loc_sys_cache[loc_id] = sid
+
             if sid:
-                sys_name = resolve_location_name(sid)
+                if sid in _loc_name_cache:
+                    sys_name = _loc_name_cache[sid]
+                else:
+                    sys_name = resolve_location_name(sid)
+                    _loc_name_cache[sid] = sys_name
 
         if not sid:
             return
@@ -86,7 +97,13 @@ def get_clones(user_id: int) -> Dict[int, dict]:
 
         loc_key = loc_id or 0
         if loc_key not in system_map[sid]["locations"]:
-            system_map[sid]["locations"][loc_key] = {"name": resolve_location_name(loc_id) or f"Location {loc_id}", "clones": []}
+            if loc_key in _loc_name_cache:
+                resolved_loc_name = _loc_name_cache[loc_key]
+            else:
+                resolved_loc_name = resolve_location_name(loc_id) or f"Location {loc_id}"
+                _loc_name_cache[loc_key] = resolved_loc_name
+
+            system_map[sid]["locations"][loc_key] = {"name": resolved_loc_name, "clones": []}
 
         system_map[sid]["locations"][loc_key]["clones"].append({
             "char_id": char_id,
@@ -154,6 +171,9 @@ def get_hostile_clone_locations(user_id: int) -> Dict[str, str]:
         return {}
 
     hostile_map: Dict[str, str] = {}
+    from ..app_settings import get_safe_entities
+    safe_entities = get_safe_entities()
+    _hostile_memo = {}
 
     for system_id, data in systems.items():
         system_name = data.get("name")
@@ -175,12 +195,21 @@ def get_hostile_clone_locations(user_id: int) -> Dict[str, str]:
             loc_owner = location_owner_info.get("owner_name", system_owner_name) if location_owner_info else system_owner_name
 
             for clone in loc_data.get("clones", []):
-                if is_hostile_unified(
-                    involved_ids=[clone["char_id"]],
-                    location_id=loc_id,
-                    system_id=system_id,
-                    when=timezone.now()
-                ):
+                # Memoize check results for character+location+system
+                memo_key = (clone["char_id"], loc_id, system_id)
+                if memo_key in _hostile_memo:
+                    is_hostile = _hostile_memo[memo_key]
+                else:
+                    is_hostile = is_hostile_unified(
+                        involved_ids=[clone["char_id"]],
+                        location_id=loc_id,
+                        system_id=system_id,
+                        when=timezone.now(),
+                        safe_entities=safe_entities
+                    )
+                    _hostile_memo[memo_key] = is_hostile
+
+                if is_hostile:
                     system_hostile = True
                     hostile_chars.add(f"{clone['char_name']} [{clone['jump_clone_name']}]")
                     # Use the location owner (citadel owner if applicable)
@@ -214,6 +243,9 @@ def render_clones(user_id: int) -> str:
         return '<p>No clones found.</p>'
 
     rows: List[Dict] = []
+    from ..app_settings import get_safe_entities
+    safe_entities = get_safe_entities()
+    _hostile_memo = {}
 
     for system_id, data in systems.items():
         system_name = data.get("name")
@@ -238,12 +270,19 @@ def render_clones(user_id: int) -> str:
             for clone in loc_data.get("clones", []):
                 char_name = clone["char_name"]
 
-                is_hostile = is_hostile_unified(
-                    involved_ids=[clone["char_id"]],
-                    location_id=loc_id,
-                    system_id=system_id,
-                    when=timezone.now()
-                )
+                # Memoize check results for character+location+system
+                memo_key = (clone["char_id"], loc_id, system_id)
+                if memo_key in _hostile_memo:
+                    is_hostile = _hostile_memo[memo_key]
+                else:
+                    is_hostile = is_hostile_unified(
+                        involved_ids=[clone["char_id"]],
+                        location_id=loc_id,
+                        system_id=system_id,
+                        when=timezone.now(),
+                        safe_entities=safe_entities
+                    )
+                    _hostile_memo[memo_key] = is_hostile
 
                 rows.append({
                     "system": display_name,

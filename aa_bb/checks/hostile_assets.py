@@ -61,6 +61,8 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
         return {}
 
     system_map: Dict[int, dict] = {}
+    _loc_sys_cache = {}
+    _loc_name_cache = {}
 
     def add_asset(system_obj, location_id, location_name, char_id, char_name, type_id, type_name):
         """Store the asset details organized by system and location."""
@@ -72,9 +74,18 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
             sys_name = system_obj.name
         elif location_id:
             # Attempt to resolve system name
-            key = resolve_location_system_id(location_id)
+            if location_id in _loc_sys_cache:
+                key = _loc_sys_cache[location_id]
+            else:
+                key = resolve_location_system_id(location_id)
+                _loc_sys_cache[location_id] = key
+
             if key:
-                sys_name = resolve_location_name(key)
+                if key in _loc_name_cache:
+                    sys_name = _loc_name_cache[key]
+                else:
+                    sys_name = resolve_location_name(key)
+                    _loc_name_cache[key] = sys_name
 
         if not key:
             return
@@ -85,8 +96,17 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
         # Determine location name to use as key/label
         loc_key = location_id or 0
         if loc_key not in system_map[key]["locations"]:
+            if location_name:
+                resolved_loc_name = location_name
+            else:
+                if loc_key in _loc_name_cache:
+                    resolved_loc_name = _loc_name_cache[loc_key]
+                else:
+                    resolved_loc_name = resolve_location_name(loc_key) or f"Unknown Location {loc_key}"
+                    _loc_name_cache[loc_key] = resolved_loc_name
+
             system_map[key]["locations"][loc_key] = {
-                "name": location_name or f"Unknown Location {location_id}",
+                "name": resolved_loc_name,
                 "assets": [],
             }
 
@@ -119,7 +139,19 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
 
             loc = asset.location_name
             system_obj = getattr(loc, "system", None) if loc else None
-            loc_name = resolve_location_name(asset.location_id) or f"Location {asset.location_id}"
+
+            # Optimization: use cached name from select_related if available
+            loc_name = None
+            if loc:
+                loc_name = loc.location_name
+
+            if not loc_name:
+                loc_key = asset.location_id
+                if loc_key in _loc_name_cache:
+                    loc_name = _loc_name_cache[loc_key]
+                else:
+                    loc_name = resolve_location_name(loc_key)
+                    _loc_name_cache[loc_key] = loc_name
 
             if not asset.type_name:
                 continue
@@ -144,6 +176,9 @@ def get_hostile_asset_locations(user_id: int) -> Dict[str, str]:
         return {}
 
     hostile_map: Dict[str, str] = {}
+    from ..app_settings import get_safe_entities
+    safe_entities = get_safe_entities()
+    _hostile_memo = {}
 
     for system_id, data in systems.items():
         system_name = data.get("name")
@@ -160,15 +195,24 @@ def get_hostile_asset_locations(user_id: int) -> Dict[str, str]:
         # Check each location in this system
         for loc_id, loc_data in data.get("locations", {}).items():
             for asset in loc_data.get("assets", []):
-                # Use unified check for each asset
-                if is_hostile_unified(
-                    involved_ids=[asset["char_id"]],
-                    location_id=loc_id,
-                    system_id=system_id,
-                    is_asset=True,
-                    asset_type_id=asset["type_id"],
-                    when=timezone.now()
-                ):
+                # Memoize check results for character+location+type
+                memo_key = (asset["char_id"], loc_id, system_id, asset["type_id"])
+                if memo_key in _hostile_memo:
+                    is_hostile = _hostile_memo[memo_key]
+                else:
+                    # Use unified check for each asset
+                    is_hostile = is_hostile_unified(
+                        involved_ids=[asset["char_id"]],
+                        location_id=loc_id,
+                        system_id=system_id,
+                        is_asset=True,
+                        asset_type_id=asset["type_id"],
+                        when=timezone.now(),
+                        safe_entities=safe_entities
+                    )
+                    _hostile_memo[memo_key] = is_hostile
+
+                if is_hostile:
                     system_hostile = True
                     hostile_chars.add(asset["char_name"])
                     if is_ship(asset["type_id"]):
@@ -208,6 +252,9 @@ def render_assets(user_id: int) -> Optional[str]:
             return None
 
         rows: List[Dict] = []
+        from ..app_settings import get_safe_entities
+        safe_entities = get_safe_entities()
+        _hostile_memo = {}
 
         for system_id, data in systems.items():
             system_name = data.get("name")
@@ -230,15 +277,22 @@ def render_assets(user_id: int) -> Optional[str]:
                     if char_name not in char_assets:
                         char_assets[char_name] = {"ships": [], "is_hostile": False, "char_id": asset["char_id"]}
 
-                    # Check if this specific asset is hostile
-                    is_hostile = is_hostile_unified(
-                        involved_ids=[asset["char_id"]],
-                        location_id=loc_id,
-                        system_id=system_id,
-                        is_asset=True,
-                        asset_type_id=asset["type_id"],
-                        when=timezone.now()
-                    )
+                    # Memoize check results for character+location+type
+                    memo_key = (asset["char_id"], loc_id, system_id, asset["type_id"])
+                    if memo_key in _hostile_memo:
+                        is_hostile = _hostile_memo[memo_key]
+                    else:
+                        # Check if this specific asset is hostile
+                        is_hostile = is_hostile_unified(
+                            involved_ids=[asset["char_id"]],
+                            location_id=loc_id,
+                            system_id=system_id,
+                            is_asset=True,
+                            asset_type_id=asset["type_id"],
+                            when=timezone.now(),
+                            safe_entities=safe_entities
+                        )
+                        _hostile_memo[memo_key] = is_hostile
 
                     if is_hostile:
                         char_assets[char_name]["is_hostile"] = True

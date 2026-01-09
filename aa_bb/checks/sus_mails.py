@@ -148,7 +148,7 @@ def get_cell_style_for_mail_cell(column: str, row: dict, index: Optional[int] = 
     return ''
 
 
-def is_mail_row_hostile(row: dict) -> bool:
+def is_mail_row_hostile(row: dict, safe_entities: set = None) -> bool:
     """
     Checks if a mail is considered hostile using the unified processor.
     """
@@ -164,7 +164,8 @@ def is_mail_row_hostile(row: dict) -> bool:
 
     return is_hostile_unified(
         involved_ids=involved,
-        when=row.get("sent_date")
+        when=row.get("sent_date"),
+        safe_entities=safe_entities
     )
 
 
@@ -177,8 +178,11 @@ def render_mails(user_id: int) -> str:
     if not mails:  # User has no mail history yet.
         return '<p>No mails found.</p>'
 
+    from ..app_settings import get_safe_entities
+    safe_entities = get_safe_entities()
+
     rows = sorted(mails.values(), key=lambda x: x['sent_date'], reverse=True)
-    hostile_rows = [r for r in rows if is_mail_row_hostile(r)]
+    hostile_rows = [r for r in rows if is_mail_row_hostile(r, safe_entities=safe_entities)]
     total = len(hostile_rows)
     if total == 0:  # Nothing matched the hostile criteria.
         return '<p>No hostile mails found.</p>'
@@ -245,7 +249,10 @@ def get_user_hostile_mails(user_id: int) -> Dict[int, str]:
         new_qs = all_qs.filter(id_key__in=new_ids)
         new_rows = get_user_mails(new_qs)
 
-        hostile_rows: dict[int, dict] = {mid: m for mid, m in new_rows.items() if is_mail_row_hostile(m)}
+        from ..app_settings import get_safe_entities
+        safe_entities = get_safe_entities()
+
+        hostile_rows: dict[int, dict] = {mid: m for mid, m in new_rows.items() if is_mail_row_hostile(m, safe_entities=safe_entities)}
 
         pms: dict[int, ProcessedMail] = {}
         if hostile_rows:

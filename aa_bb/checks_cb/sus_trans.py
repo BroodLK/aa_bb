@@ -208,7 +208,7 @@ def get_user_transactions(qs) -> Dict[int, Dict]:
     return result
 
 
-def is_transaction_hostile(tx: dict) -> bool:
+def is_transaction_hostile(tx: dict, safe_entities: set = None) -> bool:
     """
     Checks if a wallet transaction is considered hostile using the unified processor.
     """
@@ -229,7 +229,8 @@ def is_transaction_hostile(tx: dict) -> bool:
         is_market=is_market,
         market_item_id=tx.get("type_id"),
         market_unit_price=abs(tx.get("raw_amount")) / (tx.get("quantity") or 1) if tx.get("raw_amount") is not None else None,
-        when=tx.get("date")
+        when=tx.get("date"),
+        safe_entities=safe_entities
     )
 
 
@@ -241,11 +242,14 @@ def render_transactions(corp_id: int) -> str:
         qs = gather_user_transactions(corp_id)
         txs = get_user_transactions(qs)
 
+        from ..app_settings import get_safe_entities
+        safe_entities = get_safe_entities()
+
         # sort by date desc
         all_list = sorted(txs.values(), key=lambda x: x['date'], reverse=True)
         hostile: List[dict] = []
         for tx in all_list:
-            if is_transaction_hostile(tx):  # Keep only transactions that tripped hostility logic.
+            if is_transaction_hostile(tx, safe_entities=safe_entities):  # Keep only transactions that tripped hostility logic.
                 hostile.append(tx)
         if not hostile:  # No hostile rows were identified.
             return '<p>No hostile transactions found.</p>'
@@ -334,11 +338,15 @@ def get_corp_hostile_transactions(corp_id: int) -> Dict[int, str]:
         new_qs = qs_all.filter(entry_id__in=new)
         del qs_all
         rows = get_user_transactions(new_qs)
+
+        from ..app_settings import get_safe_entities
+        safe_entities = get_safe_entities()
+
         for eid, tx in rows.items():
             pt, created = ProcessedTransaction.objects.get_or_create(entry_id=eid)
             if not created:  # Another worker finished first; do not duplicate notes.
                 continue
-            if not is_transaction_hostile(tx):  # Ignore non-hostile transactions.
+            if not is_transaction_hostile(tx, safe_entities=safe_entities):  # Ignore non-hostile transactions.
                 continue
             flags = []
             if tx['type']:  # Skip type analysis when CCP omitted the ref type.

@@ -192,7 +192,7 @@ def get_cell_style_for_contract_row(column: str, row: dict) -> str:
 
     return ''
 
-def is_contract_row_hostile(row: dict) -> bool:
+def is_contract_row_hostile(row: dict, safe_entities: set = None) -> bool:
     """
     Checks if a contract is considered hostile using the unified processor.
     Checks both start and end locations.
@@ -204,16 +204,14 @@ def is_contract_row_hostile(row: dict) -> bool:
     end_loc = row.get("end_location_id")
 
     # Check start location
-    if is_hostile_unified(involved_ids=[issuer_id, assignee_id], location_id=start_loc, when=when):
+    if is_hostile_unified(involved_ids=[issuer_id, assignee_id], location_id=start_loc, when=when, safe_entities=safe_entities):
         return True
 
     # Check end location
-    if is_hostile_unified(involved_ids=[issuer_id, assignee_id], location_id=end_loc, when=when):
+    if is_hostile_unified(involved_ids=[issuer_id, assignee_id], location_id=end_loc, when=when, safe_entities=safe_entities):
         return True
 
     return False
-
-
 
 
 def get_corp_hostile_contracts(corp_id: int) -> Dict[int, str]:
@@ -224,8 +222,8 @@ def get_corp_hostile_contracts(corp_id: int) -> Dict[int, str]:
     text while remaining idempotent.
     """
     cfg = BigBrotherConfig.get_solo()
-    hostile_corps = cfg.hostile_corporations
-    hostile_allis = cfg.hostile_alliances
+    from ..app_settings import get_safe_entities
+    safe_entities = get_safe_entities()
 
     # 1) Gather all raw contracts
     all_qs = gather_user_contracts(corp_id)
@@ -257,7 +255,7 @@ def get_corp_hostile_contracts(corp_id: int) -> Dict[int, str]:
             if not created:
                 continue
 
-            if not is_contract_row_hostile(c):  # Skip non-hostile contracts to limit note noise.
+            if not is_contract_row_hostile(c, safe_entities=safe_entities):  # Skip non-hostile contracts to limit note noise.
                 continue
 
             flags: List[str] = []

@@ -40,6 +40,8 @@ def get_asset_locations(corp_id: int) -> Dict[int, Optional[str]]:
         return {}
 
     system_map: Dict[int, Optional[str]] = {}
+    _loc_sys_cache = {}
+    _loc_name_cache = {}
 
     def add_system(system_obj, loc_id=None):
         """Track the system when the asset resolves to a solar system."""
@@ -47,9 +49,19 @@ def get_asset_locations(corp_id: int) -> Dict[int, Optional[str]]:
             key = getattr(system_obj, 'pk', None)
             system_map[key] = system_obj.name
         elif loc_id:
-            sid = resolve_location_system_id(loc_id)
+            if loc_id in _loc_sys_cache:
+                sid = _loc_sys_cache[loc_id]
+            else:
+                sid = resolve_location_system_id(loc_id)
+                _loc_sys_cache[loc_id] = sid
+
             if sid:
-                system_map[sid] = resolve_location_name(sid)
+                if sid in _loc_name_cache:
+                    s_name = _loc_name_cache[sid]
+                else:
+                    s_name = resolve_location_name(sid)
+                    _loc_name_cache[sid] = s_name
+                system_map[sid] = s_name
 
     # All corp assets (exclude ones where location_flag is "solar_system")
     assets = CorpAsset.objects.select_related('location_name__system') \
@@ -76,6 +88,8 @@ def get_corp_hostile_asset_locations(corp_id: int) -> Dict[str, str]:
         return {}
 
     hostile_map: Dict[str, str] = {}
+    from ..app_settings import get_safe_entities
+    safe_entities = get_safe_entities()
 
     for system_id, system_name in systems.items():
         display_name = system_name or f"Unknown ({system_id})"
@@ -84,7 +98,8 @@ def get_corp_hostile_asset_locations(corp_id: int) -> Dict[str, str]:
         if is_hostile_unified(
             involved_ids=[corp_id],
             system_id=system_id,
-            is_asset=True
+            is_asset=True,
+            safe_entities=safe_entities
         ):
             owner_info = get_system_owner({
                 "id":   system_id,
@@ -114,6 +129,8 @@ def render_assets(corp_id: int) -> Optional[str]:
 
     html_output = '<table class="table table-striped">'
     html_output += '<thead><tr><th>System</th><th>Owner</th><th>Region</th></tr></thead><tbody>'
+    from ..app_settings import get_safe_entities
+    safe_entities = get_safe_entities()
 
     for system_id, system_name in systems.items():
         display_name = system_name or f"Unknown ({system_id})"
@@ -129,7 +146,8 @@ def render_assets(corp_id: int) -> Optional[str]:
         hostile = is_hostile_unified(
             involved_ids=[corp_id],
             system_id=system_id,
-            is_asset=True
+            is_asset=True,
+            safe_entities=safe_entities
         )
 
         if hostile:
