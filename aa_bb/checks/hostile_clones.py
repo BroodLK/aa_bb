@@ -120,7 +120,7 @@ def get_clones(user_id: int) -> Dict[int, dict]:
             loc = home_clone.location_name
             status = "Home Station"
             if home_clone.location_id == active_location_id:
-                status += " (Active)"
+                status += " (Current Location)"
             add_location(getattr(loc, "system", None), home_clone.location_id, char_id, char_name, jump_clone_name=status)
         except Clone.DoesNotExist:
             pass
@@ -136,7 +136,7 @@ def get_clones(user_id: int) -> Dict[int, dict]:
             implants = [i.type_name.name for i in jc.implant_set.all() if i.type_name]
             status = jc.name or "Jump Clone"
             if jc.location_id == active_location_id:
-                status += " (Active)"
+                status += " (Current Location)"
             add_location(getattr(loc, "system", None), jc.location_id, char_id, char_name, implants=implants, jump_clone_name=status)
 
     return system_map
@@ -209,12 +209,23 @@ def render_clones(user_id: int) -> str:
         system_name = data.get("name")
         display_name = system_name or f"ID {system_id}"
 
-        owner_info = get_system_owner({"id": system_id, "name": display_name})
-        oname = owner_info.get("owner_name", "Unresolvable") if owner_info else "Unresolvable"
-        region_name = owner_info.get("region_name", "Unknown Region") if owner_info else "Unknown Region"
+        # Sovereignty info for the system
+        sov_info = get_system_owner({"id": system_id, "name": display_name})
+        sov_owner = sov_info.get("owner_name", "Unresolvable") if sov_info else "Unresolvable"
+        region_name = sov_info.get("region_name", "Unknown Region") if sov_info else "Unknown Region"
 
         for loc_id, loc_data in data.get("locations", {}).items():
             loc_name = loc_data["name"]
+
+            # Specific location owner (Structure/Station)
+            loc_owner_info = get_system_owner({"id": loc_id})
+            loc_owner = loc_owner_info.get("owner_name", "Unresolvable") if loc_owner_info else "Unresolvable"
+
+            # Combine for display
+            if loc_owner != sov_owner and loc_owner not in ("Unresolvable", "Unclaimed"):
+                owner_display = f"{loc_owner} ({sov_owner} Sov)"
+            else:
+                owner_display = loc_owner if loc_owner != "Unresolvable" else sov_owner
 
             for clone in loc_data.get("clones", []):
                 char_name = clone["char_name"]
@@ -230,7 +241,7 @@ def render_clones(user_id: int) -> str:
                     "system": display_name,
                     "location": loc_name,
                     "character": char_name,
-                    "owner": oname,
+                    "owner": owner_display,
                     "region": region_name,
                     "hostile": is_hostile,
                     "jump_clone": clone["jump_clone_name"],

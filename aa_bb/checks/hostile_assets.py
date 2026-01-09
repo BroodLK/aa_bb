@@ -104,7 +104,6 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
         except CharacterAudit.DoesNotExist:
             continue
 
-        # all their assets in space (exclude station containers, etc.)
         assets = (
             CharacterAsset.objects.select_related(
                 "location_name__system",
@@ -112,9 +111,8 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
             )
             .filter(
                 character=char_audit,
-                location_type__in=["station", "structure", "other"],
+                location_type__in=["station", "other"],
             )
-            .exclude(location_flag="solar_system")
         )
 
         for asset in assets:
@@ -213,14 +211,24 @@ def render_assets(user_id: int) -> Optional[str]:
         system_name = data.get("name")
         display_name = system_name or f"Unknown ({system_id})"
 
-        # Base system owner info for the table
-        owner_info = get_system_owner({"id": system_id, "name": display_name})
-        oname = owner_info.get("owner_name", "Unresolvable") if owner_info else "Unresolvable"
-        region_name = owner_info.get("region_name", "Unknown Region") if owner_info else "Unknown Region"
+        # Sovereignty info for the system
+        sov_info = get_system_owner({"id": system_id, "name": display_name})
+        sov_owner = sov_info.get("owner_name", "Unresolvable") if sov_info else "Unresolvable"
+        region_name = sov_info.get("region_name", "Unknown Region") if sov_info else "Unknown Region"
 
         # Iterate locations inside system
         for loc_id, loc_data in data.get("locations", {}).items():
             loc_name = loc_data["name"]
+
+            # Specific location owner (Structure/Station)
+            loc_owner_info = get_system_owner({"id": loc_id})
+            loc_owner = loc_owner_info.get("owner_name", "Unresolvable") if loc_owner_info else "Unresolvable"
+
+            # Combine for display
+            if loc_owner != sov_owner and loc_owner not in ("Unresolvable", "Unclaimed"):
+                owner_display = f"{loc_owner} ({sov_owner} Sov)"
+            else:
+                owner_display = loc_owner if loc_owner != "Unresolvable" else sov_owner
 
             # Check each asset group (char/type combo)
             # Actually we can group by char for rendering
@@ -251,7 +259,7 @@ def render_assets(user_id: int) -> Optional[str]:
                     "system": display_name,
                     "location": loc_name,
                     "character": char_name,
-                    "owner": oname,
+                    "owner": owner_display,
                     "region": region_name,
                     "hostile": cdata["is_hostile"],
                     "ships": ship_str,

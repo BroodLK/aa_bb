@@ -51,10 +51,12 @@ def get_asset_locations(corp_id: int) -> Dict[int, Optional[str]]:
             if sid:
                 system_map[sid] = resolve_location_name(sid)
 
-    # All corp assets (exclude ones where location_flag is "solar_system")
+    # All corp assets (exclude ones where location_flag is "assetsafety")
     assets = CorpAsset.objects.select_related('location_name__system') \
-                              .filter(corporation=corp_audit) \
-                              .exclude(location_flag="solar_system")
+                              .filter(
+                                  corporation=corp_audit,
+                                  location_type__in=["station", "other"]
+                              )
 
     for asset in assets:
         loc = asset.location_name
