@@ -287,11 +287,15 @@ def get_user_transactions(qs) -> Dict[int, Dict]:
         first_party_id = entry.first_party_id
         first_party_type = get_eve_entity_type(first_party_id)
         iinfo = get_entity_info(first_party_id, tx_date)
+        if not iinfo:
+            iinfo = {'name': 'Unknown', 'corp_id': None, 'corp_name': 'Unknown', 'alli_id': None, 'alli_name': 'Unknown'}
 
         # second_party = second_party_id
         second_party_id = entry.second_party_id
         second_party_type = get_eve_entity_type(second_party_id)
         ainfo = get_entity_info(second_party_id, tx_date)
+        if not ainfo:
+            ainfo = {'name': 'Unknown', 'corp_id': None, 'corp_name': 'Unknown', 'alli_id': None, 'alli_name': 'Unknown'}
 
         context = ""
         context_id = entry.context_id
@@ -306,7 +310,9 @@ def get_user_transactions(qs) -> Dict[int, Dict]:
             location_id = context_id
             system_id = resolve_location_system_id(context_id)
         elif context_type == "character_id":  # Link to a specific character.
-            context = f"Character: {get_entity_info(context_id, tx_date)['name']}"
+            char_info = get_entity_info(context_id, tx_date)
+            char_name = char_info['name'] if char_info else 'Unknown'
+            context = f"Character: {char_name}"
         elif context_type == "eve_system":  # System-level context from journal entry.
             context = "EVE System"
             system_id = context_id

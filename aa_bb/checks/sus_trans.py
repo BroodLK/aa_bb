@@ -298,9 +298,13 @@ def get_user_transactions(qs) -> Dict[int, Dict]:
 
         first_party_id = entry.first_party_id
         iinfo = _cached_info(first_party_id, tx_date)
+        if not iinfo:
+            iinfo = {'name': 'Unknown', 'corp_id': None, 'corp_name': 'Unknown', 'alli_id': None, 'alli_name': 'Unknown'}
 
         second_party_id = entry.second_party_id
         ainfo = _cached_info(second_party_id, tx_date)
+        if not ainfo:
+            ainfo = {'name': 'Unknown', 'corp_id': None, 'corp_name': 'Unknown', 'alli_id': None, 'alli_name': 'Unknown'}
 
         context_id = entry.context_id
         context_type = entry.context_id_type
@@ -314,7 +318,9 @@ def get_user_transactions(qs) -> Dict[int, Dict]:
             location_id = context_id
             system_id = resolve_location_system_id(context_id)
         elif context_type == "character_id":
-            context = f"Character: {_cached_info(context_id, tx_date)['name']}"
+            char_info = _cached_info(context_id, tx_date)
+            char_name = char_info['name'] if char_info else 'Unknown'
+            context = f"Character: {char_name}"
         elif context_type == "eve_system":
             context = "EVE System"
             system_id = context_id
