@@ -1846,14 +1846,19 @@ def is_ship(type_id):
         return res
 
     is_ship_bool = False
-    if EVEUNIVERSE_INSTALLED:
-        from eveuniverse.models import EveItemType
-        try:
-            it = EveItemType.objects.get(pk=type_id)
-            if it and it.group and it.group.category and it.group.category.name == "Ship":
+    try:
+        if corptools_active():
+            from corptools.models import EveItemType
+            it = EveItemType.objects.select_related('group__category').get(pk=type_id)
+            if it.group and it.group.category and it.group.category.name == "Ship":
                 is_ship_bool = True
-        except Exception:
-            pass
+        elif EVEUNIVERSE_INSTALLED:
+            from eveuniverse.models import EveType
+            it = EveType.objects.select_related('eve_group__eve_category').get(pk=type_id)
+            if it.eve_group and it.eve_group.eve_category and it.eve_group.eve_category.name == "Ship":
+                is_ship_bool = True
+    except Exception:
+        pass
 
     cache.set(cache_key, is_ship_bool, 86400)
     return is_ship_bool
