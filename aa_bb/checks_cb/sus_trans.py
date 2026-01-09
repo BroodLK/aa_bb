@@ -105,7 +105,7 @@ def gather_user_transactions(corp_id: int):
         return CorporationWalletJournalEntry.objects.none()
 
     qs = CorporationWalletJournalEntry.objects.filter(division__corporation=corp_audit)
-    logger.info(f"qs:{qs.count()}")
+    logger.info(f"Gathered {qs.count()} wallet entries for corp {corp_id}")
     return qs
 
 
@@ -116,23 +116,30 @@ def get_user_transactions(qs) -> Dict[int, Dict]:
     resolving corp/alliance at transaction time.
     """
     result: Dict[int, Dict] = {}
+
+    _info_cache: Dict[tuple[int, int], dict] = {}
+
+    def _cached_info(eid: int, when: datetime) -> dict:
+        key = (int(eid or 0), int(when.date().toordinal()))
+        if key in _info_cache:
+            return _info_cache[key]
+        info = get_entity_info(eid, when)
+        if not info:
+            info = {'name': 'Unknown', 'corp_id': None, 'corp_name': 'Unknown', 'alli_id': None, 'alli_name': 'Unknown'}
+        _info_cache[key] = info
+        return info
+
     for entry in qs:
         tx_id = entry.entry_id
         tx_date = entry.date
 
         # first_party = first_party_id
         first_party_id = entry.first_party_id
-        first_party_type = get_eve_entity_type(first_party_id)
-        iinfo = get_entity_info(first_party_id, tx_date)
-        if not iinfo:
-            iinfo = {'name': 'Unknown', 'corp_id': None, 'corp_name': 'Unknown', 'alli_id': None, 'alli_name': 'Unknown'}
+        iinfo = _cached_info(first_party_id, tx_date)
 
         # second_party = second_party_id
         second_party_id = entry.second_party_id
-        second_party_type = get_eve_entity_type(second_party_id)
-        ainfo = get_entity_info(second_party_id, tx_date)
-        if not ainfo:
-            ainfo = {'name': 'Unknown', 'corp_id': None, 'corp_name': 'Unknown', 'alli_id': None, 'alli_name': 'Unknown'}
+        ainfo = _cached_info(second_party_id, tx_date)
 
         context = ""
         context_id = entry.context_id
@@ -147,7 +154,7 @@ def get_user_transactions(qs) -> Dict[int, Dict]:
             location_id = context_id
             system_id = resolve_location_system_id(context_id)
         elif context_type == "character_id":  # Link to a specific character.
-            char_info = get_entity_info(context_id, tx_date)
+            char_info = _cached_info(context_id, tx_date)
             char_name = char_info['name'] if char_info else 'Unknown'
             context = f"Character: {char_name}"
         elif context_type == "eve_system":  # System-level context from journal entry.
@@ -198,7 +205,6 @@ def get_user_transactions(qs) -> Dict[int, Dict]:
             'type_id': type_id,
             'quantity': quantity,
         }
-    #logger.debug(f"Transformed {len(result)} transactions")
     return result
 
 
@@ -222,7 +228,7 @@ def is_transaction_hostile(tx: dict) -> bool:
         system_id=tx.get("system_id"),
         is_market=is_market,
         market_item_id=tx.get("type_id"),
-        market_unit_price=tx.get("raw_amount") / (tx.get("quantity") or 1) if tx.get("raw_amount") is not None else None,
+        market_unit_price=abs(tx.get("raw_amount")) / (tx.get("quantity") or 1) if tx.get("raw_amount") is not None else None,
         when=tx.get("date")
     )
 
@@ -231,76 +237,80 @@ def render_transactions(corp_id: int) -> str:
     """
     Render HTML table of recent hostile wallet transactions for the corp.
     """
-    qs = gather_user_transactions(corp_id)
-    txs = get_user_transactions(qs)
+    try:
+        qs = gather_user_transactions(corp_id)
+        txs = get_user_transactions(qs)
 
-    # sort by date desc
-    all_list = sorted(txs.values(), key=lambda x: x['date'], reverse=True)
-    hostile: List[dict] = []
-    for tx in all_list:
-        if is_transaction_hostile(tx):  # Keep only transactions that tripped hostility logic.
-            hostile.append(tx)
-    if not hostile:  # No hostile rows were identified.
-        return '<p>No hostile transactions found.</p>'
+        # sort by date desc
+        all_list = sorted(txs.values(), key=lambda x: x['date'], reverse=True)
+        hostile: List[dict] = []
+        for tx in all_list:
+            if is_transaction_hostile(tx):  # Keep only transactions that tripped hostility logic.
+                hostile.append(tx)
+        if not hostile:  # No hostile rows were identified.
+            return '<p>No hostile transactions found.</p>'
 
-    limit = 50
-    display = hostile[:limit]
-    skipped = max(0, len(hostile) - limit)
+        limit = 50
+        display = hostile[:limit]
+        skipped = max(0, len(hostile) - limit)
 
-    # define headers to show
-    first = display[0]
-    HIDDEN = {'first_party_id','second_party_id','first_party_corporation_id','second_party_corporation_id',
-              'first_party_alliance_id','second_party_alliance_id','entry_id'}
-    headers = []
-    for column in first.keys():
-        if column not in HIDDEN:  # Hide ids/foreign keys that are not user-facing.
-            headers.append(column)
+        # define headers to show
+        first = display[0]
+        HIDDEN = {'first_party_id','second_party_id','first_party_corporation_id','second_party_corporation_id',
+                  'first_party_alliance_id','second_party_alliance_id','entry_id'}
+        headers = []
+        for column in first.keys():
+            if column not in HIDDEN:  # Hide ids/foreign keys that are not user-facing.
+                headers.append(column)
 
-    parts = ['<table class="table table-striped">','<thead>','<tr>']
-    for h in headers:
-        parts.append(f'<th>{html.escape(h.replace("_"," ").title())}</th>')
-    parts.extend(['</tr>','</thead>','<tbody>'])
+        parts = ['<table class="table table-striped table-hover stats">','<thead>','<tr>']
+        for h in headers:
+            parts.append(f'<th>{html.escape(h.replace("_"," ").title())}</th>')
+        parts.extend(['</tr>','</thead>','<tbody>'])
 
-    cfg = BigBrotherConfig.get_solo()
-    hostile_corps = {s.strip() for s in (cfg.hostile_corporations or "").split(",") if s.strip()}
-    hostile_allis = {s.strip() for s in (cfg.hostile_alliances or "").split(",") if s.strip()}
+        cfg = BigBrotherConfig.get_solo()
+        hostile_corps = {s.strip() for s in (cfg.hostile_corporations or "").split(",") if s.strip()}
+        hostile_allis = {s.strip() for s in (cfg.hostile_alliances or "").split(",") if s.strip()}
 
-    for t in display:
-        parts.append('<tr>')
-        for col in headers:
-            val = html.escape(str(t.get(col)))
-            style = ''
-            # reuse contract style logic by mapping to transaction
-            if col == 'type':  # Highlight suspicious ref types inline.
-                for key in SUS_TYPES:
-                    if key in t['type']:  # Suspect ref-type.
+        for t in display:
+            parts.append('<tr>')
+            for col in headers:
+                val = html.escape(str(t.get(col)))
+                style = ''
+                # reuse contract style logic by mapping to transaction
+                if col == 'type':  # Highlight suspicious ref types inline.
+                    for key in SUS_TYPES:
+                        if key in t['type']:  # Suspect ref-type.
+                            style = 'color: red;'
+                    if cfg.show_market_transactions:
+                        if "market_escrow" in t['type'] or "market_transaction" in t['type']:
+                            style = 'color: red;'
+                if col in ('first_party_name', 'second_party_name'):
+                    pid = t.get(col + '_id')
+                    if get_hostile_state(pid, 'character'):
                         style = 'color: red;'
-                if cfg.show_market_transactions:
-                    if "market_escrow" in t['type'] or "market_transaction" in t['type']:
+                if col.endswith('corporation'):
+                    cid = t.get(col + '_id')
+                    if get_hostile_state(cid, 'corporation'):
                         style = 'color: red;'
-            if col in ('first_party_name', 'second_party_name'):
-                pid = t.get(col + '_id')
-                if get_hostile_state(pid, 'character'):
-                    style = 'color: red;'
-            if col.endswith('corporation'):
-                cid = t.get(col + '_id')
-                if get_hostile_state(cid, 'corporation'):
-                    style = 'color: red;'
-            if col.endswith('alliance'):
-                aid = t.get(col + '_id')
-                if get_hostile_state(aid, 'alliance'):
-                    style = 'color: red;'
-            def make_td(val, style=""):
-                """Render a TD with optional inline style for hostile cues."""
-                style_attr = f' style="{style}"' if style else ""
-                return f"<td{style_attr}>{val}</td>"
-            parts.append(make_td(val, style))
-        parts.append('</tr>')
+                if col.endswith('alliance'):
+                    aid = t.get(col + '_id')
+                    if get_hostile_state(aid, 'alliance'):
+                        style = 'color: red;'
+                def make_td(val, style=""):
+                    """Render a TD with optional inline style for hostile cues."""
+                    style_attr = f' style="{style}"' if style else ""
+                    return f"<td{style_attr}>{val}</td>"
+                parts.append(make_td(val, style))
+            parts.append('</tr>')
 
-    parts.extend(['</tbody>','</table>'])
-    if skipped:  # Let the reviewer know older hostile rows are omitted.
-        parts.append(f'<p>Showing {limit} of {len(hostile)} hostile transactions; skipped {skipped} older ones.</p>')
-    return '\n'.join(parts)
+        parts.extend(['</tbody>','</table>'])
+        if skipped:  # Let the reviewer know older hostile rows are omitted.
+            parts.append(f'<p>Showing {limit} of {len(hostile)} hostile transactions; skipped {skipped} older ones.</p>')
+        return '\n'.join(parts)
+    except Exception as e:
+        logger.exception(f"Error rendering transactions for corp {corp_id}")
+        return f"<p class='text-danger'>Error rendering transactions: {str(e)}</p>"
 
 
 def get_corp_hostile_transactions(corp_id: int) -> Dict[int, str]:

@@ -89,20 +89,28 @@ def get_user_contracts(qs) -> Dict[int, Dict]:
     with corp/alliance names at the contract issue date, combined.
     Uses c.for_corporation to identify corporate assignees.
     """
-    logger.info(f"Number of contracts: {len(qs)}")
-    number = 0
     result: Dict[int, Dict] = {}
+
+    _info_cache: Dict[tuple[int, int], dict] = {}
+
+    def _cached_info(eid: int, when: datetime) -> dict:
+        key = (int(eid or 0), int(when.date().toordinal()))
+        if key in _info_cache:
+            return _info_cache[key]
+        info = get_entity_info(eid, when)
+        if not info:
+            info = {'name': 'Unknown', 'corp_id': None, 'corp_name': 'Unknown', 'alli_id': None, 'alli_name': 'Unknown'}
+        _info_cache[key] = info
+        return info
+
     for c in qs:
         cid = c.contract_id
         issue = c.date_issued
-        number += 1
-        logger.info(f"corp contract number: {number}")
+        timeee = issue or timezone.now()
 
         # -- issuer --
         issuer_id = get_character_id(c.issuer_name)
-        issuer_type = get_eve_entity_type(issuer_id)
-        timeee = getattr(c, "timestamp", timezone.now())
-        iinfo = get_entity_info(issuer_id, timeee)
+        iinfo = _cached_info(issuer_id, timeee)
 
         # -- assignee --
         if c.assignee_id != 0:  # Corporate contracts specify assignee_id directly.
@@ -110,9 +118,7 @@ def get_user_contracts(qs) -> Dict[int, Dict]:
         else:
             assignee_id = c.acceptor_id
 
-        assignee_type = get_eve_entity_type(assignee_id)
-        ainfo = get_entity_info(assignee_id, timeee)
-
+        ainfo = _cached_info(assignee_id, timeee)
 
         result[cid] = {
             'contract_id':              cid,
@@ -137,7 +143,6 @@ def get_user_contracts(qs) -> Dict[int, Dict]:
             'end_location_id':          getattr(c, "end_location_id", None),
             'end_location':             resolve_location_name(getattr(c, "end_location_id", None)),
         }
-    logger.info(f"Number of contracts returned: {len(result)}")
     return result
 
 def get_cell_style_for_contract_row(column: str, row: dict) -> str:

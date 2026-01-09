@@ -472,7 +472,6 @@ def stream_contracts_sse(request: WSGIRequest):
         )
 
     def generator():
-
         try:
             # Initial SSE heartbeat
             yield ": ok\n\n"
@@ -483,85 +482,44 @@ def stream_contracts_sse(request: WSGIRequest):
                 yield "event: done\ndata:0\n\n"
                 return
 
-            for c in qs:
-                processed += 1
-                # Ping to keep connection alive
-                yield ": ping\n\n"
+            batch_size = 50
+            for i in range(0, total, batch_size):
+                batch = qs[i : i + batch_size]
+                rows_map = get_user_contracts(batch)
+                # Sort keys to maintain some order; date desc is preferred
+                sorted_keys = sorted(rows_map.keys(), key=lambda k: rows_map[k]['issued_date'] or timezone.now(), reverse=True)
 
-                try:
-                    issued = getattr(c, "date_issued", timezone.now())
-                    issuer_id = get_character_id(c.issuer_name)
-                    yield ": ping\n\n"
-                    cid = c.contract_id
-                    if c.assignee_id != 0:  # Prefer assignee when present; fallback to acceptor.
-                        assignee_id = c.assignee_id
-                    else:
-                        assignee_id = c.acceptor_id
-                    yield ": ping\n\n"
-                    #logger.info(f"getting info for {issuer_id}")
-                    iinfo     = get_entity_info(issuer_id, issued)
-                    yield ": ping\n\n"
-                    #logger.info(f"getting info for {assignee_id}")
-                    ainfo     = get_entity_info(assignee_id, issued)
+                for cid in sorted_keys:
+                    row = rows_map[cid]
+                    processed += 1
+                    # Ping to keep connection alive
                     yield ": ping\n\n"
 
-                    # Hydrate just this one
-
-                    row = {
-                        'contract_id':              cid,
-                        'issued_date':              issued,
-                        'end_date':                 c.date_completed or c.date_expired,
-                        'contract_type':            c.contract_type,
-                        'issuer_name':              iinfo["name"],
-                        'issuer_id':                issuer_id,
-                        'issuer_corporation':       iinfo["corp_name"],
-                        'issuer_corporation_id':    iinfo["corp_id"],
-                        'issuer_alliance':          iinfo["alli_name"],
-                        'issuer_alliance_id':       iinfo["alli_id"],
-                        'assignee_name':            ainfo["name"],
-                        'assignee_id':              assignee_id,
-                        'assignee_corporation':     ainfo["corp_name"],
-                        'assignee_corporation_id':  ainfo["corp_id"],
-                        'assignee_alliance':        ainfo["alli_name"],
-                        'assignee_alliance_id':     ainfo["alli_id"],
-                        'status':                   c.status,
-                        'start_location':           resolve_location_name(getattr(c, "start_location_id", None)),
-                        'end_location':             resolve_location_name(getattr(c, "end_location_id", None)),
-                    }
-
-                    style_map = {
-                        col: get_cell_style_for_contract_row(col, row)
-                        for col in row
-                    }
-                    yield ": ping\n\n"
-                    row['cell_styles'] = style_map
-
-                    if is_contract_row_hostile(row):  # Emit only hostile rows.
-                        hostile_count += 1
-                        tr_html = _render_contract_row_html(row)
-                        yield f"event: contract\ndata:{json.dumps(tr_html)}\n\n"
-
-                    # Progress update
-                    yield (
-                        "event: progress\n"
-                        f"data:{processed},{total},{hostile_count}\n\n"
-                    )
-                    connection.close()
-                except (ConnectionResetError, BrokenPipeError):
-                    # client disconnected — stop quietly
-                    logger.debug("Client disconnected from contract SSE")
-                    return
-                except Exception:
-                    # Log full traceback and notify the client via SSE before exiting
-                    tb = traceback.format_exc()
-                    logger.exception(f"Error while processing contract stream\n{tb}")
-                    # Send a short error event (don't send huge tracebacks to clients)
-                    msg = f"Server error while streaming contracts.\n{tb}"
                     try:
-                        yield f"event: error\ndata:{json.dumps(msg)}\n\n"
+                        style_map = {
+                            col: get_cell_style_for_contract_row(col, row)
+                            for col in row
+                        }
+                        yield ": ping\n\n"
+                        row['cell_styles'] = style_map
+
+                        if is_contract_row_hostile(row):  # Emit only hostile rows.
+                            hostile_count += 1
+                            tr_html = _render_contract_row_html(row)
+                            yield f"event: contract\ndata:{json.dumps(tr_html)}\n\n"
+
+                        # Progress update
+                        yield (
+                            "event: progress\n"
+                            f"data:{processed},{total},{hostile_count}\n\n"
+                        )
+                    except (ConnectionResetError, BrokenPipeError):
+                        return
                     except Exception:
-                        pass
-                    return
+                        logger.exception(f"Error while processing contract {cid}")
+                        continue
+
+                connection.close()
 
             # Done
             yield "event: done\ndata:bye\n\n"

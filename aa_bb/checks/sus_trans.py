@@ -233,7 +233,7 @@ def is_transaction_hostile(tx: dict, user_ids: set = None) -> bool:
         system_id=tx.get("system_id"),
         is_market=is_market,
         market_item_id=tx.get("type_id"),
-        market_unit_price=tx.get("raw_amount") / (tx.get("quantity") or 1) if tx.get("raw_amount") is not None else None,
+        market_unit_price=abs(tx.get("raw_amount")) / (tx.get("quantity") or 1) if tx.get("raw_amount") is not None else None,
         when=tx.get("date")
     )
 
