@@ -143,6 +143,14 @@ def get_available_cards():
     except (BigBrotherConfig.DoesNotExist, OperationalError, ProgrammingError):
         return cards
 
+    if not corptools_active():
+        corptools_cards = {
+            "compliance", "freq_corp", "awox", "clone_states", "sus_clones",
+            "sus_asset", "sus_conta", "sus_contr", "sus_mail", "sus_tra",
+            "cyno", "skills"
+        }
+        cards = [card for card in cards if card["key"] not in corptools_cards]
+
     if not cfg.alliance_blacklist_url:
         cards = [card for card in cards if card["key"] != "alliance_bl"]
 
@@ -240,6 +248,9 @@ def warm_entity_cache_task(self, user_id):
     from .models import BigBrotherConfig
     cfg = BigBrotherConfig.get_solo()
     if not cfg.is_active or not cfg.is_warmer_active:
+        return
+
+    if not corptools_active():
         return
     user_main = get_main_character_name(user_id) or str(user_id)
     qs = WarmProgress.objects.all()
@@ -519,9 +530,16 @@ def stream_contracts_sse(request: WSGIRequest):
     if not user_id:  # SSE requires a valid user context.
         return HttpResponseBadRequest("Unknown account")
 
-    qs    = gather_user_contracts(user_id)
-    total = qs.count()
-    connection.close()
+    if not corptools_active():
+        return HttpResponseForbidden("Corptools required")
+
+    try:
+        qs    = gather_user_contracts(user_id)
+        total = qs.count()
+        connection.close()
+    except Exception as e:
+        logger.error(f"Error initializing contract stream for {option}: {e}", exc_info=True)
+        return HttpResponseBadRequest(f"Error loading contracts: {str(e)}")
 
     def generator():
         # Initial SSE heartbeat
@@ -716,9 +734,16 @@ def stream_mails_sse(request):
     if not user_id:  # Clients must specify a valid account to inspect.
         return HttpResponseBadRequest("Unknown account")
 
-    qs    = gather_user_mails(user_id)
-    total = qs.count()
-    connection.close()
+    if not corptools_active():
+        return HttpResponseForbidden("Corptools required")
+
+    try:
+        qs    = gather_user_mails(user_id)
+        total = qs.count()
+        connection.close()
+    except Exception as e:
+        logger.error(f"Error initializing mail stream for {option}: {e}", exc_info=True)
+        return HttpResponseBadRequest(f"Error loading mails: {str(e)}")
 
     def generator():
         # initial SSE heartbeat
@@ -818,9 +843,16 @@ def stream_transactions_sse(request):
     if not user_id:  # Reject SSE connection when the pilot is unknown.
         return HttpResponseBadRequest("Unknown account")
 
-    qs    = gather_user_transactions(user_id).order_by('-date')
-    total = qs.count()
-    connection.close()
+    if not corptools_active():
+        return HttpResponseForbidden("Corptools required")
+
+    try:
+        qs    = gather_user_transactions(user_id).order_by('-date')
+        total = qs.count()
+        connection.close()
+    except Exception as e:
+        logger.error(f"Error initializing transaction stream for {option}: {e}", exc_info=True)
+        return HttpResponseBadRequest(f"Error loading transactions: {str(e)}")
 
     # Hidden columns for the transactions table
     HIDDEN        = {

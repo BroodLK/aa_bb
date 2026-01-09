@@ -16,6 +16,7 @@ from django.http import (
     JsonResponse,
     HttpResponseBadRequest,
     StreamingHttpResponse,
+    HttpResponseForbidden,
 )
 from django.shortcuts import render
 from django.core.cache import cache
@@ -120,9 +121,13 @@ def index(request: WSGIRequest):
               .order_by("corporation_name")
         )
 
+    cards = list(CARD_DEFINITIONS)
+    if not corptools_active():
+        cards = []
+
     context = {
         "dropdown_options": dropdown_options,
-        "CARD_DEFINITIONS": CARD_DEFINITIONS,
+        "CARD_DEFINITIONS": cards,
     }
     return render(request, "aa_cb/index.html", context)
 
@@ -219,6 +224,9 @@ def warm_entity_cache_task(self, user_id):
     from .models import BigBrotherConfig
     cfg = BigBrotherConfig.get_solo()
     if not cfg.is_active or not cfg.is_warmer_active:
+        return
+
+    if not corptools_active():
         return
     user_main = resolve_corporation_name(user_id) or str(user_id)
     logger.info(f"corp_name: {user_main}")
@@ -445,9 +453,17 @@ def stream_contracts_sse(request: WSGIRequest):
     if not user_id:  # Require a corp identifier.
         return HttpResponseBadRequest("Unknown account")
 
-    qs    = gather_user_contracts(user_id)
-    total = qs.count()
-    connection.close()
+    if not corptools_active():
+        return HttpResponseForbidden("Corptools required")
+
+    try:
+        qs    = gather_user_contracts(user_id)
+        total = qs.count()
+        connection.close()
+    except Exception as e:
+        logger.error(f"Error initializing contract stream for {option}: {e}", exc_info=True)
+        return HttpResponseBadRequest(f"Error loading contracts: {str(e)}")
+
     if total == 0:  # Nothing to stream -> send a simple HTML response.
         return StreamingHttpResponse(
             "<p>No contracts found.</p>",
@@ -629,6 +645,9 @@ def stream_transactions_sse(request):
     user_id = option
     if not user_id:  # Need a corp selection for SSE.
         return HttpResponseBadRequest("Unknown account")
+
+    if not corptools_active():
+        return HttpResponseForbidden("Corptools required")
 
     try:
         qs    = gather_user_transactions(user_id).order_by('-date')
