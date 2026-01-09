@@ -155,6 +155,9 @@ def load_cards(request: WSGIRequest) -> JsonResponse:
 
 def get_user_id(character_name):
     """Lookup an auth user ID from a character name."""
+    if not character_name:
+        return None
+    character_name = str(character_name)
     try:
         ownership = CharacterOwnership.objects.select_related('user') \
             .get(character__character_name=character_name)

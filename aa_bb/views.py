@@ -157,6 +157,9 @@ def get_available_cards():
 
 def get_user_id(character_name):
     """Resolve an auth user ID from a character name, respecting member restrictions."""
+    if not character_name:
+        return None
+    character_name = str(character_name)
     try:
         ownership = CharacterOwnership.objects.select_related('user__profile__main_character') \
             .get(character__character_name=character_name)

@@ -228,6 +228,9 @@ def get_character_id(name: str) -> int | None:
     with caching implemented through the Django model. Uses `esi.client` and
     self-heals duplicate name rows by reconciling via ESI.
     """
+    if not name:
+        return None
+    name = str(name)
     # Step 1: Fast-path from DB when exactly one record exists
     try:
         record = Character_names.objects.get(name=name)
@@ -1345,6 +1348,9 @@ def get_user_profiles():
 
 def get_user_id(character_name):
     """Translate a main-character name into the owning Auth user id."""
+    if not character_name:
+        return None
+    character_name = str(character_name)
     try:
         ownership = CharacterOwnership.objects.select_related('user').get(character__character_name=character_name)
         return ownership.user.id
