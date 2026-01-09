@@ -983,7 +983,7 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
         # Check for individual location ownership (Structure or Station) BEFORE falling back to system SOV
         res = None
         if system_id:
-            # Player Structure
+            # Player Structure (Upwell)
             if is_player_structure(system_id):
                 try:
                     from corptools.models import Structure
@@ -992,6 +992,38 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
                         res = {
                             "owner_id": str(struct.corporation.corporation.corporation_id),
                             "owner_name": struct.corporation.corporation.corporation_name,
+                            "owner_type": "corporation",
+                            "region_id": region_id,
+                            "region_name": region_name
+                        }
+                except Exception:
+                    pass
+
+            # POCO
+            if not res:
+                try:
+                    from corptools.models import Poco
+                    poco = Poco.objects.filter(office_id=system_id).select_related("corporation__corporation").first()
+                    if poco and poco.corporation and poco.corporation.corporation:
+                        res = {
+                            "owner_id": str(poco.corporation.corporation.corporation_id),
+                            "owner_name": poco.corporation.corporation.corporation_name,
+                            "owner_type": "corporation",
+                            "region_id": region_id,
+                            "region_name": region_name
+                        }
+                except Exception:
+                    pass
+
+            # Starbase (POS)
+            if not res:
+                try:
+                    from corptools.models import Starbase
+                    pos = Starbase.objects.filter(starbase_id=system_id).select_related("corporation__corporation").first()
+                    if pos and pos.corporation and pos.corporation.corporation:
+                        res = {
+                            "owner_id": str(pos.corporation.corporation.corporation_id),
+                            "owner_name": pos.corporation.corporation.corporation_name,
                             "owner_type": "corporation",
                             "region_id": region_id,
                             "region_name": region_name
@@ -1320,6 +1352,14 @@ def is_hostile_unified(
     l_oid = 0
     l_otype = None
     l_oname = ""
+    is_station = False
+    if location_id:
+        try:
+            loc_id_int = int(location_id)
+            is_station = 60000000 <= loc_id_int < 64000000
+        except (ValueError, TypeError):
+            pass
+
     if location_id or actual_system_id:
         l_owner_info = get_system_owner({"id": location_id or actual_system_id})
         if l_owner_info:
@@ -1332,18 +1372,23 @@ def is_hostile_unified(
         else:
             l_oname = "Unresolvable"
 
-    # 2. Citadel owned by safe entity
-    if location_id and is_player_structure(location_id):
+    # Determine if this is a player-controlled structure (Upwell, POS, or POCO)
+    # If we found a corporation owner and it's not a known NPC station, treat it as a player structure.
+    is_player_struct = is_player_structure(location_id) or (l_otype == "corporation" and not is_station)
+
+    # 2. Citadel / Player Structure owned by safe entity
+    if location_id and is_player_struct:
         if l_oid in safe_entities:
             return False
 
     # 3. NPC Station owned by safe entity (e.g. Faction stations)
-    if location_id and 60000000 <= int(location_id) < 64000000:
+    if location_id and is_station:
         if l_oid in safe_entities:
             return False
 
     # 4. System owned by safe entity
-    if actual_system_id:
+    # Fall back to system sovereignty for unresolvable structures or non-player-controlled locations
+    if actual_system_id and (not is_player_struct or l_oid == 0):
         s_owner_info = get_system_owner({"id": actual_system_id})
         if s_owner_info:
             try:
@@ -1415,8 +1460,8 @@ def is_hostile_unified(
     if actual_system_id and cfg.consider_lowsec_hostile and is_lowsec(actual_system_id):
         return True
 
-    # 17. Consider citadels hostile
-    if location_id and is_player_structure(location_id) and cfg.consider_all_structures_hostile:
+    # 17. Consider citadels/structures hostile
+    if location_id and is_player_struct and cfg.consider_all_structures_hostile:
         return True
 
     # 18. Consider NPC stations hostile
@@ -1424,10 +1469,24 @@ def is_hostile_unified(
         return True
 
     # 19-20. Blacklist and Explicit Hostile
-    if involved_ids:
+    check_ids = set(involved_ids or [])
+    if l_oid:
+        try:
+            check_ids.add(int(l_oid))
+        except (ValueError, TypeError):
+            pass
+    if actual_system_id:
+        s_owner_info = get_system_owner({"id": actual_system_id})
+        if s_owner_info and s_owner_info.get("owner_id"):
+            try:
+                check_ids.add(int(s_owner_info.get("owner_id")))
+            except (ValueError, TypeError):
+                pass
+
+    if check_ids:
         hostile_corps = {int(x) for x in (cfg.hostile_corporations or "").split(",") if x.strip().isdigit()}
         hostile_allis = {int(x) for x in (cfg.hostile_alliances or "").split(",") if x.strip().isdigit()}
-        for eid in involved_ids:
+        for eid in check_ids:
             if not eid:
                 continue
             eid = int(eid)
@@ -1642,7 +1701,7 @@ def resolve_location_name(location_id: int) -> Optional[str]:
         except Exception:
             pass
 
-    # 3) Player Structure
+    # 3) Player Structure (Upwell)
     if is_player_structure(location_id):
         try:
             from corptools.models import Structure
@@ -1651,6 +1710,24 @@ def resolve_location_name(location_id: int) -> Optional[str]:
                 return struct.name
         except Exception:
             pass
+
+    # 4) POCO
+    try:
+        from corptools.models import Poco
+        poco = Poco.objects.filter(office_id=location_id).first()
+        if poco:
+            return poco.name
+    except Exception:
+        pass
+
+    # 5) Starbase (POS)
+    try:
+        from corptools.models import Starbase
+        pos = Starbase.objects.filter(starbase_id=location_id).first()
+        if pos:
+            return pos.name
+    except Exception:
+        pass
 
     # Fallback to EveLocation
     try:
@@ -1688,7 +1765,7 @@ def resolve_location_system_id(location_id: int) -> Optional[int]:
         except Exception:
             pass
 
-    # 3) Player Structure
+    # 3) Player Structure (Upwell)
     if is_player_structure(location_id):
         try:
             from corptools.models import Structure, EveLocation
@@ -1702,6 +1779,24 @@ def resolve_location_system_id(location_id: int) -> Optional[int]:
                 return loc.system_id
         except Exception:
             pass
+
+    # 4) POCO
+    try:
+        from corptools.models import Poco
+        poco = Poco.objects.filter(office_id=location_id).first()
+        if poco and poco.system_id:
+            return poco.system_id
+    except Exception:
+        pass
+
+    # 5) Starbase (POS)
+    try:
+        from corptools.models import Starbase
+        pos = Starbase.objects.filter(starbase_id=location_id).first()
+        if pos and pos.system_id:
+            return pos.system_id
+    except Exception:
+        pass
 
     return None
 
