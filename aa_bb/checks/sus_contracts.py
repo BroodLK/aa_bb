@@ -236,83 +236,81 @@ def get_user_hostile_contracts(user_id: int) -> Dict[int, str]:
         new_rows = get_user_contracts(new_qs)
 
         hostile_rows: dict[int, dict] = {cid: c for cid, c in new_rows.items() if is_contract_row_hostile(c)}
-        if not hostile_rows:
-            return {}
-
-        ProcessedContract.objects.bulk_create(
-            [ProcessedContract(contract_id=cid) for cid in hostile_rows.keys()],
-            ignore_conflicts=True,
-        )
-
-        pcs = {
-            pc.contract_id: pc
-            for pc in ProcessedContract.objects.filter(contract_id__in=hostile_rows.keys())
-        }
-
-        for cid, c in hostile_rows.items():
-            pc = pcs.get(cid)
-            if not pc:
-                continue
-
-            flags: List[str] = []
-            # issuer
-            if get_hostile_state(c["issuer_id"], "character"):
-                flags.append(f"Issuer **{c['issuer_name']}** is hostile/blacklisted")
-
-            # assignee
-            if get_hostile_state(c["assignee_id"], "character"):
-                flags.append(f"Assignee **{c['assignee_name']}** is hostile/blacklisted")
-
-            if is_location_hostile(c.get("start_location_id")):
-                loc_id = c.get("start_location_id")
-                owner_info = get_system_owner({"id": loc_id})
-                oname = owner_info.get("owner_name")
-                rname = owner_info.get("region_name")
-                flag = f"Start location **{c['start_location']}** is hostile space"
-                if oname or rname:
-                    info_parts = []
-                    if oname:
-                        info_parts.append(oname)
-                    if rname and rname != "Unknown Region":
-                        info_parts.append(f"Region: {rname}")
-                    flag += f" ({' | '.join(info_parts)})"
-                flags.append(flag)
-
-            if is_location_hostile(c.get("end_location_id")):
-                loc_id = c.get("end_location_id")
-                owner_info = get_system_owner({"id": loc_id})
-                oname = owner_info.get("owner_name")
-                rname = owner_info.get("region_name")
-                flag = f"End location **{c['end_location']}** is hostile space"
-                if oname or rname:
-                    info_parts = []
-                    if oname:
-                        info_parts.append(oname)
-                    if rname and rname != "Unknown Region":
-                        info_parts.append(f"Region: {rname}")
-                    flag += f" ({' | '.join(info_parts)})"
-                flags.append(flag)
-
-            flags_text = "\n    - ".join(flags) if flags else "(no flags)"
-
-            note_text = (
-                f"- **{c['contract_type']}**: "
-                f"\n  - issued **{c['issued_date']}**, "
-                f"\n  - ended **{c['end_date']}**, "
-                f"\n  - from **{c['issuer_name']}**(**{c['issuer_corporation']}**/"
-                f"**{c['issuer_alliance']}**), "
-                f"\n  - to **{c['assignee_name']}**(**{c['assignee_corporation']}**/"
-                f"**{c['assignee_alliance']}**), "
-                f"\n  - start **{c['start_location']}**, "
-                f"\n  - end **{c['end_location']}**; "
-                f"\n  - flags:\n    - {flags_text}"
+        if hostile_rows:
+            ProcessedContract.objects.bulk_create(
+                [ProcessedContract(contract_id=cid) for cid in hostile_rows.keys()],
+                ignore_conflicts=True,
             )
 
-            SusContractNote.objects.update_or_create(
-                contract=pc,
-                defaults={"user_id": user_id, "note": note_text},
-            )
-            notes[cid] = note_text
+            pcs = {
+                pc.contract_id: pc
+                for pc in ProcessedContract.objects.filter(contract_id__in=hostile_rows.keys())
+            }
+
+            for cid, c in hostile_rows.items():
+                pc = pcs.get(cid)
+                if not pc:
+                    continue
+
+                flags: List[str] = []
+                # issuer
+                if get_hostile_state(c["issuer_id"], "character"):
+                    flags.append(f"Issuer **{c['issuer_name']}** is hostile/blacklisted")
+
+                # assignee
+                if get_hostile_state(c["assignee_id"], "character"):
+                    flags.append(f"Assignee **{c['assignee_name']}** is hostile/blacklisted")
+
+                if is_location_hostile(c.get("start_location_id")):
+                    loc_id = c.get("start_location_id")
+                    owner_info = get_system_owner({"id": loc_id})
+                    oname = owner_info.get("owner_name")
+                    rname = owner_info.get("region_name")
+                    flag = f"Start location **{c['start_location']}** is hostile space"
+                    if oname or rname:
+                        info_parts = []
+                        if oname:
+                            info_parts.append(oname)
+                        if rname and rname != "Unknown Region":
+                            info_parts.append(f"Region: {rname}")
+                        flag += f" ({' | '.join(info_parts)})"
+                    flags.append(flag)
+
+                if is_location_hostile(c.get("end_location_id")):
+                    loc_id = c.get("end_location_id")
+                    owner_info = get_system_owner({"id": loc_id})
+                    oname = owner_info.get("owner_name")
+                    rname = owner_info.get("region_name")
+                    flag = f"End location **{c['end_location']}** is hostile space"
+                    if oname or rname:
+                        info_parts = []
+                        if oname:
+                            info_parts.append(oname)
+                        if rname and rname != "Unknown Region":
+                            info_parts.append(f"Region: {rname}")
+                        flag += f" ({' | '.join(info_parts)})"
+                    flags.append(flag)
+
+                flags_text = "\n    - ".join(flags) if flags else "(no flags)"
+
+                note_text = (
+                    f"- **{c['contract_type']}**: "
+                    f"\n  - issued **{c['issued_date']}**, "
+                    f"\n  - ended **{c['end_date']}**, "
+                    f"\n  - from **{c['issuer_name']}**(**{c['issuer_corporation']}**/"
+                    f"**{c['issuer_alliance']}**), "
+                    f"\n  - to **{c['assignee_name']}**(**{c['assignee_corporation']}**/"
+                    f"**{c['assignee_alliance']}**), "
+                    f"\n  - start **{c['start_location']}**, "
+                    f"\n  - end **{c['end_location']}**; "
+                    f"\n  - flags:\n    - {flags_text}"
+                )
+
+                SusContractNote.objects.update_or_create(
+                    contract=pc,
+                    defaults={"user_id": user_id, "note": note_text},
+                )
+                notes[cid] = note_text
 
     for scn in SusContractNote.objects.filter(user_id=user_id):
         notes[scn.contract.contract_id] = scn.note

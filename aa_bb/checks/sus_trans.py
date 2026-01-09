@@ -35,18 +35,11 @@ else:
         return False
 
 try:
-    if corptools_active():
-        from corptools.models import (
-            CharacterWalletJournalEntry as WalletJournalEntry,
-            CharacterMarketTransaction,
-            Structure,
-        )
-    else:
-        WalletJournalEntry = None
-        CharacterMarketTransaction = None
-        Structure = None
+    from corptools.models import (
+        CharacterMarketTransaction,
+        Structure,
+    )
 except ImportError:
-    WalletJournalEntry = None
     CharacterMarketTransaction = None
     Structure = None
 
@@ -269,14 +262,24 @@ def _find_alliance_at(history: list, date: datetime) -> Optional[int]:
 
 
 def gather_user_transactions(user_id: int):
-    if not corptools_active() or WalletJournalEntry is None:
+    if not corptools_active():
         from ..models import ProcessedTransaction
         return ProcessedTransaction.objects.none()
+
+    try:
+        from corptools.models import CharacterWalletJournalEntry as WalletJournalEntry
+    except ImportError:
+        from ..models import ProcessedTransaction
+        return ProcessedTransaction.objects.none()
+
     user_chars = get_user_characters(user_id)
     user_ids = set(user_chars.keys())
-    qs = WalletJournalEntry.objects.filter(second_party_id__in=user_ids)
-    qs = qs.exclude(first_party_id__in=user_ids, second_party_id__in=user_ids)
-    return qs
+    return WalletJournalEntry.objects.filter(
+        character__character__character_id__in=user_ids
+    ).exclude(
+        first_party_id__in=user_ids,
+        second_party_id__in=user_ids
+    )
 
 
 def get_user_transactions(qs) -> Dict[int, Dict]:
@@ -410,6 +413,9 @@ def is_transaction_hostile(tx: dict, user_ids: set = None) -> bool:
             return False
         if cfg.exclude_low_sec and is_lowsec(sys_id):
             return False
+
+    if is_location_hostile(tx.get("location_id"), tx.get("system_id")):
+        return True
 
     # Determine if either party is hostile using mega-helper
     fp_hostile = fpid not in (user_ids or set()) and get_hostile_state(fpid, when=when)
