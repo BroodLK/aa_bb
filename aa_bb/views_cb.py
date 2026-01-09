@@ -276,21 +276,20 @@ def warm_entity_cache_task(self, user_id):
     for t in trans:
         candidates.append((t.first_party_id, getattr(t, "date")))
         candidates.append((t.second_party_id, getattr(t, "date")))
+    from django.db.models import Q
     from .models import EntityInfoCache
-    unique_candidates = set(candidates)
-    unique_eids = {c[0] for c in unique_candidates if c[0] is not None}
+    query_filter = Q()
+    for entity_id, as_of in candidates:
+        query_filter |= Q(entity_id=entity_id, as_of=as_of)
 
-    # Load all existing cache entries for these entities to avoid N queries or giant Q objects
-    cache_lookup = {}
-    if unique_eids:
-        for eid, as_of in EntityInfoCache.objects.filter(entity_id__in=unique_eids).values_list('entity_id', 'as_of'):
-            if eid not in cache_lookup:
-                cache_lookup[eid] = set()
-            cache_lookup[eid].add(as_of)
+    existing = set(
+        EntityInfoCache.objects.filter(query_filter)
+        .values_list('entity_id', 'as_of')
+    )
 
-    for eid, as_of in unique_candidates:
-        if eid not in cache_lookup or as_of not in cache_lookup[eid]:
-            entries.append((eid, as_of))
+    for candidate in candidates:
+        if candidate not in existing:  # Only fetch entity info when cache lacks the tuple.
+            entries.append(candidate)
 
     total = len(entries)
     logger.info(f"Starting warm cache for {user_main} ({total} entries)")
