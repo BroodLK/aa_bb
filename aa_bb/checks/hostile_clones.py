@@ -27,6 +27,7 @@ from ..app_settings import (
     is_lowsec,
     corptools_active,
     is_hostile_unified,
+    get_location_owner,
 )
 from django.utils import timezone
 from ..models import BigBrotherConfig
@@ -120,7 +121,7 @@ def get_clones(user_id: int) -> Dict[int, dict]:
             loc = home_clone.location_name
             status = "Home Station"
             if home_clone.location_id == active_location_id:
-                status += " (Active)"
+                status += " (Current Location)"
             add_location(getattr(loc, "system", None), home_clone.location_id, char_id, char_name, jump_clone_name=status)
         except Clone.DoesNotExist:
             pass
@@ -136,7 +137,7 @@ def get_clones(user_id: int) -> Dict[int, dict]:
             implants = [i.type_name.name for i in jc.implant_set.all() if i.type_name]
             status = jc.name or "Jump Clone"
             if jc.location_id == active_location_id:
-                status += " (Active)"
+                status += " (Current Location)"
             add_location(getattr(loc, "system", None), jc.location_id, char_id, char_name, implants=implants, jump_clone_name=status)
 
     return system_map
@@ -163,9 +164,16 @@ def get_hostile_clone_locations(user_id: int) -> Dict[str, str]:
 
         # System owner info for summary
         owner_info = get_system_owner({"id": system_id, "name": display_name})
-        oname = owner_info.get("owner_name", "Unresolvable") if owner_info else "Unresolvable"
+        system_owner_name = owner_info.get("owner_name", "Unresolvable") if owner_info else "Unresolvable"
+
+        # Track the owner to display (may be overridden by citadel owner)
+        display_owner = system_owner_name
 
         for loc_id, loc_data in data.get("locations", {}).items():
+            # Check if this is a citadel and get its owner
+            location_owner_info = get_location_owner(loc_id)
+            loc_owner = location_owner_info.get("owner_name", system_owner_name) if location_owner_info else system_owner_name
+
             for clone in loc_data.get("clones", []):
                 if is_hostile_unified(
                     involved_ids=[clone["char_id"]],
@@ -175,12 +183,14 @@ def get_hostile_clone_locations(user_id: int) -> Dict[str, str]:
                 ):
                     system_hostile = True
                     hostile_chars.add(f"{clone['char_name']} [{clone['jump_clone_name']}]")
+                    # Use the location owner (citadel owner if applicable)
+                    display_owner = loc_owner
 
         if not system_hostile:
             continue
 
         # Build the detail string
-        parts = [oname]
+        parts = [display_owner]
         rname = owner_info.get("region_name") if owner_info else None
         if rname and rname != "Unknown Region":
             parts.append(f"Region: {rname}")
@@ -210,11 +220,20 @@ def render_clones(user_id: int) -> str:
         display_name = system_name or f"ID {system_id}"
 
         owner_info = get_system_owner({"id": system_id, "name": display_name})
-        oname = owner_info.get("owner_name", "Unresolvable") if owner_info else "Unresolvable"
+        system_owner_name = owner_info.get("owner_name", "Unresolvable") if owner_info else "Unresolvable"
         region_name = owner_info.get("region_name", "Unknown Region") if owner_info else "Unknown Region"
 
         for loc_id, loc_data in data.get("locations", {}).items():
             loc_name = loc_data["name"]
+
+            # Check if this is a citadel (player structure) and get its owner
+            location_owner_info = get_location_owner(loc_id)
+            if location_owner_info:
+                # Use citadel owner for clones in citadels
+                oname = location_owner_info.get("owner_name", system_owner_name)
+            else:
+                # Use system owner for NPC stations or space
+                oname = system_owner_name
 
             for clone in loc_data.get("clones", []):
                 char_name = clone["char_name"]

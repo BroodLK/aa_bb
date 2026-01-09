@@ -109,10 +109,8 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
                 "location_name__system",
                 "type_name__group__category",
             )
-            .filter(
-                character=char_audit,
-            )
-            .exclude(location_flag="solar_system")
+            .filter(character=char_audit)
+            .exclude(location_flag__iexact="solar_system")
         )
 
         for asset in assets:

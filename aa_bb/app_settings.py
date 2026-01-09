@@ -1800,6 +1800,41 @@ def resolve_location_system_id(location_id: int) -> Optional[int]:
 
     return None
 
+
+def get_location_owner(location_id: int) -> Optional[Dict[str, str]]:
+    """
+    Returns owner info for a location (citadel/structure) if it's a player structure.
+    Returns None for NPC stations, solar systems, or if owner can't be resolved.
+
+    Returns dict with keys: owner_id, owner_name, owner_type
+    """
+    if not location_id:
+        return None
+
+    try:
+        location_id = int(location_id)
+    except (ValueError, TypeError):
+        return None
+
+    # Only resolve for player structures (citadels/upwell)
+    if not is_player_structure(location_id):
+        return None
+
+    try:
+        from corptools.models import Structure
+        struct = Structure.objects.filter(structure_id=location_id).select_related("corporation__corporation").first()
+        if struct and struct.corporation and struct.corporation.corporation:
+            return {
+                "owner_id": str(struct.corporation.corporation.corporation_id),
+                "owner_name": struct.corporation.corporation.corporation_name,
+                "owner_type": "corporation"
+            }
+    except Exception:
+        pass
+
+    return None
+
+
 def is_ship(type_id):
     """Checks if a type_id belongs to a ship."""
     if not type_id:
