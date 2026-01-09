@@ -26,6 +26,7 @@ from ..app_settings import (
     is_highsec,
     is_lowsec,
     corptools_active,
+    is_hostile_unified,
 )
 
 if aablacklist_active():
@@ -70,193 +71,6 @@ if EVEUNIVERSE_INSTALLED:
 from ..models import BigBrotherConfig, ProcessedTransaction, SusTransactionNote, EveItemPrice
 
 SUS_TYPES = ("player_trading", "corporation_account_withdrawal", "player_donation")
-
-MAJOR_HUBS = {30000142, 30002187, 30002659, 30002510, 30002053}
-SECONDARY_HUBS = {30002661, 30003733, 30001389, 30000144}
-
-
-def is_major_hub(tx: dict) -> bool:
-    system_id = tx.get("system_id")
-    if not system_id:
-        return False
-    return int(system_id) in MAJOR_HUBS
-
-
-def is_secondary_hub(tx: dict) -> bool:
-    system_id = tx.get("system_id")
-    if not system_id:
-        return False
-    return int(system_id) in SECONDARY_HUBS
-
-
-def is_excluded_system(tx: dict, excluded_str: str) -> bool:
-    if not excluded_str:
-        return False
-    system_id = tx.get("system_id")
-    if not system_id:
-        return False
-    excluded_ids = {int(s.strip()) for s in excluded_str.split(",") if s.strip().isdigit()}
-    return int(system_id) in excluded_ids
-
-
-def get_or_create_prices(item_id, force_refresh=True):
-    cfg = BigBrotherConfig.get_solo()
-
-    # Check local cache first
-    try:
-        price_obj = EveItemPrice.objects.get(eve_type_id=item_id)
-        # If it's fresh (less than configured days), return it
-        if not force_refresh or price_obj.updated > timezone.now() - timedelta(days=cfg.market_transactions_price_max_age):
-            return price_obj
-    except EveItemPrice.DoesNotExist:
-        price_obj = None
-
-    if not force_refresh and price_obj:
-        return price_obj
-
-    # Need to fetch/refresh
-    primary = cfg.market_transactions_price_method
-    methods = [primary]
-    if primary == 'Janice':
-        methods.append('Fuzzwork')
-    else:
-        methods.append('Janice')
-
-    buy = None
-    sell = None
-
-    for method in methods:
-        if method == 'Janice':
-            api_key = cfg.market_transactions_janice_api_key
-            if not api_key:
-                continue
-            try:
-                response = requests.get(
-                    f"https://janice.e-351.com/api/rest/v2/pricer/{item_id}",
-                    headers={
-                        "Content-Type": "text/plain",
-                        "X-ApiKey": api_key,
-                        "accept": "application/json",
-                    },
-                    timeout=10
-                )
-                if response.status_code == 200:
-                    data = response.json()
-                    if "immediatePrices" in data:
-                        if cfg.market_transactions_price_instant:
-                            buy = float(data["immediatePrices"]["buyPrice5DayMedian"])
-                            sell = float(data["immediatePrices"]["sellPrice5DayMedian"])
-                        else:
-                            buy = float(data["top5AveragePrices"]["buyPrice5DayMedian"])
-                            sell = float(data["top5AveragePrices"]["sellPrice5DayMedian"])
-                        break
-            except Exception as e:
-                logger.error(f"Janice price fetch failed for {item_id}: {e}")
-
-        elif method == 'Fuzzwork':
-            station_id = cfg.market_transactions_fuzzwork_station_id or 60003760
-            try:
-                response = requests.get(
-                    "https://market.fuzzwork.co.uk/aggregates/",
-                    params={
-                        "types": item_id,
-                        "station": station_id,
-                    },
-                    timeout=10
-                )
-                if response.status_code == 200:
-                    data = response.json()
-                    if str(item_id) in data:
-                        item_data = data[str(item_id)]
-                        if cfg.market_transactions_price_instant:
-                            buy = float(item_data["buy"]["max"])
-                            sell = float(item_data["sell"]["min"])
-                        else:
-                            buy = float(item_data["buy"]["percentile"])
-                            sell = float(item_data["sell"]["percentile"])
-                        break
-            except Exception as e:
-                logger.error(f"Fuzzwork price fetch failed for {item_id}: {e}")
-
-    if buy is not None and sell is not None:
-        if price_obj:
-            price_obj.buy = buy
-            price_obj.sell = sell
-            price_obj.save()
-            return price_obj
-        else:
-            return EveItemPrice.objects.create(
-                eve_type_id=item_id,
-                buy=buy,
-                sell=sell
-            )
-
-    return price_obj
-
-
-def is_above_threshold(tx: dict, threshold_percent: float) -> bool:
-    type_id = tx.get("type_id")
-    amount = tx.get("raw_amount", 0)
-    if not type_id or amount == 0:
-        return True
-
-    avg_price = None
-
-    if EVEUNIVERSE_INSTALLED:
-        cfg = BigBrotherConfig.get_solo()
-        try:
-            price_obj = EveMarketPrice.objects.filter(eve_type_id=type_id).first()
-            if price_obj and price_obj.average_price and price_obj.average_price > 0:
-                # Check age
-                if hasattr(price_obj, 'updated_at') and price_obj.updated_at > timezone.now() - timedelta(days=cfg.market_transactions_price_max_age):
-                    avg_price = float(price_obj.average_price)
-        except Exception:
-            logger.exception("Error checking EveUniverse price")
-
-    if avg_price is None:
-        # Fallback to local cache / Janice / Fuzzwork
-        # First attempt with force_refresh=False to avoid API hit if possible
-        try:
-            local_price = get_or_create_prices(type_id, force_refresh=False)
-            if local_price:
-                avg_price = (local_price.buy + local_price.sell) / 2
-
-                # If we have an old price, check if it's suspicious
-                if avg_price > 0:
-                    quantity = tx.get("quantity", 1) or 1
-                    unit_price = abs(amount) / quantity
-                    diff_percent = (abs(unit_price - avg_price) / avg_price) * 100
-
-                    # If NOT suspicious even with old price, we can skip refresh
-                    # If it IS suspicious, we FORCE refresh to be sure
-                    if diff_percent > threshold_percent:
-                        local_price = get_or_create_prices(type_id, force_refresh=True)
-                        if local_price:
-                            avg_price = (local_price.buy + local_price.sell) / 2
-            else:
-                # No price at all, must fetch
-                local_price = get_or_create_prices(type_id, force_refresh=True)
-                if local_price:
-                    avg_price = (local_price.buy + local_price.sell) / 2
-        except Exception:
-            logger.exception("Error checking fallback prices")
-
-    if avg_price is None or avg_price <= 0:
-        return True
-
-    try:
-        quantity = tx.get("quantity", 1)
-        if quantity == 0:
-            quantity = 1
-        unit_price = abs(amount) / quantity
-
-        diff_percent = (abs(unit_price - avg_price) / avg_price) * 100
-        if diff_percent > threshold_percent:
-            return True
-    except Exception:
-        logger.exception("Error checking price threshold")
-
-    return False
 
 
 def _find_employment_at(employment: list, date: datetime) -> Optional[dict]:
@@ -400,6 +214,9 @@ def get_user_transactions(qs) -> Dict[int, Dict]:
 
 
 def is_transaction_hostile(tx: dict, user_ids: set = None) -> bool:
+    """
+    Checks if a wallet transaction is considered hostile using the unified processor.
+    """
     ttype = tx.get("type") or ""
     is_sus_type = any(st in ttype for st in SUS_TYPES)
     is_market = "market_escrow" in ttype or "market_transaction" in ttype
@@ -407,95 +224,20 @@ def is_transaction_hostile(tx: dict, user_ids: set = None) -> bool:
     if not (is_sus_type or is_market):
         return False
 
-    def _to_int(val):
-        try:
-            return int(val) if val is not None else None
-        except (ValueError, TypeError):
-            return None
+    fpid = tx.get("first_party_id")
+    spid = tx.get("second_party_id")
 
-    fpid = _to_int(tx.get("first_party_id"))
-    spid = _to_int(tx.get("second_party_id"))
-    fp_corp = _to_int(tx.get("first_party_corporation_id"))
-    sp_corp = _to_int(tx.get("second_party_corporation_id"))
-    fp_alli = _to_int(tx.get("first_party_alliance_id"))
-    sp_alli = _to_int(tx.get("second_party_alliance_id"))
-    when = tx.get("date")
-
-    # Debug specific transaction
-    if spid == 2117320267 or fpid == 2117320267:
-        logger.info(f"DEBUG TX with char 2117320267: type={ttype}, is_market={is_market}, is_sus={is_sus_type}")
-        logger.info(f"  fpid={fpid}, spid={spid}, fp_corp={fp_corp}, sp_corp={sp_corp}")
-        logger.info(f"  user_ids={user_ids}")
-
-    if user_ids and fpid in user_ids and spid in user_ids:
-        if spid == 2117320267 or fpid == 2117320267:
-            logger.info(f"  FILTERED: Both parties are user (fpid in user_ids and spid in user_ids)")
-        return False
-
-    if fp_corp and sp_corp and fp_corp == sp_corp:
-        if spid == 2117320267 or fpid == 2117320267:
-            logger.info(f"  FILTERED: Same corp (fp_corp={fp_corp}, sp_corp={sp_corp})")
-        return False
-
-    if fp_alli and sp_alli and fp_alli == sp_alli:
-        if spid == 2117320267 or fpid == 2117320267:
-            logger.info(f"  FILTERED: Same alliance (fp_alli={fp_alli}, sp_alli={sp_alli})")
-        return False
-
-    cfg = BigBrotherConfig.get_solo()
-
-    # System Exclusion Check
-    sys_id = tx.get("system_id") or resolve_location_system_id(tx.get("location_id"))
-    if sys_id:
-        if cfg.exclude_high_sec and is_highsec(sys_id):
-            if spid == 2117320267 or fpid == 2117320267:
-                logger.info(f"  FILTERED: Highsec excluded (sys_id={sys_id})")
-            return False
-        if cfg.exclude_low_sec and is_lowsec(sys_id):
-            if spid == 2117320267 or fpid == 2117320267:
-                logger.info(f"  FILTERED: Lowsec excluded (sys_id={sys_id})")
-            return False
-
-    if is_location_hostile(tx.get("location_id"), tx.get("system_id")):
-        if spid == 2117320267 or fpid == 2117320267:
-            logger.info(f"  HOSTILE: Location is hostile")
-        return True
-
-    # Determine if either party is hostile using mega-helper
-    fp_hostile = fpid not in (user_ids or set()) and get_hostile_state(fpid, when=when)
-    sp_hostile = spid not in (user_ids or set()) and get_hostile_state(spid, when=when)
-
-    if spid == 2117320267 or fpid == 2117320267:
-        logger.info(f"  Hostility check: fp_hostile={fp_hostile}, sp_hostile={sp_hostile}")
-        logger.info(f"  fpid in user_ids: {fpid in (user_ids or set())}, spid in user_ids: {spid in (user_ids or set())}")
-
-    if fp_hostile or sp_hostile:
-        if is_market:
-            if not cfg.market_transactions_show_major_hubs and is_major_hub(tx):
-                if spid == 2117320267 or fpid == 2117320267:
-                    logger.info(f"  FILTERED: Major hub excluded")
-                return False
-            if not cfg.market_transactions_show_secondary_hubs and is_secondary_hub(tx):
-                if spid == 2117320267 or fpid == 2117320267:
-                    logger.info(f"  FILTERED: Secondary hub excluded")
-                return False
-            if is_excluded_system(tx, cfg.market_transactions_excluded_systems):
-                if spid == 2117320267 or fpid == 2117320267:
-                    logger.info(f"  FILTERED: System excluded")
-                return False
-
-            if cfg.market_transactions_threshold_alert and cfg.market_transactions_threshold_percent > 0:
-                if not is_above_threshold(tx, cfg.market_transactions_threshold_percent):
-                    if spid == 2117320267 or fpid == 2117320267:
-                        logger.info(f"  FILTERED: Below price threshold")
-                    return False
-        if spid == 2117320267 or fpid == 2117320267:
-            logger.info(f"  HOSTILE: Passed all checks")
-        return True
-
-    if spid == 2117320267 or fpid == 2117320267:
-        logger.info(f"  NOT HOSTILE: Neither party flagged as hostile")
-    return False
+    # Unified check handles Rule 1 (Safe entities), which includes both parties being safe.
+    # It also handles hubs, price thresholds, location hostility, etc.
+    return is_hostile_unified(
+        involved_ids=[fpid, spid],
+        location_id=tx.get("location_id"),
+        system_id=tx.get("system_id"),
+        is_market=is_market,
+        market_item_id=tx.get("type_id"),
+        market_unit_price=tx.get("raw_amount") / (tx.get("quantity") or 1) if tx.get("raw_amount") is not None else None,
+        when=tx.get("date")
+    )
 
 
 def render_transactions(user_id: int) -> str:

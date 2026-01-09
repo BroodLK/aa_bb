@@ -7,7 +7,7 @@ live and highlight systems owned by alliances on the hostile list.
 
 from allianceauth.eveonline.models import EveCorporationInfo
 from allianceauth.services.hooks import get_extension_logger
-from ..app_settings import get_system_owner, resolve_location_name, resolve_location_system_id, get_hostile_state, corptools_active
+from ..app_settings import get_system_owner, resolve_location_name, resolve_location_system_id, get_hostile_state, corptools_active, is_hostile_unified
 from ..models import BigBrotherConfig
 from django.utils.html import format_html
 from typing import List, Optional, Dict
@@ -69,43 +69,36 @@ def get_asset_locations(corp_id: int) -> Dict[int, Optional[str]]:
 def get_corp_hostile_asset_locations(corp_id: int) -> Dict[str, str]:
     """
     Return {system name -> owner name} entries for hostile corp asset locations.
-
-    Only systems that cannot be resolved or that belong to a hostile alliance
-    are included in the response.
+    Uses the unified processor logic.
     """
-    # get_asset_locations now returns Dict[int, Optional[str]]
     systems = get_asset_locations(corp_id)
-    if not systems:  # No corp assets means nothing to audit.
+    if not systems:
         return {}
-
-    # parse hostile alliance IDs
-    hostile_str = BigBrotherConfig.get_solo().hostile_alliances or ""
-    hostile_ids = {int(s) for s in hostile_str.split(",") if s.strip().isdigit()}
-    logger.debug(f"Hostile alliance IDs: {hostile_ids}")
 
     hostile_map: Dict[str, str] = {}
 
-    # iterate system_id, system_name pairs
     for system_id, system_name in systems.items():
         display_name = system_name or f"Unknown ({system_id})"
 
-        # Check hostility using mega-helper
-        if get_hostile_state(system_id, 'solar_system'):
-            # build the dict that get_system_owner expects
+        # Check hostility using unified processor
+        if is_hostile_unified(
+            involved_ids=[corp_id],
+            system_id=system_id,
+            is_asset=True
+        ):
             owner_info = get_system_owner({
                 "id":   system_id,
                 "name": display_name
             })
 
             oname = owner_info.get("owner_name") or "Unresolvable"
-            oid = owner_info.get("owner_id")
             rname = owner_info.get("region_name")
 
             summary = oname
             if rname and rname != "Unknown Region":
                 summary = f"{oname} | Region: {rname}"
             hostile_map[display_name] = summary
-            logger.info(f"Hostile asset system: {display_name} owned by {summary} ({oid})")
+            logger.info(f"Hostile corp asset system: {display_name} owned by {summary}")
 
     return hostile_map
 
@@ -113,43 +106,38 @@ def get_corp_hostile_asset_locations(corp_id: int) -> Dict[str, str]:
 def render_assets(corp_id: int) -> Optional[str]:
     """
     Render an HTML table of systems where the corporation owns assets in space.
-
-    The table mirrors the member-level view but operates on corp audits and
-    highlights hostile sovereignty holders in red.
+    Highlights hostile sovereignty holders in red using the unified processor.
     """
     systems = get_asset_locations(corp_id)
-    logger.info(f"corp id {corp_id}, systems {len(systems)}")
-    if not systems:  # Short-circuit when no corp assets exist.
+    if not systems:
         return None
 
-    # Parse hostile IDs into a set of ints
-    hostile_str = BigBrotherConfig.get_solo().hostile_alliances or ""
-    hostile_ids = {int(s) for s in hostile_str.split(",") if s.strip().isdigit()}
-    #logger.debug(f"Hostile IDs for assets: {hostile_ids}")
-
-    html = '<table class="table table-striped">'
-    html += '<thead><tr><th>System</th><th>Owner</th><th>Region</th></tr></thead><tbody>'
+    html_output = '<table class="table table-striped">'
+    html_output += '<thead><tr><th>System</th><th>Owner</th><th>Region</th></tr></thead><tbody>'
 
     for system_id, system_name in systems.items():
-        # build the dict your get_system_owner() wants:
         display_name = system_name or f"Unknown ({system_id})"
         owner_info = get_system_owner({
             "id":   system_id,
             "name": display_name
         })
-        rname = "—"
-        hostile = get_hostile_state(system_id, 'solar_system')
-        oname = "—"
 
-        if owner_info:  # Only resolve sovereignty details when SDE returns something.
-            rname = owner_info.get("region_name") or "—"
-            oname = owner_info.get("owner_name") or "—"
+        oname = owner_info.get("owner_name") or "—"
+        rname = owner_info.get("region_name") or "—"
 
-        if hostile:  # Paint hostile ownership red for attention.
+        # Check hostility using unified processor
+        hostile = is_hostile_unified(
+            involved_ids=[corp_id],
+            system_id=system_id,
+            is_asset=True
+        )
+
+        if hostile:
             row_tpl = '<tr><td>{}</td><td style="color: red;">{}</td><td>{}</td></tr>'
-        else:  # Neutral owners get default styling.
+        else:
             row_tpl = '<tr><td>{}</td><td>{}</td><td>{}</td></tr>'
-        html += format_html(row_tpl, display_name, oname, rname)
 
-    html += "</tbody></table>"
-    return html
+        html_output += format_html(row_tpl, display_name, oname, rname)
+
+    html_output += "</tbody></table>"
+    return html_output

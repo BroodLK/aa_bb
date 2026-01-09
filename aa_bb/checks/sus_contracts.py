@@ -24,6 +24,7 @@ from ..app_settings import (
     is_highsec,
     is_lowsec,
     corptools_active,
+    is_hostile_unified,
 )
 from django.utils import timezone
 
@@ -170,48 +171,23 @@ def get_cell_style_for_contract_row(column: str, row: dict) -> str:
 
 
 def is_contract_row_hostile(row: dict) -> bool:
-    def _to_int(val):
-        try:
-            return int(val) if val is not None else None
-        except (ValueError, TypeError):
-            return None
-
-    issuer_corp_id = _to_int(row.get("issuer_corporation_id"))
-    issuer_alli_id = _to_int(row.get("issuer_alliance_id"))
-    assignee_corp_id = _to_int(row.get("assignee_corporation_id"))
-    assignee_alli_id = _to_int(row.get("assignee_alliance_id"))
-    issuer_id = _to_int(row.get("issuer_id"))
-    assignee_id = _to_int(row.get("assignee_id"))
+    """
+    Checks if a contract is considered hostile using the unified processor.
+    Checks both start and end locations.
+    """
+    issuer_id = row.get("issuer_id")
+    assignee_id = row.get("assignee_id")
     when = row.get("issued_date")
-
-    # Same corporation check (consistency with transactions)
-    if issuer_corp_id and assignee_corp_id and issuer_corp_id == assignee_corp_id:
-        return False
-
-    cfg = BigBrotherConfig.get_solo()
     start_loc = row.get("start_location_id")
     end_loc = row.get("end_location_id")
-    start_sys = resolve_location_system_id(start_loc) if start_loc else None
-    end_sys = resolve_location_system_id(end_loc) if end_loc else None
 
-    # If all involved systems are excluded, ignore the contract entirely
-    start_excluded = start_sys and ((cfg.exclude_high_sec and is_highsec(start_sys)) or (cfg.exclude_low_sec and is_lowsec(start_sys)))
-    end_excluded = end_sys and ((cfg.exclude_high_sec and is_highsec(end_sys)) or (cfg.exclude_low_sec and is_lowsec(end_sys)))
-
-    # If both locations are excluded (or one is missing and the other is excluded), ignore.
-    if (start_excluded or not start_sys) and (end_excluded or not end_sys):
-        return False
-
-    # Check issuer and assignee hostility
-    issuer_hostile = get_hostile_state(issuer_id, when=when)
-    assignee_hostile = get_hostile_state(assignee_id, when=when)
-
-    if issuer_hostile or assignee_hostile:
+    # Unified check handles Rule 1 (Safe entities), location rules, and entity rules.
+    # Check start location
+    if is_hostile_unified(involved_ids=[issuer_id, assignee_id], location_id=start_loc, when=when):
         return True
 
-    if is_location_hostile(start_loc):
-        return True
-    if is_location_hostile(end_loc):
+    # Check end location
+    if is_hostile_unified(involved_ids=[issuer_id, assignee_id], location_id=end_loc, when=when):
         return True
 
     return False

@@ -45,7 +45,7 @@ from aa_bb.checks_cb.sus_contracts import (
 from .app_settings import (
     get_user_characters, get_entity_info, get_character_id,
     resolve_corporation_name, aablacklist_active, resolve_location_name,
-    corptools_active
+    corptools_active, get_hostile_state
 )
 from .models import BigBrotherConfig, WarmProgress
 
@@ -698,16 +698,6 @@ def stream_transactions_sse(request):
             yield f"event: header\ndata:{json.dumps(header_html)}\n\n"
 
             cfg = BigBrotherConfig.get_solo()
-            hostile_corps = set((cfg.hostile_corporations or "").split(","))
-            hostile_allis = set((cfg.hostile_alliances or "").split(","))
-
-            blacklisted_ids = set()
-            if aablacklist_active():
-                from blacklist.models import EveNote
-                blacklisted_ids = set(EveNote.objects.filter(
-                    blacklisted=True,
-                    eve_catagory='character'
-                ).values_list('eve_id', flat=True))
 
             batch_size = 100
             for i in range(0, total, batch_size):
@@ -739,20 +729,18 @@ def stream_transactions_sse(request):
                                     if "market_escrow" in row['type'] or "market_transaction" in row['type']:
                                         style = 'color:red;'
                             # first/second party name
-                            if aablacklist_active():
-                                if col in ('first_party_name','second_party_name'):
-                                    id_col = col.replace("_name", "_id")
-                                    pid = row[id_col]
-                                    if pid in blacklisted_ids:
-                                        style = 'color:red;'
+                            if col in ('first_party_name','second_party_name'):
+                                pid = row[col.replace("_name", "_id")]
+                                if get_hostile_state(pid, 'character', when=row['date']):
+                                    style = 'color:red;'
                             # corps & alliances
                             if col.endswith('corporation'):
                                 cid = row[f"{col}_id"]
-                                if cid and str(cid) in hostile_corps:
+                                if cid and get_hostile_state(cid, 'corporation', when=row['date']):
                                     style = 'color:red;'
                             if col.endswith('alliance'):
                                 aid = row[f"{col}_id"]
-                                if aid and str(aid) in hostile_allis:
+                                if aid and get_hostile_state(aid, 'alliance', when=row['date']):
                                     style = 'color:red;'
                             def make_td(text, style=""):
                                 style_attr = f' style="{style}"' if style else ""

@@ -20,6 +20,7 @@ from ..app_settings import (
     aablacklist_active,
     get_hostile_state,
     corptools_active,
+    is_hostile_unified,
 )
 
 if aablacklist_active():
@@ -149,41 +150,23 @@ def get_cell_style_for_mail_cell(column: str, row: dict, index: Optional[int] = 
 
 
 def is_mail_row_hostile(row: dict) -> bool:
-    def _to_int(val):
-        try:
-            return int(val) if val is not None else None
-        except (ValueError, TypeError):
-            return None
+    """
+    Checks if a mail is considered hostile using the unified processor.
+    """
+    sender_id = row.get("sender_id")
+    recipient_ids = row.get("recipient_ids", [])
+    involved = [sender_id] + list(recipient_ids)
 
-    sender_id = _to_int(row.get("sender_id"))
-    sender_corp_id = _to_int(row.get("sender_corporation_id"))
-    sender_alli_id = _to_int(row.get("sender_alliance_id"))
-    when = row.get("sent_date")
-
-    recipient_ids = [_to_int(rid) for rid in row.get("recipient_ids", [])]
-    recipient_corp_ids = [_to_int(rcid) for rcid in row.get("recipient_corp_ids", [])]
-    recipient_alli_ids = [_to_int(raid) for raid in row.get("recipient_alliance_ids", [])]
-
+    # CCP/GM check (Custom rule for mails)
     if row.get("sender_name"):
         for key in ["GM ", "CCP "]:
             if key in str(row["sender_name"]):
                 return True
 
-    # Same corporation check (sender and ALL recipients in same corp)
-    if sender_corp_id and all(rcid == sender_corp_id for rcid in recipient_corp_ids if rcid):
-        if recipient_corp_ids: # Ensure there is at least one recipient with a corp
-            return False
-
-    # Check sender hostility
-    if get_hostile_state(sender_id, when=when):
-        return True
-
-    # Check recipients hostility
-    for rid in recipient_ids:
-        if get_hostile_state(rid, when=when):
-            return True
-
-    return False
+    return is_hostile_unified(
+        involved_ids=involved,
+        when=row.get("sent_date")
+    )
 
 
 

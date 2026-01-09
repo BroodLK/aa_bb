@@ -24,6 +24,7 @@ from ..app_settings import (
     aablacklist_active,
     get_hostile_state,
     corptools_active,
+    is_hostile_unified,
 )
 from django.utils import timezone
 

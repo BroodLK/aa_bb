@@ -25,6 +25,7 @@ from ..app_settings import (
     get_system_owner,
     get_hostile_state,
     corptools_active,
+    is_hostile_unified
 )
 
 if aablacklist_active():
@@ -189,34 +190,22 @@ def get_cell_style_for_contract_row(column: str, row: dict) -> str:
     return ''
 
 def is_contract_row_hostile(row: dict) -> bool:
-    def _to_int(val):
-        try:
-            return int(val) if val is not None else None
-        except (ValueError, TypeError):
-            return None
-
-    issuer_corp_id = _to_int(row.get("issuer_corporation_id"))
-    issuer_alli_id = _to_int(row.get("issuer_alliance_id"))
-    assignee_corp_id = _to_int(row.get("assignee_corporation_id"))
-    assignee_alli_id = _to_int(row.get("assignee_alliance_id"))
-    issuer_id = _to_int(row.get("issuer_id"))
-    assignee_id = _to_int(row.get("assignee_id"))
+    """
+    Checks if a contract is considered hostile using the unified processor.
+    Checks both start and end locations.
+    """
+    issuer_id = row.get("issuer_id")
+    assignee_id = row.get("assignee_id")
     when = row.get("issued_date")
+    start_loc = row.get("start_location_id")
+    end_loc = row.get("end_location_id")
 
-    # Same corporation check (consistency with transactions)
-    if issuer_corp_id and assignee_corp_id and issuer_corp_id == assignee_corp_id:
-        return False
-
-    # Check issuer and assignee hostility
-    issuer_hostile = get_hostile_state(issuer_id, when=when)
-    assignee_hostile = get_hostile_state(assignee_id, when=when)
-
-    if issuer_hostile or assignee_hostile:
+    # Check start location
+    if is_hostile_unified(involved_ids=[issuer_id, assignee_id], location_id=start_loc, when=when):
         return True
 
-    if is_location_hostile(row.get("start_location_id")):
-        return True
-    if is_location_hostile(row.get("end_location_id")):
+    # Check end location
+    if is_hostile_unified(involved_ids=[issuer_id, assignee_id], location_id=end_loc, when=when):
         return True
 
     return False
