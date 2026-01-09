@@ -35,16 +35,11 @@ else:
         return False
 
 try:
-    if corptools_active():
-        from corptools.models import (
-            CharacterWalletJournalEntry as WalletJournalEntry,
-            CharacterMarketTransaction,
-            Structure,
-        )
-    else:
-        WalletJournalEntry = None
-        CharacterMarketTransaction = None
-        Structure = None
+    from corptools.models import (
+        CharacterWalletJournalEntry as WalletJournalEntry,
+        CharacterMarketTransaction,
+        Structure,
+    )
 except ImportError:
     WalletJournalEntry = None
     CharacterMarketTransaction = None
