@@ -1205,11 +1205,14 @@ def is_entity_hostile(entity_id: int, entity_type: str = None, when: datetime = 
         return True
 
     # For characters, check their corp/alliance context (reuse char_info from above)
-    if entity_type == 'character' and char_info:
-        if char_info.get('corp_id') in hostile_corps:
-            return True
-        if char_info.get('alli_id') in hostile_allis:
-            return True
+    if entity_type == 'character':
+        if char_info:
+            if char_info.get('corp_id') in hostile_corps:
+                return True
+            if char_info.get('alli_id') in hostile_allis:
+                return True
+        # If we couldn't get char_info, we can't determine hostility from corp/alliance
+        # Continue to other checks
 
     # Priority 21: NPC entities are safe
     if entity_type == 'character' and is_npc_character(entity_id):

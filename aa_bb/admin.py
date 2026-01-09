@@ -297,7 +297,7 @@ class TicketToolConfigAdmin(SingletonModelAdmin):
     def get_fieldsets(self, request, obj=None):
         fieldsets = [
             (None, {
-                'fields': ('ticket_type', 'Role_ID', 'hr_forum_webhook', 'Forum_Channel_ID', 'ticket_counter', 'excluded_users')
+                'fields': ('ticket_type', 'role_id', 'hr_forum_webhook', 'Forum_Channel_ID', 'ticket_counter', 'excluded_users')
             }),
         ]
 

@@ -396,13 +396,17 @@ def is_transaction_hostile(tx: dict) -> bool:
     sys_id = tx.get("system_id") or resolve_location_system_id(tx.get("location_id"))
     if sys_id:
         if cfg.exclude_high_sec and is_highsec(sys_id):
+            logger.debug(f"Transaction excluded: high-sec system {sys_id}")
             return False
         if cfg.exclude_low_sec and is_lowsec(sys_id):
+            logger.debug(f"Transaction excluded: low-sec system {sys_id}")
             return False
 
     # Determine if either party is hostile using mega-helper
     fp_hostile = get_hostile_state(fpid, when=when)
     sp_hostile = get_hostile_state(spid, when=when)
+
+    logger.debug(f"Transaction check: fpid={fpid} fp_hostile={fp_hostile}, spid={spid} sp_hostile={sp_hostile}")
 
     if fp_hostile or sp_hostile:
         if is_market:
