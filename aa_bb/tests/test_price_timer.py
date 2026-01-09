@@ -3,7 +3,7 @@ from django.utils import timezone
 from datetime import timedelta
 from unittest.mock import patch, MagicMock
 from aa_bb.models import BigBrotherConfig, EveItemPrice
-from aa_bb.checks.sus_trans import get_or_create_prices
+from aa_bb.app_settings import get_or_create_prices
 
 class TestPriceTimer(TestCase):
     def setUp(self):

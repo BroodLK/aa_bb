@@ -67,7 +67,7 @@ def _find_alliance_at(history: list, date: datetime) -> Optional[int]:
 
 def gather_user_contracts(user_id: int):
     if not corptools_active() or Contract is None:
-        return Contract.objects.none() if Contract else ProcessedContract.objects.none()
+        return []
     user_chars = get_user_characters(user_id)
     user_ids = set(user_chars.keys())
     return Contract.objects.filter(

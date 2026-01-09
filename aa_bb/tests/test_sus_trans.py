@@ -117,9 +117,8 @@ class TestSusTrans(TestCase):
 
         self.assertFalse(is_transaction_hostile_cb(tx), "String system_id should still be filtered out by major hub filter (corp version)")
 
-    @patch('aa_bb.checks.sus_trans.get_hostile_state')
-    @patch('aa_bb.checks.sus_trans.is_location_hostile')
-    def test_transaction_location_hostility(self, mock_is_hostile, mock_get_hostile):
+    @patch('aa_bb.checks.sus_trans.is_hostile_unified')
+    def test_transaction_location_hostility(self, mock_is_hostile):
         tx = {
             "type": "player_trading",
             "location_id": 1000000000001,
@@ -128,7 +127,6 @@ class TestSusTrans(TestCase):
             "second_party_id": 2,
         }
 
-        mock_get_hostile.return_value = False
         mock_is_hostile.return_value = True
         self.assertTrue(is_transaction_hostile(tx), "Transaction in hostile location should be hostile if it's a suspicious type")
 
@@ -136,14 +134,13 @@ class TestSusTrans(TestCase):
         self.assertFalse(is_transaction_hostile(tx), "player_trading should NOT be hostile if parties are neutral")
 
         # Test with a hostile party
-        mock_get_hostile.return_value = True
+        mock_is_hostile.return_value = True
         self.assertTrue(is_transaction_hostile(tx), "Transaction with hostile party should be hostile")
 
         # Test a normal transaction that is ONLY hostile due to location (should be False now)
-        mock_get_hostile.return_value = False
+        mock_is_hostile.return_value = True
         tx["first_party_corporation_id"] = 100 # Safe
         tx["type"] = "normal_transaction"
-        mock_is_hostile.return_value = True
         self.assertFalse(is_transaction_hostile(tx), "Normal transaction in hostile location should NOT be hostile if parties are safe/neutral")
 
     @patch('aa_bb.checks.sus_trans.resolve_location_name')

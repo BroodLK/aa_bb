@@ -37,9 +37,13 @@ try:
         from corptools.models import (
             CorporationAudit,
             CorporationWalletJournalEntry,
-            CorporationMarketTransaction,
             Structure,
         )
+        # Try to import CorporationMarketTransaction, but don't fail if it doesn't exist
+        try:
+            from corptools.models import CorporationMarketTransaction
+        except ImportError:
+            CorporationMarketTransaction = None
     else:
         CorporationAudit = None
         CorporationWalletJournalEntry = None
@@ -93,7 +97,7 @@ def gather_user_transactions(corp_id: int):
     Parameter mirrors the member helper naming but expects a corporation id.
     """
     if not corptools_active() or CorporationWalletJournalEntry is None:
-        return CorporationWalletJournalEntry.objects.none() if CorporationWalletJournalEntry else ProcessedTransaction.objects.none()
+        return []
     try:
         corp_info = EveCorporationInfo.objects.get(corporation_id=corp_id)
         corp_audit = CorporationAudit.objects.get(corporation=corp_info)

@@ -73,7 +73,7 @@ def gather_user_contracts(corp_id: int):
     Fetch every CorporateContract row for the given corporation id.
     """
     if not corptools_active() or CorporateContract is None:
-        return CorporateContract.objects.none() if CorporateContract else ProcessedContract.objects.none()
+        return []
     try:
         corp_info = EveCorporationInfo.objects.get(corporation_id=corp_id)
         corp_audit = CorporationAudit.objects.get(corporation=corp_info)

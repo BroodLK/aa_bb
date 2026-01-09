@@ -64,7 +64,7 @@ def _find_alliance_at(history: List[dict], date: datetime) -> Optional[int]:
 
 def gather_user_mails(user_id: int):
     if not corptools_active() or MailMessage is None:
-        return MailMessage.objects.none() if MailMessage else ProcessedMail.objects.none()
+        return []
     user_chars = get_user_characters(user_id)
     user_ids = set(user_chars.keys())
     return MailMessage.objects.filter(

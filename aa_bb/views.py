@@ -450,9 +450,12 @@ def list_contract_ids(request):
         return JsonResponse({"error": "Unknown account"}, status=404)
 
     user_chars = get_user_characters(user_id)
-    qs = Contract.objects.filter(
-        character__character__character_id__in=user_chars
-    ).order_by('-date_issued').values_list('contract_id', 'date_issued')
+    if Contract is not None:
+        qs = Contract.objects.filter(
+            character__character__character_id__in=user_chars
+        ).order_by('-date_issued').values_list('contract_id', 'date_issued')
+    else:
+        qs = []
 
     contracts = [
         {'id': cid, 'date': dt.isoformat()} for cid, dt in qs
@@ -531,7 +534,7 @@ def stream_contracts_sse(request: WSGIRequest):
 
     try:
         qs    = gather_user_contracts(user_id)
-        total = qs.count()
+        total = qs.count() if hasattr(qs, 'count') else len(qs)
         connection.close()
     except Exception as e:
         logger.error(f"Error initializing contract stream for {option}: {e}", exc_info=True)
@@ -843,8 +846,11 @@ def stream_transactions_sse(request):
         return HttpResponseForbidden("Corptools required")
 
     try:
-        qs    = gather_user_transactions(user_id)
-        total = qs.count()
+        qs = gather_user_transactions(user_id)
+        if hasattr(qs, 'order_by'):
+            # Journal entries are best viewed in descending date order
+            qs = qs.order_by('-date')
+        total = qs.count() if hasattr(qs, 'count') else len(qs)
         logger.info(f"Transaction stream for {option}: found {total} total transactions")
         connection.close()
     except Exception as e:

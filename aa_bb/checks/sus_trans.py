@@ -93,8 +93,7 @@ def _find_alliance_at(history: list, date: datetime) -> Optional[int]:
 
 def gather_user_transactions(user_id: int):
     if not corptools_active() or WalletJournalEntry is None:
-        logger.warning(f"gather_user_transactions: corptools_active={corptools_active()}, WalletJournalEntry={WalletJournalEntry}")
-        return WalletJournalEntry.objects.none() if WalletJournalEntry else ProcessedTransaction.objects.none()
+        return []
 
     user_chars = get_user_characters(user_id)
     user_ids = set(user_chars.keys())

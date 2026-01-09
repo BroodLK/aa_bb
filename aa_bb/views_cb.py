@@ -379,7 +379,10 @@ def list_contract_ids(request):
     if not option:
         return JsonResponse({"error": "Missing corporation selection"}, status=400)
 
-    qs = gather_user_contracts(option).order_by('-date_issued').values_list('contract_id', 'date_issued')
+    qs = gather_user_contracts(option)
+    if hasattr(qs, 'order_by'):
+        qs = qs.order_by('-date_issued')
+    qs = qs.values_list('contract_id', 'date_issued')
 
     contracts = [
         {'id': cid, 'date': dt.isoformat()} for cid, dt in qs
@@ -456,7 +459,7 @@ def stream_contracts_sse(request: WSGIRequest):
 
     try:
         qs    = gather_user_contracts(user_id)
-        total = qs.count()
+        total = qs.count() if hasattr(qs, 'count') else len(qs)
         connection.close()
     except Exception as e:
         logger.error(f"Error initializing contract stream for {option}: {e}", exc_info=True)
@@ -648,8 +651,10 @@ def stream_transactions_sse(request):
         return HttpResponseForbidden("Corptools required")
 
     try:
-        qs    = gather_user_transactions(user_id).order_by('-date')
-        total = qs.count()
+        qs = gather_user_transactions(user_id)
+        if hasattr(qs, 'order_by'):
+            qs = qs.order_by('-date')
+        total = qs.count() if hasattr(qs, 'count') else len(qs)
         connection.close()
         if total == 0:  # No transactions -> return SSE stream with no data message
             def empty_generator():
