@@ -312,7 +312,7 @@ def warm_cache(request):
     Immediately registers a WarmProgress row so queued tasks also appear.
     """
     if not BigBrotherConfig.get_solo().is_warmer_active:  # Allow admins to disable heavy warm jobs.
-        return
+        return JsonResponse({"error": "Warmer disabled"}, status=403)
     logger.warning(f"warm triggered")
     option  = request.GET.get("option", "")
     user_id = option
@@ -367,17 +367,13 @@ def get_warm_progress(request):
 @permission_required("aa_bb.basic_access_cb")
 def list_contract_ids(request):
     """
-    Return JSON list of all contract IDs and issue dates for the selected user.
+    Return JSON list of all contract IDs and issue dates for the selected corporation.
     """
     option = request.GET.get("option")
-    user_id = get_user_id(option)
-    if user_id is None:  # Unknown corp selection.
-        return JsonResponse({"error": "Unknown account"}, status=404)
+    if not option:
+        return JsonResponse({"error": "Missing corporation selection"}, status=400)
 
-    user_chars = get_user_characters(user_id)
-    qs = Contract.objects.filter(
-        character__character__character_id__in=user_chars
-    ).order_by('-date_issued').values_list('contract_id', 'date_issued')
+    qs = gather_user_contracts(option).order_by('-date_issued').values_list('contract_id', 'date_issued')
 
     contracts = [
         {'id': cid, 'date': dt.isoformat()} for cid, dt in qs
@@ -392,20 +388,18 @@ def check_contract_batch(request):
     Check a slice of contracts for hostility by start/limit parameters.
     Returns JSON with `checked` count and list of `hostile_found`,
     each entry including a `cell_styles` dict for inline styling.
-    Now uses gather_user_contracts + get_user_contracts(qs) on the full set.
     """
     option = request.GET.get("option")
     start  = int(request.GET.get("start", 0))
     limit  = int(request.GET.get("limit", 10))
-    user_id = get_user_id(option)
-    if user_id is None:  # Need a valid account to inspect.
-        return JsonResponse({"error": "Unknown account"}, status=404)
+    if not option:
+        return JsonResponse({"error": "Missing corporation selection"}, status=400)
 
     # 1) Ensure the full QuerySet is available
-    cache_key = f"contract_qs_{user_id}"
+    cache_key = f"corp_contract_qs_{option}"
     qs_all = cache.get(cache_key)
-    if qs_all is None:  # Cache miss, gather and store for 5 minutes.
-        qs_all = gather_user_contracts(user_id)
+    if qs_all is None:
+        qs_all = gather_user_contracts(option)
         cache.set(cache_key, qs_all, 300)
 
     # 2) Slice out just this batch of model instances
@@ -650,17 +644,25 @@ def stream_transactions_sse(request):
             resp["X-Accel-Buffering"] = "no"
             return resp
 
-        # Determine headers from a single hydrated row
-        sample = qs[:1]
-        sample_map    = get_user_transactions(sample)
-        sample_row    = next(iter(sample_map.values()))
+        # Determine headers from a single hydrated row (after empty check)
+        sample_map = get_user_transactions(qs[:1])
+        sample_row = next(iter(sample_map.values()), None)
         HIDDEN        = {
             'first_party_id','second_party_id',
             'first_party_corporation_id','second_party_corporation_id',
             'first_party_alliance_id','second_party_alliance_id',
             'entry_id'
         }
-        headers = [h for h in sample_row.keys() if h not in HIDDEN]
+        if sample_row:  # Derive headers from real data when available.
+            headers = [h for h in sample_row.keys() if h not in HIDDEN]
+        else:
+            # Fallback to a safe default when sampling finds nothing
+            headers = [
+                'date', 'amount', 'balance', 'description', 'reason',
+                'first_party_name', 'first_party_corporation', 'first_party_alliance',
+                'second_party_name', 'second_party_corporation', 'second_party_alliance',
+                'context', 'type',
+            ]
     except Exception as e:
         logger.error(f"Error in stream_transactions_sse setup: {e}", exc_info=True)
         return HttpResponseBadRequest(f"Error loading transactions: {str(e)}")
@@ -681,6 +683,14 @@ def stream_transactions_sse(request):
             cfg = BigBrotherConfig.get_solo()
             hostile_corps = set((cfg.hostile_corporations or "").split(","))
             hostile_allis = set((cfg.hostile_alliances or "").split(","))
+
+            blacklisted_ids = set()
+            if aablacklist_active():
+                from blacklist.models import EveNote
+                blacklisted_ids = set(EveNote.objects.filter(
+                    blacklisted=True,
+                    eve_catagory='character'
+                ).values_list('eve_id', flat=True))
 
             batch_size = 100
             for i in range(0, total, batch_size):
@@ -716,7 +726,7 @@ def stream_transactions_sse(request):
                                 if col in ('first_party_name','second_party_name'):
                                     id_col = col.replace("_name", "_id")
                                     pid = row[id_col]
-                                    if check_char_add_to_bl(pid):
+                                    if pid in blacklisted_ids:
                                         style = 'color:red;'
                             # corps & alliances
                             if col.endswith('corporation'):

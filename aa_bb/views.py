@@ -865,6 +865,14 @@ def stream_transactions_sse(request):
         hostile_corps = set((cfg.hostile_corporations or "").split(","))
         hostile_allis = set((cfg.hostile_alliances or "").split(","))
 
+        blacklisted_ids = set()
+        if aablacklist_active():
+            from blacklist.models import EveNote
+            blacklisted_ids = set(EveNote.objects.filter(
+                blacklisted=True,
+                eve_catagory='character'
+            ).values_list('eve_id', flat=True))
+
         user_chars = get_user_characters(user_id)
         user_ids = set(user_chars.keys())
 
@@ -902,7 +910,7 @@ def stream_transactions_sse(request):
                             if col in ('first_party_name','second_party_name'):
                                 id_col = col.replace("_name", "_id")
                                 pid = row[id_col]
-                                if check_char_add_to_bl(pid):
+                                if pid in blacklisted_ids:
                                     style = 'color:red;'
                         # corps & alliances
                         if col.endswith('corporation'):
