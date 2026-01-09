@@ -8,7 +8,7 @@ messages without duplicating all the plumbing.
 from collections import deque
 
 from allianceauth.authentication.models import UserProfile, CharacterOwnership
-import logging
+from allianceauth.services.hooks import get_extension_logger
 import re
 import subprocess
 import sys
@@ -40,7 +40,7 @@ from eveuniverse.models import EveSolarSystem
 from django.core.cache import cache
 from django.conf import settings
 
-logger = logging.getLogger(__name__)
+logger = get_extension_logger(__name__)
 
 DATASOURCE = "tranquility"
 VERBOSE_WEBHOOK_LOGGING = True
@@ -701,8 +701,6 @@ def _fetch_alliance_history(corp_id, expiry_key, cached_history=None):
     except Exception as e:
         logger.warning(f"Failed to fetch alliance history for corp {corp_id}: {e}")
         return []
-
-logger = logging.getLogger(__name__)
 
 ALLIANCE_TTL = timedelta(hours=24)
 

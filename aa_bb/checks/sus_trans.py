@@ -4,14 +4,14 @@ flag suspicious counterparties, and keep deduplicated notes for alerts.
 """
 
 import html
-import logging
 import requests
 from typing import Dict, Optional
 from datetime import datetime, timedelta
 from django.utils import timezone
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+from allianceauth.services.hooks import get_extension_logger
+
+logger = get_extension_logger(__name__)
 
 from ..app_settings import (
     get_user_characters,

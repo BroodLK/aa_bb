@@ -1,13 +1,9 @@
 import html
-import logging
 import errno
 import socket
 import traceback
 import json
 import time
-
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.DEBUG)
 
 from django.contrib.auth.decorators import login_required, permission_required
 from django.db import connection
@@ -27,6 +23,9 @@ from celery import shared_task
 from celery.exceptions import Ignore
 
 from allianceauth.authentication.models import CharacterOwnership
+from allianceauth.services.hooks import get_extension_logger
+
+logger = get_extension_logger(__name__)
 
 from aa_bb.checks_cb.hostile_assets import render_assets
 from aa_bb.checks_cb.sus_trans import (

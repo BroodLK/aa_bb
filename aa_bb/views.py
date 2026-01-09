@@ -1,5 +1,4 @@
 import html
-import logging
 import time
 import json
 
@@ -25,6 +24,7 @@ from celery import shared_task
 from celery.exceptions import Ignore
 
 from allianceauth.authentication.models import UserProfile, CharacterOwnership
+from allianceauth.services.hooks import get_extension_logger
 
 from .forms import LeaveRequestForm
 from .app_settings import (
@@ -74,8 +74,7 @@ from aa_bb.checks.roles_and_tokens import render_user_roles_tokens_html
 from aa_bb.checks.clone_state import render_character_states_html
 from aa_bb.checks.skills import render_user_skills_html
 
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.DEBUG)
+logger = get_extension_logger(__name__)
 
 try:
     if corptools_active():
