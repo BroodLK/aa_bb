@@ -121,6 +121,9 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
             system_obj = getattr(loc, "system", None) if loc else None
             loc_name = resolve_location_name(asset.location_id) or f"Location {asset.location_id}"
 
+            if not asset.type_name:
+                continue
+
             add_asset(
                 system_obj, asset.location_id, loc_name,
                 co.character.character_id, co.character.character_name,
@@ -199,106 +202,110 @@ def render_assets(user_id: int) -> Optional[str]:
     Returns an HTML table listing each system where the user's characters have assets,
     the system's sovereign owner, and highlights in red any asset considered hostile.
     """
-    systems = get_asset_locations(user_id)
-    if not systems:
-        return None
+    try:
+        systems = get_asset_locations(user_id)
+        if not systems:
+            return None
 
-    rows: List[Dict] = []
+        rows: List[Dict] = []
 
-    for system_id, data in systems.items():
-        system_name = data.get("name")
-        display_name = system_name or f"Unknown ({system_id})"
+        for system_id, data in systems.items():
+            system_name = data.get("name")
+            display_name = system_name or f"Unknown ({system_id})"
 
-        # Base system owner info for the table
-        owner_info = get_system_owner({"id": system_id, "name": display_name})
-        oname = owner_info.get("owner_name", "Unresolvable") if owner_info else "Unresolvable"
-        region_name = owner_info.get("region_name", "Unknown Region") if owner_info else "Unknown Region"
+            # Base system owner info for the table
+            owner_info = get_system_owner({"id": system_id, "name": display_name})
+            oname = owner_info.get("owner_name", "Unresolvable") if owner_info else "Unresolvable"
+            region_name = owner_info.get("region_name", "Unknown Region") if owner_info else "Unknown Region"
 
-        # Iterate locations inside system
-        for loc_id, loc_data in data.get("locations", {}).items():
-            loc_name = loc_data["name"]
+            # Iterate locations inside system
+            for loc_id, loc_data in data.get("locations", {}).items():
+                loc_name = loc_data["name"]
 
-            # Check each asset group (char/type combo)
-            # Actually we can group by char for rendering
-            char_assets = {}
-            for asset in loc_data.get("assets", []):
-                char_name = asset["char_name"]
-                if char_name not in char_assets:
-                    char_assets[char_name] = {"ships": [], "is_hostile": False, "char_id": asset["char_id"]}
+                # Check each asset group (char/type combo)
+                # Actually we can group by char for rendering
+                char_assets = {}
+                for asset in loc_data.get("assets", []):
+                    char_name = asset["char_name"]
+                    if char_name not in char_assets:
+                        char_assets[char_name] = {"ships": [], "is_hostile": False, "char_id": asset["char_id"]}
 
-                # Check if this specific asset is hostile
-                is_hostile = is_hostile_unified(
-                    involved_ids=[asset["char_id"]],
-                    location_id=loc_id,
-                    system_id=system_id,
-                    is_asset=True,
-                    asset_type_id=asset["type_id"],
-                    when=timezone.now()
-                )
+                    # Check if this specific asset is hostile
+                    is_hostile = is_hostile_unified(
+                        involved_ids=[asset["char_id"]],
+                        location_id=loc_id,
+                        system_id=system_id,
+                        is_asset=True,
+                        asset_type_id=asset["type_id"],
+                        when=timezone.now()
+                    )
 
-                if is_hostile:
-                    char_assets[char_name]["is_hostile"] = True
-                    if is_ship(asset["type_id"]):
-                        char_assets[char_name]["ships"].append(asset["type_name"])
+                    if is_hostile:
+                        char_assets[char_name]["is_hostile"] = True
+                        if is_ship(asset["type_id"]):
+                            char_assets[char_name]["ships"].append(asset["type_name"])
 
-            for char_name, cdata in char_assets.items():
-                ship_str = ", ".join(sorted(cdata["ships"])) if cdata["ships"] else ""
-                rows.append({
-                    "system": display_name,
-                    "location": loc_name,
-                    "character": char_name,
-                    "owner": oname,
-                    "region": region_name,
-                    "hostile": cdata["is_hostile"],
-                    "ships": ship_str,
-                })
+                for char_name, cdata in char_assets.items():
+                    ship_str = ", ".join(sorted(cdata["ships"])) if cdata["ships"] else ""
+                    rows.append({
+                        "system": display_name,
+                        "location": loc_name,
+                        "character": char_name,
+                        "owner": oname,
+                        "region": region_name,
+                        "hostile": cdata["is_hostile"],
+                        "ships": ship_str,
+                    })
 
-    if not rows:
-        return "<p>No hostile assets found.</p>"
+        if not rows:
+            return "<p>No hostile assets found.</p>"
 
-    # Sort rows: hostile first, then by system, location, character
-    rows.sort(key=lambda x: (not x["hostile"], x["system"], x["location"], x["character"]))
+        # Sort rows: hostile first, then by system, location, character
+        rows.sort(key=lambda x: (not x["hostile"], x["system"], x["location"], x["character"]))
 
-    html_output = '<table class="table table-striped table-hover stats">'
-    html_output += (
-        '<thead>'
-        '  <tr>'
-        '      <th style="width: 15%">System</th>'
-        '      <th style="width: 20%">Station</th>'
-        '      <th style="width: 15%">Character</th>'
-        '      <th style="width: 15%">Owner</th>'
-        '      <th style="width: 15%">Region</th>'
-        '      <th style="width: 20%">Hostile Asset</th>'
-        '  </tr>'
-        '</thead>'
-        '<tbody>'
-    )
-
-    for row in rows:
-        system_cell = row["system"]
-        owner_cell = row["owner"]
-        region_cell = row["region"]
-        hostile_ship = row["ships"] if row["hostile"] else ""
-
-        if row["hostile"]:
-            owner_cell = mark_safe(f'<span class="text-danger">{owner_cell}</span>')
-
-        html_output += format_html(
-            '   <tr>'
-            '       <td>{}</td>'
-            '       <td>{}</td>'
-            '       <td>{}</td>'
-            '       <td>{}</td>'
-            '       <td>{}</td>'
-            '       <td>{}</td>'
-            '   </tr>',
-            system_cell,
-            row["location"],
-            row["character"],
-            owner_cell,
-            region_cell,
-            hostile_ship,
+        html_output = '<table class="table table-striped table-hover stats">'
+        html_output += (
+            '<thead>'
+            '  <tr>'
+            '      <th style="width: 15%">System</th>'
+            '      <th style="width: 20%">Station</th>'
+            '      <th style="width: 15%">Character</th>'
+            '      <th style="width: 15%">Owner</th>'
+            '      <th style="width: 15%">Region</th>'
+            '      <th style="width: 20%">Hostile Asset</th>'
+            '  </tr>'
+            '</thead>'
+            '<tbody>'
         )
 
-    html_output += '</tbody></table>'
-    return html_output
+        for row in rows:
+            system_cell = row["system"]
+            owner_cell = row["owner"]
+            region_cell = row["region"]
+            hostile_ship = row["ships"] if row["hostile"] else ""
+
+            if row["hostile"]:
+                owner_cell = mark_safe(f'<span class="text-danger">{owner_cell}</span>')
+
+            html_output += format_html(
+                '   <tr>'
+                '       <td>{}</td>'
+                '       <td>{}</td>'
+                '       <td>{}</td>'
+                '       <td>{}</td>'
+                '       <td>{}</td>'
+                '       <td>{}</td>'
+                '   </tr>',
+                system_cell,
+                row["location"],
+                row["character"],
+                owner_cell,
+                region_cell,
+                hostile_ship,
+            )
+
+        html_output += '</tbody></table>'
+        return html_output
+    except Exception as e:
+        logger.exception(f"Error rendering assets for user {user_id}")
+        return f"<p class='text-danger'>Error rendering assets: {str(e)}</p>"

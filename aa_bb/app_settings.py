@@ -1850,9 +1850,9 @@ def is_ship(type_id):
         from eveuniverse.models import EveItemType
         try:
             it = EveItemType.objects.get(pk=type_id)
-            if it.group.category.name == "Ship":
+            if it and it.group and it.group.category and it.group.category.name == "Ship":
                 is_ship_bool = True
-        except EveItemType.DoesNotExist:
+        except Exception:
             pass
 
     cache.set(cache_key, is_ship_bool, 86400)
