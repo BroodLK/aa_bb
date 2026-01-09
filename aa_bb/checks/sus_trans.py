@@ -386,22 +386,24 @@ def get_user_hostile_transactions(user_id: int) -> Dict[int, str]:
 
                 note_lines = [
                     f"- **{tx['date']}** · **{tx['amount']} ISK**",
+                    f"  - **Type:** {tx['type']}",
                     (
-                        f"  {tx['first_party_name']} "
+                        f"  - **From:** {tx['first_party_name']} "
                         f"({tx['first_party_corporation']} | {tx['first_party_alliance']})"
-                        f" **→** "
-                        f"{tx['second_party_name']} "
+                    ),
+                    (
+                        f"  - **To:** {tx['second_party_name']} "
                         f"({tx['second_party_corporation']} | {tx['second_party_alliance']})"
                     ),
                 ]
 
-                if tx.get("reason"):
-                    note_lines.append(f"  Reason: **{tx['reason']}**")
+                if tx.get("reason") and tx.get("reason") != "None":
+                    note_lines.append(f"  - **Reason:** {tx['reason']}")
 
                 if tx.get("context") and tx.get("context") != "None":
-                    note_lines.append(f"  Context: **{tx['context']}**")
+                    note_lines.append(f"  - **Context:** {tx['context']}")
 
-                note_lines.append("  Flags:")
+                note_lines.append("  - **Flags:**")
                 note_lines.extend(flags_lines)
 
                 note = "\n".join(note_lines)

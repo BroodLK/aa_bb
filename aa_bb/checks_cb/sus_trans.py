@@ -367,16 +367,14 @@ def get_corp_hostile_transactions(corp_id: int) -> Dict[int, str]:
             flags_text = "\n    - ".join(flags)
 
             note = (
-                f"- **{tx['date']}**: "
-                f"\n  - amount **{tx['amount']}**, "
-                f"\n  - type **{tx['type']}**, "
-                f"\n  - reason **{tx['reason']}**, "
-                f"\n  - context **{tx['context']}**, "
-                f"\n  - from **{tx['first_party_name']}**(**{tx['first_party_corporation']}**/"
-                  f"**{tx['first_party_alliance']}**), "
-                f"\n  - to **{tx['second_party_name']}**(**{tx['second_party_corporation']}**/"
-                  f"**{tx['second_party_alliance']}**); "
-                f"\n  - flags:\n    - {flags_text}"
+                f"- **{tx['date']}** · **{tx['amount']} ISK**"
+                f"\n  - **Type:** {tx['type']}"
+                f"\n  - **From:** {tx['first_party_name']} ({tx['first_party_corporation']} | {tx['first_party_alliance']})"
+                f"\n  - **To:** {tx['second_party_name']} ({tx['second_party_corporation']} | {tx['second_party_alliance']})"
+                f"\n  - **Reason:** {tx['reason']}"
+                f"\n  - **Context:** {tx['context']}"
+                f"\n  - **Flags:**"
+                f"\n    - {flags_text}"
             )
             SusTransactionNote.objects.update_or_create(
                 transaction=pt,

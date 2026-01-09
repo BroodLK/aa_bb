@@ -302,16 +302,12 @@ def get_corp_hostile_contracts(corp_id: int) -> Dict[int, str]:
             flags_text = "\n    - ".join(flags)
 
             note_text = (
-                f"- **{c['contract_type']}**: "
-                f"\n  - issued **{c['issued_date']}**, "
-                f"\n  - ended **{c['end_date']}**, "
-                f"\n  - from **{c['issuer_name']}**(**{c['issuer_corporation']}**/"
-                  f"**{c['issuer_alliance']}**), "
-                f"\n  - to **{c['assignee_name']}**(**{c['assignee_corporation']}**/"
-                  f"**{c['assignee_alliance']}**), "
-                f"\n  - start **{c['start_location']}**, "
-                f"\n  - end **{c['end_location']}**; "
-                f"\n  - flags:\n    - {flags_text}"
+                f"- **{c['contract_type']}** ({c['issued_date']} → {c['end_date']})"
+                f"\n  - **From:** {c['issuer_name']} ({c['issuer_corporation']} | {c['issuer_alliance']})"
+                f"\n  - **To:** {c['assignee_name']} ({c['assignee_corporation']} | {c['assignee_alliance']})"
+                f"\n  - **Location:** {c['start_location']} → {c['end_location']}"
+                f"\n  - **Flags:**"
+                f"\n    - {flags_text}"
             )
             SusContractNote.objects.update_or_create(
                 contract=pc,

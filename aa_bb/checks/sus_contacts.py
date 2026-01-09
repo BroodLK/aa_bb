@@ -290,9 +290,11 @@ def get_user_hostile_notifications(user_id: int) -> dict[int, str]:
 
         if alerts:
             char_list = ', '.join(sorted(chars)) if chars else 'no characters'
+            flags_text = "\n    - ".join(alerts)
             message = (
-                f"- A {s} **{ctype}** type contact **{cname}** found on **{char_list}**, flags: "
-                + "; ".join(alerts)
+                f"- A **{ctype}** type contact **{cname}** (Standing: {s:.2f}) found on **{char_list}**:"
+                f"\n  Flags:"
+                f"\n    - {flags_text}"
             )
             notifications[cid] = message
 

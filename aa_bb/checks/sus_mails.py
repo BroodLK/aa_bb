@@ -277,11 +277,10 @@ def get_user_hostile_mails(user_id: int) -> Dict[int, str]:
             flags_text = "\n    - ".join(flags) if flags else "(no flags)"
 
             note_text = (
-                f"- **'{m['subject']}'**: "
-                f"\n  - sent {m['sent_date']}; "
-                f"\n  - from **{m['sender_name']}**(**{m['sender_corporation']}**/"
-                f"**{m['sender_alliance']}**), "
-                f"\n  - flags:\n    - {flags_text}"
+                f"- **'{m['subject']}'** (Sent: {m['sent_date']})"
+                f"\n  - **From:** {m['sender_name']} ({m['sender_corporation']} | {m['sender_alliance']})"
+                f"\n  - **Flags:**"
+                f"\n    - {flags_text}"
             )
 
             SusMailNote.objects.update_or_create(
