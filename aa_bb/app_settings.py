@@ -941,18 +941,23 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
     Get sovereignty owner of an EVE system by name.
     Always returns a dict with keys: owner_id, owner_name, owner_type, region_id, region_name.
     """
-    owner_id = "0"
-    owner_name = "Unresolvable Init"
-    owner_type = "unknown"
-    region_id = "0"
-    region_name = "Unknown Region"
-
-    # 1) Pull name and ID from the passed-in dict
     system_id_raw = system.get("id")
     try:
         system_id = int(system_id_raw) if system_id_raw is not None else None
     except (ValueError, TypeError):
         system_id = None
+
+    if system_id:
+        cache_key = f"aa_bb_system_owner_{system_id}"
+        cached = cache.get(cache_key)
+        if cached:
+            return cached
+
+    owner_id = "0"
+    owner_name = "Unresolvable"
+    owner_type = "unknown"
+    region_id = "0"
+    region_name = "Unknown Region"
 
     system_nam = system.get("name")
     system_name = str()
@@ -972,6 +977,7 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
                 pass
 
         # Check for individual location ownership (Structure or Station) BEFORE falling back to system SOV
+        res = None
         if system_id:
             # Player Structure
             if is_player_structure(system_id):
@@ -979,7 +985,7 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
                     from corptools.models import Structure
                     struct = Structure.objects.filter(structure_id=system_id).select_related("corporation__corporation").first()
                     if struct and struct.corporation and struct.corporation.corporation:
-                        return {
+                        res = {
                             "owner_id": str(struct.corporation.corporation.corporation_id),
                             "owner_name": struct.corporation.corporation.corporation_name,
                             "owner_type": "corporation",
@@ -995,7 +1001,7 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
                     from eveuniverse.models import EveStation
                     station_obj = EveStation.objects.get(id=system_id)
                     if station_obj.owner_id:
-                        return {
+                        res = {
                             "owner_id": str(station_obj.owner_id),
                             "owner_name": resolve_corporation_name(station_obj.owner_id),
                             "owner_type": "corporation",
@@ -1004,6 +1010,11 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
                         }
                 except Exception:
                     pass
+
+        if res:
+            if system_id:
+                cache.set(f"aa_bb_system_owner_{system_id}", res, 3600)
+            return res
 
         sov_map = _get_sov_map()
         # If it's a structure or station, we want the system it's in for SOV
@@ -1017,7 +1028,7 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
                     try:
                         from eveuniverse.models import EveSolarSystem
                         sys_obj = EveSolarSystem.objects.get(id=target_sov_id)
-                        return {
+                        res = {
                             "owner_id": "0",
                             "owner_name": "Unclaimed",
                             "owner_type": "unknown",
@@ -1027,35 +1038,41 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
                     except Exception:
                         pass
 
-            # If it's specifically a player structure ID that we can't resolve owner for
-            if system_id and is_player_structure(system_id):
-                return {
-                    "owner_id": owner_id,
-                    "owner_name": "Unresolvable structure due to lack of docking rights",
-                    "owner_type": owner_type,
-                    "region_id": region_id,
-                    "region_name": region_name
-                }
+            if not res:
+                # If it's specifically a player structure ID that we can't resolve owner for
+                if system_id and is_player_structure(system_id):
+                    res = {
+                        "owner_id": owner_id,
+                        "owner_name": "Unresolvable structure due to lack of docking rights",
+                        "owner_type": owner_type,
+                        "region_id": region_id,
+                        "region_name": region_name
+                    }
+                else:
+                    res = {
+                        "owner_id": owner_id,
+                        "owner_name": "Unresolvable location",
+                        "owner_type": owner_type,
+                        "region_id": region_id,
+                        "region_name": region_name
+                    }
 
-            return {
-                "owner_id": owner_id,
-                "owner_name": "Unresolvable location",
-                "owner_type": owner_type,
-                "region_id": region_id,
-                "region_name": region_name
-            }
+            if system_id:
+                cache.set(f"aa_bb_system_owner_{system_id}", res, 3600)
+            return res
 
     except Exception as e:
         logger.exception(f"Failed to fetch sovereignty for system ID {system_id}: {e}")
         e_short = e.__class__.__name__
         e_detail = getattr(e, 'code', None) or getattr(e, 'status', None) or str(e)
-        return {
+        res = {
             "owner_id": owner_id,
             "owner_name": f"Unresolvable sov, {e_short}{e_detail}",
             "owner_type": owner_type,
             "region_id": region_id,
             "region_name": region_name
         }
+        return res
 
     # 3) Determine owner ID and type
     alliance_id = entry.get("alliance_id")
@@ -1067,13 +1084,16 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
         owner_id = str(faction_id)
         owner_type = "faction"
     else:
-        return {
+        res = {
             "owner_id": "0",
             "owner_name": "Unclaimed",
             "owner_type": "unknown",
             "region_id": region_id,
             "region_name": region_name
         }
+        if system_id:
+            cache.set(f"aa_bb_system_owner_{system_id}", res, 3600)
+        return res
 
     # 4) Resolve owner name
     try:
@@ -1083,13 +1103,16 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
         owner_id = "0"
         owner_type = "unknown"
 
-    return {
+    res = {
         "owner_id": owner_id,
         "owner_name": owner_name,
         "owner_type": owner_type,
         "region_id": region_id,
         "region_name": region_name
     }
+    if system_id:
+        cache.set(f"aa_bb_system_owner_{system_id}", res, 3600)
+    return res
 
 
 def get_id_hostile_state(entity_id: int, when: datetime = None) -> bool:

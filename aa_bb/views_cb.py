@@ -269,20 +269,21 @@ def warm_entity_cache_task(self, user_id):
     for t in trans:
         candidates.append((t.first_party_id, getattr(t, "date")))
         candidates.append((t.second_party_id, getattr(t, "date")))
-    from django.db.models import Q
     from .models import EntityInfoCache
-    query_filter = Q()
-    for entity_id, as_of in candidates:
-        query_filter |= Q(entity_id=entity_id, as_of=as_of)
+    unique_candidates = set(candidates)
+    unique_eids = {c[0] for c in unique_candidates if c[0] is not None}
 
-    existing = set(
-        EntityInfoCache.objects.filter(query_filter)
-        .values_list('entity_id', 'as_of')
-    )
+    # Load all existing cache entries for these entities to avoid N queries or giant Q objects
+    cache_lookup = {}
+    if unique_eids:
+        for eid, as_of in EntityInfoCache.objects.filter(entity_id__in=unique_eids).values_list('entity_id', 'as_of'):
+            if eid not in cache_lookup:
+                cache_lookup[eid] = set()
+            cache_lookup[eid].add(as_of)
 
-    for candidate in candidates:
-        if candidate not in existing:  # Only fetch entity info that is missing from cache.
-            entries.append(candidate)
+    for eid, as_of in unique_candidates:
+        if eid not in cache_lookup or as_of not in cache_lookup[eid]:
+            entries.append((eid, as_of))
 
     total = len(entries)
     logger.info(f"Starting warm cache for {user_main} ({total} entries)")
@@ -636,7 +637,7 @@ def stream_transactions_sse(request):
         return HttpResponseBadRequest("Unknown account")
 
     try:
-        qs    = gather_user_transactions(user_id)
+        qs    = gather_user_transactions(user_id).order_by('-date')
         total = qs.count()
         connection.close()
         if total == 0:  # No transactions -> return SSE stream with no data message
@@ -681,15 +682,20 @@ def stream_transactions_sse(request):
             hostile_corps = set((cfg.hostile_corporations or "").split(","))
             hostile_allis = set((cfg.hostile_alliances or "").split(","))
 
-            for entry in qs:
-                try:
+            batch_size = 100
+            for i in range(0, total, batch_size):
+                batch = qs[i:i + batch_size]
+                rows_map = get_user_transactions(batch)
+                # Sort keys to maintain some order if possible, though date desc is better
+                sorted_keys = sorted(rows_map.keys(), key=lambda k: rows_map[k]['date'], reverse=True)
+
+                for eid in sorted_keys:
+                    row = rows_map[eid]
                     processed += 1
-                    yield ": ping\n\n"         # keep‐alive
+                    if processed % 10 == 0:
+                        yield ": ping\n\n"         # keep‐alive
 
-                    # hydrate this one entry
-                    row = get_user_transactions([entry])[entry.entry_id]
-
-                    if is_transaction_hostile(row):  # Emit rows matching suspicious checks.
+                    if is_transaction_hostile(row):  # Only push rows that meet hostility rules.
                         hostile_count += 1
 
                         # build the <tr> using same style logic as render_transactions()
@@ -728,16 +734,13 @@ def stream_transactions_sse(request):
                         tr_html = "<tr>" + "".join(cells) + "</tr>"
                         yield f"event: transaction\ndata:{json.dumps(tr_html)}\n\n"
 
-                    # progress update
-                    yield (
-                        "event: progress\n"
-                        f"data:{processed},{total},{hostile_count}\n\n"
-                    )
-                    connection.close()
-                except Exception as e:
-                    logger.error(f"Error processing transaction entry {entry.entry_id}: {e}", exc_info=True)
-                    yield f"event: error\ndata:{json.dumps(str(e))}\n\n"
-                    continue
+                    # progress update every few rows to avoid flood
+                    if processed % 10 == 0 or processed == total:
+                        yield (
+                            "event: progress\n"
+                            f"data:{processed},{total},{hostile_count}\n\n"
+                        )
+                connection.close()
 
             # Done
             yield "event: done\ndata:bye\n\n"

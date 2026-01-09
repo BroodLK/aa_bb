@@ -295,20 +295,21 @@ def warm_entity_cache_task(self, user_id):
     for t in trans:
         candidates.append((t.first_party_id, getattr(t, "date")))
         candidates.append((t.second_party_id, getattr(t, "date")))
-    from django.db.models import Q
     from .models import EntityInfoCache
-    query_filter = Q()
-    for entity_id, as_of in candidates:
-        query_filter |= Q(entity_id=entity_id, as_of=as_of)
+    unique_candidates = set(candidates)
+    unique_eids = {c[0] for c in unique_candidates if c[0] is not None}
 
-    existing = set(
-        EntityInfoCache.objects.filter(query_filter)
-        .values_list('entity_id', 'as_of')
-    )
+    # Load all existing cache entries for these entities to avoid N queries or giant Q objects
+    cache_lookup = {}
+    if unique_eids:
+        for eid, as_of in EntityInfoCache.objects.filter(entity_id__in=unique_eids).values_list('entity_id', 'as_of'):
+            if eid not in cache_lookup:
+                cache_lookup[eid] = set()
+            cache_lookup[eid].add(as_of)
 
-    for candidate in candidates:
-        if candidate not in existing:  # Only fetch entity info when cache lacks the tuple.
-            entries.append(candidate)
+    for eid, as_of in unique_candidates:
+        if eid not in cache_lookup or as_of not in cache_lookup[eid]:
+            entries.append((eid, as_of))
 
     total = len(entries)
     logger.info(f"Starting warm cache for {user_main} ({total} entries)")
@@ -817,7 +818,7 @@ def stream_transactions_sse(request):
     if not user_id:  # Reject SSE connection when the pilot is unknown.
         return HttpResponseBadRequest("Unknown account")
 
-    qs    = gather_user_transactions(user_id)
+    qs    = gather_user_transactions(user_id).order_by('-date')
     total = qs.count()
     connection.close()
 
@@ -864,57 +865,67 @@ def stream_transactions_sse(request):
         hostile_corps = set((cfg.hostile_corporations or "").split(","))
         hostile_allis = set((cfg.hostile_alliances or "").split(","))
 
-        for entry in qs:
-            processed += 1
-            yield ": ping\n\n"         # keep‐alive
+        user_chars = get_user_characters(user_id)
+        user_ids = set(user_chars.keys())
 
-            # hydrate this one entry
-            row = get_user_transactions([entry])[entry.entry_id]
+        batch_size = 100
+        for i in range(0, total, batch_size):
+            batch = qs[i:i + batch_size]
+            rows_map = get_user_transactions(batch)
+            # Sort keys to maintain some order if possible, though date desc is better
+            sorted_keys = sorted(rows_map.keys(), key=lambda k: rows_map[k]['date'], reverse=True)
 
-            if is_transaction_hostile(row):  # Only push rows that meet hostility rules.
-                hostile_count += 1
+            for eid in sorted_keys:
+                row = rows_map[eid]
+                processed += 1
+                if processed % 10 == 0:
+                    yield ": ping\n\n"         # keep‐alive
 
-                # build the <tr> using same style logic as render_transactions()
-                cells = []
-                for col in headers:
-                    val = row.get(col, "")
-                    text = html.escape(str(val))
-                    style = ""
-                    # type‐based red
-                    if col == 'type':
-                        if any(st in row['type'] for st in SUS_TYPES):
-                            style = 'color:red;'
-                        if cfg.show_market_transactions:
-                            if "market_escrow" in row['type'] or "market_transaction" in row['type']:
+                if is_transaction_hostile(row, user_ids):  # Only push rows that meet hostility rules.
+                    hostile_count += 1
+
+                    # build the <tr> using same style logic as render_transactions()
+                    cells = []
+                    for col in headers:
+                        val = row.get(col, "")
+                        text = html.escape(str(val))
+                        style = ""
+                        # type‐based red
+                        if col == 'type':
+                            if any(st in row['type'] for st in SUS_TYPES):
                                 style = 'color:red;'
-                    # first/second party name
-                    if aablacklist_active():
-                        if col in ('first_party_name','second_party_name'):
-                            id_col = col.replace("_name", "_id")
-                            pid = row[id_col]
-                            if check_char_add_to_bl(pid):
+                            if cfg.show_market_transactions:
+                                if "market_escrow" in row['type'] or "market_transaction" in row['type']:
+                                    style = 'color:red;'
+                        # first/second party name
+                        if aablacklist_active():
+                            if col in ('first_party_name','second_party_name'):
+                                id_col = col.replace("_name", "_id")
+                                pid = row[id_col]
+                                if check_char_add_to_bl(pid):
+                                    style = 'color:red;'
+                        # corps & alliances
+                        if col.endswith('corporation'):
+                            cid = row[f"{col}_id"]
+                            if cid and str(cid) in hostile_corps:
                                 style = 'color:red;'
-                    # corps & alliances
-                    if col.endswith('corporation'):
-                        cid = row[f"{col}_id"]
-                        if cid and str(cid) in hostile_corps:
-                            style = 'color:red;'
-                    if col.endswith('alliance'):
-                        aid = row[f"{col}_id"]
-                        if aid and str(aid) in hostile_allis:
-                            style = 'color:red;'
-                    def make_td(text, style=""):
-                        style_attr = f' style="{style}"' if style else ""
-                        return f"<td{style_attr}>{text}</td>"
-                    cells.append(make_td(text, style))
-                tr_html = "<tr>" + "".join(cells) + "</tr>"
-                yield f"event: transaction\ndata:{json.dumps(tr_html)}\n\n"
+                        if col.endswith('alliance'):
+                            aid = row[f"{col}_id"]
+                            if aid and str(aid) in hostile_allis:
+                                style = 'color:red;'
+                        def make_td(text, style=""):
+                            style_attr = f' style="{style}"' if style else ""
+                            return f"<td{style_attr}>{text}</td>"
+                        cells.append(make_td(text, style))
+                    tr_html = "<tr>" + "".join(cells) + "</tr>"
+                    yield f"event: transaction\ndata:{json.dumps(tr_html)}\n\n"
 
-            # progress update
-            yield (
-                "event: progress\n"
-                f"data:{processed},{total},{hostile_count}\n\n"
-            )
+                # progress update every few rows to avoid flood
+                if processed % 10 == 0 or processed == total:
+                    yield (
+                        "event: progress\n"
+                        f"data:{processed},{total},{hostile_count}\n\n"
+                    )
             connection.close()
 
         # Done

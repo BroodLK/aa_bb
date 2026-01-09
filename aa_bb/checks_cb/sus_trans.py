@@ -408,6 +408,9 @@ def is_transaction_hostile(tx: dict) -> bool:
             logger.debug(f"Transaction excluded: low-sec system {sys_id}")
             return False
 
+    if is_location_hostile(tx.get("location_id"), tx.get("system_id")):
+        return True
+
     # Determine if either party is hostile using mega-helper
     fp_hostile = get_hostile_state(fpid, when=when)
     sp_hostile = get_hostile_state(spid, when=when)
