@@ -12,10 +12,10 @@ from django.utils import timezone
 from allianceauth.authentication.models import State, UserProfile
 from allianceauth.groupmanagement.models import AuthGroup
 from allianceauth.eveonline.models import EveAllianceInfo, EveCorporationInfo
+from allianceauth.services.hooks import get_extension_logger
 
-import logging
 
-logger = logging.getLogger(__name__)
+logger = get_extension_logger(__name__)
 
 from django.utils.translation import gettext_lazy as _
 from django.apps import apps

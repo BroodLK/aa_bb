@@ -6,6 +6,7 @@ that can be sent when a user has assets in systems owned by enemies.
 """
 
 from allianceauth.authentication.models import CharacterOwnership
+from allianceauth.services.hooks import get_extension_logger
 from django.contrib.auth.models import User
 from ..app_settings import (
     get_system_owner,
@@ -22,9 +23,8 @@ from ..models import BigBrotherConfig
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 from typing import List, Optional, Dict
-import logging
 
-logger = logging.getLogger(__name__)
+logger = get_extension_logger(__name__)
 
 try:
     if corptools_active():

@@ -5,8 +5,10 @@ These helpers normalize MailMessage rows, detect suspicious senders or
 recipients, and persist short notes for repeated reporting.
 """
 
+from allianceauth.services.hooks import get_extension_logger
+
+
 import html
-import logging
 from typing import Dict, Optional, List
 from datetime import datetime
 from django.utils import timezone
@@ -28,8 +30,7 @@ else:
 
 from ..models import BigBrotherConfig, ProcessedMail, SusMailNote
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger = get_extension_logger(__name__)
 
 try:
     if corptools_active():

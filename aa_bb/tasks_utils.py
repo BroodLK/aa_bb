@@ -1,8 +1,9 @@
-import logging
+from allianceauth.services.hooks import get_extension_logger
+
 from django.db import transaction, IntegrityError
 from django_celery_beat.models import PeriodicTask, CrontabSchedule, IntervalSchedule
 
-logger = logging.getLogger(__name__)
+logger = get_extension_logger(__name__)
 
 def format_task_name(name: str) -> str:
     """

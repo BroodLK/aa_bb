@@ -5,7 +5,9 @@ The functions in this module normalize Contract ORM rows, highlight hostile
 counterparties, and persist short notes for reuse in notifications.
 """
 
-import logging
+from allianceauth.services.hooks import get_extension_logger
+
+
 from typing import Dict, Optional, List
 from datetime import datetime
 
@@ -33,8 +35,7 @@ else:
 
 from ..models import BigBrotherConfig, ProcessedContract, SusContractNote
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger = get_extension_logger(__name__)
 
 try:
     if corptools_active():

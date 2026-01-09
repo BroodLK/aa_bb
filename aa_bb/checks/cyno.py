@@ -6,16 +6,17 @@ by combining skill levels, ship ownership and corporation tenure. The
 heavy lifting happens here so templates only need to call render helpers.
 """
 
+from allianceauth.services.hooks import get_extension_logger
+
+
 from .skills import get_user_skill_info, get_char_age
 from ..app_settings import get_user_characters, get_character_id, corptools_active
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 from .corp_changes import get_current_stint_days_in_corp
-import logging
 from aa_bb.models import BigBrotherConfig as bbc
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger = get_extension_logger(__name__)
 
 try:
     if corptools_active():

@@ -5,17 +5,18 @@ These helpers fetch and render frequently referenced skills as well as
 generic routines (get_user_skill_info) that other check modules import.
 """
 
+from allianceauth.services.hooks import get_extension_logger
+
+
 from django.utils.html import format_html
 from ..app_settings import get_user_characters, format_int, get_character_id, corptools_active
-import logging
 import json
 import os
 from typing import Dict
 from django.utils.safestring import mark_safe
 from django.utils import timezone
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger = get_extension_logger(__name__)
 
 try:
     if corptools_active():

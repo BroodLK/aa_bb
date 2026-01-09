@@ -6,15 +6,14 @@ highlight hostile counterparties, and cache note text for notifications.
 """
 
 import html
-import logging
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger = get_extension_logger(__name__)
 
 from typing import Dict, Optional, List
 from datetime import datetime
 
 from allianceauth.eveonline.models import EveCorporationInfo
+from allianceauth.services.hooks import get_extension_logger
 
 from ..app_settings import (
     get_character_id,

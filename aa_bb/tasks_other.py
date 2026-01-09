@@ -7,8 +7,7 @@ from django.db.models import Q
 
 from celery import shared_task
 
-import logging
-logger = logging.getLogger(__name__)
+logger = get_extension_logger(__name__)
 
 @shared_task
 def BB_send_recurring_stats():

@@ -274,9 +274,17 @@ def gather_user_transactions(user_id: int):
         return ProcessedTransaction.objects.none()
     user_chars = get_user_characters(user_id)
     user_ids = set(user_chars.keys())
+
     from django.db.models import Q
-    qs = WalletJournalEntry.objects.filter(Q(first_party_id__in=user_ids) | Q(second_party_id__in=user_ids))
+    # Filter by character ownership (entries belonging to user's characters)
+    qs = WalletJournalEntry.objects.filter(character__character__character_id__in=user_ids)
+
+    # Also filter to transactions involving external parties
+    # Keep only transactions where at least one party is NOT the user
+    qs = qs.filter(Q(first_party_id__in=user_ids) | Q(second_party_id__in=user_ids))
     qs = qs.exclude(first_party_id__in=user_ids, second_party_id__in=user_ids)
+
+    logger.info(f"gather_user_transactions for user {user_id}: user_chars={list(user_ids)[:5]}, found {qs.count()} transactions")
     return qs
 
 

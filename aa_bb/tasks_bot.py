@@ -8,16 +8,16 @@ create/rebalance compliance ticket channels.
 from __future__ import annotations
 
 import re
-import logging
 
 from allianceauth.authentication.models import UserProfile
+from allianceauth.services.hooks import get_extension_logger
 
 from django.db import transaction, close_old_connections
 from django.core.cache import cache
 from django.utils import timezone
 from asgiref.sync import sync_to_async
 
-logger = logging.getLogger(__name__)
+logger = get_extension_logger(__name__)
 logger.info("✅ [AA-BB] - [Tasks Bot] - Module loading from %s", __file__)
 
 __all__ = [

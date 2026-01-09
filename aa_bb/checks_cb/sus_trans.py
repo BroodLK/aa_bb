@@ -3,16 +3,15 @@ Corporate wallet journal analysis helpers mirroring the member-level checks.
 """
 
 import html
-import logging
 import requests
 from typing import Dict, Optional, List
 from datetime import datetime, timedelta
 from django.utils import timezone
 
 from allianceauth.eveonline.models import EveCorporationInfo
+from allianceauth.services.hooks import get_extension_logger
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger = get_extension_logger(__name__)
 
 from ..app_settings import (
     get_eve_entity_type,

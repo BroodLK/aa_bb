@@ -5,10 +5,12 @@ These helpers tidy up CharacterContact rows, group them by standing, color-code 
 entities, and expose utilities for producing notification text.
 """
 
-import html
-import logging
+from allianceauth.services.hooks import get_extension_logger
 
-logger = logging.getLogger(__name__)
+
+import html
+
+logger = get_extension_logger(__name__)
 
 from ..app_settings import (
     is_npc_corporation,
@@ -226,8 +228,7 @@ def render_contacts(user_id: int) -> str:
 
     return '\n'.join(html_parts)
 
-import logging
-logger = logging.getLogger(__name__)
+logger = get_extension_logger(__name__)
 
 def get_user_hostile_notifications(user_id: int) -> dict[int, str]:
     """

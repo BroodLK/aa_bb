@@ -6,6 +6,9 @@ the same logic can be reused both in HTML renderings and in background
 tasks that persist the findings.
 """
 
+from allianceauth.services.hooks import get_extension_logger
+
+
 from aa_bb.models import CharacterAccountState, BigBrotherConfig
 from aa_bb.app_settings import resolve_character_name, get_user_characters
 from django.db import transaction
@@ -13,7 +16,6 @@ from django.utils.html import format_html, mark_safe
 from django.utils import timezone
 import json
 import os
-import logging
 from datetime import timedelta, time
 
 try:
@@ -22,7 +24,7 @@ except Exception:
     CharacterAudit = None
     Skill = None
 
-logger = logging.getLogger(__name__)
+logger = get_extension_logger(__name__)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
