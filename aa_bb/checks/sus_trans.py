@@ -271,9 +271,24 @@ def _find_alliance_at(history: list, date: datetime) -> Optional[int]:
 def gather_user_transactions(user_id: int):
     if not corptools_active() or WalletJournalEntry is None:
         from ..models import ProcessedTransaction
+        logger.warning(f"gather_user_transactions: corptools_active={corptools_active()}, WalletJournalEntry={WalletJournalEntry}")
         return ProcessedTransaction.objects.none()
+
     user_chars = get_user_characters(user_id)
     user_ids = set(user_chars.keys())
+    logger.info(f"gather_user_transactions for user {user_id}: user_chars={list(user_ids)}")
+
+    # Check total entries in database
+    total_entries = WalletJournalEntry.objects.count()
+    logger.info(f"Total CharacterWalletJournalEntry records in database: {total_entries}")
+
+    # Check entries for user's characters
+    char_entries = WalletJournalEntry.objects.filter(character__character__character_id__in=user_ids)
+    logger.info(f"Entries for user's characters: {char_entries.count()}")
+
+    if char_entries.exists():
+        sample = char_entries.first()
+        logger.info(f"Sample entry: character_id={sample.character.character.character_id}, first_party={sample.first_party_id}, second_party={sample.second_party_id}, ref_type={sample.ref_type}")
 
     from django.db.models import Q
     # Filter by character ownership (entries belonging to user's characters)
@@ -282,9 +297,11 @@ def gather_user_transactions(user_id: int):
     # Also filter to transactions involving external parties
     # Keep only transactions where at least one party is NOT the user
     qs = qs.filter(Q(first_party_id__in=user_ids) | Q(second_party_id__in=user_ids))
-    qs = qs.exclude(first_party_id__in=user_ids, second_party_id__in=user_ids)
+    logger.info(f"After filtering by first_party_id or second_party_id in user_ids: {qs.count()}")
 
-    logger.info(f"gather_user_transactions for user {user_id}: user_chars={list(user_ids)[:5]}, found {qs.count()} transactions")
+    qs = qs.exclude(first_party_id__in=user_ids, second_party_id__in=user_ids)
+    logger.info(f"After excluding internal transactions: {qs.count()}")
+
     return qs
 
 
