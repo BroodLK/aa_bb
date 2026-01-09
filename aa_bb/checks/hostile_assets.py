@@ -112,7 +112,7 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
             )
             .filter(
                 character=char_audit,
-                location_type="station",
+                location_type__in=["station", "structure", "other"],
             )
             .exclude(location_flag="solar_system")
         )

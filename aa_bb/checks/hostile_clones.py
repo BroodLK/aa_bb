@@ -35,17 +35,19 @@ logger = get_extension_logger(__name__)
 
 try:
     if corptools_active():
-        from corptools.models import CharacterAudit, Clone, JumpClone, Implant
+        from corptools.models import CharacterAudit, Clone, JumpClone, Implant, CharacterLocation
     else:
         CharacterAudit = None
         Clone = None
         JumpClone = None
         Implant = None
+        CharacterLocation = None
 except ImportError:
     CharacterAudit = None
     Clone = None
     JumpClone = None
     Implant = None
+    CharacterLocation = None
 
 
 def get_clones(user_id: int) -> Dict[int, dict]:
@@ -89,7 +91,7 @@ def get_clones(user_id: int) -> Dict[int, dict]:
             "char_id": char_id,
             "char_name": char_name,
             "implants": implants or [],
-            "jump_clone_name": jump_clone_name or ("Active Clone" if jump_clone_name is None else "")
+            "jump_clone_name": jump_clone_name or "Jump Clone"
         })
 
     # iterate through all characters owned by the user
@@ -101,13 +103,25 @@ def get_clones(user_id: int) -> Dict[int, dict]:
         except CharacterAudit.DoesNotExist:
             continue
 
+        # Get current active location
+        active_location_id = None
+        if CharacterLocation:
+            try:
+                char_loc = CharacterLocation.objects.get(character=char_audit)
+                active_location_id = char_loc.current_location_id
+            except CharacterLocation.DoesNotExist:
+                pass
+
         # Home clone
         try:
             home_clone = Clone.objects.select_related(
                 "location_name__system"
             ).get(character=char_audit)
             loc = home_clone.location_name
-            add_location(getattr(loc, "system", None), home_clone.location_id, char_id, char_name)
+            status = "Home Station"
+            if home_clone.location_id == active_location_id:
+                status += " (Active)"
+            add_location(getattr(loc, "system", None), home_clone.location_id, char_id, char_name, jump_clone_name=status)
         except Clone.DoesNotExist:
             pass
 
@@ -120,7 +134,10 @@ def get_clones(user_id: int) -> Dict[int, dict]:
         for jc in jump_clones:
             loc = jc.location_name
             implants = [i.type_name.name for i in jc.implant_set.all() if i.type_name]
-            add_location(getattr(loc, "system", None), jc.location_id, char_id, char_name, implants=implants, jump_clone_name=jc.name)
+            status = jc.name or "Jump Clone"
+            if jc.location_id == active_location_id:
+                status += " (Active)"
+            add_location(getattr(loc, "system", None), jc.location_id, char_id, char_name, implants=implants, jump_clone_name=status)
 
     return system_map
 
@@ -157,7 +174,7 @@ def get_hostile_clone_locations(user_id: int) -> Dict[str, str]:
                     when=timezone.now()
                 ):
                     system_hostile = True
-                    hostile_chars.add(clone["char_name"])
+                    hostile_chars.add(f"{clone['char_name']} [{clone['jump_clone_name']}]")
 
         if not system_hostile:
             continue
