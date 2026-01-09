@@ -847,7 +847,7 @@ def stream_transactions_sse(request):
         return HttpResponseForbidden("Corptools required")
 
     try:
-        qs    = gather_user_transactions(user_id).order_by('-date')
+        qs    = gather_user_transactions(user_id)
         total = qs.count()
         connection.close()
     except Exception as e:
