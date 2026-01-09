@@ -93,14 +93,12 @@ def gather_user_transactions(corp_id: int):
     Parameter mirrors the member helper naming but expects a corporation id.
     """
     if not corptools_active() or CorporationWalletJournalEntry is None:
-        from ..models import ProcessedTransaction
-        return ProcessedTransaction.objects.none()
+        return CorporationWalletJournalEntry.objects.none() if CorporationWalletJournalEntry else ProcessedTransaction.objects.none()
     try:
         corp_info = EveCorporationInfo.objects.get(corporation_id=corp_id)
         corp_audit = CorporationAudit.objects.get(corporation=corp_info)
     except (EveCorporationInfo.DoesNotExist, CorporationAudit.DoesNotExist):
-        from ..models import ProcessedTransaction
-        return ProcessedTransaction.objects.none()
+        return CorporationWalletJournalEntry.objects.none()
 
     qs = CorporationWalletJournalEntry.objects.filter(division__corporation=corp_audit)
     logger.info(f"qs:{qs.count()}")

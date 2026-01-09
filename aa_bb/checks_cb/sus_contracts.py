@@ -73,14 +73,12 @@ def gather_user_contracts(corp_id: int):
     Fetch every CorporateContract row for the given corporation id.
     """
     if not corptools_active() or CorporateContract is None:
-        from ..models import ProcessedContract
-        return ProcessedContract.objects.none()
+        return CorporateContract.objects.none() if CorporateContract else ProcessedContract.objects.none()
     try:
         corp_info = EveCorporationInfo.objects.get(corporation_id=corp_id)
         corp_audit = CorporationAudit.objects.get(corporation=corp_info)
     except (EveCorporationInfo.DoesNotExist, CorporationAudit.DoesNotExist):
-        from ..models import ProcessedContract
-        return ProcessedContract.objects.none()
+        return CorporateContract.objects.none()
 
     qs = CorporateContract.objects.filter(corporation=corp_audit)
     return qs
