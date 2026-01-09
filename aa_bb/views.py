@@ -849,6 +849,7 @@ def stream_transactions_sse(request):
     try:
         qs    = gather_user_transactions(user_id)
         total = qs.count()
+        logger.info(f"Transaction stream for {option}: found {total} total transactions")
         connection.close()
     except Exception as e:
         logger.error(f"Error initializing transaction stream for {option}: {e}", exc_info=True)
@@ -921,7 +922,11 @@ def stream_transactions_sse(request):
                 if processed % 10 == 0:
                     yield ": ping\n\n"         # keep‐alive
 
-                if is_transaction_hostile(row, user_ids):  # Only push rows that meet hostility rules.
+                is_hostile = is_transaction_hostile(row, user_ids)
+                if processed <= 5:  # Log first 5 for debugging
+                    logger.info(f"TX {eid}: type={row.get('type')}, fp={row.get('first_party_id')}, sp={row.get('second_party_id')}, hostile={is_hostile}")
+
+                if is_hostile:  # Only push rows that meet hostility rules.
                     hostile_count += 1
 
                     # build the <tr> using same style logic as render_transactions()
