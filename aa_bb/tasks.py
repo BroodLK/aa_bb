@@ -57,43 +57,6 @@ VERBOSE_WEBHOOK_LOGGING = True
 
 
 
-def parse_hostile_summary(summary: str):
-    """
-    Parse the summary string from get_hostile_asset_locations /
-    get_hostile_clone_locations into (owner, region, ships, chars).
-
-    Expected format from helpers is:
-      "Owner Name | Region: Region Name | Ships: A, B | Chars: X, Y"
-    or
-      "Owner Name | Chars: X, Y"
-
-    Ships may be empty for clones.
-    """
-    owner = summary or "Unresolvable"
-    region = ""
-    ships = ""
-    chars: list[str] = []
-
-    if not summary:
-        return owner, region, ships, chars
-
-    parts = [p.strip() for p in summary.split("|") if p.strip()]
-    if parts:
-        owner = parts[0]
-
-    for seg in parts[1:]:
-        label, _, rest = seg.partition(":")
-        label = label.strip().lower()
-        value = rest.strip()
-        if label == "region":
-            region = value
-        elif label == "ships":
-            ships = value
-        elif label == "chars":
-            if value:
-                chars = [c.strip() for c in value.split(",") if c.strip()]
-
-    return owner, region, ships, chars
 
 
 @shared_task
@@ -639,29 +602,36 @@ def BB_update_single_user(user_id, char_name):
                 old_systems = set(status.hostile_assets or [])
                 new_systems = set(hostile_assets_result) - old_systems
 
-                # Build mapping: char -> list of (system, owner, region, ships)
-                assets_by_char: dict[str, list[tuple[str, str, str, str]]] = {}
+                # Build mapping: char -> list of (system, location, owner, region, ships)
+                assets_by_char: dict[str, list[tuple[str, str, str, str, str]]] = {}
 
                 for system in new_systems:
-                    summary = hostile_assets_result.get(system, "")
-                    owner, region, ships, chars = parse_hostile_summary(summary)
+                    data = hostile_assets_result.get(system)
+                    if not data or not isinstance(data, dict):
+                        continue
 
-                    # If helper didn't give chars for some reason, fall back
-                    if not chars:
-                        chars = ["Unknown Character"]
+                    owner = data.get("owner", "Unresolvable")
+                    region = data.get("region", "Unknown Region")
+                    records = data.get("records", [])
 
-                    for cname in chars:
+                    for rec in records:
+                        cname = rec.get("char_name", "Unknown Character")
+                        loc_name = rec.get("location_name", "Unknown Location")
+                        ships = ", ".join(rec.get("ships", []))
+
                         assets_by_char.setdefault(cname, []).append(
-                            (system, owner, region, ships)
+                            (system, loc_name, owner, region, ships)
                         )
 
                 lines: list[str] = []
                 for cname in sorted(assets_by_char.keys()):
                     lines.append(f"- {cname}")
-                    for system, owner, region, ships in assets_by_char[cname]:
-                        info = f"{system} ({owner})"
-                        if region:
-                            info = f"{system} ({owner} | {region})"
+                    for system, loc_name, owner, region, ships in assets_by_char[cname]:
+                        info = f"{loc_name} ({owner} | Region: {region})"
+                        # Use system name if loc_name is not available or too generic
+                        if not loc_name or loc_name == "Unknown Location":
+                             info = f"{system} ({owner} | Region: {region})"
+
                         lines.append(f"   - {info}")
                         if ships:
                             lines.append(f"    - {ships}")
@@ -692,28 +662,35 @@ def BB_update_single_user(user_id, char_name):
                 old_systems = set(status.hostile_clones or [])
                 new_systems = set(hostile_clones_result) - old_systems
 
-                # Build mapping: char -> list of (system, owner, region)
-                clones_by_char: dict[str, list[tuple[str, str, str]]] = {}
+                # Build mapping: char -> list of (system, location, owner, region)
+                clones_by_char: dict[str, list[tuple[str, str, str, str]]] = {}
 
                 for system in new_systems:
-                    summary = hostile_clones_result.get(system, "")
-                    owner, region, _ships, chars = parse_hostile_summary(summary)
+                    data = hostile_clones_result.get(system)
+                    if not data or not isinstance(data, dict):
+                        continue
 
-                    if not chars:
-                        chars = ["Unknown Character"]
+                    system_owner = data.get("owner", "Unresolvable")
+                    region = data.get("region", "Unknown Region")
+                    records = data.get("records", [])
 
-                    for cname in chars:
+                    for rec in records:
+                        cname = rec.get("char_name", "Unknown Character")
+                        loc_name = rec.get("location_name", "Unknown Location")
+                        loc_owner = rec.get("owner_name", system_owner)
+                        clone_name = rec.get("clone_name", "Jump Clone")
+
                         clones_by_char.setdefault(cname, []).append(
-                            (system, owner, region)
+                            (system, loc_name, loc_owner, region, clone_name)
                         )
 
                 lines: list[str] = []
                 for cname in sorted(clones_by_char.keys()):
-                    lines.append(f"- {cname}")
-                    for system, owner, region in clones_by_char[cname]:
-                        info = f"{system} ({owner})"
-                        if region:
-                            info = f"{system} ({owner} | {region})"
+                    for system, loc_name, loc_owner, region, clone_name in clones_by_char[cname]:
+                        lines.append(f"- {cname} [{clone_name}]")
+                        info = f"{loc_name} ({loc_owner} | Region: {region})"
+                        if not loc_name or loc_name == "Unknown Location":
+                            info = f"{system} ({loc_owner} | Region: {region})"
                         lines.append(f"   - {info}")
 
                 if lines:
@@ -804,13 +781,16 @@ def BB_update_single_user(user_id, char_name):
 
                 if new_links:  # write each new contract entry to the report
                     if instance.contract_notify:
-                        changes.append(f"## New Suspicious Contracts:")
-                        for issuer_id in new_links:
+                        contract_lines = []
+                        for issuer_id in sorted(new_links):
                             res = sus_contracts_result[issuer_id]
                             ping = get_pings('New Suspicious Contracts')
                             if res.startswith("- A -"):  # skip ping for alliance-level alerts
                                 ping = ""
-                            changes.append(f"{res} {ping}")
+                            contract_lines.append(f"{res} {ping}")
+
+                        if contract_lines:
+                            changes.append(f"## New Suspicious Contracts:\n" + "\n".join(contract_lines))
 
                 status.has_sus_contracts = has_sus_contracts
                 status.sus_contracts = sus_contracts_result
@@ -844,13 +824,16 @@ def BB_update_single_user(user_id, char_name):
 
                 if new_links:  # enumerate the new mail entries for the report
                     if instance.mail_notify:
-                        changes.append(f"### New Suspicious Mails:")
-                        for issuer_id in new_links:
+                        mail_lines = []
+                        for issuer_id in sorted(new_links):
                             res = sus_mails_result[issuer_id]
                             ping = get_pings('New Suspicious Mails')
                             if res.startswith("- A -"):  # skip ping for alliance-level alerts
                                 ping = ""
-                            changes.append(f"{res} {ping}")
+                            mail_lines.append(f"{res} {ping}")
+
+                        if mail_lines:
+                            changes.append(f"### New Suspicious Mails:\n" + "\n".join(mail_lines))
 
                 status.has_sus_mails = has_sus_mails
                 status.sus_mails = sus_mails_result

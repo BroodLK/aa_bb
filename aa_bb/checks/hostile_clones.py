@@ -160,9 +160,9 @@ def get_clones(user_id: int) -> Dict[int, dict]:
     return system_map
 
 
-def get_hostile_clone_locations(user_id: int) -> Dict[str, str]:
+def get_hostile_clone_locations(user_id: int) -> Dict[str, dict]:
     """
-    Returns a dict of system display name -> owner/clone summary string
+    Returns a dict of system display name -> structured hostile data
     for systems where this user has home or jump clones in space and the
     system is considered hostile under the unified processor logic.
     """
@@ -170,7 +170,7 @@ def get_hostile_clone_locations(user_id: int) -> Dict[str, str]:
     if not systems:
         return {}
 
-    hostile_map: Dict[str, str] = {}
+    hostile_map: Dict[str, dict] = {}
     from ..app_settings import get_safe_entities
     safe_entities = get_safe_entities()
     _hostile_memo = {}
@@ -179,17 +179,16 @@ def get_hostile_clone_locations(user_id: int) -> Dict[str, str]:
         system_name = data.get("name")
         display_name = system_name or f"ID {system_id}"
 
-        system_hostile = False
-        hostile_chars = set()
-
         # System owner info for summary
         owner_info = get_system_owner({"id": system_id, "name": display_name})
         system_owner_name = owner_info.get("owner_name", "Unresolvable") if owner_info else "Unresolvable"
+        region_name = owner_info.get("region_name", "Unknown Region") if owner_info else "Unknown Region"
 
-        # Track the owner to display (may be overridden by citadel owner)
-        display_owner = system_owner_name
+        system_has_hostile = False
+        records = []
 
         for loc_id, loc_data in data.get("locations", {}).items():
+            loc_name = loc_data["name"]
             # Check if this is a citadel and get its owner
             location_owner_info = get_location_owner(loc_id)
             loc_owner = location_owner_info.get("owner_name", system_owner_name) if location_owner_info else system_owner_name
@@ -211,25 +210,20 @@ def get_hostile_clone_locations(user_id: int) -> Dict[str, str]:
                     _hostile_memo[memo_key] = is_hostile
 
                 if is_hostile:
-                    system_hostile = True
-                    hostile_chars.add(f"{clone['char_name']} [{clone['jump_clone_name']}]")
-                    # Use the location owner (citadel owner if applicable)
-                    display_owner = loc_owner
+                    system_has_hostile = True
+                    records.append({
+                        "char_name": clone['char_name'],
+                        "location_name": loc_name,
+                        "owner_name": loc_owner,
+                        "clone_name": clone['jump_clone_name']
+                    })
 
-        if not system_hostile:
-            continue
-
-        # Build the detail string
-        parts = [display_owner]
-        rname = owner_info.get("region_name") if owner_info else None
-        if rname and rname != "Unknown Region":
-            parts.append(f"Region: {rname}")
-
-        if hostile_chars:
-            parts.append("Chars: " + ", ".join(sorted(hostile_chars)))
-
-        owner_summary = " | ".join(parts)
-        hostile_map[display_name] = owner_summary
+        if system_has_hostile:
+            hostile_map[display_name] = {
+                "owner": system_owner_name,
+                "region": region_name,
+                "records": records
+            }
 
     return hostile_map
 

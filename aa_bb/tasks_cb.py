@@ -156,18 +156,31 @@ def CB_update_single_corp(corp_id):
 
             # Hostile Assets
             if corpstatus.has_hostile_assets != has_hostile_assets or set(hostile_assets_result) != set(corpstatus.hostile_assets or []):
-                old_links = set(corpstatus.hostile_assets or [])
-                new_links = set(hostile_assets_result) - old_links
-                link_list = "\n".join(
-                    f"- {system} owned by {hostile_assets_result[system]}"
-                    for system in (set(hostile_assets_result) - set(corpstatus.hostile_assets or []))
-                )
+                old_systems = set(corpstatus.hostile_assets or [])
+                new_systems = set(hostile_assets_result) - old_systems
+
+                asset_lines = []
+                for system in sorted(new_systems):
+                    data = hostile_assets_result.get(system)
+                    if not data or not isinstance(data, dict):
+                        continue
+
+                    owner = data.get("owner", "Unresolvable")
+                    region = data.get("region", "Unknown Region")
+                    records = data.get("records", [])
+
+                    asset_lines.append(f"- {system} ({owner} | Region: {region})")
+                    for rec in records:
+                        loc_name = rec.get("location_name", "Unknown Location")
+                        asset_lines.append(f"   - {loc_name}")
+
+                link_list = "\n".join(asset_lines)
                 logger.info(f"✅  [AA-BB] - [CB_update_single_corp] - {corp_name} new assets {link_list}")
                 if corpstatus.has_hostile_assets != has_hostile_assets:
                     if not has_hostile_assets:
                         corp_changes.append(f"## Hostile Corp Assets: 🟢")
 
-                if new_links:
+                if asset_lines:
                     corp_changes.append(f"##{get_pings('New Hostile Assets')} New Hostile Assets:\n{link_list}")
 
                 corpstatus.has_hostile_assets = has_hostile_assets
@@ -185,13 +198,16 @@ def CB_update_single_corp(corp_id):
                         corp_changes.append(f"## Sus Corp Contracts: 🟢")
 
                 if new_links:
-                    corp_changes.append(f"## New Sus Contracts:")
-                    for issuer_id in new_links:
+                    contract_lines = []
+                    for issuer_id in sorted(new_links):
                         res = sus_contracts_result[issuer_id]
                         ping = get_pings('New Sus Contracts')
                         if res.startswith("- A -"):
                             ping = ""
-                        corp_changes.append(f"{res} {ping}")
+                        contract_lines.append(f"{res} {ping}")
+
+                    if contract_lines:
+                        corp_changes.append(f"## New Sus Contracts:\n" + "\n".join(contract_lines))
 
                 corpstatus.has_sus_contracts = has_sus_contracts
                 corpstatus.sus_contracts = sus_contracts_result
@@ -208,9 +224,8 @@ def CB_update_single_corp(corp_id):
                         corp_changes.append(f"## Sus Corp Transactions: 🟢")
 
                 if new_links:
-                    corp_changes.append(f"## New Sus Transactions{get_pings('New Sus Transactions')}:\n{link_list}")
-                    link_list_tx = "\n".join(f"{sus_trans_result[issuer_id]}" for issuer_id in new_links)
-                    corp_changes.append(f"## New Sus Transactions{get_pings('New Sus Transactions')}:\n{link_list_tx}")
+                    link_list_tx = "\n".join(f"{sus_trans_result[issuer_id]}" for issuer_id in sorted(new_links))
+                    corp_changes.append(f"### New Sus Transactions{get_pings('New Sus Transactions')}:\n{link_list_tx}")
 
                 corpstatus.has_sus_trans = has_sus_trans
                 corpstatus.sus_trans = sus_trans_result

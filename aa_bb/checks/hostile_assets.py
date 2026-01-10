@@ -165,9 +165,9 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
     return system_map
 
 
-def get_hostile_asset_locations(user_id: int) -> Dict[str, str]:
+def get_hostile_asset_locations(user_id: int) -> Dict[str, dict]:
     """
-    Returns a mapping of system display name -> owner/asset summary string
+    Returns a mapping of system display name -> structured hostile data
     for systems where the user's characters have assets in space and the
     system is considered hostile under the unified processor logic.
     """
@@ -175,7 +175,7 @@ def get_hostile_asset_locations(user_id: int) -> Dict[str, str]:
     if not systems:
         return {}
 
-    hostile_map: Dict[str, str] = {}
+    hostile_map: Dict[str, dict] = {}
     from ..app_settings import get_safe_entities
     safe_entities = get_safe_entities()
     _hostile_memo = {}
@@ -184,16 +184,23 @@ def get_hostile_asset_locations(user_id: int) -> Dict[str, str]:
         system_name = data.get("name")
         display_name = system_name or f"Unknown ({system_id})"
 
-        system_hostile = False
-        hostile_ships = set()
-        hostile_chars = set()
-
-        # We need the system owner info for the summary string
+        # We need the system owner info for the summary
         owner_info = get_system_owner({"id": system_id, "name": display_name})
         oname = owner_info.get("owner_name", "Unresolvable") if owner_info else "Unresolvable"
+        rname = owner_info.get("region_name", "Unknown Region") if owner_info else "Unknown Region"
+
+        system_has_hostile = False
+        # structured data: list of records
+        records = []
 
         # Check each location in this system
         for loc_id, loc_data in data.get("locations", {}).items():
+            loc_name = loc_data["name"]
+
+            # Map of char_name -> set of ships for this specific location
+            char_ships_at_loc = {}
+            location_has_hostile = False
+
             for asset in loc_data.get("assets", []):
                 # Memoize check results for character+location+type
                 memo_key = (asset["char_id"], loc_id, system_id, asset["type_id"])
@@ -213,29 +220,30 @@ def get_hostile_asset_locations(user_id: int) -> Dict[str, str]:
                     _hostile_memo[memo_key] = is_hostile
 
                 if is_hostile:
-                    system_hostile = True
-                    hostile_chars.add(asset["char_name"])
+                    system_has_hostile = True
+                    location_has_hostile = True
+                    cname = asset["char_name"]
                     if is_ship(asset["type_id"]):
-                        hostile_ships.add(asset["type_name"])
+                        char_ships_at_loc.setdefault(cname, set()).add(asset["type_name"])
+                    else:
+                        # Ensure character is recorded even if no ships (e.g. just modules/items)
+                        char_ships_at_loc.setdefault(cname, set())
 
-        if not system_hostile:
-            continue
+            if location_has_hostile:
+                for cname, ships in char_ships_at_loc.items():
+                    records.append({
+                        "char_name": cname,
+                        "location_name": loc_name,
+                        "ships": sorted(list(ships))
+                    })
 
-        # Build the owner/detail string
-        parts = [oname]
-        rname = owner_info.get("region_name") if owner_info else None
-        if rname and rname != "Unknown Region":
-            parts.append(f"Region: {rname}")
-
-        if hostile_ships:
-            parts.append("Ships: " + ", ".join(sorted(hostile_ships)))
-
-        if hostile_chars:
-            parts.append("Chars: " + ", ".join(sorted(hostile_chars)))
-
-        owner_summary = " | ".join(parts)
-        hostile_map[display_name] = owner_summary
-        logger.info(f"Hostile asset system: {display_name} owned by {oname}")
+        if system_has_hostile:
+            hostile_map[display_name] = {
+                "owner": oname,
+                "region": rname,
+                "records": records
+            }
+            logger.info(f"Hostile asset system: {display_name} owned by {oname}")
 
     return hostile_map
 
