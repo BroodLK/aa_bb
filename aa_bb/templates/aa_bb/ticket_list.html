@@ -20,6 +20,11 @@
                 </a>
             </li>
             <li class="nav-item">
+                <a class="nav-link {% if current_tab == 'resolved' %}active{% endif %}" href="{% url 'aa_bb:ticket_list' %}?tab=resolved">
+                    {% translate "Resolved" %}
+                </a>
+            </li>
+            <li class="nav-item">
                 <a class="nav-link {% if current_tab == 'all' %}active{% endif %}" href="{% url 'aa_bb:ticket_list' %}?tab=all">
                     {% translate "All" %}
                 </a>

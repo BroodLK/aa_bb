@@ -527,8 +527,23 @@ def ensure_ticket(user, reason, details=None):
 
     # prevent duplicates and check for exceptions
     existing = ComplianceTicket.objects.filter(
-        user=user, reason=reason, is_resolved=False
+        user=user, reason=reason
     ).first()
+
+    if existing:
+        if not existing.is_resolved:
+            return  # Already has an open ticket
+
+        # Reopen existing resolved ticket instead of creating a new one
+        reopen_ticket(existing, message=f"⚠️ Issue re-detected:\n{ticket_message}")
+
+        send_status_embed(
+            subject="Ticket Reopened",
+            lines=[f"Ticket for **{user.username}** reopened, reason - **{reason}**"],
+            color=0xf1c40f,  # Yellow
+            hook=get_webhook_for_reason(reason)
+        )
+        return
 
     # If an exception exists for this user/reason, don't create a new ticket
     exception_exists = ComplianceTicket.objects.filter(
@@ -674,3 +689,27 @@ def close_char_removed_ticket(ticket):
     """Mark a char_removed ticket resolved without deleting it (legacy behavior)."""
     ticket.is_resolved = True
     ticket.save()
+
+
+def reopen_ticket(ticket, message=None):
+    """Reopen a resolved ticket and unarchive its Discord channel/thread."""
+    ticket.is_resolved = False
+    ticket.save(update_fields=["is_resolved"])
+    if run_task_function and ticket.discord_channel_id:
+        run_task_function.apply_async(
+            args=["aa_bb.tasks_bot.unarchive_thread"],
+            kwargs={
+                "task_args": [ticket.discord_channel_id],
+                "task_kwargs": {}
+            },
+            queue='aadiscordbot'
+        )
+        if message:
+            run_task_function.apply_async(
+                args=["aa_bb.tasks_bot.send_ticket_reminder"],
+                kwargs={
+                    "task_args": [ticket.discord_channel_id, 0, message],
+                    "task_kwargs": {}
+                },
+                queue='aadiscordbot'
+            )

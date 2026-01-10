@@ -1283,6 +1283,8 @@ def ticket_list(request):
         tickets = ComplianceTicket.objects.all()
     elif tab == 'exceptions':
         tickets = ComplianceTicket.objects.filter(is_exception=True)
+    elif tab == 'resolved':
+        tickets = ComplianceTicket.objects.filter(is_resolved=True)
     else:  # 'open' is default
         tickets = ComplianceTicket.objects.filter(is_resolved=False, is_exception=False)
 
@@ -1332,21 +1334,8 @@ def ticket_resolve(request, pk):
 def ticket_reopen(request, pk):
     """Reopen a resolved ticket."""
     ticket = get_object_or_404(ComplianceTicket, pk=pk)
-    ticket.is_resolved = False
-    ticket.save(update_fields=["is_resolved"])
-
-    # Unarchive Discord thread if bot is available and channel_id exists
-    if ticket.discord_channel_id:
-        from aa_bb.tasks_tickets import run_task_function
-        if run_task_function:
-            run_task_function.apply_async(
-                args=["aa_bb.tasks_bot.unarchive_thread"],
-                kwargs={
-                    "task_args": [ticket.discord_channel_id],
-                    "task_kwargs": {}
-                },
-                queue='aadiscordbot'
-            )
+    from .tasks_tickets import reopen_ticket
+    reopen_ticket(ticket)
 
     return redirect('aa_bb:ticket_view', pk=pk)
 

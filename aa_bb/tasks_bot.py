@@ -559,7 +559,7 @@ class TicketCommands(commands.Cog):
                 logger.exception("Failed to track Discord activity for UID %s", uid)
 
     @slash_command(
-        name="resolve-ticket",
+        name="resolve-compliance-ticket",
         description="Mark this ticket as resolved and close/lock the channel."
     )
     @sender_is_admin()
@@ -608,11 +608,8 @@ class TicketCommands(commands.Cog):
 
         # Resolve all tickets in this channel
         for ticket in tickets:
-            if ticket.reason in ["char_removed", "awox_kill"]:
-                ticket.is_resolved = True
-                await sync_to_async(ticket.save)(update_fields=["is_resolved"])
-            else:
-                await sync_to_async(ticket.delete)()
+            ticket.is_resolved = True
+            await sync_to_async(ticket.save)(update_fields=["is_resolved"])
 
         # If no more active tickets in this channel, close it
         remaining_qs = ComplianceTicket.objects.filter(discord_channel_id=channel.id, is_resolved=False)
@@ -633,14 +630,6 @@ class TicketCommands(commands.Cog):
                 await ctx_or_msg.respond(msg)
             else:
                 await channel.send(msg)
-
-    @slash_command(
-        name="resolve-char-removed",
-        description="Mark this channel's 'char_removed' ticket as resolved (no channel/DB deletion)."
-    )
-    @sender_is_admin()
-    async def resolve_char_removed(self, ctx: discord.ApplicationContext):
-        await self.resolve_ticket_slash(ctx)
 
     @slash_command(
         name="mark-ticket-as-exception",
@@ -714,11 +703,8 @@ class TicketCommands(commands.Cog):
         tickets = await sync_to_async(list)(tickets_qs)
 
         for ticket in tickets:
-            if ticket.reason in ["char_removed", "awox_kill"]:
-                ticket.is_resolved = True
-                await sync_to_async(ticket.save)(update_fields=["is_resolved"])
-            else:
-                await sync_to_async(ticket.delete)()
+            ticket.is_resolved = True
+            await sync_to_async(ticket.save)(update_fields=["is_resolved"])
 
         if tickets:
             logger.info(f"Marked {len(tickets)} ticket(s) as resolved due to channel deletion: {channel.id}")
@@ -734,11 +720,8 @@ class TicketCommands(commands.Cog):
         tickets = await sync_to_async(list)(tickets_qs)
 
         for ticket in tickets:
-            if ticket.reason in ["char_removed", "awox_kill"]:
-                ticket.is_resolved = True
-                await sync_to_async(ticket.save)(update_fields=["is_resolved"])
-            else:
-                await sync_to_async(ticket.delete)()
+            ticket.is_resolved = True
+            await sync_to_async(ticket.save)(update_fields=["is_resolved"])
 
         if tickets:
             logger.info(f"Marked {len(tickets)} ticket(s) as resolved due to thread deletion: {thread.id}")
