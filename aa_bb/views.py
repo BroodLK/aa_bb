@@ -1300,7 +1300,10 @@ def ticket_list(request):
 @permission_required("aa_bb.ticket_manager")
 def ticket_view(request, pk):
     """View details and comments for a specific ticket."""
-    ticket = get_object_or_404(ComplianceTicket, pk=pk)
+    ticket = get_object_or_404(
+        ComplianceTicket.objects.select_related('user__profile__main_character'),
+        pk=pk
+    )
     if ticket.reason == "paps_check" and not afat_active():
         return HttpResponseForbidden("PAP compliance tickets are hidden as afat is not active.")
     comments = ticket.comments.all().select_related('user__profile__main_character')

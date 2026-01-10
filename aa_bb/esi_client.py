@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from django.conf import settings
 from django.utils import timezone
 from email.utils import parsedate_to_datetime
 from esi.openapi_clients import ESIClientProvider
 
-from . import __title__, __version__
+from . import __title__, __version__, __github_url__, __esi_compatibility_date__
 
-DEFAULT_COMPATIBILITY_DATE = "2025-07-23"
 DEFAULT_OPERATIONS = [
     "PostUniverseNames",
     "PostUniverseIds",
@@ -22,17 +20,12 @@ DEFAULT_OPERATIONS = [
 ]
 
 
-def _setting(name: str, default):
-    """Convenience helper to read optional Django settings with fallbacks."""
-    return getattr(settings, name, default)
-
-
 esi = ESIClientProvider(
-    compatibility_date=_setting("BB_ESI_COMPATIBILITY_DATE", DEFAULT_COMPATIBILITY_DATE),
-    ua_appname=_setting("BB_ESI_UA_APPNAME", __title__),
-    ua_version=_setting("BB_ESI_UA_VERSION", __version__),
-    ua_url=_setting("BB_ESI_UA_URL", None),
-    operations=_setting("BB_ESI_OPERATIONS", DEFAULT_OPERATIONS),
+    compatibility_date=__esi_compatibility_date__,
+    ua_appname=__title__,
+    ua_version=__version__,
+    ua_url=__github_url__,
+    operations=DEFAULT_OPERATIONS,
 )
 
 

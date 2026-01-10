@@ -27,7 +27,13 @@
                             <dd>{{ ticket.exception_reason }}</dd>
                             {% endif %}
                             <dt>{% translate "User" %}</dt>
-                            <dd>{{ ticket.user.profile.main_character.character_name|default:ticket.user.username }}</dd>
+                            <dd>
+                                {% if ticket.user %}
+                                    {{ ticket.user.profile.main_character.character_name|default:ticket.user.username }}
+                                {% else %}
+                                    {% translate "Unknown User" %}
+                                {% endif %}
+                            </dd>
                             <dt>{% translate "Reason" %}</dt>
                             <dd>{{ ticket.get_reason_display }}</dd>
                             <dt>{% translate "Created At" %}</dt>
@@ -79,7 +85,13 @@
                     {% for comment in comments %}
                     <div class="list-group-item">
                         <div class="d-flex w-100 justify-content-between">
-                            <h5 class="mb-1">{{ comment.user.profile.main_character.character_name|default:comment.user.username }}</h5>
+                            <h5 class="mb-1">
+                                {% if comment.user %}
+                                    {{ comment.user.profile.main_character.character_name|default:comment.user.username }}
+                                {% else %}
+                                    {% translate "Unknown User" %}
+                                {% endif %}
+                            </h5>
                             <small>{{ comment.created_at|date:"Y-m-d H:i" }}</small>
                         </div>
                         <p class="mb-1 text-break">{{ comment.comment|linebreaksbr }}</p>

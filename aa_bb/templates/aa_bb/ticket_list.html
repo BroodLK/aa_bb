@@ -41,7 +41,13 @@
                     {% for ticket in tickets %}
                     <tr>
                         <td>{{ ticket.ticket_id }}</td>
-                        <td>{{ ticket.user.profile.main_character.character_name|default:ticket.user.username }}</td>
+                        <td>
+                            {% if ticket.user %}
+                                {{ ticket.user.profile.main_character.character_name|default:ticket.user.username }}
+                            {% else %}
+                                {% translate "Unknown User" %}
+                            {% endif %}
+                        </td>
                         <td>{{ ticket.get_reason_display }}</td>
                         <td>
                             {% if ticket.is_exception %}
