@@ -688,7 +688,12 @@ def add_ticket_comment(ticket, user, comment_text, post_to_discord=True):
 
         if tcfg.ticket_type == TicketToolConfig.TICKET_TYPE_FORUM_THREAD and tcfg.hr_forum_webhook:
             webhook_url = f"{tcfg.hr_forum_webhook}?thread_id={ticket.discord_channel_id}"
-            send_message({"content": full_content}, hook=webhook_url)
+            embed = {
+                "title": "Ticket Comment",
+                "description": full_content,
+                "color": 0xFFA500  # Orange
+            }
+            send_message({"embeds": [embed]}, hook=webhook_url)
         elif run_task_function:
             run_task_function.apply_async(
                 args=["aa_bb.tasks_bot.send_ticket_reminder"],
@@ -728,7 +733,12 @@ def close_ticket(ticket, user=None):
         tcfg = TicketToolConfig.get_solo()
         if tcfg.ticket_type == TicketToolConfig.TICKET_TYPE_FORUM_THREAD and tcfg.hr_forum_webhook:
             webhook_url = f"{tcfg.hr_forum_webhook}?thread_id={ticket.discord_channel_id}"
-            send_message({"content": message}, hook=webhook_url)
+            embed = {
+                "title": "Ticket Comment",
+                "description": message,
+                "color": 0xFFA500  # Orange
+            }
+            send_message({"embeds": [embed]}, hook=webhook_url)
 
     ticket.is_resolved = True
     ticket.save(update_fields=["is_resolved"])

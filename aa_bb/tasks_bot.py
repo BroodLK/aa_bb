@@ -45,7 +45,10 @@ try:
 except ImportError:
     class discord:
         class Message: pass
-        class Embed: pass
+        class Embed:
+            def __init__(self, *args, **kwargs):
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
         class Color:
             @classmethod
             def from_rgb(cls, *args): pass
@@ -435,7 +438,12 @@ async def close_ticket_channel(bot, channel_id: int, message: str = None, **kwar
 
     if channel:
         if message:
-            await channel.send(message)
+            embed = discord.Embed(
+                title="Ticket Comment",
+                description=message,
+                color=discord.Color.orange()
+            )
+            await channel.send(embed=embed)
             import asyncio
             await asyncio.sleep(1)
 
@@ -629,10 +637,15 @@ class TicketCommands(commands.Cog):
         remaining_qs = ComplianceTicket.objects.filter(discord_channel_id=channel.id, is_resolved=False)
         if not await sync_to_async(remaining_qs.exists)():
             msg = f"✅ All issues resolved by <@{author.id}>. Closing channel..."
+            embed = discord.Embed(
+                title="Ticket Comment",
+                description=msg,
+                color=discord.Color.orange()
+            )
             if hasattr(ctx_or_msg, "respond"):
-                await ctx_or_msg.respond(msg)
+                await ctx_or_msg.respond(embed=embed)
             else:
-                await channel.send(msg)
+                await channel.send(embed=embed)
 
             if isinstance(channel, discord.Thread):
                 await channel.edit(archived=True, locked=True)
@@ -640,10 +653,15 @@ class TicketCommands(commands.Cog):
                 await channel.delete(reason=f"Resolved by {author}")
         else:
             msg = f"✅ Ticket(s) resolved by <@{author.id}>. (Remaining active tickets exist in this channel)"
+            embed = discord.Embed(
+                title="Ticket Comment",
+                description=msg,
+                color=discord.Color.orange()
+            )
             if hasattr(ctx_or_msg, "respond"):
-                await ctx_or_msg.respond(msg)
+                await ctx_or_msg.respond(embed=embed)
             else:
-                await channel.send(msg)
+                await channel.send(embed=embed)
 
     @slash_command(
         name="mark-ticket-as-exception",
@@ -714,8 +732,19 @@ class TicketCommands(commands.Cog):
         if reason:
             exception_msg += f"\nReason: {reason}"
 
-        await ctx.respond(exception_msg)
-        await channel.send(f"ℹ️ This ticket has been marked as an exception and will not receive reminders or be recreated.")
+        embed1 = discord.Embed(
+            title="Ticket Comment",
+            description=exception_msg,
+            color=discord.Color.orange()
+        )
+        await ctx.respond(embed=embed1)
+
+        embed2 = discord.Embed(
+            title="Ticket Comment",
+            description=f"ℹ️ This ticket has been marked as an exception and will not receive reminders or be recreated.",
+            color=discord.Color.orange()
+        )
+        await channel.send(embed=embed2)
 
     @commands.Cog.listener("on_guild_channel_delete")
     async def on_channel_delete(self, channel: discord.abc.GuildChannel):
