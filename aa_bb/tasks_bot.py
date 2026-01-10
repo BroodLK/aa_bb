@@ -107,8 +107,8 @@ except ImportError:
 
     logger.info("discord service not installed; Discord commands will not work.")
 
-def get_staff_roles():
-    """Parse the comma-separated list of Discord role IDs to add to ticket channels/threads."""
+def get_ticket_roles():
+    """Parse the comma-separated list of Discord role IDs from TicketToolConfig."""
     cfg = TicketToolConfig.get_solo()
     roles = []
     if cfg.role_id:
@@ -152,7 +152,7 @@ async def create_compliance_ticket(bot, user_id, discord_user_id: int, reason: s
     user = await sync_to_async(User.objects.get)(id=user_id)
     profile = await sync_to_async(UserProfile.objects.get)(user=user)
 
-    staff_roles = await sync_to_async(get_staff_roles)()
+    staff_roles = await sync_to_async(get_ticket_roles)()
 
     overwrites = {
         guild.default_role: discord.PermissionOverwrite(view_channel=False),
@@ -195,6 +195,12 @@ async def create_compliance_ticket(bot, user_id, discord_user_id: int, reason: s
     pings = []
     if include_user and discord_user_id:
         pings.append(f"<@{discord_user_id}>")
+
+    ticket_roles = await sync_to_async(get_ticket_roles)()
+    for r_val in ticket_roles:
+        if isinstance(r_val, int):
+            pings.append(f"<@&{r_val}>")
+
     content = " ".join(pings) if pings else None
 
     for i, chunk in enumerate(chunks):
@@ -261,8 +267,12 @@ async def create_compliance_thread(bot, user_id, discord_user_id: int, reason: s
         pings = []
         if include_user and discord_user_id:
             pings.append(f"<@{discord_user_id}>")
-        if tcfg.Role_ID:
-            pings.append(f"<@&{tcfg.Role_ID}>")
+
+        ticket_roles = await sync_to_async(get_ticket_roles)()
+        for r_val in ticket_roles:
+            if isinstance(r_val, int):
+                pings.append(f"<@&{r_val}>")
+
         content = " ".join(pings) if pings else None
 
         if isinstance(parent_channel, discord.ForumChannel):
@@ -338,7 +348,7 @@ async def create_compliance_thread(bot, user_id, discord_user_id: int, reason: s
             logger.warning(f"Failed to add user {discord_user_id} to thread {thread.id}")
 
     # Staff
-    staff_roles = await sync_to_async(get_staff_roles)()
+    staff_roles = await sync_to_async(get_ticket_roles)()
     if staff_roles:
         # Try to ensure members are cached for staff roles
         try:
@@ -366,7 +376,13 @@ async def create_compliance_thread(bot, user_id, discord_user_id: int, reason: s
                 role = discord.utils.get(guild.roles, name=r_val)
 
             if role:
-                for m in role.members:
+                # Limit thread additions to avoid hitting rate limits or Discord thread member limits
+                members_to_add = list(role.members)
+                if len(members_to_add) > 50:
+                    logger.warning(f"Role {role.name} has too many members ({len(members_to_add)}), only adding first 50 to thread {thread.id}")
+                    members_to_add = members_to_add[:50]
+
+                for m in members_to_add:
                     try:
                         await thread.add_user(m)
                     except Exception:
@@ -556,7 +572,7 @@ class TicketCommands(commands.Cog):
         author = ctx_or_msg.author if isinstance(ctx_or_msg, discord.Message) else ctx_or_msg.user
 
         # Permission check: must be admin or have staff role
-        staff_roles = await sync_to_async(get_staff_roles)()
+        staff_roles = await sync_to_async(get_ticket_roles)()
         is_staff = author.guild_permissions.administrator or any(role.id in staff_roles for role in author.roles)
 
         # Check AA permissions if DiscordUser is linked
@@ -642,7 +658,7 @@ class TicketCommands(commands.Cog):
         author = ctx.user
 
         # Permission check: must be admin or have staff role
-        staff_roles = await sync_to_async(get_staff_roles)()
+        staff_roles = await sync_to_async(get_ticket_roles)()
         is_staff = author.guild_permissions.administrator or any(role.id in staff_roles for role in author.roles)
 
         # Check AA permissions if DiscordUser is linked

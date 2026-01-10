@@ -328,7 +328,7 @@ class TicketToolConfigAdmin(SingletonModelAdmin):
 
         if discordbot_active():
             fieldsets.insert(1, ('Private Channel Settings (Bot)', {
-                'fields': ('Category_ID', 'role_id')
+                'fields': ('Category_ID',)
             }))
 
             # Find the index of Inactivity Check to insert Discord Link Check after it

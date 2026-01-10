@@ -63,7 +63,7 @@ class BigBrotherMenuItem(MenuItemHook):
             _("Big Brother"),
             "fas fa-eye fa-fw",
             "aa_bb:index",
-            navactive=["aa_bb:"],
+            navactive=["aa_bb:index"],
         )
 
     def render(self, request):

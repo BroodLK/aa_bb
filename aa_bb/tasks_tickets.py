@@ -344,7 +344,13 @@ def hourly_compliance_check():
         if reason == "paps_check":  # PAP reminder template only uses {days}.
             msg = template.format(days=days_left)
         else:
-            msg = template.format(namee=mention, role=t_cfg.Role_ID, days=days_left)
+            role_ping = ""
+            if t_cfg.role_id:
+                ids = [i.strip() for i in str(t_cfg.role_id).split(",") if i.strip()]
+                role_ping = "><@&".join(ids)
+            msg = template.format(namee=mention, role=role_ping, days=days_left)
+            if not role_ping:
+                msg = msg.replace("<@&>,", "").replace("<@&>", "")
 
         # Queue the bot-side reminder (ensure task_kwargs is present)
         if run_task_function:
@@ -395,6 +401,7 @@ def ensure_ticket(user, reason, details=None):
     the actual ticket creation to the bot worker.
     """
     tcfg = TicketToolConfig.get_solo()
+    role_ping = "><@&".join([i.strip() for i in str(tcfg.role_id).split(",") if i.strip()]) if tcfg.role_id else ""
     max_afk_days = tcfg.Max_Afk_Days
     reason_checkers = {
         "corp_check": (corp_check, tcfg.corp_check_reason),
@@ -436,16 +443,19 @@ def ensure_ticket(user, reason, details=None):
         namee_val = discord_id if include_user else user.username
 
         if reason == "afk_check":  # AFK templates expect {days}.
-            ticket_message = msg_template.format(namee=namee_val, role=tcfg.Role_ID, days=max_afk_days)
+            ticket_message = msg_template.format(namee=namee_val, role=role_ping, days=max_afk_days)
         elif reason == "discord_inactivity":
-            ticket_message = msg_template.format(namee=namee_val, role=tcfg.Role_ID, days=tcfg.discord_inactivity_days)
+            ticket_message = msg_template.format(namee=namee_val, role=role_ping, days=tcfg.discord_inactivity_days)
         elif reason == "discord_check":  # Discord-specific template uses username, not Discord mention.
             username = user.username
-            ticket_message = msg_template.format(namee=username, role=tcfg.Role_ID, days=max_afk_days)
+            ticket_message = msg_template.format(namee=username, role=role_ping, days=max_afk_days)
         elif reason in ["char_removed", "awox_kill"]:
-            ticket_message = msg_template.format(namee=namee_val, role=tcfg.Role_ID, details=details)
+            ticket_message = msg_template.format(namee=namee_val, role=role_ping, details=details)
         else:
-            ticket_message = msg_template.format(namee=namee_val, role=tcfg.Role_ID)
+            ticket_message = msg_template.format(namee=namee_val, role=role_ping)
+
+        if not role_ping:
+            ticket_message = ticket_message.replace("<@&>,", "").replace("<@&>", "")
     except NotAuthenticated:
         # User has no Discord → fall back to first superuser with Discord linked
         superusers = User.objects.filter(is_superuser=True)
@@ -485,32 +495,35 @@ def ensure_ticket(user, reason, details=None):
             ticket_message = (
                 f"⚠️ Compliance issue for **{user.username}** "
                 f"(no Discord linked!)\n\n"
-                f"{msg_template.format(namee=user.username, role=tcfg.Role_ID, days=max_afk_days)}"
+                f"{msg_template.format(namee=user.username, role=role_ping, days=max_afk_days)}"
             )
         elif reason == "discord_inactivity":
             ticket_message = (
                 f"⚠️ Compliance issue for **{user.username}** "
                 f"(no Discord activity!)\n\n"
-                f"{msg_template.format(namee=user.username, role=tcfg.Role_ID, days=tcfg.discord_inactivity_days)}"
+                f"{msg_template.format(namee=user.username, role=role_ping, days=tcfg.discord_inactivity_days)}"
             )
         elif reason == "discord_check":  # Discord issues share the same format as AFK fallback.
             ticket_message = (
                 f"⚠️ Compliance issue for **{user.username}** "
                 f"(no Discord linked!)\n\n"
-                f"{msg_template.format(namee=user.username, role=tcfg.Role_ID, days=max_afk_days)}"
+                f"{msg_template.format(namee=user.username, role=role_ping, days=max_afk_days)}"
             )
         elif reason in ["char_removed", "awox_kill"]:
             ticket_message = (
                 f"⚠️ Compliance issue for **{user.username}** "
                 f"(no Discord linked!)\n\n"
-                f"{msg_template.format(namee=user.username, role=tcfg.Role_ID, details=details)}"
+                f"{msg_template.format(namee=user.username, role=role_ping, details=details)}"
             )
         else:
             ticket_message = (
                 f"⚠️ Compliance issue for **{user.username}** "
                 f"(no Discord linked!)\n\n"
-                f"{msg_template.format(namee=user.username, role=tcfg.Role_ID)}"
+                f"{msg_template.format(namee=user.username, role=role_ping)}"
             )
+
+        if not role_ping:
+            ticket_message = ticket_message.replace("<@&>,", "").replace("<@&>", "")
 
     # prevent duplicates and check for exceptions
     existing = ComplianceTicket.objects.filter(

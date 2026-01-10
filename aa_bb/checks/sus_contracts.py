@@ -122,9 +122,9 @@ def get_user_contracts(qs) -> Dict[int, Dict]:
             "assignee_alliance_id": ainfo["alli_id"],
             "status": c.status,
             "start_location_id": getattr(c, "start_location_id", None),
-            "start_location": resolve_location_name(getattr(c, "start_location_id", None)),
+            "start_location": resolve_location_name(getattr(c, "start_location_id", None)) or "Unknown Location",
             "end_location_id": getattr(c, "end_location_id", None),
-            "end_location": resolve_location_name(getattr(c, "end_location_id", None)),
+            "end_location": resolve_location_name(getattr(c, "end_location_id", None)) or "Unknown Location",
         }
 
     logger.debug("Hydrated %d contract rows", len(result))
@@ -269,11 +269,16 @@ def get_user_hostile_contracts(user_id: int) -> Dict[int, str]:
 
                 flags_text = "\n    - ".join(flags) if flags else "(no flags)"
 
+                if c['contract_type'] == "item_exchange" or c['start_location'] == c['end_location']:
+                    loc_text = c['start_location']
+                else:
+                    loc_text = f"{c['start_location']} → {c['end_location']}"
+
                 note_text = (
                     f"- **{c['contract_type']}** ({c['issued_date']} → {c['end_date']})"
                     f"\n  - **From:** {c['issuer_name']} ({c['issuer_corporation']} | {c['issuer_alliance']})"
                     f"\n  - **To:** {c['assignee_name']} ({c['assignee_corporation']} | {c['assignee_alliance']})"
-                    f"\n  - **Location:** {c['start_location']} → {c['end_location']}"
+                    f"\n  - **Location:** {loc_text}"
                     f"\n  - **Flags:**"
                     f"\n    - {flags_text}"
                 )

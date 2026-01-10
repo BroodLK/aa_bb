@@ -1610,7 +1610,7 @@ class TicketToolConfig(SingletonModel):
       AFK monitoring, and Discord link checks.
     - Max_Afk_Days / afk_check: trailing max and post-ticket grace period.
     - discord_check fields: mirror the AFK logic but for Discord link status.
-    - Category_ID / staff_roles / Role_ID: Discord metadata controlling which
+    - Category_ID / role_id: Discord metadata controlling which
       category hosts the ticket, which roles gain access, and which role is pinged.
     - excluded_users: AllianceAuth users that should never receive automated tickets.
     """

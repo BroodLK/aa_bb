@@ -1327,29 +1327,10 @@ def is_hostile_unified(
     if safe_entities is None:
         safe_entities = get_safe_entities()
 
-    # 1. Is it taking place between (everyone involved) entities on the members, ignored, or whitelists?
-    if involved_ids:
-        all_safe = True
-        now_ts = when or timezone.now()
-        for eid in involved_ids:
-            if not eid:
-                continue
-            eid = int(eid)
-            if eid in safe_entities:
-                continue
-            # Check context (corp/alliance membership)
-            info = get_entity_info(eid, now_ts)
-            if info and (info.get('corp_id') in safe_entities or info.get('alli_id') in safe_entities):
-                continue
-            all_safe = False
-            break
-        if all_safe:
-            return False
-
-    # Location resolution for Rules 2-8, 10-12, 15-18
+    # Location resolution for Rules 1-8, 10-12, 15-18
     actual_system_id = system_id or (resolve_location_system_id(location_id) if location_id else None)
 
-    # Resolve location owner for Rules 2-4
+    # Resolve location owner for Rules 1-4
     l_oid = 0
     l_otype = None
     l_oname = ""
@@ -1376,6 +1357,36 @@ def is_hostile_unified(
     # Determine if this is a player-controlled structure (Upwell, POS, or POCO)
     # If we found a corporation owner and it's not a known NPC station, treat it as a player structure.
     is_player_struct = is_player_structure(location_id) or (l_otype == "corporation" and not is_station)
+
+    # 1. Is it taking place between (everyone involved) entities on the members, ignored, or whitelists?
+    # For assets/clones, we also consider the location/system owners in the safety check.
+    check_safe_ids = set(involved_ids or [])
+    if location_id:
+        if l_oid:
+            check_safe_ids.add(l_oid)
+        else:
+            # Unresolvable location. We can't say it's all safe yet, as Rules 15-16 handle system hostility.
+            # We add a dummy ID to prevent early 'False' return if Rule 1 would have otherwise triggered.
+            check_safe_ids.add(-1)
+
+    if check_safe_ids:
+        all_safe = True
+        now_ts = when or timezone.now()
+        for eid in check_safe_ids:
+            if not eid or eid == -1:
+                all_safe = False
+                break
+            eid = int(eid)
+            if eid in safe_entities:
+                continue
+            # Check context (corp/alliance membership)
+            info = get_entity_info(eid, now_ts)
+            if info and (info.get('corp_id') in safe_entities or info.get('alli_id') in safe_entities):
+                continue
+            all_safe = False
+            break
+        if all_safe:
+            return False
 
     # 2. Citadel / Player Structure owned by safe entity
     if location_id and is_player_struct:
@@ -1462,11 +1473,11 @@ def is_hostile_unified(
         return True
 
     # 17. Consider citadels/structures hostile
-    if location_id and is_player_struct and cfg.consider_all_structures_hostile:
+    if location_id and is_player_struct and cfg.consider_all_structures_hostile and l_oname != "Unresolvable":
         return True
 
     # 18. Consider NPC stations hostile
-    if location_id and 60000000 <= int(location_id) < 64000000 and cfg.consider_npc_stations_hostile:
+    if location_id and 60000000 <= int(location_id) < 64000000 and cfg.consider_npc_stations_hostile and l_oname != "Unresolvable":
         return True
 
     # 19-20. Blacklist and Explicit Hostile
@@ -1512,6 +1523,25 @@ def is_hostile_unified(
 
     # 22. Unknown Hostile
     if cfg.hostile_everyone_else:
+        # If the only reason for check is an unresolvable location,
+        # and all involved parties are safe (or there are none), treat as safe.
+        if location_id and l_oname == "Unresolvable":
+            all_involved_safe = True
+            if involved_ids:
+                now_ts = when or timezone.now()
+                for eid in involved_ids:
+                    if not eid:
+                        continue
+                    eid = int(eid)
+                    if eid in safe_entities:
+                        continue
+                    # Check context (corp/alliance membership)
+                    info = get_entity_info(eid, now_ts)
+                    if not (info and (info.get('corp_id') in safe_entities or info.get('alli_id') in safe_entities)):
+                        all_involved_safe = False
+                        break
+            if all_involved_safe:
+                return False
         return True
 
     # 23. Safe

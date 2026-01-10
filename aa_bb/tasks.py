@@ -369,9 +369,7 @@ def BB_update_single_user(user_id, char_name):
 
                 # 1) Flag change for top-level boolean
                 if status.has_cyno != has_cyno:  # flip the top-level boolean when overall readiness changes
-                    if not has_cyno:
-                        if instance.cyno_notify:
-                            changes.append(f"### Cyno Status: 🟢")
+                    # User: Only trigger if "Can Light" = True (has_cyno is based on can_light)
                     status.has_cyno = has_cyno
 
                 # 2) Grab the old vs. new JSON blobs
@@ -438,25 +436,36 @@ def BB_update_single_user(user_id, char_name):
                         "i_carrier", "i_dread", "i_fax", "i_super", "i_titan", "i_jf", "i_rorq",
                     ]
 
-                    if changed_chars:  # only build table output when specific characters changed
-                        if instance.cyno_notify:
-                            changes.append(f"###{get_pings('All Cyno Changes')} Changes in cyno capabilities detected:")
+                    cyno_updates = []
 
                     for charname in changed_chars:
                         old_entry = old_cyno.get(charname, {})
                         new_entry = new_cyno.get(charname, {})
+
+                        # User: Only trigger if "Can Light" = True
+                        if not new_entry.get("can_light", False):
+                            continue
+
+                        # User: Never trigger if one of the "has ship" goes from True to False
+                        ship_lost = False
+                        for key in cyno_keys:
+                            if key.startswith("i_"):
+                                if int(old_entry.get(key, 0)) > int(new_entry.get(key, 0)):
+                                    ship_lost = True
+                                    break
+                        if ship_lost:
+                            continue
+
                         anything = any(
                             val in (1, 2, 3, 4, 5)
                             for val in new_entry.values()
                         )
                         if anything == False:  # skip characters that have no meaningful cyno skills
                             continue
-                        if new_entry.get("can_light", False) == True:  # highlight characters that can actively light cynos
-                            pingrole = get_pings('Can Light Cyno')
-                        else:
-                            pingrole = get_pings('Cyno Update')
-                        if instance.cyno_notify:
-                            changes.append(f"- **{charname}**{pingrole}:")
+
+                        pingrole = get_pings('Can Light Cyno')
+                        cyno_updates.append(f"- **{charname}**{pingrole}:")
+
                         table_lines = [
                             "(1 = trained but alpha, 2 = active)",
                             "Value                 | Old   | New",
@@ -468,18 +477,16 @@ def BB_update_single_user(user_id, char_name):
                             old_val = str(old_entry.get(key, 0))
                             new_val = str(new_entry.get(key, 0))
                             if old_val != new_val:
-                                if instance.cyno_notify:
-                                    table_lines.append(f"{display.ljust(21)} | {old_val.ljust(7)} | {new_val.ljust(6)}")
+                                table_lines.append(f"{display.ljust(21)} | {old_val.ljust(7)} | {new_val.ljust(6)}")
 
                         # Show can_light as a summary at bottom
                         can_light_old = old_entry.get("can_light", False)
                         can_light_new = new_entry.get("can_light", False)
-                        if instance.cyno_notify:
-                            table_lines.append("")
-                            table_lines.append(
-                                f"{'Can Light'.ljust(21)} | "
-                                f"{('Yes' if can_light_old else 'No').ljust(7)} | "
-                                f"{('Yes' if can_light_new else 'No').ljust(6)}")
+                        table_lines.append("")
+                        table_lines.append(
+                            f"{'Can Light'.ljust(21)} | "
+                            f"{('Yes' if can_light_old else 'No').ljust(7)} | "
+                            f"{('Yes' if can_light_new else 'No').ljust(6)}")
 
                         try:
                             cid = get_character_id(charname)
@@ -497,21 +504,22 @@ def BB_update_single_user(user_id, char_name):
                         except Exception as e:
                             logger.warning(f"ℹ️  [AA-BB] - [BB_update_single_user] - Could not fetch corp time for {charname}: {e}")
 
-
                         table_block = "```\n" + "\n".join(table_lines) + "\n```"
-                        if instance.cyno_notify:
-                            changes.append(table_block)
+                        cyno_updates.append(table_block)
+
+                    if cyno_updates and instance.cyno_notify:
+                        now_ts = timezone.now().strftime('%Y-%m-%d %H:%M:%S')
+                        changes.append(f"###{get_pings('All Cyno Changes')} Changes in cyno capabilities detected ({now_ts} UTC):")
+                        changes.extend(cyno_updates)
 
                 # 4) Save new blob
                 status.cyno = new_cyno
 
             if status.has_skills != has_skills or skills_norm(skills_result) != skills_norm(
                 status.skills or {}):  # skill list changed?
-                # 1) If the boolean flag flipped, append the 🔴 / 🟢 as before
-                if status.has_skills != has_skills:  # emit a coarse-grained flag when the threshold crosses zero/any skills
-                    if not has_skills:
-                        if instance.cyno_notify:
-                            changes.append(f"### Skill Status: 🟢")
+                # 1) If the boolean flag flipped
+                if status.has_skills != has_skills:
+                    # User: trigger ONLY for new skills (has_skills crossing 0 to 1 handled in character loop)
                     status.has_skills = has_skills
 
                 # 2) Grab the old vs. new JSON blobs
@@ -569,9 +577,7 @@ def BB_update_single_user(user_id, char_name):
                         30651, 30652, 30653, 30650, 33856,
                     ]
 
-                    if changed_chars:  # preface the per-character tables with a summary line
-                        if instance.cyno_notify:
-                            changes.append(f"##{get_pings('skills')} Changes in skills detected:")
+                    skill_updates = []
 
                     for charname in changed_chars:
                         raw_old = old_skills.get(charname)
@@ -579,21 +585,8 @@ def BB_update_single_user(user_id, char_name):
 
                         raw_new = new_skills.get(charname)
                         new_entry = raw_new if isinstance(raw_new, dict) else {}
-                        anything = any(
-                            (
-                                new_entry.get(sid, {"trained": 0, "active": 0})["trained"] > 0
-                                or
-                                new_entry.get(sid, {"trained": 0, "active": 0})["active"] > 0
-                            )
-                            for sid in ordered_skill_ids
-                        )
-                        if anything == False:  # skip characters with zero relevant skills (just noise)
-                            continue
-                        logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {new_entry.values()}")
 
-                        if instance.cyno_notify:
-                            changes.append(f"- **{charname}**:")
-                        table_lines = [
+                        char_table_lines = [
                             "Skill              | Old       | New",
                             "------------------------------------",
                         ]
@@ -617,18 +610,27 @@ def BB_update_single_user(user_id, char_name):
                             if old_tr == new_tr and old_ac == new_ac:
                                 continue
 
+                            # User: shouldn't trigger unless the skill is new, like T3C goes from 0 to 1
+                            if not (old_tr == 0 and new_tr > 0):
+                                continue
+
                             old_fmt = f"{old_tr}/{old_ac}"
                             new_fmt = f"{new_tr}/{new_ac}"
                             name_padded = name.ljust(18)
 
-                            table_lines.append(
+                            char_table_lines.append(
                                 f"{name_padded} | {old_fmt.ljust(9)} | {new_fmt.ljust(8)}"
                             )
 
-                        if len(table_lines) > 2:
-                            table_block = "```\n" + "\n".join(table_lines) + "\n```"
-                            if instance.cyno_notify:
-                                changes.append(table_block)
+                        if len(char_table_lines) > 2:
+                            skill_updates.append(f"- **{charname}**:")
+                            table_block = "```\n" + "\n".join(char_table_lines) + "\n```"
+                            skill_updates.append(table_block)
+
+                    if skill_updates and instance.cyno_notify:
+                        now_ts = timezone.now().strftime('%Y-%m-%d %H:%M:%S')
+                        changes.append(f"##{get_pings('skills')} Changes in skills detected ({now_ts} UTC):")
+                        changes.extend(skill_updates)
 
                 status.skills = new_skills
             if status.has_hostile_assets != has_hostile_assets or set(hostile_assets_result) != set(
