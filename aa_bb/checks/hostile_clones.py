@@ -204,6 +204,7 @@ def get_hostile_clone_locations(user_id: int) -> Dict[str, str]:
                         involved_ids=[clone["char_id"]],
                         location_id=loc_id,
                         system_id=system_id,
+                        is_asset=True,
                         when=timezone.now(),
                         safe_entities=safe_entities
                     )
@@ -279,6 +280,7 @@ def render_clones(user_id: int) -> str:
                         involved_ids=[clone["char_id"]],
                         location_id=loc_id,
                         system_id=system_id,
+                        is_asset=True,
                         when=timezone.now(),
                         safe_entities=safe_entities
                     )

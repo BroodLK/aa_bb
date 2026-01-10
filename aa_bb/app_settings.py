@@ -1361,7 +1361,7 @@ def is_hostile_unified(
     # 1. Is it taking place between (everyone involved) entities on the members, ignored, or whitelists?
     # For assets/clones, we also consider the location/system owners in the safety check.
     check_safe_ids = set(involved_ids or [])
-    if location_id:
+    if is_asset and location_id:
         if l_oid:
             check_safe_ids.add(l_oid)
         else:
