@@ -45,7 +45,7 @@ if get_alts_queryset is None:
     def get_alts_queryset(*args, **kwargs):
         return []
 
-from .models import BigBrotherConfig, TicketToolConfig, PapCompliance, LeaveRequest, ComplianceTicket
+from .models import BigBrotherConfig, TicketToolConfig, PapCompliance, LeaveRequest, ComplianceTicket, ComplianceTicketComment
 
 User = get_user_model()
 
@@ -670,29 +670,94 @@ def ensure_ticket(user, reason, details=None):
             )
 
 
-def close_ticket(ticket):
+def add_ticket_comment(ticket, user, comment_text, post_to_discord=True):
+    """Add a comment to a ticket and optionally post to Discord."""
+    from .models import ComplianceTicketComment, TicketToolConfig
+    comment = ComplianceTicketComment.objects.create(
+        ticket=ticket,
+        user=user,
+        comment=comment_text
+    )
+    if post_to_discord and ticket.discord_channel_id:
+        tcfg = TicketToolConfig.get_solo()
+        attribution = ""
+        if user:
+            main_char = getattr(user.profile, "main_character", None)
+            attribution = f"**{main_char.character_name if main_char else user.username}**: "
+        full_content = f"{attribution}{comment_text}"
+
+        if tcfg.ticket_type == TicketToolConfig.TICKET_TYPE_FORUM_THREAD and tcfg.hr_forum_webhook:
+            webhook_url = f"{tcfg.hr_forum_webhook}?thread_id={ticket.discord_channel_id}"
+            send_message({"content": full_content}, hook=webhook_url)
+        elif run_task_function:
+            run_task_function.apply_async(
+                args=["aa_bb.tasks_bot.send_ticket_reminder"],
+                kwargs={
+                    "task_args": [ticket.discord_channel_id, 0, full_content],
+                    "task_kwargs": {}
+                },
+                queue='aadiscordbot'
+            )
+    return comment
+
+
+def close_ticket(ticket, user=None):
     """Close the Discord compliance ticket and mark it resolved locally."""
+    message = "✅ Ticket resolved"
+    if user:
+        main_char = getattr(user.profile, "main_character", None)
+        name = main_char.character_name if main_char else user.username
+        message += f" by **{name}**"
+
+    # Create Auth comment
+    add_ticket_comment(ticket, user, message, post_to_discord=False)
+
     if run_task_function and ticket.discord_channel_id:
+        # Bot manages the channel, send message via close task to ensure it's seen before closing
         run_task_function.apply_async(
             args=["aa_bb.tasks_bot.close_ticket_channel"],
             kwargs={
                 "task_args": [ticket.discord_channel_id],
-                "task_kwargs": {}
+                "task_kwargs": {"message": message}
             },
             queue='aadiscordbot'
         )
+    elif ticket.discord_channel_id:
+        # Not bot managed (e.g. forum thread via webhook), send message normally
+        from .models import TicketToolConfig
+        tcfg = TicketToolConfig.get_solo()
+        if tcfg.ticket_type == TicketToolConfig.TICKET_TYPE_FORUM_THREAD and tcfg.hr_forum_webhook:
+            webhook_url = f"{tcfg.hr_forum_webhook}?thread_id={ticket.discord_channel_id}"
+            send_message({"content": message}, hook=webhook_url)
+
     ticket.is_resolved = True
     ticket.save(update_fields=["is_resolved"])
 
 
-def close_char_removed_ticket(ticket):
+def close_char_removed_ticket(ticket, user=None):
     """Mark a char_removed ticket resolved without deleting it (legacy behavior)."""
+    message = "✅ Ticket resolved"
+    if user:
+        main_char = getattr(user.profile, "main_character", None)
+        name = main_char.character_name if main_char else user.username
+        message += f" by **{name}**"
+
+    add_ticket_comment(ticket, user, message, post_to_discord=True)
+
     ticket.is_resolved = True
-    ticket.save()
+    ticket.save(update_fields=["is_resolved"])
 
 
-def reopen_ticket(ticket, message=None):
+def reopen_ticket(ticket, user=None, message=None):
     """Reopen a resolved ticket and unarchive its Discord channel/thread."""
+    if not message and user:
+        main_char = getattr(user.profile, "main_character", None)
+        name = main_char.character_name if main_char else user.username
+        message = f"🔄 Ticket reopened by **{name}**."
+
+    if message:
+        add_ticket_comment(ticket, user, message, post_to_discord=True)
+
     ticket.is_resolved = False
     ticket.save(update_fields=["is_resolved"])
     if run_task_function and ticket.discord_channel_id:
@@ -704,12 +769,31 @@ def reopen_ticket(ticket, message=None):
             },
             queue='aadiscordbot'
         )
-        if message:
-            run_task_function.apply_async(
-                args=["aa_bb.tasks_bot.send_ticket_reminder"],
-                kwargs={
-                    "task_args": [ticket.discord_channel_id, 0, message],
-                    "task_kwargs": {}
-                },
-                queue='aadiscordbot'
-            )
+
+
+def mark_ticket_exception(ticket, user, reason=None):
+    """Mark a ticket as an exception and notify Discord."""
+    ticket.is_exception = True
+    ticket.exception_reason = reason or f"Marked as exception by {user.username}"
+    ticket.save(update_fields=["is_exception", "exception_reason"])
+
+    main_char = getattr(user.profile, "main_character", None)
+    name = main_char.character_name if main_char else user.username
+    msg = f"ℹ️ Ticket marked as exception by **{name}**."
+    if reason:
+        msg += f"\nReason: {reason}"
+
+    add_ticket_comment(ticket, user, msg, post_to_discord=True)
+
+
+def clear_ticket_exception(ticket, user):
+    """Clear exception status and notify Discord."""
+    ticket.is_exception = False
+    ticket.exception_reason = None
+    ticket.save(update_fields=["is_exception", "exception_reason"])
+
+    main_char = getattr(user.profile, "main_character", None)
+    name = main_char.character_name if main_char else user.username
+    msg = f"🔄 Exception status cleared by **{name}**."
+
+    add_ticket_comment(ticket, user, msg, post_to_discord=True)

@@ -424,7 +424,7 @@ async def send_ticket_reminder(bot, channel_id: int, user_id: int, message: str,
             else:
                 await channel.send(embed=embed)
 
-async def close_ticket_channel(bot, channel_id: int, **kwargs):
+async def close_ticket_channel(bot, channel_id: int, message: str = None, **kwargs):
     close_old_connections()
     channel = bot.get_channel(channel_id)
     if not channel and hasattr(bot, 'fetch_channel'):
@@ -434,6 +434,11 @@ async def close_ticket_channel(bot, channel_id: int, **kwargs):
             pass
 
     if channel:
+        if message:
+            await channel.send(message)
+            import asyncio
+            await asyncio.sleep(1)
+
         qs = ComplianceTicket.objects.filter(discord_channel_id=channel_id, is_resolved=False)
         if await sync_to_async(qs.exists)():
             return
@@ -575,20 +580,21 @@ class TicketCommands(commands.Cog):
         staff_roles = await sync_to_async(get_ticket_roles)()
         is_staff = author.guild_permissions.administrator or any(role.id in staff_roles for role in author.roles)
 
-        # Check AA permissions if DiscordUser is linked
-        if not is_staff:
-            try:
-                from allianceauth.services.modules.discord.models import DiscordUser
-                du_qs = DiscordUser.objects.select_related('user').filter(uid=author.id)
-                discord_user = await sync_to_async(du_qs.get)()
+        # Check AA permissions and resolve auth_user
+        from allianceauth.services.modules.discord.models import DiscordUser
+        auth_user = None
+        try:
+            du_qs = DiscordUser.objects.select_related('user').filter(uid=author.id)
+            discord_user = await sync_to_async(du_qs.get)()
+            auth_user = discord_user.user
 
-                def check_perms(user):
-                    return user.has_perm("aa_bb.ticket_manager") or user.is_superuser
+            def check_perms(user):
+                return user.has_perm("aa_bb.ticket_manager") or user.is_superuser
 
-                if await sync_to_async(check_perms)(discord_user.user):
-                    is_staff = True
-            except Exception:
-                pass
+            if not is_staff and await sync_to_async(check_perms)(auth_user):
+                is_staff = True
+        except Exception:
+            pass
 
         if not is_staff:
             if hasattr(ctx_or_msg, "respond"):
@@ -610,6 +616,14 @@ class TicketCommands(commands.Cog):
         for ticket in tickets:
             ticket.is_resolved = True
             await sync_to_async(ticket.save)(update_fields=["is_resolved"])
+
+            # Create Auth comment
+            comment_text = f"✅ Ticket resolved on Discord by {author}."
+            await sync_to_async(ComplianceTicketComment.objects.create)(
+                ticket=ticket,
+                user=auth_user,
+                comment=comment_text
+            )
 
         # If no more active tickets in this channel, close it
         remaining_qs = ComplianceTicket.objects.filter(discord_channel_id=channel.id, is_resolved=False)
@@ -650,20 +664,21 @@ class TicketCommands(commands.Cog):
         staff_roles = await sync_to_async(get_ticket_roles)()
         is_staff = author.guild_permissions.administrator or any(role.id in staff_roles for role in author.roles)
 
-        # Check AA permissions if DiscordUser is linked
-        if not is_staff:
-            try:
-                from allianceauth.services.modules.discord.models import DiscordUser
-                du_qs = DiscordUser.objects.select_related('user').filter(uid=author.id)
-                discord_user = await sync_to_async(du_qs.get)()
+        # Check AA permissions and resolve auth_user
+        from allianceauth.services.modules.discord.models import DiscordUser
+        auth_user = None
+        try:
+            du_qs = DiscordUser.objects.select_related('user').filter(uid=author.id)
+            discord_user = await sync_to_async(du_qs.get)()
+            auth_user = discord_user.user
 
-                def check_perms(user):
-                    return user.has_perm("aa_bb.ticket_manager") or user.is_superuser
+            def check_perms(user):
+                return user.has_perm("aa_bb.ticket_manager") or user.is_superuser
 
-                if await sync_to_async(check_perms)(discord_user.user):
-                    is_staff = True
-            except Exception:
-                pass
+            if not is_staff and await sync_to_async(check_perms)(auth_user):
+                is_staff = True
+        except Exception:
+            pass
 
         if not is_staff:
             await ctx.respond("You do not have permission to mark tickets as exceptions.", ephemeral=True)
@@ -684,6 +699,16 @@ class TicketCommands(commands.Cog):
             ticket.is_exception = True
             ticket.exception_reason = reason or f"Marked as exception by {author.display_name}"
             await sync_to_async(ticket.save)(update_fields=["is_exception", "exception_reason"])
+
+            # Create Auth comment
+            comment_text = f"ℹ️ Ticket marked as exception on Discord by {author}."
+            if reason:
+                comment_text += f"\nReason: {reason}"
+            await sync_to_async(ComplianceTicketComment.objects.create)(
+                ticket=ticket,
+                user=auth_user,
+                comment=comment_text
+            )
 
         exception_msg = f"✅ Ticket(s) marked as exception by <@{author.id}>."
         if reason:

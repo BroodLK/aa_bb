@@ -1321,9 +1321,9 @@ def ticket_resolve(request, pk):
     from .tasks_tickets import close_ticket, close_char_removed_ticket
 
     if ticket.reason in ["char_removed", "awox_kill"]:
-        close_char_removed_ticket(ticket)
+        close_char_removed_ticket(ticket, user=request.user)
     else:
-        close_ticket(ticket)
+        close_ticket(ticket, user=request.user)
 
     return redirect('aa_bb:ticket_view', pk=pk)
 
@@ -1335,7 +1335,7 @@ def ticket_reopen(request, pk):
     """Reopen a resolved ticket."""
     ticket = get_object_or_404(ComplianceTicket, pk=pk)
     from .tasks_tickets import reopen_ticket
-    reopen_ticket(ticket)
+    reopen_ticket(ticket, user=request.user)
 
     return redirect('aa_bb:ticket_view', pk=pk)
 
@@ -1348,9 +1348,8 @@ def ticket_mark_exception(request, pk):
     ticket = get_object_or_404(ComplianceTicket, pk=pk)
     reason = request.POST.get('reason', '').strip()
 
-    ticket.is_exception = True
-    ticket.exception_reason = reason or f"Marked as exception by {request.user.username}"
-    ticket.save(update_fields=["is_exception", "exception_reason"])
+    from .tasks_tickets import mark_ticket_exception
+    mark_ticket_exception(ticket, request.user, reason)
 
     return redirect('aa_bb:ticket_view', pk=pk)
 
@@ -1362,9 +1361,8 @@ def ticket_clear_exception(request, pk):
     """Clear exception status from a ticket."""
     ticket = get_object_or_404(ComplianceTicket, pk=pk)
 
-    ticket.is_exception = False
-    ticket.exception_reason = None
-    ticket.save(update_fields=["is_exception", "exception_reason"])
+    from .tasks_tickets import clear_ticket_exception
+    clear_ticket_exception(ticket, request.user)
 
     return redirect('aa_bb:ticket_view', pk=pk)
 
@@ -1377,39 +1375,7 @@ def ticket_add_comment(request, pk):
     ticket = get_object_or_404(ComplianceTicket, pk=pk)
     comment_text = request.POST.get('comment')
     if comment_text:
-        ComplianceTicketComment.objects.create(
-            ticket=ticket,
-            user=request.user,
-            comment=comment_text
-        )
-
-        # Post to Discord if channel/thread ID exists
-        if ticket.discord_channel_id:
-            from .models import TicketToolConfig
-            tcfg = TicketToolConfig.get_solo()
-
-            # Forward to Discord if it's a thread/forum
-            if tcfg.ticket_type in [TicketToolConfig.TICKET_TYPE_FORUM_THREAD, TicketToolConfig.TICKET_TYPE_PRIVATE_THREAD]:
-                from .app_settings import send_message
-                main_char = getattr(request.user.profile, "main_character", None)
-                char_name = main_char.character_name if main_char else request.user.username
-
-                content = f"**{char_name}**: {comment_text}"
-
-                if tcfg.ticket_type == TicketToolConfig.TICKET_TYPE_FORUM_THREAD and tcfg.hr_forum_webhook:
-                    webhook_url = f"{tcfg.hr_forum_webhook}?thread_id={ticket.discord_channel_id}"
-                    send_message({"content": content}, hook=webhook_url)
-                else:
-                    # For bot-managed threads
-                    from aa_bb.tasks_tickets import run_task_function
-                    if run_task_function:
-                        run_task_function.apply_async(
-                            args=["aa_bb.tasks_bot.send_ticket_reminder"], # Reuse reminder task to post msg
-                            kwargs={
-                                "task_args": [ticket.discord_channel_id, 0, content], # user_id=0 means no mention
-                                "task_kwargs": {}
-                            },
-                            queue='aadiscordbot'
-                        )
+        from .tasks_tickets import add_ticket_comment
+        add_ticket_comment(ticket, request.user, comment_text)
 
     return redirect('aa_bb:ticket_view', pk=pk)
