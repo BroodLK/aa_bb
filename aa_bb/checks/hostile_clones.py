@@ -295,18 +295,19 @@ def render_clones(user_id: int) -> str:
         return "<p>No clones found.</p>"
 
     # Sort: hostile first, then system, location, character
-    rows.sort(key=lambda x: (not x["hostile"], x["character"], x["system"]))
+    rows.sort(key=lambda x: (not x["hostile"], x["system"], x["location"], x["character"]))
 
     html_parts = [
         '<table class="table table-striped table-hover stats">',
         "<thead>"
         "<tr>"
-        "<th>Character</th>"
-        "<th>System</th>"
-        "<th>Clone Status</th>"
-        "<th>Implants</th>"
-        "<th>Owner</th>"
-        "<th>Region</th>"
+        '<th style="width: 15%">System</th>'
+        '<th style="width: 20%">Station</th>'
+        '<th style="width: 15%">Character</th>'
+        '<th style="width: 10%">Clone Status</th>'
+        '<th style="width: 15%">Implants</th>'
+        '<th style="width: 15%">Owner</th>'
+        '<th style="width: 10%">Region</th>'
         "</tr>"
         "</thead>"
         "<tbody>",
@@ -319,9 +320,10 @@ def render_clones(user_id: int) -> str:
 
         html_parts.append(
             format_html(
-                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
-                row["character"],
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
                 row["system"],
+                row["location"],
+                row["character"],
                 row["jump_clone"],
                 row["implants_html"],
                 owner_cell,
