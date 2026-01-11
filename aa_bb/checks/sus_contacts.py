@@ -137,7 +137,7 @@ def get_user_contacts(user_id: int) -> dict[int, dict]:
 
     return contacts
 
-def get_cell_style_for_row(cid: int, column: str, row: dict, safe_entities: set = None, user_character_ids: set = None, local_cache: dict = None) -> str:
+def get_cell_style_for_row(cid: int, column: str, row: dict) -> str:
     """
     Determine inline CSS used when rendering the contact tables so that
     hostiles/blacklist hits pop out immediately.
@@ -157,15 +157,15 @@ def get_cell_style_for_row(cid: int, column: str, row: dict, safe_entities: set 
 
     # New fixed columns
     if column == 'character':
-        if row.get('contact_type') == 'character' and get_hostile_state(cid, 'character', safe_entities=safe_entities, user_character_ids=user_character_ids, local_cache=local_cache):
+        if row.get('contact_type') == 'character' and get_hostile_state(cid, 'character'):
             return 'color: red;'
     elif column == 'corporation':
         coid = row.get("coid")
-        if coid and get_hostile_state(coid, 'corporation', safe_entities=safe_entities, user_character_ids=user_character_ids, local_cache=local_cache):
+        if coid and get_hostile_state(coid, 'corporation'):
             return 'color: red;'
     elif column == 'alliance':
         aid = row.get("aid")
-        if aid and get_hostile_state(aid, 'alliance', safe_entities=safe_entities, user_character_ids=user_character_ids, local_cache=local_cache):
+        if aid and get_hostile_state(aid, 'alliance'):
             return 'color: red;'
 
     return ''
@@ -200,11 +200,6 @@ def render_contacts(user_id: int) -> str:
     if not contacts:  # No contact records available; show placeholder.
         return '<p>No contacts found.</p>'
 
-    from allianceauth.authentication.models import CharacterOwnership
-    safe_entities = get_safe_entities()
-    user_character_ids = set(CharacterOwnership.objects.filter(user_id=user_id).values_list('character__character_id', flat=True))
-    local_cache = {}
-
     html_parts = ['<div class="contact-groups">']
     for bucket, entries in sorted(groups.items(), reverse=True):
         label = f"Standing {bucket:+d}"
@@ -227,7 +222,7 @@ def render_contacts(user_id: int) -> str:
             for h in headers:
                 val = entry.get(h, '')
                 display_val = ', '.join(map(str, val)) if isinstance(val, list) else val  # Join multiple character names.
-                style = get_cell_style_for_row(cid, h, entry, safe_entities=safe_entities, user_character_ids=user_character_ids, local_cache=local_cache)
+                style = get_cell_style_for_row(cid, h, entry)
                 html_parts.append(f'      <td style="{style}">{html.escape(str(display_val))}</td>')
             html_parts.append('    </tr>')
         html_parts.append('  </tbody>')

@@ -127,18 +127,18 @@ def get_user_mails(qs) -> Dict[int, Dict]:
     return result
 
 
-def get_cell_style_for_mail_cell(column: str, row: dict, index: Optional[int] = None, safe_entities: set = None, user_character_ids: set = None, local_cache: dict = None) -> str:
+def get_cell_style_for_mail_cell(column: str, row: dict, index: Optional[int] = None) -> str:
     """Centralized inline-style logic so tables and exports highlight hostiles."""
     when = row.get("sent_date")
     # sender cell
     if column.startswith('sender_'):
         sid = row.get('sender_id')
-        if get_hostile_state(sid, when=when, safe_entities=safe_entities, user_character_ids=user_character_ids, local_cache=local_cache):
+        if get_hostile_state(sid, when=when):
             return 'color: red;'
     # recipient cell
     if column.startswith('recipient_') and index is not None:
         rid = row['recipient_ids'][index]
-        if get_hostile_state(rid, when=when, safe_entities=safe_entities, user_character_ids=user_character_ids, local_cache=local_cache):
+        if get_hostile_state(rid, when=when):
             return 'color: red;'
     return ''
 
@@ -212,12 +212,12 @@ def render_mails(user_id: int) -> str:
             if isinstance(val, list):
                 parts = []
                 for idx, item in enumerate(val):
-                    style = get_cell_style_for_mail_cell(col, row, index=idx, safe_entities=safe_entities, user_character_ids=user_ids, local_cache=local_cache)
+                    style = get_cell_style_for_mail_cell(col, row, index=idx)
                     prefix = f"<span style='{style}'>" if style else "<span>"
                     parts.append(f"{prefix}{html.escape(str(item))}</span>")
                 cell = '<td>' + ', '.join(parts) + '</td>'
             else:
-                style = get_cell_style_for_mail_cell(col, row, safe_entities=safe_entities, user_character_ids=user_ids, local_cache=local_cache)
+                style = get_cell_style_for_mail_cell(col, row)
                 style_attr = f" style='{style}'" if style else ""
                 cell = f"<td{style_attr}>{html.escape(str(val))}</td>"
 
@@ -282,12 +282,12 @@ def get_user_hostile_mails(user_id: int, safe_entities: set = None, user_charact
 
             flags: List[str] = []
             # Check sender
-            if get_hostile_state(m.get("sender_id"), 'character', when=m.get("sent_date"), safe_entities=safe_entities, user_character_ids=user_ids, local_cache=local_cache):
+            if get_hostile_state(m.get("sender_id"), 'character'):
                 flags.append(f"Sender **{m['sender_name']}** is hostile/blacklisted")
 
             # Check recipients
             for idx, rid in enumerate(m.get("recipient_ids", [])):
-                if get_hostile_state(rid, 'character', when=m.get("sent_date"), safe_entities=safe_entities, user_character_ids=user_ids, local_cache=local_cache):
+                if get_hostile_state(rid, 'character'):
                     name = m["recipient_names"][idx]
                     flags.append(f"Recipient **{name}** is hostile/blacklisted")
 

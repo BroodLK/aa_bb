@@ -380,9 +380,9 @@ def get_user_hostile_transactions(user_id: int, safe_entities: set = None, user_
                     flags.append(f"second_party **{tx['second_party_name']}** is hostile/blacklisted")
 
                 loc_id = tx.get("location_id") or tx.get("system_id")
-                if loc_id and is_location_hostile(tx.get("location_id"), tx.get("system_id"), safe_entities=safe_entities, user_character_ids=user_ids, local_cache=local_cache):
+                if loc_id and is_location_hostile(tx.get("location_id"), tx.get("system_id")):
                     loc_name = resolve_location_name(loc_id) or f"ID {loc_id}"
-                    owner_info = get_system_owner({"id": loc_id}, local_cache=local_cache)
+                    owner_info = get_system_owner({"id": loc_id})
                     oname = owner_info.get("owner_name")
                     rname = owner_info.get("region_name")
                     flag = f"Location **{loc_name}** is hostile space"

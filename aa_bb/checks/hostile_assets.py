@@ -187,7 +187,7 @@ def get_hostile_asset_locations(user_id: int, safe_entities: set = None, user_ch
         display_name = system_name or f"Unknown ({system_id})"
 
         # We need the system owner info for the summary
-        owner_info = get_system_owner({"id": system_id, "name": display_name}, local_cache=local_cache)
+        owner_info = get_system_owner({"id": system_id, "name": display_name})
         oname = owner_info.get("owner_name", "Unresolvable") if owner_info else "Unresolvable"
         rname = owner_info.get("region_name", "Unknown Region") if owner_info else "Unknown Region"
 
@@ -275,7 +275,7 @@ def render_assets(user_id: int) -> Optional[str]:
             display_name = system_name or f"Unknown ({system_id})"
 
             # Base system owner info for the table
-            owner_info = get_system_owner({"id": system_id, "name": display_name}, local_cache=local_cache)
+            owner_info = get_system_owner({"id": system_id, "name": display_name})
             oname = owner_info.get("owner_name", "Unresolvable") if owner_info else "Unresolvable"
             region_name = owner_info.get("region_name", "Unknown Region") if owner_info else "Unknown Region"
 

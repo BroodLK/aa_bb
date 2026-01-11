@@ -138,47 +138,47 @@ def get_user_contracts(qs) -> Dict[int, Dict]:
         }
     return result
 
-def get_cell_style_for_contract_row(column: str, row: dict, safe_entities: set = None, local_cache: dict = None) -> str:
+def get_cell_style_for_contract_row(column: str, row: dict) -> str:
     """Return inline CSS so tables/exports highlight blacklist/hostile hits."""
     when = row.get("issued_date")
     if column == 'issuer_name':  # Color issuer names if the character is suspect.
         cid = row.get("issuer_id")
-        if get_hostile_state(cid, 'character', when=when, safe_entities=safe_entities, local_cache=local_cache):
+        if get_hostile_state(cid, 'character', when=when):
             return 'color: red;'
         else:
             return ''
 
     if column == 'assignee_name':  # Color assignee names when suspect.
         cid = row.get("assignee_id")
-        if get_hostile_state(cid, 'character', when=when, safe_entities=safe_entities, local_cache=local_cache):
+        if get_hostile_state(cid, 'character', when=when):
             return 'color: red;'
         else:
             return ''
 
     if column == 'issuer_corporation':  # Apply styles for hostile issuer corps.
         aid = row.get("issuer_corporation_id")
-        if get_hostile_state(aid, 'corporation', when=when, safe_entities=safe_entities, local_cache=local_cache):
+        if get_hostile_state(aid, 'corporation', when=when):
             return 'color: red;'
         else:
             return ''
 
     if column == 'issuer_alliance':  # Apply styles for hostile issuer alliances.
         coid = row.get("issuer_alliance_id")
-        if get_hostile_state(coid, 'alliance', when=when, safe_entities=safe_entities, local_cache=local_cache):
+        if get_hostile_state(coid, 'alliance', when=when):
             return 'color: red;'
         else:
             return ''
 
     if column == 'assignee_corporation':  # Apply styles for hostile assignee corps.
         aid = row.get("assignee_corporation_id")
-        if get_hostile_state(aid, 'corporation', when=when, safe_entities=safe_entities, local_cache=local_cache):
+        if get_hostile_state(aid, 'corporation', when=when):
             return 'color: red;'
         else:
             return ''
 
     if column == 'assignee_alliance':  # Apply styles for hostile assignee alliances.
         coid = row.get("assignee_alliance_id")
-        if get_hostile_state(coid, 'alliance', when=when, safe_entities=safe_entities, local_cache=local_cache):
+        if get_hostile_state(coid, 'alliance', when=when):
             return 'color: red;'
         else:
             return ''
@@ -244,6 +244,8 @@ def get_corp_hostile_contracts(corp_id: int, safe_entities: set = None, local_ca
         del all_qs
         new_rows = get_user_contracts(new_qs)
 
+        local_cache = {}
+
         for cid, c in new_rows.items():
             # only create ProcessedContract if it doesn't already exist
             pc, created = ProcessedContract.objects.get_or_create(contract_id=cid)
@@ -256,21 +258,21 @@ def get_corp_hostile_contracts(corp_id: int, safe_entities: set = None, local_ca
 
             flags: List[str] = []
             # issuer
-            if get_hostile_state(c['issuer_id'], 'character', safe_entities=safe_entities, local_cache=local_cache):
+            if get_hostile_state(c['issuer_id'], 'character'):
                 flags.append(f"Issuer **{c['issuer_name']}** is hostile/blacklisted")
             # fall back just in case
-            if get_hostile_state(c['issuer_corporation_id'], 'corporation', safe_entities=safe_entities, local_cache=local_cache):
+            if get_hostile_state(c['issuer_corporation_id'], 'corporation'):
                 flags.append(f"Issuer corp **{c['issuer_corporation']}** is hostile")
             # assignee
-            if get_hostile_state(c['assignee_id'], 'character', safe_entities=safe_entities, local_cache=local_cache):
+            if get_hostile_state(c['assignee_id'], 'character'):
                 flags.append(f"Assignee **{c['assignee_name']}** is hostile/blacklisted")
             # fall back just in case
-            if get_hostile_state(c['assignee_corporation_id'], 'corporation', safe_entities=safe_entities, local_cache=local_cache):
+            if get_hostile_state(c['assignee_corporation_id'], 'corporation'):
                 flags.append(f"Assignee corp **{c['assignee_corporation']}** is hostile")
 
-            if is_location_hostile(c.get("start_location_id"), safe_entities=safe_entities, local_cache=local_cache):
+            if is_location_hostile(c.get("start_location_id")):
                 loc_id = c.get("start_location_id")
-                owner_info = get_system_owner({"id": loc_id}, local_cache=local_cache)
+                owner_info = get_system_owner({"id": loc_id})
                 oname = owner_info.get("owner_name")
                 rname = owner_info.get("region_name")
                 flag = f"Start location **{c['start_location']}** is hostile space"
@@ -283,9 +285,9 @@ def get_corp_hostile_contracts(corp_id: int, safe_entities: set = None, local_ca
                     flag += f" ({' | '.join(info_parts)})"
                 flags.append(flag)
 
-            if is_location_hostile(c.get("end_location_id"), safe_entities=safe_entities, local_cache=local_cache):
+            if is_location_hostile(c.get("end_location_id")):
                 loc_id = c.get("end_location_id")
-                owner_info = get_system_owner({"id": loc_id}, local_cache=local_cache)
+                owner_info = get_system_owner({"id": loc_id})
                 oname = owner_info.get("owner_name")
                 rname = owner_info.get("region_name")
                 flag = f"End location **{c['end_location']}** is hostile space"

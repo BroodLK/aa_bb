@@ -483,10 +483,6 @@ def stream_contracts_sse(request: WSGIRequest):
                 return
 
             batch_size = 50
-            local_cache = {}
-            from .app_settings import get_safe_entities
-            safe_entities = get_safe_entities()
-
             for i in range(0, total, batch_size):
                 batch = qs[i : i + batch_size]
                 rows_map = get_user_contracts(batch)
@@ -501,13 +497,13 @@ def stream_contracts_sse(request: WSGIRequest):
 
                     try:
                         style_map = {
-                            col: get_cell_style_for_contract_row(col, row, safe_entities=safe_entities, local_cache=local_cache)
+                            col: get_cell_style_for_contract_row(col, row)
                             for col in row
                         }
                         yield ": ping\n\n"
                         row['cell_styles'] = style_map
 
-                        if is_contract_row_hostile(row, safe_entities=safe_entities, local_cache=local_cache):  # Emit only hostile rows.
+                        if is_contract_row_hostile(row):  # Emit only hostile rows.
                             hostile_count += 1
                             tr_html = _render_contract_row_html(row)
                             yield f"event: contract\ndata:{json.dumps(tr_html)}\n\n"
@@ -665,9 +661,6 @@ def stream_transactions_sse(request):
             yield f"event: header\ndata:{json.dumps(header_html)}\n\n"
 
             cfg = BigBrotherConfig.get_solo()
-            local_cache = {}
-            from .app_settings import get_safe_entities
-            safe_entities = get_safe_entities()
 
             batch_size = 100
             for i in range(0, total, batch_size):
@@ -682,7 +675,7 @@ def stream_transactions_sse(request):
                     if processed % 10 == 0:
                         yield ": ping\n\n"         # keep‐alive
 
-                    if is_transaction_hostile(row, safe_entities=safe_entities, local_cache=local_cache):  # Only push rows that meet hostility rules.
+                    if is_transaction_hostile(row):  # Only push rows that meet hostility rules.
                         hostile_count += 1
 
                         # build the <tr> using same style logic as render_transactions()
@@ -701,16 +694,16 @@ def stream_transactions_sse(request):
                             # first/second party name
                             if col in ('first_party_name','second_party_name'):
                                 pid = row[col.replace("_name", "_id")]
-                                if get_hostile_state(pid, 'character', when=row['date'], safe_entities=safe_entities, local_cache=local_cache):
+                                if get_hostile_state(pid, 'character', when=row['date']):
                                     style = 'color:red;'
                             # corps & alliances
                             if col.endswith('corporation'):
                                 cid = row[f"{col}_id"]
-                                if cid and get_hostile_state(cid, 'corporation', when=row['date'], safe_entities=safe_entities, local_cache=local_cache):
+                                if cid and get_hostile_state(cid, 'corporation', when=row['date']):
                                     style = 'color:red;'
                             if col.endswith('alliance'):
                                 aid = row[f"{col}_id"]
-                                if aid and get_hostile_state(aid, 'alliance', when=row['date'], safe_entities=safe_entities, local_cache=local_cache):
+                                if aid and get_hostile_state(aid, 'alliance', when=row['date']):
                                     style = 'color:red;'
                             def make_td(text, style=""):
                                 style_attr = f' style="{style}"' if style else ""
