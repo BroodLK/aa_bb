@@ -215,17 +215,20 @@ def get_user_hostile_contracts(user_id: int, safe_entities: set = None, user_cha
         local_cache = {}
 
     all_qs = gather_user_contracts(user_id)
-    all_ids = list(all_qs.values_list("contract_id", flat=True))
 
+    # Get already processed IDs
     seen_ids = set(
-        ProcessedContract.objects.filter(contract_id__in=all_ids).values_list("contract_id", flat=True)
+        ProcessedContract.objects.filter(
+            contract_id__in=all_qs.values_list("contract_id", flat=True)
+        ).values_list("contract_id", flat=True)
     )
 
     notes: Dict[int, str] = {}
-    new_ids = [cid for cid in all_ids if cid not in seen_ids]
 
-    if new_ids:
-        new_qs = all_qs.filter(contract_id__in=new_ids)
+    # Filter to only unprocessed contracts at DB level
+    new_qs = all_qs.exclude(contract_id__in=seen_ids) if seen_ids else all_qs
+
+    if new_qs.exists():
         new_rows = get_user_contracts(new_qs)
 
         user_chars = get_user_characters(user_id)
