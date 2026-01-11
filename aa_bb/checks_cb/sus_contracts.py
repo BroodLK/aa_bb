@@ -80,7 +80,7 @@ def gather_user_contracts(corp_id: int):
     except (EveCorporationInfo.DoesNotExist, CorporationAudit.DoesNotExist):
         return CorporateContract.objects.none()
 
-    qs = CorporateContract.objects.filter(corporation=corp_audit)
+    qs = CorporateContract.objects.filter(corporation=corp_audit).select_related('corporation')
     return qs
 
 def get_user_contracts(qs) -> Dict[int, Dict]:
@@ -223,99 +223,100 @@ def get_corp_hostile_contracts(corp_id: int, safe_entities: set = None, local_ca
 
     # 1) Gather all raw contracts
     all_qs = gather_user_contracts(corp_id)
-    all_ids = list(all_qs.values_list('contract_id', flat=True))
 
-    # 2) Which are already processed?
-    seen_ids = set(ProcessedContract.objects.filter(contract_id__in=all_ids)
-                                      .values_list('contract_id', flat=True))
+    # 2) Which are already processed? Use exists() for fast check
+    seen_ids = set(ProcessedContract.objects.filter(
+        contract_id__in=all_qs.values_list('contract_id', flat=True)
+    ).values_list('contract_id', flat=True))
 
     notes: Dict[int, str] = {}
-    new_ids = []
-    for cid in all_ids:
-        if cid not in seen_ids:  # Track contract ids that still need note generation.
-            new_ids.append(cid)
-    del all_ids
-    del seen_ids
-    processed = 0
-    if new_ids:  # Only hydrate contracts that haven't been processed.
-        processed += 1
-        # 3) Hydrate only new contracts
-        new_qs = all_qs.filter(contract_id__in=new_ids)
-        del all_qs
-        new_rows = get_user_contracts(new_qs)
 
-        for cid, c in new_rows.items():
-            # only create ProcessedContract if it doesn't already exist
-            pc, created = ProcessedContract.objects.get_or_create(contract_id=cid)
-            # Skip entries already handled by another worker.
-            if not created:
-                continue
+    # 3) Filter to only unprocessed contracts at DB level
+    new_qs = all_qs.exclude(contract_id__in=seen_ids) if seen_ids else all_qs
 
-            if not is_contract_row_hostile(c, safe_entities=safe_entities, local_cache=local_cache):  # Skip non-hostile contracts to limit note noise.
-                continue
+    if not new_qs.exists():
+        # No new contracts, just return existing notes
+        for scn in SusContractNote.objects.filter(user_id=corp_id).select_related('contract'):
+            notes[scn.contract.contract_id] = scn.note
+        return notes
 
-            flags: List[str] = []
-            # issuer
-            if get_hostile_state(c['issuer_id'], 'character', safe_entities=safe_entities, local_cache=local_cache):
-                flags.append(f"Issuer **{c['issuer_name']}** is hostile/blacklisted")
-            # fall back just in case
-            if get_hostile_state(c['issuer_corporation_id'], 'corporation', safe_entities=safe_entities, local_cache=local_cache):
-                flags.append(f"Issuer corp **{c['issuer_corporation']}** is hostile")
-            # assignee
-            if get_hostile_state(c['assignee_id'], 'character', safe_entities=safe_entities, local_cache=local_cache):
-                flags.append(f"Assignee **{c['assignee_name']}** is hostile/blacklisted")
-            # fall back just in case
-            if get_hostile_state(c['assignee_corporation_id'], 'corporation', safe_entities=safe_entities, local_cache=local_cache):
-                flags.append(f"Assignee corp **{c['assignee_corporation']}** is hostile")
+    # 4) Process only new contracts
+    new_rows = get_user_contracts(new_qs)
 
-            if is_location_hostile(c.get("start_location_id"), safe_entities=safe_entities, local_cache=local_cache):
-                loc_id = c.get("start_location_id")
-                owner_info = get_system_owner({"id": loc_id}, local_cache=local_cache)
-                oname = owner_info.get("owner_name")
-                rname = owner_info.get("region_name")
-                flag = f"Start location **{c['start_location']}** is hostile space"
-                if oname or rname:
-                    info_parts = []
-                    if oname:
-                        info_parts.append(oname)
-                    if rname and rname != "Unknown Region":
-                        info_parts.append(f"Region: {rname}")
-                    flag += f" ({' | '.join(info_parts)})"
-                flags.append(flag)
+    for cid, c in new_rows.items():
+        # only create ProcessedContract if it doesn't already exist
+        pc, created = ProcessedContract.objects.get_or_create(contract_id=cid)
+        # Skip entries already handled by another worker.
+        if not created:
+            continue
 
-            if is_location_hostile(c.get("end_location_id"), safe_entities=safe_entities, local_cache=local_cache):
-                loc_id = c.get("end_location_id")
-                owner_info = get_system_owner({"id": loc_id}, local_cache=local_cache)
-                oname = owner_info.get("owner_name")
-                rname = owner_info.get("region_name")
-                flag = f"End location **{c['end_location']}** is hostile space"
-                if oname or rname:
-                    info_parts = []
-                    if oname:
-                        info_parts.append(oname)
-                    if rname and rname != "Unknown Region":
-                        info_parts.append(f"Region: {rname}")
-                    flag += f" ({' | '.join(info_parts)})"
-                flags.append(flag)
+        if not is_contract_row_hostile(c, safe_entities=safe_entities, local_cache=local_cache):  # Skip non-hostile contracts to limit note noise.
+            continue
 
-            flags_text = "\n    - ".join(flags)
+        flags: List[str] = []
+        # issuer
+        if get_hostile_state(c['issuer_id'], 'character', safe_entities=safe_entities, local_cache=local_cache):
+            flags.append(f"Issuer **{c['issuer_name']}** is hostile/blacklisted")
+        # fall back just in case
+        if get_hostile_state(c['issuer_corporation_id'], 'corporation', safe_entities=safe_entities, local_cache=local_cache):
+            flags.append(f"Issuer corp **{c['issuer_corporation']}** is hostile")
+        # assignee
+        if get_hostile_state(c['assignee_id'], 'character', safe_entities=safe_entities, local_cache=local_cache):
+            flags.append(f"Assignee **{c['assignee_name']}** is hostile/blacklisted")
+        # fall back just in case
+        if get_hostile_state(c['assignee_corporation_id'], 'corporation', safe_entities=safe_entities, local_cache=local_cache):
+            flags.append(f"Assignee corp **{c['assignee_corporation']}** is hostile")
 
-            note_text = (
-                f"- **{c['contract_type']}** ({c['issued_date']} → {c['end_date']})"
-                f"\n  - **From:** {c['issuer_name']} ({c['issuer_corporation']} | {c['issuer_alliance']})"
-                f"\n  - **To:** {c['assignee_name']} ({c['assignee_corporation']} | {c['assignee_alliance']})"
-                f"\n  - **Location:** {c['start_location']} → {c['end_location']}"
-                f"\n  - **Flags:**"
-                f"\n    - {flags_text}"
-            )
-            SusContractNote.objects.update_or_create(
-                contract=pc,
-                defaults={'user_id': corp_id, 'note': note_text}
-            )
-            notes[cid] = note_text
+        if is_location_hostile(c.get("start_location_id"), safe_entities=safe_entities, local_cache=local_cache):
+            loc_id = c.get("start_location_id")
+            owner_info = get_system_owner({"id": loc_id}, local_cache=local_cache)
+            oname = owner_info.get("owner_name")
+            rname = owner_info.get("region_name")
+            flag = f"Start location **{c['start_location']}** is hostile space"
+            if oname or rname:
+                info_parts = []
+                if oname:
+                    info_parts.append(oname)
+                if rname and rname != "Unknown Region":
+                    info_parts.append(f"Region: {rname}")
+                flag += f" ({' | '.join(info_parts)})"
+            flags.append(flag)
 
-    # 4) Pull in old notes
-    for scn in SusContractNote.objects.filter(user_id=corp_id):
-        notes[scn.contract.contract_id] = scn.note
+        if is_location_hostile(c.get("end_location_id"), safe_entities=safe_entities, local_cache=local_cache):
+            loc_id = c.get("end_location_id")
+            owner_info = get_system_owner({"id": loc_id}, local_cache=local_cache)
+            oname = owner_info.get("owner_name")
+            rname = owner_info.get("region_name")
+            flag = f"End location **{c['end_location']}** is hostile space"
+            if oname or rname:
+                info_parts = []
+                if oname:
+                    info_parts.append(oname)
+                if rname and rname != "Unknown Region":
+                    info_parts.append(f"Region: {rname}")
+                flag += f" ({' | '.join(info_parts)})"
+            flags.append(flag)
+
+        flags_text = "\n    - ".join(flags)
+
+        note_text = (
+            f"- **{c['contract_type']}** ({c['issued_date']} → {c['end_date']})"
+            f"\n  - **From:** {c['issuer_name']} ({c['issuer_corporation']} | {c['issuer_alliance']})"
+            f"\n  - **To:** {c['assignee_name']} ({c['assignee_corporation']} | {c['assignee_alliance']})"
+            f"\n  - **Location:** {c['start_location']} → {c['end_location']}"
+            f"\n  - **Flags:**"
+            f"\n    - {flags_text}"
+        )
+        SusContractNote.objects.update_or_create(
+            contract=pc,
+            defaults={'user_id': corp_id, 'note': note_text}
+        )
+        notes[cid] = note_text
+
+    # 5) Pull in old notes (only if we had new contracts, otherwise already done above)
+    if notes:
+        for scn in SusContractNote.objects.filter(user_id=corp_id).select_related('contract'):
+            if scn.contract.contract_id not in notes:
+                notes[scn.contract.contract_id] = scn.note
 
     return notes
