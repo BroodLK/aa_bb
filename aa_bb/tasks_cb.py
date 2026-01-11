@@ -301,7 +301,8 @@ def CB_run_regular_updates():
                 qs = qs.filter(Q(corporation_id__in=member_corps) | Q(alliance_id__in=member_allis))
 
             corps = list(
-                qs.values_list("corporation_id", flat=True)
+                qs.select_related('alliance')
+                .values_list("corporation_id", flat=True)
                 .order_by("corporation_name")
                 .filter(corporationaudit__isnull=False)
             )
@@ -309,11 +310,16 @@ def CB_run_regular_updates():
             total_corps = len(corps)
             logger.info(f"✅  [AA-BB] - [CB_run_regular_updates] - Dispatching updates for {total_corps} corps.")
 
-            # Backlog check
+            # Backlog check (cached to avoid repeated expensive introspection)
             try:
-                from celery import current_app
-                inspector = current_app.control.inspect()
-                if inspector:
+                from django.core.cache import cache
+                backlog_cache_key = "cb_update_backlog_check"
+                remaining_count = cache.get(backlog_cache_key)
+
+                if remaining_count is None:
+                    from celery import current_app
+                    inspector = current_app.control.inspect()
+                if remaining_count is None and inspector:
                     active = inspector.active() or {}
                     reserved = inspector.reserved() or {}
                     task_name = CB_update_single_corp.name
@@ -330,24 +336,28 @@ def CB_run_regular_updates():
                                 if t.get('name') == task_name:
                                     remaining_count += 1
 
-                    if remaining_count > 0 and instance.update_backlog_notify:
-                        # For corps we might use the same threshold or a fixed one?
-                        # Let's use the same threshold but against total_corps?
-                        # Actually, let's just use a fixed small number or similar logic.
-                        if total_corps > 0:
-                            percent = (remaining_count / total_corps) * 100
-                            if percent > instance.update_backlog_threshold:
-                                logger.warning(f"ℹ️  [AA-BB] - [CB_run_regular_updates] - Corp Update backlog detected: {remaining_count} tasks remaining")
-                                send_status_embed(
-                                    subject="Corp Update Backlog Alert",
-                                    lines=[f"{get_pings('Error')} {remaining_count} corps are still being processed from the previous run."],
-                                    color=0xFF0000,
-                                )
+                    # Cache for 60 seconds to avoid repeated expensive introspection
+                    cache.set(backlog_cache_key, remaining_count, 60)
+
+                if remaining_count and remaining_count > 0 and instance.update_backlog_notify:
+                    # For corps we might use the same threshold or a fixed one?
+                    # Let's use the same threshold but against total_corps?
+                    # Actually, let's just use a fixed small number or similar logic.
+                    if total_corps > 0:
+                        percent = (remaining_count / total_corps) * 100
+                        if percent > instance.update_backlog_threshold:
+                            logger.warning(f"ℹ️  [AA-BB] - [CB_run_regular_updates] - Corp Update backlog detected: {remaining_count} tasks remaining")
+                            send_status_embed(
+                                subject="Corp Update Backlog Alert",
+                                lines=[f"{get_pings('Error')} {remaining_count} corps are still being processed from the previous run."],
+                                color=0xFF0000,
+                            )
             except Exception as e:
                 logger.error(f"ℹ️  [AA-BB] - [CB_run_regular_updates] - Failed to check for backlog: {e}")
 
-            for corp_id in corps:
-                CB_update_single_corp.delay(corp_id)
+            # Dispatch with staggered delays to smooth load
+            for idx, corp_id in enumerate(corps):
+                CB_update_single_corp.apply_async(args=[corp_id], countdown=idx * 0.5)
         else:
             logger.warning("ℹ️  [AA-BB] - [CB_run_regular_updates] - Plugin is disabled (is_active=False), skipping corp updates.")
 
@@ -426,18 +436,20 @@ def check_member_compliance():
         corp_ids = instance.member_corporations
         ali_ids = instance.member_alliances
 
-    if corp_ids:  # optionally check extra corp ids even if they’re outside auth
-        for corp_id in corp_ids.split(","):
-            corp_chars = []
-            corp_id = corp_id.strip()
-            if not corp_id:  # ignore blank entries
-                continue
+    if corp_ids:  # optionally check extra corp ids even if they're outside auth
+        # Batch query all corp characters upfront
+        all_corp_ids = [int(c.strip()) for c in corp_ids.split(",") if c.strip().isdigit()]
+        linked_chars_by_corp = {}
+        if all_corp_ids:
+            all_linked = EveCharacter.objects.filter(
+                corporation_id__in=all_corp_ids
+            ).values('corporation_id', 'character_name')
+            for rec in all_linked:
+                linked_chars_by_corp.setdefault(rec['corporation_id'], set()).add(rec['character_name'])
 
-            # Get characters linked in your DB
-            linked_chars = list(
-                EveCharacter.objects.filter(corporation_id=corp_id)
-                .values_list("character_name", flat=True)
-            )
+        for corp_id in all_corp_ids:
+            corp_chars = []
+            linked_chars = linked_chars_by_corp.get(corp_id, set())
 
             corp_name = get_corporation_info(corp_id)["name"]
             # Get characters from EveWho API
@@ -452,19 +464,20 @@ def check_member_compliance():
 
     logger.info(f"✅  [AA-BB] - [check_member_compliance] - ali_ids: {str(ali_ids)}")
     if ali_ids:  # optional alliance-level audits
-        for ali_id in ali_ids.split(","):
+        # Batch query all alliance characters upfront
+        all_ali_ids = [int(a.strip()) for a in ali_ids.split(",") if a.strip().isdigit()]
+        linked_chars_by_ali = {}
+        if all_ali_ids:
+            all_linked = EveCharacter.objects.filter(
+                alliance_id__in=all_ali_ids
+            ).values('alliance_id', 'character_name')
+            for rec in all_linked:
+                linked_chars_by_ali.setdefault(rec['alliance_id'], set()).add(rec['character_name'])
+
+        for ali_id in all_ali_ids:
             logger.info(f"✅  [AA-BB] - [check_member_compliance] - ali_id: {str(ali_id)}")
             ali_chars = []
-            ali_id = ali_id.strip()
-            logger.info(f"✅  [AA-BB] - [check_member_compliance] - ali_id: {str(ali_id)}")
-            if not ali_id:  # Ignore empty strings
-                continue
-
-            # Get characters linked in your DB
-            linked_chars = list(
-                EveCharacter.objects.filter(alliance_id=ali_id)
-                .values_list("character_name", flat=True)
-            )
+            linked_chars = linked_chars_by_ali.get(ali_id, set())
             logger.info(f"✅  [AA-BB] - [check_member_compliance] - linked_chars: {str(linked_chars)}")
 
             ali_name = get_alliance_name(ali_id)

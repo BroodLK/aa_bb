@@ -141,13 +141,8 @@ def afk_check(user):
     if not ec:  # Cannot determine AFK if the main character record is missing.
         return False
 
-    # Find the most recent logoff among all alts
-    latest_logoff = None
-    for char in get_alts_queryset(ec):
-        audit = getattr(char, "characteraudit", None)
-        ts = getattr(audit, "last_known_logoff", None) if audit else None
-        if ts and (latest_logoff is None or ts > latest_logoff):  # Track the newest timestamp.
-            latest_logoff = ts
+    # Find the most recent logoff among all alts (cached to avoid repeated queries)
+    latest_logoff = _get_latest_logoff_cached(ec.character_id)
 
     if not latest_logoff:  # No logoff information means fail the AFK check.
         return False
@@ -157,6 +152,31 @@ def afk_check(user):
     if days_since >= max_afk_days:  # Too many days inactive triggers failure.
         return False
     return True
+
+
+def _get_latest_logoff_cached(char_id):
+    """Cache latest logoff time for character to avoid repeated alt queries."""
+    from django.core.cache import cache
+    cache_key = f"aa_bb_latest_logoff_{char_id}"
+    cached = cache.get(cache_key)
+
+    if cached is not None:
+        return cached
+
+    ec = EveCharacter.objects.filter(character_id=char_id).first()
+    if not ec:
+        return None
+
+    latest_logoff = None
+    for char in get_alts_queryset(ec):
+        audit = getattr(char, "characteraudit", None)
+        ts = getattr(audit, "last_known_logoff", None) if audit else None
+        if ts and (latest_logoff is None or ts > latest_logoff):
+            latest_logoff = ts
+
+    # Cache for 1 hour
+    cache.set(cache_key, latest_logoff, 3600)
+    return latest_logoff
 
 
 def discord_check(user):
@@ -261,7 +281,8 @@ def hourly_compliance_check():
     if bb_cfg.limit_to_main_corp:
         profiles_qs = profiles_qs.filter(main_character__corporation_id=bb_cfg.main_corporation_id)
 
-    profiles = list(profiles_qs)
+    # Bulk load profiles with select_related to reduce queries
+    profiles = list(profiles_qs.select_related('user', 'main_character'))
     allowed_users = {p.user for p in profiles}
 
     # 1. Check compliance reasons

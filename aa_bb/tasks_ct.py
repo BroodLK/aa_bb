@@ -70,9 +70,17 @@ class ModuleRule:
 
 
 def _safe_identity_refresh(char_id: int):
-    """Ensure the EveCharacter identity cache is refreshed without exploding."""
+    """Ensure the EveCharacter identity cache is refreshed without exploding. Cached per session."""
+    from django.core.cache import cache
+    cache_key = f"aa_bb_identity_refresh_{char_id}"
+
+    # Check if we've already refreshed this character recently (cache for 1 hour)
+    if cache.get(cache_key):
+        return
+
     try:
         EveCharacter.objects.update_character(char_id)
+        cache.set(cache_key, True, 3600)  # Cache for 1 hour
     except Exception as e:
         logger.warning(f"✅  [AA-BB] - [_safe_identity_refresh] - Identity refresh failed for {char_id}: {e}", exc_info=True)
 
