@@ -58,14 +58,32 @@ def get_clones(user_id: int) -> Dict[int, dict]:
     """
     if not corptools_active() or CharacterAudit is None:
         return {}
-    try:
-        user = User.objects.get(pk=user_id)
-    except User.DoesNotExist:
-        return {}
 
     system_map: Dict[int, dict] = {}
     _loc_sys_cache = {}
     _loc_name_cache = {}
+
+    # Bulk fetch character IDs and names
+    char_data = dict(CharacterOwnership.objects.filter(user_id=user_id).values_list('character__character_id', 'character__character_name'))
+    if not char_data:
+        return {}
+
+    user_char_ids = set(char_data.keys())
+
+    # Bulk fetch active locations
+    active_locs = {}
+    if CharacterLocation:
+        active_locs = dict(CharacterLocation.objects.filter(character__character__character_id__in=user_char_ids).values_list('character__character__character_id', 'current_location_id'))
+
+    # Bulk fetch home clones
+    home_clones = Clone.objects.select_related("location_name__system").filter(character__character__character_id__in=user_char_ids)
+
+    # Bulk fetch jump clones
+    jump_clones = (
+        JumpClone.objects.select_related("location_name__system")
+        .prefetch_related("implant_set__type_name")
+        .filter(character__character__character_id__in=user_char_ids)
+    )
 
     def add_location(system_obj, loc_id, char_id, char_name, implants=None, jump_clone_name=None):
         """Helper to safely extract system ID and name from various types."""
@@ -112,55 +130,31 @@ def get_clones(user_id: int) -> Dict[int, dict]:
             "jump_clone_name": jump_clone_name or "Jump Clone"
         })
 
-    # iterate through all characters owned by the user
-    for co in CharacterOwnership.objects.filter(user=user).select_related("character"):
-        char_name = co.character.character_name
-        char_id = co.character.character_id
-        try:
-            char_audit = CharacterAudit.objects.get(character=co.character)
-        except CharacterAudit.DoesNotExist:
-            continue
+    # Process home clones
+    for hc in home_clones:
+        char_id = hc.character.character.character_id
+        char_name = char_data.get(char_id, "Unknown")
+        loc = hc.location_name
+        status = "Home Station"
+        if hc.location_id == active_locs.get(char_id):
+            status += " (Current Location)"
+        add_location(getattr(loc, "system", None), hc.location_id, char_id, char_name, jump_clone_name=status)
 
-        # Get current active location
-        active_location_id = None
-        if CharacterLocation:
-            try:
-                char_loc = CharacterLocation.objects.get(character=char_audit)
-                active_location_id = char_loc.current_location_id
-            except CharacterLocation.DoesNotExist:
-                pass
-
-        # Home clone
-        try:
-            home_clone = Clone.objects.select_related(
-                "location_name__system"
-            ).get(character=char_audit)
-            loc = home_clone.location_name
-            status = "Home Station"
-            if home_clone.location_id == active_location_id:
-                status += " (Current Location)"
-            add_location(getattr(loc, "system", None), home_clone.location_id, char_id, char_name, jump_clone_name=status)
-        except Clone.DoesNotExist:
-            pass
-
-        # Jump clones
-        jump_clones = (
-            JumpClone.objects.select_related("location_name__system")
-            .prefetch_related("implant_set__type_name")
-            .filter(character=char_audit)
-        )
-        for jc in jump_clones:
-            loc = jc.location_name
-            implants = [i.type_name.name for i in jc.implant_set.all() if i.type_name]
-            status = jc.name or "Jump Clone"
-            if jc.location_id == active_location_id:
-                status += " (Current Location)"
-            add_location(getattr(loc, "system", None), jc.location_id, char_id, char_name, implants=implants, jump_clone_name=status)
+    # Process jump clones
+    for jc in jump_clones:
+        char_id = jc.character.character.character_id
+        char_name = char_data.get(char_id, "Unknown")
+        loc = jc.location_name
+        implants = [i.type_name.name for i in jc.implant_set.all() if i.type_name]
+        status = jc.name or "Jump Clone"
+        if jc.location_id == active_locs.get(char_id):
+            status += " (Current Location)"
+        add_location(getattr(loc, "system", None), jc.location_id, char_id, char_name, implants=implants, jump_clone_name=status)
 
     return system_map
 
 
-def get_hostile_clone_locations(user_id: int) -> Dict[str, dict]:
+def get_hostile_clone_locations(user_id: int, safe_entities: set = None, user_character_ids: set = None, local_cache: dict = None) -> Dict[str, dict]:
     """
     Returns a dict of system display name -> structured hostile data
     for systems where this user has home or jump clones in space and the
@@ -172,7 +166,12 @@ def get_hostile_clone_locations(user_id: int) -> Dict[str, dict]:
 
     hostile_map: Dict[str, dict] = {}
     from ..app_settings import get_safe_entities
-    safe_entities = get_safe_entities()
+    if safe_entities is None:
+        safe_entities = get_safe_entities()
+    if user_character_ids is None:
+        user_character_ids = set(CharacterOwnership.objects.filter(user_id=user_id).values_list('character__character_id', flat=True))
+    if local_cache is None:
+        local_cache = {}
     _hostile_memo = {}
 
     for system_id, data in systems.items():
@@ -205,7 +204,9 @@ def get_hostile_clone_locations(user_id: int) -> Dict[str, dict]:
                         system_id=system_id,
                         is_asset=True,
                         when=timezone.now(),
-                        safe_entities=safe_entities
+                        safe_entities=safe_entities,
+                        user_character_ids=user_character_ids,
+                        local_cache=local_cache
                     )
                     _hostile_memo[memo_key] = is_hostile
 
@@ -240,6 +241,8 @@ def render_clones(user_id: int) -> str:
     rows: List[Dict] = []
     from ..app_settings import get_safe_entities
     safe_entities = get_safe_entities()
+    user_character_ids = set(CharacterOwnership.objects.filter(user_id=user_id).values_list('character__character_id', flat=True))
+    local_cache = {}
     _hostile_memo = {}
 
     for system_id, data in systems.items():
@@ -276,7 +279,9 @@ def render_clones(user_id: int) -> str:
                         system_id=system_id,
                         is_asset=True,
                         when=timezone.now(),
-                        safe_entities=safe_entities
+                        safe_entities=safe_entities,
+                        user_character_ids=user_character_ids,
+                        local_cache=local_cache
                     )
                     _hostile_memo[memo_key] = is_hostile
 

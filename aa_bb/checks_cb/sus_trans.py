@@ -117,17 +117,10 @@ def get_user_transactions(qs) -> Dict[int, Dict]:
     """
     result: Dict[int, Dict] = {}
 
-    _info_cache: Dict[tuple[int, int], dict] = {}
+    local_cache: dict = {}
 
     def _cached_info(eid: int, when: datetime) -> dict:
-        key = (int(eid or 0), int(when.date().toordinal()))
-        if key in _info_cache:
-            return _info_cache[key]
-        info = get_entity_info(eid, when)
-        if not info:
-            info = {'name': 'Unknown', 'corp_id': None, 'corp_name': 'Unknown', 'alli_id': None, 'alli_name': 'Unknown'}
-        _info_cache[key] = info
-        return info
+        return get_entity_info(eid, when, local_cache=local_cache)
 
     for entry in qs:
         tx_id = entry.entry_id
@@ -208,7 +201,7 @@ def get_user_transactions(qs) -> Dict[int, Dict]:
     return result
 
 
-def is_transaction_hostile(tx: dict, safe_entities: set = None) -> bool:
+def is_transaction_hostile(tx: dict, safe_entities: set = None, local_cache: dict = None) -> bool:
     """
     Checks if a wallet transaction is considered hostile using the unified processor.
     """
@@ -230,7 +223,8 @@ def is_transaction_hostile(tx: dict, safe_entities: set = None) -> bool:
         market_item_id=tx.get("type_id"),
         market_unit_price=abs(tx.get("raw_amount")) / (tx.get("quantity") or 1) if tx.get("raw_amount") is not None else None,
         when=tx.get("date"),
-        safe_entities=safe_entities
+        safe_entities=safe_entities,
+        local_cache=local_cache
     )
 
 
@@ -244,12 +238,13 @@ def render_transactions(corp_id: int) -> str:
 
         from ..app_settings import get_safe_entities
         safe_entities = get_safe_entities()
+        local_cache = {}
 
         # sort by date desc
         all_list = sorted(txs.values(), key=lambda x: x['date'], reverse=True)
         hostile: List[dict] = []
         for tx in all_list:
-            if is_transaction_hostile(tx, safe_entities=safe_entities):  # Keep only transactions that tripped hostility logic.
+            if is_transaction_hostile(tx, safe_entities=safe_entities, local_cache=local_cache):  # Keep only transactions that tripped hostility logic.
                 hostile.append(tx)
         if not hostile:  # No hostile rows were identified.
             return '<p>No hostile transactions found.</p>'
@@ -317,7 +312,7 @@ def render_transactions(corp_id: int) -> str:
         return f"<p class='text-danger'>Error rendering transactions: {str(e)}</p>"
 
 
-def get_corp_hostile_transactions(corp_id: int) -> Dict[int, str]:
+def get_corp_hostile_transactions(corp_id: int, safe_entities: set = None, local_cache: dict = None) -> Dict[int, str]:
     """
     Persist and return formatted notes for hostile corporate transactions.
     """
@@ -340,13 +335,16 @@ def get_corp_hostile_transactions(corp_id: int) -> Dict[int, str]:
         rows = get_user_transactions(new_qs)
 
         from ..app_settings import get_safe_entities
-        safe_entities = get_safe_entities()
+        if safe_entities is None:
+            safe_entities = get_safe_entities()
+        if local_cache is None:
+            local_cache = {}
 
         for eid, tx in rows.items():
             pt, created = ProcessedTransaction.objects.get_or_create(entry_id=eid)
             if not created:  # Another worker finished first; do not duplicate notes.
                 continue
-            if not is_transaction_hostile(tx, safe_entities=safe_entities):  # Ignore non-hostile transactions.
+            if not is_transaction_hostile(tx, safe_entities=safe_entities, local_cache=local_cache):  # Ignore non-hostile transactions.
                 continue
             flags = []
             if tx['type']:  # Skip type analysis when CCP omitted the ref type.

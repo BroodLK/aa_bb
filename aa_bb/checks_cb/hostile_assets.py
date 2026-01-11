@@ -98,7 +98,7 @@ def get_asset_locations(corp_id: int) -> Dict[int, dict]:
 
     return system_map
 
-def get_corp_hostile_asset_locations(corp_id: int) -> Dict[str, dict]:
+def get_corp_hostile_asset_locations(corp_id: int, safe_entities: set = None, local_cache: dict = None) -> Dict[str, dict]:
     """
     Return {system name -> structured hostile data} for hostile corp asset locations.
     Uses the unified processor logic.
@@ -109,7 +109,10 @@ def get_corp_hostile_asset_locations(corp_id: int) -> Dict[str, dict]:
 
     hostile_map: Dict[str, dict] = {}
     from ..app_settings import get_safe_entities
-    safe_entities = get_safe_entities()
+    if safe_entities is None:
+        safe_entities = get_safe_entities()
+    if local_cache is None:
+        local_cache = {}
 
     for system_id, data in systems.items():
         system_name = data.get("name")
@@ -128,7 +131,8 @@ def get_corp_hostile_asset_locations(corp_id: int) -> Dict[str, dict]:
                 location_id=loc_id,
                 system_id=system_id,
                 is_asset=True,
-                safe_entities=safe_entities
+                safe_entities=safe_entities,
+                local_cache=local_cache
             ):
                 system_has_hostile = True
                 records.append({
@@ -167,6 +171,7 @@ def render_assets(corp_id: int) -> Optional[str]:
     html_output += '<thead><tr><th>System</th><th>Location</th><th>Owner</th><th>Region</th></tr></thead><tbody>'
     from ..app_settings import get_safe_entities
     safe_entities = get_safe_entities()
+    local_cache = {}
 
     for system_id, data in systems.items():
         system_name = data.get("name")
@@ -188,7 +193,8 @@ def render_assets(corp_id: int) -> Optional[str]:
                 location_id=loc_id,
                 system_id=system_id,
                 is_asset=True,
-                safe_entities=safe_entities
+                safe_entities=safe_entities,
+                local_cache=local_cache
             )
 
             if hostile:

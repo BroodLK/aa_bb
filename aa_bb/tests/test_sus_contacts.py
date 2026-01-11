@@ -25,7 +25,7 @@ class TestSusContacts(TestCase):
                 'alliance': 'Hostile Alliance',
             }
         }
-        mock_hostile_state.side_effect = lambda cid, ctype: True
+        mock_hostile_state.side_effect = lambda cid, ctype, **kwargs: True
 
         notifications = get_user_hostile_notifications(1)
 
@@ -48,7 +48,7 @@ class TestSusContacts(TestCase):
                 'alliance': 'Hostile Alliance',
             }
         }
-        mock_hostile_state.side_effect = lambda cid, ctype: True
+        mock_hostile_state.side_effect = lambda cid, ctype, **kwargs: True
 
         notifications = get_user_hostile_notifications(1)
 
@@ -71,7 +71,7 @@ class TestSusContacts(TestCase):
                 'alliance': 'Hostile Alliance',
             }
         }
-        mock_hostile_state.side_effect = lambda cid, ctype: True
+        mock_hostile_state.side_effect = lambda cid, ctype, **kwargs: True
 
         notifications = get_user_hostile_notifications(1)
 

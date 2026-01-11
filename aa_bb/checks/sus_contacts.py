@@ -57,6 +57,8 @@ def get_user_contacts(user_id: int) -> dict[int, dict]:
     ).select_related('contact_name', 'character__character')
 
     contacts: dict[int, dict] = {}
+    local_cache: dict = {}
+    now_ts = timezone.now()
 
     for cc in qs:
         cid = cc.contact_id
@@ -81,7 +83,7 @@ def get_user_contacts(user_id: int) -> dict[int, dict]:
             if ctype == 'character':  # Populate character + org info for character contacts.
                 # Character: populate all three columns using point-in-time info
                 character_name = cc.contact_name.name
-                info = get_entity_info(cid, timezone.now())
+                info = get_entity_info(cid, now_ts, local_cache=local_cache)
                 corp_id = info.get("corp_id") or 0
                 corp_name = info.get("corp_name") or ""
                 alli_id = info.get("alli_id") or 0
@@ -231,7 +233,7 @@ def render_contacts(user_id: int) -> str:
 
 logger = get_extension_logger(__name__)
 
-def get_user_hostile_notifications(user_id: int) -> dict[int, str]:
+def get_user_hostile_notifications(user_id: int, safe_entities: set = None, user_character_ids: set = None, local_cache: dict = None) -> dict[int, str]:
     """
     Fetches all contacts for the given user, checks each one against
     the character blacklist, hostile corporations, and hostile alliances,
@@ -240,11 +242,17 @@ def get_user_hostile_notifications(user_id: int) -> dict[int, str]:
     contacts = get_user_contacts(user_id)
     notifications: dict[int, str] = {}
 
-    cfg = BigBrotherConfig.get_solo()
-    hostile_corps = cfg.hostile_corporations
-    hostile_allis = cfg.hostile_alliances
-    safe_entities = get_safe_entities()
-    logger.info(f"{hostile_allis}")
+    if safe_entities is None:
+        safe_entities = get_safe_entities()
+
+    if user_character_ids is None:
+        user_chars = get_user_characters(user_id)
+        user_ids = set(user_chars.keys())
+    else:
+        user_ids = user_character_ids
+
+    if local_cache is None:
+        local_cache = {}
 
     for cid, info in contacts.items():
         ctype     = info['contact_type']      # 'character' | 'corporation' | 'alliance'
@@ -269,7 +277,7 @@ def get_user_hostile_notifications(user_id: int) -> dict[int, str]:
 
         alerts: list[str] = []
 
-        if get_hostile_state(cid, ctype):
+        if get_hostile_state(cid, ctype, safe_entities=safe_entities, user_character_ids=user_ids, local_cache=local_cache):
             if ctype == 'character':
                 if aablacklist_active() and check_char_add_to_bl(cid):
                     alerts.append(f"**{cname}** is on blacklist")
@@ -280,12 +288,12 @@ def get_user_hostile_notifications(user_id: int) -> dict[int, str]:
 
         # Even if the contact itself isn't hostile, its corp/alliance might be
         if ctype == 'character':
-            if coid and get_hostile_state(coid, 'corporation'):
+            if coid and get_hostile_state(coid, 'corporation', safe_entities=safe_entities, user_character_ids=user_ids, local_cache=local_cache):
                 alerts.append(f"corporation **{corp_name}** is on hostile list")
-            if aid and get_hostile_state(aid, 'alliance'):
+            if aid and get_hostile_state(aid, 'alliance', safe_entities=safe_entities, user_character_ids=user_ids, local_cache=local_cache):
                 alerts.append(f"alliance **{alli_name}** is on hostile list")
         elif ctype == 'corporation':
-            if aid and get_hostile_state(aid, 'alliance'):
+            if aid and get_hostile_state(aid, 'alliance', safe_entities=safe_entities, user_character_ids=user_ids, local_cache=local_cache):
                 alerts.append(f"alliance **{alli_name}** is on hostile list")
 
         if alerts:

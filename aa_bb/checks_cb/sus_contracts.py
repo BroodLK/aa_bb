@@ -91,17 +91,10 @@ def get_user_contracts(qs) -> Dict[int, Dict]:
     """
     result: Dict[int, Dict] = {}
 
-    _info_cache: Dict[tuple[int, int], dict] = {}
+    local_cache: dict = {}
 
     def _cached_info(eid: int, when: datetime) -> dict:
-        key = (int(eid or 0), int(when.date().toordinal()))
-        if key in _info_cache:
-            return _info_cache[key]
-        info = get_entity_info(eid, when)
-        if not info:
-            info = {'name': 'Unknown', 'corp_id': None, 'corp_name': 'Unknown', 'alli_id': None, 'alli_name': 'Unknown'}
-        _info_cache[key] = info
-        return info
+        return get_entity_info(eid, when, local_cache=local_cache)
 
     for c in qs:
         cid = c.contract_id
@@ -192,7 +185,7 @@ def get_cell_style_for_contract_row(column: str, row: dict) -> str:
 
     return ''
 
-def is_contract_row_hostile(row: dict, safe_entities: set = None) -> bool:
+def is_contract_row_hostile(row: dict, safe_entities: set = None, local_cache: dict = None) -> bool:
     """
     Checks if a contract is considered hostile using the unified processor.
     Checks both start and end locations.
@@ -204,17 +197,17 @@ def is_contract_row_hostile(row: dict, safe_entities: set = None) -> bool:
     end_loc = row.get("end_location_id")
 
     # Check start location
-    if is_hostile_unified(involved_ids=[issuer_id, assignee_id], location_id=start_loc, when=when, safe_entities=safe_entities):
+    if is_hostile_unified(involved_ids=[issuer_id, assignee_id], location_id=start_loc, when=when, safe_entities=safe_entities, local_cache=local_cache):
         return True
 
     # Check end location
-    if is_hostile_unified(involved_ids=[issuer_id, assignee_id], location_id=end_loc, when=when, safe_entities=safe_entities):
+    if is_hostile_unified(involved_ids=[issuer_id, assignee_id], location_id=end_loc, when=when, safe_entities=safe_entities, local_cache=local_cache):
         return True
 
     return False
 
 
-def get_corp_hostile_contracts(corp_id: int) -> Dict[int, str]:
+def get_corp_hostile_contracts(corp_id: int, safe_entities: set = None, local_cache: dict = None) -> Dict[int, str]:
     """
     Return {contract_id -> note} entries for newly detected hostile corp contracts.
 
@@ -223,7 +216,10 @@ def get_corp_hostile_contracts(corp_id: int) -> Dict[int, str]:
     """
     cfg = BigBrotherConfig.get_solo()
     from ..app_settings import get_safe_entities
-    safe_entities = get_safe_entities()
+    if safe_entities is None:
+        safe_entities = get_safe_entities()
+    if local_cache is None:
+        local_cache = {}
 
     # 1) Gather all raw contracts
     all_qs = gather_user_contracts(corp_id)
@@ -248,6 +244,8 @@ def get_corp_hostile_contracts(corp_id: int) -> Dict[int, str]:
         del all_qs
         new_rows = get_user_contracts(new_qs)
 
+        local_cache = {}
+
         for cid, c in new_rows.items():
             # only create ProcessedContract if it doesn't already exist
             pc, created = ProcessedContract.objects.get_or_create(contract_id=cid)
@@ -255,7 +253,7 @@ def get_corp_hostile_contracts(corp_id: int) -> Dict[int, str]:
             if not created:
                 continue
 
-            if not is_contract_row_hostile(c, safe_entities=safe_entities):  # Skip non-hostile contracts to limit note noise.
+            if not is_contract_row_hostile(c, safe_entities=safe_entities, local_cache=local_cache):  # Skip non-hostile contracts to limit note noise.
                 continue
 
             flags: List[str] = []
