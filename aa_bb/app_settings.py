@@ -1329,6 +1329,7 @@ def is_hostile_unified(
 
     # Location resolution for Rules 1-8, 10-12, 15-18
     actual_system_id = system_id or (resolve_location_system_id(location_id) if location_id else None)
+    now_ts = when or timezone.now()
 
     # Resolve location owner for Rules 1-4
     l_oid = 0
@@ -1371,7 +1372,6 @@ def is_hostile_unified(
 
     if check_safe_ids:
         all_safe = True
-        now_ts = when or timezone.now()
         for eid in check_safe_ids:
             if not eid or eid == -1:
                 all_safe = False
@@ -1389,13 +1389,21 @@ def is_hostile_unified(
             return False
 
     # 2. Citadel / Player Structure owned by safe entity
-    if location_id and is_player_struct:
+    if location_id and is_player_struct and l_oid:
         if l_oid in safe_entities:
+            return False
+        # Check parent corp/alliance context
+        l_info = get_entity_info(l_oid, now_ts)
+        if l_info and (l_info.get('corp_id') in safe_entities or l_info.get('alli_id') in safe_entities):
             return False
 
     # 3. NPC Station owned by safe entity (e.g. Faction stations)
-    if location_id and is_station:
+    if location_id and is_station and l_oid:
         if l_oid in safe_entities:
+            return False
+        # Check parent corp/alliance context
+        l_info = get_entity_info(l_oid, now_ts)
+        if l_info and (l_info.get('corp_id') in safe_entities or l_info.get('alli_id') in safe_entities):
             return False
 
     # 4. System owned by safe entity
@@ -1405,8 +1413,13 @@ def is_hostile_unified(
         if s_owner_info:
             try:
                 s_oid = int(s_owner_info.get("owner_id") or 0)
-                if s_oid in safe_entities:
-                    return False
+                if s_oid:
+                    if s_oid in safe_entities:
+                        return False
+                    # Check parent corp/alliance context
+                    s_info = get_entity_info(s_oid, now_ts)
+                    if s_info and (s_info.get('corp_id') in safe_entities or s_info.get('alli_id') in safe_entities):
+                        return False
             except (ValueError, TypeError):
                 pass
 
@@ -1429,6 +1442,15 @@ def is_hostile_unified(
     # 8. Low sec exclusion
     if actual_system_id and cfg.exclude_low_sec and is_lowsec(actual_system_id):
         return False
+
+    # 8.5 Asset in space (Solar System location) is safe
+    if is_asset and location_id:
+        try:
+            loc_id_int = int(location_id)
+            if 30000000 <= loc_id_int <= 34000000:
+                return False
+        except (ValueError, TypeError):
+            pass
 
     # 9. Asset ships only
     if is_asset and cfg.hostile_assets_ships_only:
@@ -1455,7 +1477,7 @@ def is_hostile_unified(
                 return False
 
         # 13-14. Market price threshold
-        if cfg.market_transactions_threshold_alert:
+        if cfg.show_market_transactions and cfg.market_transactions_threshold_alert:
             if market_item_id and market_unit_price is not None:
                 res = is_above_market_threshold(market_item_id, market_unit_price, cfg.market_transactions_threshold_percent)
                 if res is True:
@@ -1464,21 +1486,24 @@ def is_hostile_unified(
                     return False  # SAFE (Rule 14 else)
                 # If None (Unknown), CONTINUE to Rule 15 (Rule 13 "continue checks")
 
-    # 15. Consider null sec hostile
-    if actual_system_id and cfg.consider_nullsec_hostile and is_nullsec(actual_system_id):
-        return True
-
-    # 16. Consider low sec hostile
-    if actual_system_id and cfg.consider_lowsec_hostile and is_lowsec(actual_system_id):
-        return True
-
-    # 17. Consider citadels/structures hostile
+    # 15. Consider citadels/structures hostile
     if location_id and is_player_struct and cfg.consider_all_structures_hostile and l_oname != "Unresolvable":
         return True
 
-    # 18. Consider NPC stations hostile
+    # 16. Consider NPC stations hostile
     if location_id and 60000000 <= int(location_id) < 64000000 and cfg.consider_npc_stations_hostile and l_oname != "Unresolvable":
         return True
+
+    # 17. Consider null sec hostile
+    # Gated: don't trigger if already handled by structure/station rules above
+    if actual_system_id and cfg.consider_nullsec_hostile and is_nullsec(actual_system_id):
+        if (not is_player_struct and not is_station) or l_oname == "Unresolvable":
+            return True
+
+    # 18. Consider low sec hostile
+    if actual_system_id and cfg.consider_lowsec_hostile and is_lowsec(actual_system_id):
+        if (not is_player_struct and not is_station) or l_oname == "Unresolvable":
+            return True
 
     # 19-20. Blacklist and Explicit Hostile
     check_ids = set(involved_ids or [])
@@ -1525,10 +1550,9 @@ def is_hostile_unified(
     if cfg.hostile_everyone_else:
         # If the only reason for check is an unresolvable location,
         # and all involved parties are safe (or there are none), treat as safe.
-        if location_id and l_oname == "Unresolvable":
+        if location_id and (l_oname == "Unresolvable" or l_oname.startswith("Unresolvable")):
             all_involved_safe = True
             if involved_ids:
-                now_ts = when or timezone.now()
                 for eid in involved_ids:
                     if not eid:
                         continue
@@ -1775,6 +1799,17 @@ def resolve_location_name(location_id: int) -> Optional[str]:
             loc = EveLocation.objects.filter(location_id=location_id).first()
             if loc:
                 name = loc.location_name
+        except Exception:
+            pass
+
+    # Fallback to system name if location is unresolvable
+    if not name and location_id:
+        try:
+            sys_id = resolve_location_system_id(location_id)
+            if sys_id and sys_id != location_id:
+                sys_name = resolve_location_name(sys_id)
+                if sys_name:
+                    name = f"Structure in {sys_name}"
         except Exception:
             pass
 

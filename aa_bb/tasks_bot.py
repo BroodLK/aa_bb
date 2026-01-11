@@ -451,10 +451,13 @@ async def close_ticket_channel(bot, channel_id: int, message: str = None, **kwar
         if await sync_to_async(qs.exists)():
             return
 
-        if isinstance(channel, discord.Thread):
-            await channel.edit(archived=True, locked=True, reason="Compliance issue resolved")
-        else:
-            await channel.delete(reason="Compliance issue resolved")
+        try:
+            if isinstance(channel, discord.Thread):
+                await channel.edit(archived=True, locked=True, reason="Compliance issue resolved")
+            else:
+                await channel.delete(reason="Compliance issue resolved")
+        except Exception:
+            logger.exception("Failed to close/delete channel %s", channel_id)
 
 async def join_thread(bot, thread_id: int, **kwargs):
     channel = bot.get_channel(thread_id)
@@ -577,6 +580,7 @@ class TicketCommands(commands.Cog):
     )
     @sender_is_admin()
     async def resolve_ticket_slash(self, ctx: discord.ApplicationContext):
+        await ctx.defer(ephemeral=True)
         await self._handle_resolution(ctx)
 
     async def _handle_resolution(self, ctx_or_msg):
@@ -647,10 +651,13 @@ class TicketCommands(commands.Cog):
             else:
                 await channel.send(embed=embed)
 
-            if isinstance(channel, discord.Thread):
-                await channel.edit(archived=True, locked=True)
-            else:
-                await channel.delete(reason=f"Resolved by {author}")
+            try:
+                if isinstance(channel, discord.Thread):
+                    await channel.edit(archived=True, locked=True)
+                else:
+                    await channel.delete(reason=f"Resolved by {author}")
+            except Exception:
+                logger.exception("Failed to close/delete channel %s after resolution", channel.id)
         else:
             msg = f"✅ Ticket(s) resolved by <@{author.id}>. (Remaining active tickets exist in this channel)"
             embed = discord.Embed(
@@ -674,6 +681,7 @@ class TicketCommands(commands.Cog):
         reason: str = None
     ):
         """Mark a ticket as an exception with an optional reason."""
+        await ctx.defer(ephemeral=True)
         close_old_connections()
         channel = ctx.channel
         author = ctx.user
@@ -759,13 +767,17 @@ class TicketCommands(commands.Cog):
         for ticket in tickets:
             ticket.is_resolved = True
             await sync_to_async(ticket.save)(update_fields=["is_resolved"])
+            await sync_to_async(ComplianceTicketComment.objects.create)(
+                ticket=ticket,
+                comment="✅ Ticket automatically resolved (Discord channel deleted manually)."
+            )
 
         if tickets:
             logger.info(f"Marked {len(tickets)} ticket(s) as resolved due to channel deletion: {channel.id}")
 
     @commands.Cog.listener("on_thread_delete")
     async def on_thread_delete(self, thread: discord.Thread):
-        """Mark tickets as resolved when a thread is manually deleted or archived."""
+        """Mark tickets as resolved when a thread is manually deleted."""
         close_old_connections()
         tickets_qs = ComplianceTicket.objects.filter(
             discord_channel_id=thread.id,
@@ -776,9 +788,33 @@ class TicketCommands(commands.Cog):
         for ticket in tickets:
             ticket.is_resolved = True
             await sync_to_async(ticket.save)(update_fields=["is_resolved"])
+            await sync_to_async(ComplianceTicketComment.objects.create)(
+                ticket=ticket,
+                comment="✅ Ticket automatically resolved (Discord thread deleted manually)."
+            )
 
         if tickets:
             logger.info(f"Marked {len(tickets)} ticket(s) as resolved due to thread deletion: {thread.id}")
+
+    @commands.Cog.listener("on_thread_update")
+    async def on_thread_update(self, before: discord.Thread, after: discord.Thread):
+        """Handle manual thread archiving/locking by an admin."""
+        if (after.archived and not before.archived) or (after.locked and not before.locked):
+            close_old_connections()
+            tickets_qs = ComplianceTicket.objects.filter(
+                discord_channel_id=after.id,
+                is_resolved=False
+            )
+            tickets = await sync_to_async(list)(tickets_qs)
+            if tickets:
+                for ticket in tickets:
+                    ticket.is_resolved = True
+                    await sync_to_async(ticket.save)(update_fields=["is_resolved"])
+                    await sync_to_async(ComplianceTicketComment.objects.create)(
+                        ticket=ticket,
+                        comment=f"✅ Ticket automatically resolved (Discord thread {'archived' if after.archived else 'locked'} manually)."
+                    )
+                logger.info(f"Marked {len(tickets)} ticket(s) as resolved due to manual thread closure: {after.id}")
 
 def setup(bot):
     bot.add_cog(TicketCommands(bot))
@@ -872,7 +908,7 @@ async def rebalance_ticket_categories(bot, **kwargs):
     ticket channels leftwards. Delete empty overflow categories (suffix >= 2).
     """
     close_old_connections()
-    cfg = TicketToolConfig.get_solo()
+    cfg = await sync_to_async(TicketToolConfig.get_solo)()
     if not cfg.Category_ID:  # nothing configured → nothing to rebalance
         return
     if not bot.guilds:  # ensure the bot is connected to at least one guild

@@ -139,9 +139,9 @@ def get_user_contracts(qs) -> Dict[int, Dict]:
             'assignee_alliance_id':     ainfo["alli_id"],
             'status':                   c.status,
             'start_location_id':        getattr(c, "start_location_id", None),
-            'start_location':           resolve_location_name(getattr(c, "start_location_id", None)),
+            'start_location':           resolve_location_name(getattr(c, "start_location_id", None)) or "Unknown Location",
             'end_location_id':          getattr(c, "end_location_id", None),
-            'end_location':             resolve_location_name(getattr(c, "end_location_id", None)),
+            'end_location':             resolve_location_name(getattr(c, "end_location_id", None)) or "Unknown Location",
         }
     return result
 
