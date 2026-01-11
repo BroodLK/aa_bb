@@ -15,7 +15,6 @@ import subprocess
 import sys
 import requests
 from datetime import datetime, timedelta
-from functools import lru_cache
 
 from django.apps import apps
 from django.utils import timezone
@@ -92,7 +91,7 @@ def get_pings(message_type: str) -> str:
     """
     Given a MessageType instance, return a string of pings separated by spaces.
     """
-    cfg = get_bigbrother_config()
+    cfg = BigBrotherConfig.get_solo()
     pings = []
 
     if cfg.pingrole1_messages.all().filter(name=message_type).exists():  # Ping role1 when message type is subscribed.
@@ -326,15 +325,7 @@ def get_character_id(name: str) -> int | None:
 
 _EXPIRY = timedelta(days=30)
 
-def normalize_timestamp(dt: datetime) -> datetime:
-    """Round timestamp to the nearest hour for cache stability."""
-    if not dt:
-        return dt
-    # Round to the nearest hour (or 15 min if preferred, brainstorming said hour)
-    return dt.replace(minute=0, second=0, microsecond=0)
-
-
-def get_entity_info(entity_id: int, as_of: timezone.datetime, local_cache: dict = None) -> Dict:
+def get_entity_info(entity_id: int, as_of: timezone.datetime) -> Dict:
     """
     Returns a dict:
       {
@@ -353,14 +344,6 @@ def get_entity_info(entity_id: int, as_of: timezone.datetime, local_cache: dict 
         errent = True
     else:
         errent = False
-
-    # Normalize timestamp to increase cache hits
-    as_of = normalize_timestamp(as_of)
-
-    # 0) Check local cache first
-    if local_cache is not None and entity_id in local_cache:
-        return local_cache[entity_id]
-
     now = timezone.now()
 
     # 1) Attempt to fetch fresh-enough cache entry
@@ -442,9 +425,6 @@ def get_entity_info(entity_id: int, as_of: timezone.datetime, local_cache: dict 
             "alli_id":   alli_id,
             "alli_name": errmsg,
         }
-
-    if local_cache is not None:
-        local_cache[entity_id] = info
 
     return info
 
@@ -1173,7 +1153,7 @@ def get_or_create_prices(item_id, force_refresh=True):
     """
     Fetch or retrieve EVE item prices from cache or external APIs (Janice/Fuzzwork).
     """
-    cfg = get_bigbrother_config()
+    cfg = BigBrotherConfig.get_solo()
 
     # Check local cache first
     try:
@@ -1326,26 +1306,6 @@ def is_above_market_threshold(type_id, unit_price, threshold_percent):
     return False
 
 
-_bigbrother_config_cache = None
-_bigbrother_config_cache_time = 0
-
-def get_bigbrother_config():
-    """Returns the BigBrotherConfig singleton, memoized for 1 minute."""
-    global _bigbrother_config_cache, _bigbrother_config_cache_time
-    now = time.time()
-
-    # Bypass cache during unit tests to ensure config changes are reflected immediately.
-    import sys
-    is_testing = 'test' in sys.argv or 'runtests' in sys.argv
-
-    if not is_testing and _bigbrother_config_cache is not None and now - _bigbrother_config_cache_time < 60:
-        return _bigbrother_config_cache
-    from .models import BigBrotherConfig
-    _bigbrother_config_cache = BigBrotherConfig.get_solo()
-    _bigbrother_config_cache_time = now
-    return _bigbrother_config_cache
-
-
 def is_hostile_unified(
     involved_ids: List[int] = None,
     location_id: int = None,
@@ -1357,28 +1317,19 @@ def is_hostile_unified(
     market_unit_price: float = None,
     entity_type: str = None,
     when: datetime = None,
-    safe_entities: set[int] = None,
-    user_character_ids: set[int] = None,
-    local_cache: dict = None
+    safe_entities: set[int] = None
 ) -> bool:
     """
     Unified hostility processor following the 23-step priority logic.
     Returns True if hostile, False if safe.
     """
-    # 0) Normalize timestamp for cache stability
-    now_ts = normalize_timestamp(when or timezone.now())
-
-    cfg = get_bigbrother_config()
+    cfg = BigBrotherConfig.get_solo()
     if safe_entities is None:
         safe_entities = get_safe_entities()
 
     # Location resolution for Rules 1-8, 10-12, 15-18
     actual_system_id = system_id or (resolve_location_system_id(location_id) if location_id else None)
-
-    # 0.5) Hub exclusion (Rule 9/11 reinforced)
-    # If it's a hub and we ignore hubs, it's safe.
-    if not cfg.market_transactions_show_major_hubs and actual_system_id in MAJOR_HUBS:
-        return False
+    now_ts = when or timezone.now()
 
     # Resolve location owner for Rules 1-4
     l_oid = 0
@@ -1426,15 +1377,10 @@ def is_hostile_unified(
                 all_safe = False
                 break
             eid = int(eid)
-
-            # Option 5: Skip User-Owned Characters (Fast-path)
-            if user_character_ids and eid in user_character_ids:
-                continue
-
             if eid in safe_entities:
                 continue
             # Check context (corp/alliance membership)
-            info = get_entity_info(eid, now_ts, local_cache=local_cache)
+            info = get_entity_info(eid, now_ts)
             if info and (info.get('corp_id') in safe_entities or info.get('alli_id') in safe_entities):
                 continue
             all_safe = False
@@ -1447,7 +1393,7 @@ def is_hostile_unified(
         if l_oid in safe_entities:
             return False
         # Check parent corp/alliance context
-        l_info = get_entity_info(l_oid, now_ts, local_cache=local_cache)
+        l_info = get_entity_info(l_oid, now_ts)
         if l_info and (l_info.get('corp_id') in safe_entities or l_info.get('alli_id') in safe_entities):
             return False
 
@@ -1456,7 +1402,7 @@ def is_hostile_unified(
         if l_oid in safe_entities:
             return False
         # Check parent corp/alliance context
-        l_info = get_entity_info(l_oid, now_ts, local_cache=local_cache)
+        l_info = get_entity_info(l_oid, now_ts)
         if l_info and (l_info.get('corp_id') in safe_entities or l_info.get('alli_id') in safe_entities):
             return False
 
@@ -1471,7 +1417,7 @@ def is_hostile_unified(
                     if s_oid in safe_entities:
                         return False
                     # Check parent corp/alliance context
-                    s_info = get_entity_info(s_oid, now_ts, local_cache=local_cache)
+                    s_info = get_entity_info(s_oid, now_ts)
                     if s_info and (s_info.get('corp_id') in safe_entities or s_info.get('alli_id') in safe_entities):
                         return False
             except (ValueError, TypeError):
@@ -1626,7 +1572,7 @@ def is_hostile_unified(
     return False
 
 
-def get_id_hostile_state(entity_id: int, when: datetime = None, safe_entities: set = None, user_character_ids: set = None, local_cache: dict = None) -> bool:
+def get_id_hostile_state(entity_id: int, when: datetime = None, safe_entities: set = None) -> bool:
     """
     Mega-helper function to determine if an ID is considered hostile.
     Automatically resolves if the ID is a Character, Corporation, Alliance,
@@ -1644,20 +1590,20 @@ def get_id_hostile_state(entity_id: int, when: datetime = None, safe_entities: s
     if (30000000 <= entity_id < 40000000) or \
        (60000000 <= entity_id < 64000000) or \
        is_player_structure(entity_id):
-        return is_hostile_unified(location_id=entity_id, when=when, safe_entities=safe_entities, user_character_ids=user_character_ids, local_cache=local_cache)
+        return is_hostile_unified(location_id=entity_id, when=when, safe_entities=safe_entities)
 
     # 2. Resolve entity type via ESI/Cache
     entity_type = get_eve_entity_type(entity_id)
 
     # 3. Handle based on resolved type
     if entity_type in ('solar_system', 'station', 'structure'):
-        return is_hostile_unified(location_id=entity_id, when=when, safe_entities=safe_entities, user_character_ids=user_character_ids, local_cache=local_cache)
+        return is_hostile_unified(location_id=entity_id, when=when, safe_entities=safe_entities)
 
     # 4. Default to entity hostility (Character, Corp, Alliance, Faction)
-    return is_hostile_unified(involved_ids=[entity_id], entity_type=entity_type, when=when, safe_entities=safe_entities, user_character_ids=user_character_ids, local_cache=local_cache)
+    return is_hostile_unified(involved_ids=[entity_id], entity_type=entity_type, when=when, safe_entities=safe_entities)
 
 
-def get_hostile_state(entity_id: int, entity_type: str = None, system_id: int = None, when: datetime = None, safe_entities: set = None, user_character_ids: set = None, local_cache: dict = None) -> bool:
+def get_hostile_state(entity_id: int, entity_type: str = None, system_id: int = None, when: datetime = None, safe_entities: set = None) -> bool:
     """
     Determine the hostile state of an entity or location.
     Returns True if hostile, False if safe.
@@ -1675,10 +1621,10 @@ def get_hostile_state(entity_id: int, entity_type: str = None, system_id: int = 
        (30000000 <= entity_id < 40000000) or \
        (60000000 <= entity_id < 64000000) or \
        is_player_structure(entity_id):
-        return is_hostile_unified(location_id=entity_id, system_id=system_id, when=when, safe_entities=safe_entities, user_character_ids=user_character_ids, local_cache=local_cache)
+        return is_hostile_unified(location_id=entity_id, system_id=system_id, when=when, safe_entities=safe_entities)
 
     # Entity Hostility (Character, Corporation, Alliance, Faction)
-    return is_hostile_unified(involved_ids=[entity_id], entity_type=entity_type, when=when, safe_entities=safe_entities, user_character_ids=user_character_ids, local_cache=local_cache)
+    return is_hostile_unified(involved_ids=[entity_id], entity_type=entity_type, when=when, safe_entities=safe_entities)
 
 
 def is_entity_hostile(entity_id: int, entity_type: str = None, when: datetime = None, safe_entities: set = None) -> bool:
@@ -1976,7 +1922,6 @@ def get_location_owner(location_id: int) -> Optional[Dict[str, str]]:
     return None
 
 
-@lru_cache(maxsize=1024)
 def is_ship(type_id):
     """Checks if a type_id belongs to a ship."""
     if not type_id:
@@ -2018,7 +1963,8 @@ def get_safe_entities():
     if _safe_entities_cache is not None and now - _safe_entities_cache_time < 60:
         return _safe_entities_cache
 
-    cfg = get_bigbrother_config()
+    from .models import BigBrotherConfig
+    cfg = BigBrotherConfig.get_solo()
 
     ids = set()
 

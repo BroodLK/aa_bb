@@ -40,7 +40,6 @@ from .tasks_ct import *
 from .tasks_tickets import *
 from .tasks_other import *
 
-from allianceauth.authentication.models import CharacterOwnership
 from allianceauth.eveonline.models import EveCharacter
 from django.contrib.auth import get_user_model
 
@@ -108,23 +107,18 @@ def BB_update_single_user(user_id, char_name):
             awox_links = [x["link"] for x in awox_data]
             awox_map = {x["link"]: x for x in awox_data}
 
-            from .app_settings import get_safe_entities
-            safe_entities = get_safe_entities()
-            user_character_ids = set(CharacterOwnership.objects.filter(user_id=user_id).values_list('character__character_id', flat=True))
-            local_cache = {}
-
             logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Fetching Hostile Clones...")
-            hostile_clones_result = get_hostile_clone_locations(user_id, safe_entities=safe_entities, user_character_ids=user_character_ids, local_cache=local_cache)
+            hostile_clones_result = get_hostile_clone_locations(user_id)
 
             logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Fetching Hostile Assets...")
 
-            hostile_assets_result = get_hostile_asset_locations(user_id, safe_entities=safe_entities, user_character_ids=user_character_ids, local_cache=local_cache)
+            hostile_assets_result = get_hostile_asset_locations(user_id)
 
             logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Fetching Sus Contacts/Contracts/Mails/Trans...")
-            sus_contacts_result = {str(cid): v for cid, v in get_user_hostile_notifications(user_id, safe_entities=safe_entities, user_character_ids=user_character_ids, local_cache=local_cache).items()}
-            sus_contracts_result = {str(issuer_id): v for issuer_id, v in get_user_hostile_contracts(user_id, safe_entities=safe_entities, user_character_ids=user_character_ids, local_cache=local_cache).items()}
-            sus_mails_result = {str(issuer_id): v for issuer_id, v in get_user_hostile_mails(user_id, safe_entities=safe_entities, user_character_ids=user_character_ids, local_cache=local_cache).items()}
-            sus_trans_result = {str(issuer_id): v for issuer_id, v in get_user_hostile_transactions(user_id, safe_entities=safe_entities, user_character_ids=user_character_ids, local_cache=local_cache).items()}
+            sus_contacts_result = {str(cid): v for cid, v in get_user_hostile_notifications(user_id).items()}
+            sus_contracts_result = {str(issuer_id): v for issuer_id, v in get_user_hostile_contracts(user_id).items()}
+            sus_mails_result = {str(issuer_id): v for issuer_id, v in get_user_hostile_mails(user_id).items()}
+            sus_trans_result = {str(issuer_id): v for issuer_id, v in get_user_hostile_transactions(user_id).items()}
 
             sp_age_ratio_result: dict[str, dict] = {}
 

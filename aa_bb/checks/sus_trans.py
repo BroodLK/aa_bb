@@ -129,10 +129,15 @@ def gather_user_transactions(user_id: int):
 def get_user_transactions(qs) -> Dict[int, Dict]:
     result: Dict[int, Dict] = {}
 
-    local_cache: dict = {}
+    _info_cache: dict[tuple[int, int], dict] = {}
 
     def _cached_info(eid: int, when: datetime) -> dict:
-        return get_entity_info(eid, when, local_cache=local_cache)
+        key = (int(eid or 0), int(when.date().toordinal()))
+        if key in _info_cache:
+            return _info_cache[key]
+        info = get_entity_info(eid, when)
+        _info_cache[key] = info
+        return info
 
     for entry in qs:
         tx_id = entry.entry_id
@@ -206,7 +211,7 @@ def get_user_transactions(qs) -> Dict[int, Dict]:
     return result
 
 
-def is_transaction_hostile(tx: dict, user_ids: set = None, safe_entities: set = None, user_character_ids: set = None, local_cache: dict = None) -> bool:
+def is_transaction_hostile(tx: dict, user_ids: set = None, safe_entities: set = None) -> bool:
     """
     Checks if a wallet transaction is considered hostile using the unified processor.
     """
@@ -230,9 +235,7 @@ def is_transaction_hostile(tx: dict, user_ids: set = None, safe_entities: set = 
         market_item_id=tx.get("type_id"),
         market_unit_price=abs(tx.get("raw_amount")) / (tx.get("quantity") or 1) if tx.get("raw_amount") is not None else None,
         when=tx.get("date"),
-        safe_entities=safe_entities,
-        user_character_ids=user_character_ids,
-        local_cache=local_cache
+        safe_entities=safe_entities
     )
 
 
@@ -248,11 +251,10 @@ def render_transactions(user_id: int) -> str:
 
     from ..app_settings import get_safe_entities
     safe_entities = get_safe_entities()
-    local_cache = {}
 
     # sort by date desc
     all_list = sorted(txs.values(), key=lambda x: x['date'], reverse=True)
-    hostile = [t for t in all_list if is_transaction_hostile(t, user_ids, safe_entities=safe_entities, user_character_ids=user_ids, local_cache=local_cache)]
+    hostile = [t for t in all_list if is_transaction_hostile(t, user_ids, safe_entities=safe_entities)]
     if not hostile:  # No transactions require attention.
         return '<p>No hostile transactions found.</p>'
 
@@ -314,7 +316,7 @@ def render_transactions(user_id: int) -> str:
     return '\n'.join(parts)
 
 
-def get_user_hostile_transactions(user_id: int, safe_entities: set = None, user_character_ids: set = None, local_cache: dict = None) -> Dict[int, str]:
+def get_user_hostile_transactions(user_id: int) -> Dict[int, str]:
     qs_all = gather_user_transactions(user_id)
     all_ids = list(qs_all.values_list("entry_id", flat=True))
 
@@ -329,20 +331,13 @@ def get_user_hostile_transactions(user_id: int, safe_entities: set = None, user_
         new_qs = qs_all.filter(entry_id__in=new)
         rows = get_user_transactions(new_qs)
 
+        user_chars = get_user_characters(user_id)
+        user_ids = set(user_chars.keys())
+
         from ..app_settings import get_safe_entities
-        if safe_entities is None:
-            safe_entities = get_safe_entities()
+        safe_entities = get_safe_entities()
 
-        if user_character_ids is None:
-            user_chars = get_user_characters(user_id)
-            user_ids = set(user_chars.keys())
-        else:
-            user_ids = user_character_ids
-
-        if local_cache is None:
-            local_cache = {}
-
-        hostile_rows: dict[int, dict] = {eid: tx for eid, tx in rows.items() if is_transaction_hostile(tx, user_ids, safe_entities=safe_entities, user_character_ids=user_ids, local_cache=local_cache)}
+        hostile_rows: dict[int, dict] = {eid: tx for eid, tx in rows.items() if is_transaction_hostile(tx, user_ids, safe_entities=safe_entities)}
         if hostile_rows:
             ProcessedTransaction.objects.bulk_create(
                 [ProcessedTransaction(entry_id=eid) for eid in hostile_rows.keys()],

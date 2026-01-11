@@ -55,27 +55,14 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
     """
     if not corptools_active() or CharacterAudit is None:
         return {}
+    try:
+        user = User.objects.get(pk=user_id)
+    except User.DoesNotExist:
+        return {}
 
     system_map: Dict[int, dict] = {}
     _loc_sys_cache = {}
     _loc_name_cache = {}
-
-    # Bulk fetch character IDs and names
-    char_data = dict(CharacterOwnership.objects.filter(user_id=user_id).values_list('character__character_id', 'character__character_name'))
-    if not char_data:
-        return {}
-
-    user_char_ids = set(char_data.keys())
-
-    # Bulk fetch assets for all characters at once
-    assets = (
-        CharacterAsset.objects.select_related(
-            "location_name__system",
-            "type_name__group__category",
-        )
-        .filter(character__character__character_id__in=user_char_ids)
-        .exclude(location_flag__iexact="solar_system")
-    )
 
     def add_asset(system_obj, location_id, location_name, char_id, char_name, type_id, type_name):
         """Store the asset details organized by system and location."""
@@ -130,39 +117,55 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
             "type_name": type_name,
         })
 
-    # Process assets in bulk
-    for asset in assets:
-        if (asset.location_flag or "").lower() == "assetsafety":
+    # for each EVE character owned by this user
+    for co in CharacterOwnership.objects.filter(user=user).select_related("character"):
+        try:
+            char_audit = CharacterAudit.objects.get(character=co.character)
+        except CharacterAudit.DoesNotExist:
             continue
 
-        if not asset.type_name:
-            continue
-
-        loc = asset.location_name
-        system_obj = getattr(loc, "system", None) if loc else None
-
-        loc_name = loc.location_name if loc else None
-        if not loc_name:
-            loc_key = asset.location_id
-            if loc_key in _loc_name_cache:
-                loc_name = _loc_name_cache[loc_key]
-            else:
-                loc_name = resolve_location_name(loc_key)
-                _loc_name_cache[loc_key] = loc_name
-
-        char_id = asset.character.character.character_id
-        char_name = char_data.get(char_id, "Unknown Character")
-
-        add_asset(
-            system_obj, asset.location_id, loc_name,
-            char_id, char_name,
-            asset.type_name.type_id, asset.type_name.name
+        assets = (
+            CharacterAsset.objects.select_related(
+                "location_name__system",
+                "type_name__group__category",
+            )
+            .filter(character=char_audit)
+            .exclude(location_flag__iexact="solar_system")
         )
+
+        for asset in assets:
+            if (asset.location_flag or "").lower() == "assetsafety":
+                continue
+
+            loc = asset.location_name
+            system_obj = getattr(loc, "system", None) if loc else None
+
+            # Optimization: use cached name from select_related if available
+            loc_name = None
+            if loc:
+                loc_name = loc.location_name
+
+            if not loc_name:
+                loc_key = asset.location_id
+                if loc_key in _loc_name_cache:
+                    loc_name = _loc_name_cache[loc_key]
+                else:
+                    loc_name = resolve_location_name(loc_key)
+                    _loc_name_cache[loc_key] = loc_name
+
+            if not asset.type_name:
+                continue
+
+            add_asset(
+                system_obj, asset.location_id, loc_name,
+                co.character.character_id, co.character.character_name,
+                asset.type_name.type_id, asset.type_name.name
+            )
 
     return system_map
 
 
-def get_hostile_asset_locations(user_id: int, safe_entities: set = None, user_character_ids: set = None, local_cache: dict = None) -> Dict[str, dict]:
+def get_hostile_asset_locations(user_id: int) -> Dict[str, dict]:
     """
     Returns a mapping of system display name -> structured hostile data
     for systems where the user's characters have assets in space and the
@@ -174,12 +177,7 @@ def get_hostile_asset_locations(user_id: int, safe_entities: set = None, user_ch
 
     hostile_map: Dict[str, dict] = {}
     from ..app_settings import get_safe_entities
-    if safe_entities is None:
-        safe_entities = get_safe_entities()
-    if user_character_ids is None:
-        user_character_ids = set(CharacterOwnership.objects.filter(user_id=user_id).values_list('character__character_id', flat=True))
-    if local_cache is None:
-        local_cache = {}
+    safe_entities = get_safe_entities()
     _hostile_memo = {}
 
     for system_id, data in systems.items():
@@ -217,9 +215,7 @@ def get_hostile_asset_locations(user_id: int, safe_entities: set = None, user_ch
                         is_asset=True,
                         asset_type_id=asset["type_id"],
                         when=timezone.now(),
-                        safe_entities=safe_entities,
-                        user_character_ids=user_character_ids,
-                        local_cache=local_cache
+                        safe_entities=safe_entities
                     )
                     _hostile_memo[memo_key] = is_hostile
 
@@ -266,8 +262,6 @@ def render_assets(user_id: int) -> Optional[str]:
         rows: List[Dict] = []
         from ..app_settings import get_safe_entities
         safe_entities = get_safe_entities()
-        user_character_ids = set(CharacterOwnership.objects.filter(user_id=user_id).values_list('character__character_id', flat=True))
-        local_cache = {}
         _hostile_memo = {}
 
         for system_id, data in systems.items():
@@ -304,9 +298,7 @@ def render_assets(user_id: int) -> Optional[str]:
                             is_asset=True,
                             asset_type_id=asset["type_id"],
                             when=timezone.now(),
-                            safe_entities=safe_entities,
-                            user_character_ids=user_character_ids,
-                            local_cache=local_cache
+                            safe_entities=safe_entities
                         )
                         _hostile_memo[memo_key] = is_hostile
 

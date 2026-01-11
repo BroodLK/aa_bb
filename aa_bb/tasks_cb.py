@@ -141,13 +141,9 @@ def CB_update_single_corp(corp_id):
             if corp_id in ignored_ids:
                 return
 
-            from .app_settings import get_safe_entities
-            safe_entities = get_safe_entities()
-            local_cache = {}
-
-            hostile_assets_result = get_corp_hostile_asset_locations(corp_id, safe_entities=safe_entities, local_cache=local_cache)
-            sus_contracts_result = {str(issuer_id): v for issuer_id, v in get_corp_hostile_contracts(corp_id, safe_entities=safe_entities, local_cache=local_cache).items()}
-            sus_trans_result = {str(issuer_id): v for issuer_id, v in get_corp_hostile_transactions(corp_id, safe_entities=safe_entities, local_cache=local_cache).items()}
+            hostile_assets_result = get_corp_hostile_asset_locations(corp_id)
+            sus_contracts_result = {str(issuer_id): v for issuer_id, v in get_corp_hostile_contracts(corp_id).items()}
+            sus_trans_result = {str(issuer_id): v for issuer_id, v in get_corp_hostile_transactions(corp_id).items()}
 
             has_hostile_assets = bool(hostile_assets_result)
             has_sus_contracts = bool(sus_contracts_result)

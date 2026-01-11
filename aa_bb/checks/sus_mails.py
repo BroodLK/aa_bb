@@ -74,10 +74,15 @@ def gather_user_mails(user_id: int):
 
 def get_user_mails(qs) -> Dict[int, Dict]:
     result: Dict[int, Dict] = {}
-    local_cache: dict = {}
+    _info_cache: dict[tuple[int, int], dict] = {}
 
     def _cached_info(eid: int, when: datetime) -> dict:
-        return get_entity_info(eid, when, local_cache=local_cache)
+        key = (int(eid or 0), int(when.date().toordinal()))
+        if key in _info_cache:
+            return _info_cache[key]
+        info = get_entity_info(eid, when)
+        _info_cache[key] = info
+        return info
 
     for m in qs:
         mid = m.id_key
@@ -143,7 +148,7 @@ def get_cell_style_for_mail_cell(column: str, row: dict, index: Optional[int] = 
     return ''
 
 
-def is_mail_row_hostile(row: dict, safe_entities: set = None, user_character_ids: set = None, local_cache: dict = None) -> bool:
+def is_mail_row_hostile(row: dict, safe_entities: set = None) -> bool:
     """
     Checks if a mail is considered hostile using the unified processor.
     """
@@ -160,9 +165,7 @@ def is_mail_row_hostile(row: dict, safe_entities: set = None, user_character_ids
     return is_hostile_unified(
         involved_ids=involved,
         when=row.get("sent_date"),
-        safe_entities=safe_entities,
-        user_character_ids=user_character_ids,
-        local_cache=local_cache
+        safe_entities=safe_entities
     )
 
 
@@ -177,12 +180,9 @@ def render_mails(user_id: int) -> str:
 
     from ..app_settings import get_safe_entities
     safe_entities = get_safe_entities()
-    user_chars = get_user_characters(user_id)
-    user_ids = set(user_chars.keys())
-    local_cache = {}
 
     rows = sorted(mails.values(), key=lambda x: x['sent_date'], reverse=True)
-    hostile_rows = [r for r in rows if is_mail_row_hostile(r, safe_entities=safe_entities, user_character_ids=user_ids, local_cache=local_cache)]
+    hostile_rows = [r for r in rows if is_mail_row_hostile(r, safe_entities=safe_entities)]
     total = len(hostile_rows)
     if total == 0:  # Nothing matched the hostile criteria.
         return '<p>No hostile mails found.</p>'
@@ -232,7 +232,7 @@ def render_mails(user_id: int) -> str:
 
 
 
-def get_user_hostile_mails(user_id: int, safe_entities: set = None, user_character_ids: set = None, local_cache: dict = None) -> Dict[int, str]:
+def get_user_hostile_mails(user_id: int) -> Dict[int, str]:
     cfg = BigBrotherConfig.get_solo()
 
     all_qs = gather_user_mails(user_id)
@@ -250,19 +250,9 @@ def get_user_hostile_mails(user_id: int, safe_entities: set = None, user_charact
         new_rows = get_user_mails(new_qs)
 
         from ..app_settings import get_safe_entities
-        if safe_entities is None:
-            safe_entities = get_safe_entities()
+        safe_entities = get_safe_entities()
 
-        if user_character_ids is None:
-            user_chars = get_user_characters(user_id)
-            user_ids = set(user_chars.keys())
-        else:
-            user_ids = user_character_ids
-
-        if local_cache is None:
-            local_cache = {}
-
-        hostile_rows: dict[int, dict] = {mid: m for mid, m in new_rows.items() if is_mail_row_hostile(m, safe_entities=safe_entities, user_character_ids=user_ids, local_cache=local_cache)}
+        hostile_rows: dict[int, dict] = {mid: m for mid, m in new_rows.items() if is_mail_row_hostile(m, safe_entities=safe_entities)}
 
         pms: dict[int, ProcessedMail] = {}
         if hostile_rows:

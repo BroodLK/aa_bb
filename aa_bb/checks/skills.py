@@ -15,7 +15,6 @@ import os
 from typing import Dict
 from django.utils.safestring import mark_safe
 from django.utils import timezone
-from django.db.models import Min
 
 logger = get_extension_logger(__name__)
 
@@ -196,31 +195,13 @@ def render_user_skills_html(user_id: int) -> str:
     skill_name_map = get_skill_map()
     # 1) Fetch all characters’ skill info in one go
     data = get_multiple_user_skill_info(user_id, skill_ids)
-
-    # 2) Bulk fetch character ages
-    ownership_map = get_user_characters(user_id)
-    user_char_ids = set(ownership_map.keys())
-    char_ages = {}
-    if corptools_active() and CorporationHistory:
-        earliest_hists = CorporationHistory.objects.filter(
-            character__character__character_id__in=user_char_ids
-        ).values('character__character__character_id').annotate(
-            earliest_start=Min('start_date')
-        )
-        now_ts = timezone.now()
-        for item in earliest_hists:
-            cid = item['character__character__character_id']
-            start = item['earliest_start']
-            if start:
-                char_ages[cid] = (now_ts - start).days
-
     # data is: { "CharName": { "total_sp": int, skill_id: {"trained": int, "active": int}, ... }, ... }
     #logger.info(len(data))
     html_parts = []
     for char_name, info in data.items():
         total_sp = info.get("total_sp", 0)
         char_id = get_character_id(char_name)
-        char_age = char_ages.get(char_id)
+        char_age = get_char_age(char_id)
         if total_sp:  # Convert skillpoints to training days when data exists.
             sp_days = (total_sp - 384000) / 64800
         else:

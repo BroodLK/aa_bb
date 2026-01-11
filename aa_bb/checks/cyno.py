@@ -9,12 +9,10 @@ heavy lifting happens here so templates only need to call render helpers.
 from allianceauth.services.hooks import get_extension_logger
 
 
-from .skills import get_multiple_user_skill_info, get_char_age
+from .skills import get_user_skill_info, get_char_age
 from ..app_settings import get_user_characters, get_character_id, corptools_active
-from django.utils import timezone
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
-from django.db.models import Min
 from .corp_changes import get_current_stint_days_in_corp
 from aa_bb.models import BigBrotherConfig as bbc
 
@@ -118,71 +116,33 @@ def get_user_cyno_info(user_id: int) -> dict:
         .filter(character__character_id__in=ownership_map.keys())
     )
 
-    # 3) fetch all required skills in one bulk query
-    all_skill_ids = list(skill_ids.values())
-    bulk_skill_info = get_multiple_user_skill_info(user_id, all_skill_ids)
-
-    # 4) Bulk fetch hulls (assets) in target groups
-    target_groups = {833, 894, 898, 830, 1202, 834, 963, 1283, 547, 485, 1538, 659, 30, 902, 883}
-    user_char_ids = set(ownership_map.keys())
-    hull_assets = set(
-        CharacterAsset.objects.filter(
-            character__character__character_id__in=user_char_ids,
-            type_name__group_id__in=target_groups
-        ).values_list('character__character__character_id', 'type_name__group_id')
-    )
-
-    # 5) Bulk fetch char ages
-    char_ages = {}
-    from corptools.models import CorporationHistory
-    earliest_hists = CorporationHistory.objects.filter(
-        character__character__character_id__in=user_char_ids
-    ).values('character__character__character_id').annotate(
-        earliest_start=Min('start_date')
-    )
-    now_ts = timezone.now()
-    for item in earliest_hists:
-        cid = item['character__character__character_id']
-        start = item['earliest_start']
-        if start:
-            char_ages[cid] = (now_ts - start).days
+    # 3) fetch each skill once
+    skill_data = {
+        key: get_user_skill_info(user_id, skill_id)
+        for key, skill_id in skill_ids.items()
+    }
 
     result = {}
 
     for audit in audits:
-        char_id = audit.character.character_id
-        name = ownership_map[char_id]
-        cid = char_id
-        age = char_ages.get(cid, 0)
-
-        # Skill info for THIS character
-        char_skills = bulk_skill_info.get(name, {})
-
-        def get_skill_levels(skill_key):
-            sid = skill_ids.get(skill_key)
-            if sid is None:
-                return 0, 0
-            levels = char_skills.get(str(sid), char_skills.get(sid, {"trained": 0, "active": 0}))
-            return levels.get("trained", 0), levels.get("active", 0)
-
-        def has_hull(gid):
-            return (char_id, gid) in hull_assets
-
-        i_recon = has_hull(833)
-        i_hic = has_hull(894)
-        i_blops = has_hull(898)
-        i_covops = has_hull(830)
-        i_brun = has_hull(1202)
-        i_sbomb = has_hull(834)
-        i_scru = has_hull(963)
-        i_expfrig = has_hull(1283)
-        i_carrier = has_hull(547)
-        i_dread = has_hull(485)
-        i_fax = has_hull(1538)
-        i_super = has_hull(659)
-        i_titan = has_hull(30)
-        i_jf = has_hull(902)
-        i_rorq = has_hull(883)
+        name = ownership_map[audit.character.character_id]
+        cid = get_character_id(name)
+        age = get_char_age(cid)
+        i_recon = owns_items_in_group(cid, 833)
+        i_hic = owns_items_in_group(cid, 894)
+        i_blops = owns_items_in_group(cid, 898)
+        i_covops = owns_items_in_group(cid, 830)
+        i_brun = owns_items_in_group(cid, 1202)
+        i_sbomb = owns_items_in_group(cid, 834)
+        i_scru = owns_items_in_group(cid, 963)
+        i_expfrig = owns_items_in_group(cid, 1283)
+        i_carrier = owns_items_in_group(cid, 547)
+        i_dread = owns_items_in_group(cid, 485)
+        i_fax = owns_items_in_group(cid, 1538)
+        i_super = owns_items_in_group(cid, 659)
+        i_titan = owns_items_in_group(cid, 30)
+        i_jf = owns_items_in_group(cid, 902)
+        i_rorq = owns_items_in_group(cid, 883)
 
         # initialize all flags to 0
         char_dic = {
@@ -224,75 +184,75 @@ def get_user_cyno_info(user_id: int) -> dict:
         jfff = 0
 
         # Pre-calculate JF status to avoid ordering issues
-        jf_trained, jf_active = get_skill_levels("jf")
+        jf_info = skill_data.get("jf", {}).get(name, {"trained_skill_level": 0, "active_skill_level": 0})
         jf_req = required_levels.get("jf", 1)
-        if jf_trained >= jf_req:
+        if jf_info["trained_skill_level"] >= jf_req:
             jfff = 1
-        if jf_active >= jf_req:
+        if jf_info["active_skill_level"] >= jf_req:
             jfff = 2
 
         # set flags based on required_levels
-        for key in skill_ids.keys():
+        for key, data in skill_data.items():
             lvl_req = required_levels.get(key, 1)
-            trained, active = get_skill_levels(key)
+            info = data.get(name, {"trained_skill_level": 0, "active_skill_level": 0})
 
             if key == "jf":
                 continue
 
             elif key in ["acarrier", "ccarrier", "gcarrier", "mcarrier"]:  # Any racial carrier skill maps to generic carrier/fax/super flags.
-                if trained >= lvl_req:  # Carrier skills also imply Super/FAX hull capabilities.
+                if info["trained_skill_level"] >= lvl_req:  # Carrier skills also imply Super/FAX hull capabilities.
                     char_dic[f"s_carrier"] = 1
                     char_dic[f"s_super"] = 1
                     char_dic[f"s_fax"] = 1
-                if active >= lvl_req:  # Active level 2 indicates Omega-ready for all related hulls.
+                if info["active_skill_level"] >= lvl_req:  # Active level 2 indicates Omega-ready for all related hulls.
                     char_dic[f"s_carrier"] = 2
                     char_dic[f"s_super"] = 2
                     char_dic[f"s_fax"] = 2
 
             elif key in ["adread", "cdread", "gdread", "mdread", "tdread"]:  # Aggregate dreadnought skills.
-                if trained >= lvl_req:  # Any dread skill counts toward the generic dread flag.
+                if info["trained_skill_level"] >= lvl_req:  # Any dread skill counts toward the generic dread flag.
                     char_dic[f"s_dread"] = 1
-                if active >= lvl_req:  # Active = Omega-ready dread pilot.
+                if info["active_skill_level"] >= lvl_req:  # Active = Omega-ready dread pilot.
                     char_dic[f"s_dread"] = 2
 
             elif key in ["atitan", "ctitan", "gtitan", "mtitan"]:  # Any titan racial skill toggles titan readiness.
-                if trained >= lvl_req:  # Any titan racial skill unlocks titan flag.
+                if info["trained_skill_level"] >= lvl_req:  # Any titan racial skill unlocks titan flag.
                     char_dic[f"s_titan"] = 1
-                if active >= lvl_req:  # Active implies Omega titan readiness.
+                if info["active_skill_level"] >= lvl_req:  # Active implies Omega titan readiness.
                     char_dic[f"s_titan"] = 2
 
             elif key in ["ajf", "cjf", "gjf", "mjf"]:  # Racial jump freighter hull skills require base JF.
-                if trained >= lvl_req and jfff >= 1:  # Only mark JF ready when base JF skill is satisfied.
+                if info["trained_skill_level"] >= lvl_req and jfff >= 1:  # Only mark JF ready when base JF skill is satisfied.
                     char_dic[f"s_jf"] = 1
-                    if active >= lvl_req and jfff >= 2:  # Active racial JF skill plus base skill unlocks JF flag.
+                    if info["active_skill_level"] >= lvl_req and jfff >= 2:  # Active racial JF skill plus base skill unlocks JF flag.
                         char_dic[f"s_jf"] = 2
 
             elif key == "rorq":  # Rorqual specific handling.
-                if trained >= lvl_req:  # Rorqual skill acts like other hull checks.
+                if info["trained_skill_level"] >= lvl_req:  # Rorqual skill acts like other hull checks.
                     char_dic[f"s_rorq"] = 1
-                if active >= lvl_req:  # Active skill toggles Rorqual omega-ready flag.
+                if info["active_skill_level"] >= lvl_req:  # Active skill toggles Rorqual omega-ready flag.
                     char_dic[f"s_rorq"] = 2
 
             elif key in ["calscru", "amascru", "galscru", "minscru"]:  # T3 cruiser subsystems map to generic T3 status.
-                if trained >= lvl_req:  # Any T3 subsystem skill enables the general T3 flag.
+                if info["trained_skill_level"] >= lvl_req:  # Any T3 subsystem skill enables the general T3 flag.
                     char_dic[f"s_scru"] = 1
-                    if active >= lvl_req:  # Active T3 subsystem skill grants omega-ready status.
+                    if info["active_skill_level"] >= lvl_req:  # Active T3 subsystem skill grants omega-ready status.
                         char_dic[f"s_scru"] = 2
 
             elif key == "cyno":  # Base cyno skill tracks both standard and covert cyno readiness.
-                if trained >= lvl_req:  # Cyno 1 unlocks standard cyno ability.
+                if info["trained_skill_level"] >= lvl_req:  # Cyno 1 unlocks standard cyno ability.
                     char_dic[f"s_{key}"] = 1
-                if active >= lvl_req:  # Active cyno skill sets standard cyno flag.
+                if info["active_skill_level"] >= lvl_req:  # Active cyno skill sets standard cyno flag.
                     char_dic[f"s_{key}"] = 2
-                if trained == 5:  # Level 5 training unlocks covert cyno flag as well.
+                if info["trained_skill_level"] == 5:  # Level 5 training unlocks covert cyno flag as well.
                     char_dic[f"s_cov_{key}"] = 1
-                if active == 5:  # Active level 5 indicates cov cyno ready even as alpha (rare).
+                if info["active_skill_level"] == 5:  # Active level 5 indicates cov cyno ready even as alpha (rare).
                     char_dic[f"s_cov_{key}"] = 2
 
             else:
-                if trained >= lvl_req:  # Generic hull/skill gating.
+                if info["trained_skill_level"] >= lvl_req:  # Generic hull/skill gating.
                     char_dic[f"s_{key}"] = 1
-                if active >= lvl_req:  # Active skill yields omega-ready status for generic hulls.
+                if info["active_skill_level"] >= lvl_req:  # Active skill yields omega-ready status for generic hulls.
                     char_dic[f"s_{key}"] = 2
 
         if char_dic[f"s_cyno"] > 0 and char_dic[f"s_recon"] > 0 and char_dic[f"i_recon"] == True:  # Standard cyno + recon hull.
