@@ -54,12 +54,9 @@ def get_asset_locations(corp_id: int) -> Dict[int, dict]:
     _loc_name_cache = {}
 
     # All corp assets (exclude ones where location_flag is "solar_system")
-    # Use only() to load only the fields we need, reducing memory and query time
     assets = CorpAsset.objects.select_related('location_name__system') \
                               .filter(corporation=corp_audit) \
-                              .exclude(location_flag="solar_system") \
-                              .only('location_name', 'location_name__id', 'location_name__name',
-                                    'location_name__system__pk', 'location_name__system__name')
+                              .exclude(location_flag="solar_system")
 
     for asset in assets:
         loc = asset.location_name

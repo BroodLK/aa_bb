@@ -316,20 +316,17 @@ def render_transactions(user_id: int) -> str:
 
 def get_user_hostile_transactions(user_id: int, safe_entities: set = None, user_character_ids: set = None, local_cache: dict = None) -> Dict[int, str]:
     qs_all = gather_user_transactions(user_id)
+    all_ids = list(qs_all.values_list("entry_id", flat=True))
 
-    # Get already processed IDs
     seen = set(
-        ProcessedTransaction.objects.filter(
-            entry_id__in=qs_all.values_list("entry_id", flat=True)
-        ).values_list("entry_id", flat=True)
+        ProcessedTransaction.objects.filter(entry_id__in=all_ids).values_list("entry_id", flat=True)
     )
 
     notes: Dict[int, str] = {}
+    new = [eid for eid in all_ids if eid not in seen]
 
-    # Filter to only unprocessed transactions at DB level
-    new_qs = qs_all.exclude(entry_id__in=seen) if seen else qs_all
-
-    if new_qs.exists():
+    if new:
+        new_qs = qs_all.filter(entry_id__in=new)
         rows = get_user_transactions(new_qs)
 
         from ..app_settings import get_safe_entities

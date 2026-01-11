@@ -104,7 +104,8 @@ def gather_user_transactions(corp_id: int):
     except (EveCorporationInfo.DoesNotExist, CorporationAudit.DoesNotExist):
         return CorporationWalletJournalEntry.objects.none()
 
-    qs = CorporationWalletJournalEntry.objects.filter(division__corporation=corp_audit).select_related('division__corporation')
+    qs = CorporationWalletJournalEntry.objects.filter(division__corporation=corp_audit)
+    logger.info(f"Gathered {qs.count()} wallet entries for corp {corp_id}")
     return qs
 
 
@@ -316,95 +317,88 @@ def get_corp_hostile_transactions(corp_id: int, safe_entities: set = None, local
     Persist and return formatted notes for hostile corporate transactions.
     """
     qs_all = gather_user_transactions(corp_id)
-
-    # Get already processed IDs
-    seen = set(ProcessedTransaction.objects.filter(
-        entry_id__in=qs_all.values_list('entry_id', flat=True)
-    ).values_list('entry_id', flat=True))
-
+    all_ids = list(qs_all.values_list('entry_id', flat=True))
+    seen = set(ProcessedTransaction.objects.filter(entry_id__in=all_ids)
+                                              .values_list('entry_id', flat=True))
     notes: Dict[int, str] = {}
+    new: List[int] = []
+    for eid in all_ids:
+        if eid not in seen:  # Only keep transactions that need processing.
+            new.append(eid)
+    del all_ids
+    del seen
+    processed = 0
+    if new:  # Only hydrate rows when new entry ids exist.
+        processed += 1
+        new_qs = qs_all.filter(entry_id__in=new)
+        del qs_all
+        rows = get_user_transactions(new_qs)
 
-    # Filter to only unprocessed transactions at DB level
-    new_qs = qs_all.exclude(entry_id__in=seen) if seen else qs_all
+        from ..app_settings import get_safe_entities
+        if safe_entities is None:
+            safe_entities = get_safe_entities()
+        if local_cache is None:
+            local_cache = {}
 
-    if not new_qs.exists():
-        # No new transactions, just return existing notes
-        for note_obj in SusTransactionNote.objects.filter(user_id=corp_id).select_related('transaction'):
-            notes[note_obj.transaction.entry_id] = note_obj.note
-        return notes
+        for eid, tx in rows.items():
+            pt, created = ProcessedTransaction.objects.get_or_create(entry_id=eid)
+            if not created:  # Another worker finished first; do not duplicate notes.
+                continue
+            if not is_transaction_hostile(tx, safe_entities=safe_entities, local_cache=local_cache):  # Ignore non-hostile transactions.
+                continue
+            flags = []
+            if tx['type']:  # Skip type analysis when CCP omitted the ref type.
+                for key in SUS_TYPES:
+                    if key in tx['type']:  # Tag suspicious ref types for operators.
+                        flags.append(f"Transaction type is **{tx['type']}**")
+                if BigBrotherConfig.get_solo().show_market_transactions:
+                    if "market_escrow" in tx['type'] or "market_transaction" in tx['type']:
+                        flags.append(f"Transaction type is **{tx['type']}**")
+            cfg = BigBrotherConfig.get_solo()
 
-    # Process only new transactions
-    rows = get_user_transactions(new_qs)
+            fpid = tx.get("first_party_id")
+            if get_hostile_state(fpid, 'character', safe_entities=safe_entities, local_cache=local_cache):
+                flags.append(f"first_party **{tx['first_party_name']}** is hostile/blacklisted")
 
-    from ..app_settings import get_safe_entities
-    if safe_entities is None:
-        safe_entities = get_safe_entities()
-    if local_cache is None:
-        local_cache = {}
+            spid = tx.get("second_party_id")
+            if get_hostile_state(spid, 'character', safe_entities=safe_entities, local_cache=local_cache):
+                flags.append(f"second_party **{tx['second_party_name']}** is hostile/blacklisted")
 
-    for eid, tx in rows.items():
-        pt, created = ProcessedTransaction.objects.get_or_create(entry_id=eid)
-        if not created:  # Another worker finished first; do not duplicate notes.
-            continue
-        if not is_transaction_hostile(tx, safe_entities=safe_entities, local_cache=local_cache):  # Ignore non-hostile transactions.
-            continue
+            loc_id = tx.get('location_id') or tx.get('system_id')
+            if loc_id and is_location_hostile(tx.get('location_id'), tx.get('system_id'), safe_entities=safe_entities, local_cache=local_cache):
+                loc_name = resolve_location_name(loc_id) or f"ID {loc_id}"
+                owner_info = get_system_owner({"id": loc_id}, local_cache=local_cache)
+                oname = owner_info.get("owner_name")
+                rname = owner_info.get("region_name")
+                flag = f"Location **{loc_name}** is hostile space"
+                if oname or rname:
+                    info_parts = []
+                    if oname:
+                        info_parts.append(oname)
+                    if rname and rname != "Unknown Region":
+                        info_parts.append(f"Region: {rname}")
+                    flag += f" ({' | '.join(info_parts)})"
+                flags.append(flag)
 
-        flags = []
-        if tx['type']:  # Skip type analysis when CCP omitted the ref type.
-            for key in SUS_TYPES:
-                if key in tx['type']:  # Tag suspicious ref types for operators.
-                    flags.append(f"Transaction type is **{tx['type']}**")
-            if BigBrotherConfig.get_solo().show_market_transactions:
-                if "market_escrow" in tx['type'] or "market_transaction" in tx['type']:
-                    flags.append(f"Transaction type is **{tx['type']}**")
-        cfg = BigBrotherConfig.get_solo()
+            flags_text = "\n    - ".join(flags)
 
-        fpid = tx.get("first_party_id")
-        if get_hostile_state(fpid, 'character', safe_entities=safe_entities, local_cache=local_cache):
-            flags.append(f"first_party **{tx['first_party_name']}** is hostile/blacklisted")
+            note = (
+                f"- **{tx['date']}** · **{tx['amount']} ISK**"
+                f"\n  - **Type:** {tx['type']}"
+                f"\n  - **From:** {tx['first_party_name']} ({tx['first_party_corporation']} | {tx['first_party_alliance']})"
+                f"\n  - **To:** {tx['second_party_name']} ({tx['second_party_corporation']} | {tx['second_party_alliance']})"
+                f"\n  - **Reason:** {tx['reason']}"
+                f"\n  - **Context:** {tx['context']}"
+                f"\n  - **Flags:**"
+                f"\n    - {flags_text}"
+            )
+            SusTransactionNote.objects.update_or_create(
+                transaction=pt,
+                defaults={'user_id': corp_id, 'note': note}
+            )
+            notes[eid] = note
 
-        spid = tx.get("second_party_id")
-        if get_hostile_state(spid, 'character', safe_entities=safe_entities, local_cache=local_cache):
-            flags.append(f"second_party **{tx['second_party_name']}** is hostile/blacklisted")
-
-        loc_id = tx.get('location_id') or tx.get('system_id')
-        if loc_id and is_location_hostile(tx.get('location_id'), tx.get('system_id'), safe_entities=safe_entities, local_cache=local_cache):
-            loc_name = resolve_location_name(loc_id) or f"ID {loc_id}"
-            owner_info = get_system_owner({"id": loc_id}, local_cache=local_cache)
-            oname = owner_info.get("owner_name")
-            rname = owner_info.get("region_name")
-            flag = f"Location **{loc_name}** is hostile space"
-            if oname or rname:
-                info_parts = []
-                if oname:
-                    info_parts.append(oname)
-                if rname and rname != "Unknown Region":
-                    info_parts.append(f"Region: {rname}")
-                flag += f" ({' | '.join(info_parts)})"
-            flags.append(flag)
-
-        flags_text = "\n    - ".join(flags)
-
-        note = (
-            f"- **{tx['date']}** · **{tx['amount']} ISK**"
-            f"\n  - **Type:** {tx['type']}"
-            f"\n  - **From:** {tx['first_party_name']} ({tx['first_party_corporation']} | {tx['first_party_alliance']})"
-            f"\n  - **To:** {tx['second_party_name']} ({tx['second_party_corporation']} | {tx['second_party_alliance']})"
-            f"\n  - **Reason:** {tx['reason']}"
-            f"\n  - **Context:** {tx['context']}"
-            f"\n  - **Flags:**"
-            f"\n    - {flags_text}"
-        )
-        SusTransactionNote.objects.update_or_create(
-            transaction=pt,
-            defaults={'user_id': corp_id, 'note': note}
-        )
-        notes[eid] = note
-
-    # Pull in old notes (only if we had new transactions, otherwise already done above)
-    if notes:
-        for note_obj in SusTransactionNote.objects.filter(user_id=corp_id).select_related('transaction'):
-            if note_obj.transaction.entry_id not in notes:
-                notes[note_obj.transaction.entry_id] = note_obj.note
+    for note_obj in SusTransactionNote.objects.filter(user_id=corp_id):  # Merge previously stored notes to maintain history.
+        notes[note_obj.transaction.entry_id] = note_obj.note
 
     return notes
