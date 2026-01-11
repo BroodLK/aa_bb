@@ -900,6 +900,9 @@ def stream_transactions_sse(request):
 
         user_chars = get_user_characters(user_id)
         user_ids = set(user_chars.keys())
+        local_cache = {}
+        from .app_settings import get_safe_entities
+        safe_entities = get_safe_entities()
 
         batch_size = 100
         for i in range(0, total, batch_size):
@@ -914,7 +917,7 @@ def stream_transactions_sse(request):
                 if processed % 10 == 0:
                     yield ": ping\n\n"         # keep‐alive
 
-                is_hostile = is_transaction_hostile(row, user_ids)
+                is_hostile = is_transaction_hostile(row, user_ids, safe_entities=safe_entities, user_character_ids=user_ids, local_cache=local_cache)
                 if processed <= 5:  # Log first 5 for debugging
                     logger.info(f"TX {eid}: type={row.get('type')}, fp={row.get('first_party_id')}, sp={row.get('second_party_id')}, hostile={is_hostile}")
 
@@ -937,16 +940,16 @@ def stream_transactions_sse(request):
                         # first/second party name
                         if col in ('first_party_name','second_party_name'):
                             pid = row[col.replace("_name", "_id")]
-                            if get_hostile_state(pid, 'character', when=row['date']):
+                            if get_hostile_state(pid, 'character', when=row['date'], safe_entities=safe_entities, user_character_ids=user_ids, local_cache=local_cache):
                                 style = 'color:red;'
                         # corps & alliances
                         if col.endswith('corporation'):
                             cid = row[f"{col}_id"]
-                            if cid and get_hostile_state(cid, 'corporation', when=row['date']):
+                            if cid and get_hostile_state(cid, 'corporation', when=row['date'], safe_entities=safe_entities, user_character_ids=user_ids, local_cache=local_cache):
                                 style = 'color:red;'
                         if col.endswith('alliance'):
                             aid = row[f"{col}_id"]
-                            if aid and get_hostile_state(aid, 'alliance', when=row['date']):
+                            if aid and get_hostile_state(aid, 'alliance', when=row['date'], safe_entities=safe_entities, user_character_ids=user_ids, local_cache=local_cache):
                                 style = 'color:red;'
                         def make_td(text, style=""):
                             style_attr = f' style="{style}"' if style else ""

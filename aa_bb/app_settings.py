@@ -200,11 +200,10 @@ def get_eve_entity_type(
     # 1. Cache lookup
     try:
         record = id_types.objects.get(pk=eve_id)
-        try:
-            record.last_accessed = timezone.now()
+        now = timezone.now()
+        if now - record.last_accessed > timedelta(hours=24):
+            record.last_accessed = now
             record.save(update_fields=["last_accessed"])
-        except Exception:
-            record.save()
         return record.name
     except id_types.DoesNotExist:
         pass
@@ -246,8 +245,10 @@ def get_character_id(name: str) -> int | None:
     except Character_names.DoesNotExist:
         record = None
     else:
-        record.updated = timezone.now()
-        record.save()
+        now = timezone.now()
+        if now - record.updated > timedelta(hours=24):
+            record.updated = now
+            record.save(update_fields=["updated"])
         return record.id
 
     # Step 2: Resolve via ESI and reconcile duplicates
@@ -358,20 +359,22 @@ def get_entity_info(entity_id: int, as_of: timezone.datetime, local_cache: dict 
     as_of = normalize_timestamp(as_of)
 
     # 0) Check local cache first
-    if local_cache is not None and entity_id in local_cache:
-        return local_cache[entity_id]
+    cache_key = (entity_id, as_of)
+    if local_cache is not None and cache_key in local_cache:
+        return local_cache[cache_key]
 
     now = timezone.now()
 
     # 1) Attempt to fetch fresh-enough cache entry
     try:
-        cache = EntityInfoCache.objects.get(entity_id=entity_id, as_of=as_of)
-        if now - cache.updated < _EXPIRY:  # Serve cached data when still within TTL.
-            #logger.debug(f"cache hit: entity={entity_id} @ {as_of}")
-            return cache.data
+        cache_obj = EntityInfoCache.objects.get(entity_id=entity_id, as_of=as_of)
+        if now - cache_obj.updated < _EXPIRY:  # Serve cached data when still within TTL.
+            info = cache_obj.data
+            if local_cache is not None:
+                local_cache[cache_key] = info
+            return info
         else:
-            #logger.debug(f"cache stale: entity={entity_id} @ {as_of}, expired {cache.updated}")
-            cache.delete()
+            cache_obj.delete()
     except EntityInfoCache.DoesNotExist:
         pass
     #logger.debug(f"cache empty: entity={entity_id} @ {as_of}")
@@ -444,7 +447,7 @@ def get_entity_info(entity_id: int, as_of: timezone.datetime, local_cache: dict 
         }
 
     if local_cache is not None:
-        local_cache[entity_id] = info
+        local_cache[cache_key] = info
 
     return info
 
@@ -538,11 +541,9 @@ def get_character_employment(character_or_id) -> list[dict]:
         if expiry_hint and expiry_hint > now_ts:  # Cache still valid per redis hint.
             return cached_rows
         if expiry_hint is None and now_ts - ce.updated < TTL_SHORT:  # Fall back to DB timestamp TTL.
-            try:
-                ce.last_accessed = timezone.now()
+            if now_ts - ce.last_accessed > timedelta(hours=24):
+                ce.last_accessed = now_ts
                 ce.save(update_fields=['last_accessed'])
-            except Exception:
-                ce.save()
             return cached_rows
     except CharacterEmploymentCache.DoesNotExist:
         cache_entry = None
@@ -842,8 +843,10 @@ def resolve_alliance_name(owner_id: int) -> str:
     # 1. Try permanent table first
     try:
         record = Alliance_names.objects.get(pk=owner_id)
-        record.updated = timezone.now()
-        record.save()
+        now = timezone.now()
+        if now - record.updated > timedelta(hours=24):
+            record.updated = now
+            record.save(update_fields=["updated"])
         return record.name
     except Alliance_names.DoesNotExist:
         pass  # need to fetch and store
@@ -883,8 +886,10 @@ def resolve_corporation_name(corp_id: int) -> str:
     # 1. Try permanent table first
     try:
         record = Corporation_names.objects.get(pk=corp_id)
-        record.updated = timezone.now()
-        record.save()
+        now = timezone.now()
+        if now - record.updated > timedelta(hours=24):
+            record.updated = now
+            record.save(update_fields=["updated"])
         return record.name
     except Corporation_names.DoesNotExist:
         pass  # need to fetch and store
@@ -924,8 +929,10 @@ def resolve_character_name(char_id: int) -> str:
     # 1. Try permanent table first
     try:
         record = Character_names.objects.get(pk=char_id)
-        record.updated = timezone.now()
-        record.save()
+        now = timezone.now()
+        if now - record.updated > timedelta(hours=24):
+            record.updated = now
+            record.save(update_fields=["updated"])
         return record.name
     except Character_names.DoesNotExist:
         pass  # need to fetch and store
@@ -958,7 +965,7 @@ def resolve_character_name(char_id: int) -> str:
         return f"Unresolvable eve map{e_short}{e_detail}"
 
 
-def get_system_owner(system: Dict) -> Dict[str, str]:
+def get_system_owner(system: Dict, local_cache: dict = None) -> Dict[str, str]:
     """
     Get sovereignty owner of an EVE system by name.
     Always returns a dict with keys: owner_id, owner_name, owner_type, region_id, region_name.
@@ -970,9 +977,16 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
         system_id = None
 
     if system_id:
+        # 0) Check local cache first
+        l_cache_key = f"sys_{system_id}"
+        if local_cache is not None and l_cache_key in local_cache:
+            return local_cache[l_cache_key]
+
         cache_key = f"aa_bb_system_owner_{system_id}"
         cached = cache.get(cache_key)
         if cached:
+            if local_cache is not None:
+                local_cache[l_cache_key] = cached
             return cached
 
     owner_id = "0"
@@ -1068,6 +1082,8 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
         if res:
             if system_id:
                 cache.set(f"aa_bb_system_owner_{system_id}", res, 3600)
+                if local_cache is not None:
+                    local_cache[f"sys_{system_id}"] = res
             return res
 
         sov_map = _get_sov_map()
@@ -1166,6 +1182,8 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
     }
     if system_id:
         cache.set(f"aa_bb_system_owner_{system_id}", res, 3600)
+        if local_cache is not None:
+            local_cache[f"sys_{system_id}"] = res
     return res
 
 
@@ -1393,7 +1411,7 @@ def is_hostile_unified(
             pass
 
     if location_id or actual_system_id:
-        l_owner_info = get_system_owner({"id": location_id or actual_system_id})
+        l_owner_info = get_system_owner({"id": location_id or actual_system_id}, local_cache=local_cache)
         if l_owner_info:
             try:
                 l_oid = int(l_owner_info.get("owner_id") or 0)
@@ -1463,7 +1481,7 @@ def is_hostile_unified(
     # 4. System owned by safe entity
     # Fall back to system sovereignty for unresolvable structures or non-player-controlled locations
     if actual_system_id and (not is_player_struct or l_oid == 0):
-        s_owner_info = get_system_owner({"id": actual_system_id})
+        s_owner_info = get_system_owner({"id": actual_system_id}, local_cache=local_cache)
         if s_owner_info:
             try:
                 s_oid = int(s_owner_info.get("owner_id") or 0)
@@ -1567,7 +1585,7 @@ def is_hostile_unified(
         except (ValueError, TypeError):
             pass
     if actual_system_id:
-        s_owner_info = get_system_owner({"id": actual_system_id})
+        s_owner_info = get_system_owner({"id": actual_system_id}, local_cache=local_cache)
         if s_owner_info and s_owner_info.get("owner_id"):
             try:
                 check_ids.add(int(s_owner_info.get("owner_id")))
@@ -1681,19 +1699,19 @@ def get_hostile_state(entity_id: int, entity_type: str = None, system_id: int = 
     return is_hostile_unified(involved_ids=[entity_id], entity_type=entity_type, when=when, safe_entities=safe_entities, user_character_ids=user_character_ids, local_cache=local_cache)
 
 
-def is_entity_hostile(entity_id: int, entity_type: str = None, when: datetime = None, safe_entities: set = None) -> bool:
+def is_entity_hostile(entity_id: int, entity_type: str = None, when: datetime = None, safe_entities: set = None, user_character_ids: set = None, local_cache: dict = None) -> bool:
     """
     Logic for entity (char, corp, alliance, faction) hostility.
     """
-    return is_hostile_unified(involved_ids=[entity_id], entity_type=entity_type, when=when, safe_entities=safe_entities)
+    return is_hostile_unified(involved_ids=[entity_id], entity_type=entity_type, when=when, safe_entities=safe_entities, user_character_ids=user_character_ids, local_cache=local_cache)
 
 
-def is_location_hostile(location_id: int, system_id: int = None, safe_entities: set = None) -> bool:
+def is_location_hostile(location_id: int, system_id: int = None, safe_entities: set = None, user_character_ids: set = None, local_cache: dict = None) -> bool:
     """
     Determines if a given location (structure, station, or system) is considered hostile.
     Returns True if hostile, False if safe.
     """
-    return is_hostile_unified(location_id=location_id, system_id=system_id, safe_entities=safe_entities)
+    return is_hostile_unified(location_id=location_id, system_id=system_id, safe_entities=safe_entities, user_character_ids=user_character_ids, local_cache=local_cache)
 
 
 

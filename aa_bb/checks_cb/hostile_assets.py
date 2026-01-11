@@ -143,7 +143,7 @@ def get_corp_hostile_asset_locations(corp_id: int, safe_entities: set = None, lo
             owner_info = get_system_owner({
                 "id":   system_id,
                 "name": display_name
-            })
+            }, local_cache=local_cache)
 
             oname = owner_info.get("owner_name") or "Unresolvable"
             rname = owner_info.get("region_name") or "Unknown Region"
@@ -179,7 +179,7 @@ def render_assets(corp_id: int) -> Optional[str]:
         owner_info = get_system_owner({
             "id":   system_id,
             "name": display_name
-        })
+        }, local_cache=local_cache)
 
         oname = owner_info.get("owner_name") or "—"
         rname = owner_info.get("region_name") or "—"

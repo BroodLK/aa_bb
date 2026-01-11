@@ -179,7 +179,7 @@ def get_hostile_clone_locations(user_id: int, safe_entities: set = None, user_ch
         display_name = system_name or f"ID {system_id}"
 
         # System owner info for summary
-        owner_info = get_system_owner({"id": system_id, "name": display_name})
+        owner_info = get_system_owner({"id": system_id, "name": display_name}, local_cache=local_cache)
         system_owner_name = owner_info.get("owner_name", "Unresolvable") if owner_info else "Unresolvable"
         region_name = owner_info.get("region_name", "Unknown Region") if owner_info else "Unknown Region"
 
@@ -249,7 +249,7 @@ def render_clones(user_id: int) -> str:
         system_name = data.get("name")
         display_name = system_name or f"ID {system_id}"
 
-        owner_info = get_system_owner({"id": system_id, "name": display_name})
+        owner_info = get_system_owner({"id": system_id, "name": display_name}, local_cache=local_cache)
         system_owner_name = owner_info.get("owner_name", "Unresolvable") if owner_info else "Unresolvable"
         region_name = owner_info.get("region_name", "Unknown Region") if owner_info else "Unknown Region"
 
