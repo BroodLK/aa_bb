@@ -165,10 +165,17 @@ def _get_latest_logoff_cached(char_id):
 
     ec = EveCharacter.objects.filter(character_id=char_id).first()
     if not ec:
+        # Cache negative result to prevent repeated DB queries
+        cache.set(cache_key, None, 600)  # 10 min for missing chars
         return None
 
     latest_logoff = None
-    for char in get_alts_queryset(ec):
+    alts = get_alts_queryset(ec)
+    # Use select_related to reduce queries
+    if hasattr(alts, 'select_related'):
+        alts = alts.select_related('characteraudit')
+
+    for char in alts:
         audit = getattr(char, "characteraudit", None)
         ts = getattr(audit, "last_known_logoff", None) if audit else None
         if ts and (latest_logoff is None or ts > latest_logoff):
@@ -285,10 +292,13 @@ def hourly_compliance_check():
     profiles = list(profiles_qs.select_related('user', 'main_character'))
     allowed_users = {p.user for p in profiles}
 
+    # Pre-fetch excluded users to avoid repeated queries
+    excluded_user_ids = set(t_cfg.excluded_users.all().values_list('id', flat=True))
+
     # 1. Check compliance reasons
     for UserProfil in profiles:
         user = UserProfil.user
-        if user in t_cfg.excluded_users.all():  # Skip users explicitly excluded from checks.
+        if user.id in excluded_user_ids:  # Skip users explicitly excluded from checks.
             continue
         for reason, (checker, msg_template) in reason_checkers.items():
             checked = checker(user)
@@ -316,6 +326,12 @@ def hourly_compliance_check():
         reason = ticket.reason
         hook = get_webhook_for_reason(reason)
 
+        # Build a display name for the user (mention or plain text)
+        if ticket.user:
+            user_display = f"**{ticket.user.username}**" if (ticket.discord_user_id == 0 or reason == "discord_check") else f"<@{ticket.discord_user_id}>"
+        else:
+            user_display = f"<@{ticket.discord_user_id}>" if ticket.discord_user_id else "Unknown User"
+
         # Skip exception tickets
         if ticket.is_exception:
             continue
@@ -330,19 +346,19 @@ def hourly_compliance_check():
         if ticket.user and checker(ticket.user):  # Condition cleared, close and notify.
             close_ticket(ticket)
             if ticket_resolved_automatic_notify:
-                add_notification(hook, f"✅ Ticket for <@{ticket.discord_user_id}> (**{reason}**) resolved")
+                add_notification(hook, f"✅ Ticket for {user_display} (**{reason}**) resolved")
             continue
 
         if ticket.user not in allowed_users:  # User left the org, close ticket and alert.
             close_ticket(ticket)
             if ticket_resolved_automatic_notify:
-                add_notification(hook, f"❌ User <@{ticket.discord_user_id}> is no longer a member, closing ticket (**{reason}**)")
+                add_notification(hook, f"❌ User {user_display} is no longer a member, closing ticket (**{reason}**)")
             continue
 
         if not ticket.user:  # Missing auth user entirely, close ticket.
             close_ticket(ticket)
             if ticket_resolved_automatic_notify:
-                add_notification(hook, f"⚠️ Ticket for <@{ticket.discord_user_id}> (**{reason}**) closed due to missing auth user")
+                add_notification(hook, f"⚠️ Ticket for {user_display} (**{reason}**) closed due to missing auth user")
             continue
 
         # Reminder logic with per-reason frequency + max-days cap
@@ -360,8 +376,25 @@ def hourly_compliance_check():
 
         # Build the normal reminder message: mention the user + role + days left
         days_left = max(0, max_dayss - days_elapsed)
-        mention = f"{ticket.discord_user_id}"
         template = reminder_messages[reason]  # must support {namee}, {role}, {days}
+
+        # Check include_user flag for this reason
+        tcfg = TicketToolConfig.get_solo()
+        include_user_flags = {
+            "corp_check": tcfg.corp_check_include_user,
+            "afk_check": tcfg.afk_check_include_user,
+            "discord_check": tcfg.discord_check_include_user,
+            "paps_check": getattr(tcfg, "paps_check_include_user", True) if afat_active() else True,
+            "discord_inactivity": tcfg.discord_inactivity_include_user,
+        }
+        include_user = include_user_flags.get(reason, True)
+
+        if reason == "discord_check" or ticket.discord_user_id == 0 or not include_user:
+            mention = f"{ticket.user.username}"
+            template = template.replace("<@{namee}>", "**{namee}**")
+        else:
+            mention = f"{ticket.discord_user_id}"
+
         if reason == "paps_check":  # PAP reminder template only uses {days}.
             msg = template.format(days=days_left)
         else:
@@ -458,8 +491,16 @@ def ensure_ticket(user, reason, details=None):
 
         username = ""
         _, msg_template = reason_checkers[reason]
+
+        # For discord_check reason, we never want to mention the user (as they aren't on discord)
+        # and we don't want to fallback to superuser.
+        if reason == "discord_check":
+            include_user = False
+            msg_template = msg_template.replace("<@{namee}>", "**{namee}**")
+
         if not include_user:
-            msg_template = msg_template.replace("<@{namee}>", "{namee}")
+            msg_template = msg_template.replace("<@{namee}>", "**{namee}**")
+            discord_id = 0
 
         namee_val = discord_id if include_user else user.username
 
@@ -478,70 +519,25 @@ def ensure_ticket(user, reason, details=None):
         if not role_ping:
             ticket_message = ticket_message.replace("<@&>,", "").replace("<@&>", "")
     except NotAuthenticated:
-        # User has no Discord → fall back to first superuser with Discord linked
-        superusers = User.objects.filter(is_superuser=True)
+        # User has no Discord - use text username instead of pinging
         username = user.username
-        discord_user = None
+        discord_id = 0
 
-        from allianceauth.services.modules.discord.models import DiscordUser
-
-        # Prefer a superuser with a linked Discord account
-        if superusers.exists():  # Only check DiscordUser table when any superuser exists.
-            discord_user = DiscordUser.objects.filter(user__in=superusers).first()
-
-        # If no superuser exists or none have Discord linked, try the first configured Discord admin
-        if not discord_user:  # Fallback to admins defined in aadiscordbot settings.
-            try:
-                admin_uids = get_admins() or []
-            except Exception:
-                admin_uids = []
-
-            if admin_uids:  # Only query DiscordUser when admin list is non-empty.
-                discord_user = DiscordUser.objects.filter(uid__in=admin_uids).first()
-
-        # If still nothing, log and notify, then stop
-        if not discord_user:  # There is no reasonable recipient—alert staff and bail.
-            logger.error(f"✅  [AA-BB] - [ensure_ticket] - Failed to create a {reason} ticket for {username}. No eligible fallback found: no superuser or Discord admin with Discord linked.")
-            send_status_embed(
-                subject="Ticket Creation Failed",
-                lines=[f"Failed to create a **{reason}** ticket for **{username}**. No eligible fallback found: no superuser or Discord admin with Discord linked."],
-                color=0xe74c3c,  # Red
-                hook=get_webhook_for_reason(reason)
-            )
-            return
-
-        discord_id = discord_user.uid
         _, msg_template = reason_checkers[reason]
-        if reason == "afk_check":  # Fallback message includes manual warning text.
-            ticket_message = (
-                f"⚠️ Compliance issue for **{user.username}** "
-                f"(no Discord linked!)\n\n"
-                f"{msg_template.format(namee=user.username, role=role_ping, days=max_afk_days)}"
-            )
+
+        # Use plain text name in the template (no Discord mention)
+        msg_template = msg_template.replace("<@{namee}>", "**{namee}**")
+
+        if reason == "afk_check":
+            ticket_message = msg_template.format(namee=user.username, role=role_ping, days=max_afk_days)
         elif reason == "discord_inactivity":
-            ticket_message = (
-                f"⚠️ Compliance issue for **{user.username}** "
-                f"(no Discord activity!)\n\n"
-                f"{msg_template.format(namee=user.username, role=role_ping, days=tcfg.discord_inactivity_days)}"
-            )
-        elif reason == "discord_check":  # Discord issues share the same format as AFK fallback.
-            ticket_message = (
-                f"⚠️ Compliance issue for **{user.username}** "
-                f"(no Discord linked!)\n\n"
-                f"{msg_template.format(namee=user.username, role=role_ping, days=max_afk_days)}"
-            )
+            ticket_message = msg_template.format(namee=user.username, role=role_ping, days=tcfg.discord_inactivity_days)
+        elif reason == "discord_check":
+            ticket_message = msg_template.format(namee=user.username, role=role_ping, days=max_afk_days)
         elif reason in ["char_removed", "awox_kill"]:
-            ticket_message = (
-                f"⚠️ Compliance issue for **{user.username}** "
-                f"(no Discord linked!)\n\n"
-                f"{msg_template.format(namee=user.username, role=role_ping, details=details)}"
-            )
+            ticket_message = msg_template.format(namee=user.username, role=role_ping, details=details)
         else:
-            ticket_message = (
-                f"⚠️ Compliance issue for **{user.username}** "
-                f"(no Discord linked!)\n\n"
-                f"{msg_template.format(namee=user.username, role=role_ping)}"
-            )
+            ticket_message = msg_template.format(namee=user.username, role=role_ping)
 
         if not role_ping:
             ticket_message = ticket_message.replace("<@&>,", "").replace("<@&>", "")
