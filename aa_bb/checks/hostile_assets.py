@@ -52,6 +52,8 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
     """
     Return a dict mapping system IDs to a dict containing their name and a list of locations
     (stations/structures) where any of the given user's characters has one or more assets.
+
+    OPTIMIZED: Limits asset processing and cleans up memory.
     """
     if not corptools_active() or CharacterAudit is None:
         return {}
@@ -67,13 +69,15 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
     assets = (
         CharacterAsset.objects.filter(character_id__in=audit_ids)
         .select_related("location_name__system", "type_name")
-        .exclude(location_flag__iexact="solar_system")
+        .exclude(location_flag__iexact="solar_system")[:5000]  # Limit to prevent memory explosion
     )
 
     system_map: Dict[int, dict] = {}
     _loc_sys_cache = {}
     _loc_name_cache = {}
     processed_combos = set()
+
+    max_combos = 10000  # Safety limit
 
     for asset in assets:
         if (asset.location_flag or "").lower() == "assetsafety":
@@ -91,6 +95,11 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
         combo = (char.character_id, asset.location_id, asset.type_name.type_id)
         if combo in processed_combos:
             continue
+
+        if len(processed_combos) >= max_combos:
+            logger.warning(f"[hostile_assets] User {user_id} hit {max_combos} asset combo limit, stopping processing")
+            break
+
         processed_combos.add(combo)
 
         loc = asset.location_name
@@ -147,6 +156,10 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
             "type_id": asset.type_name.type_id,
             "type_name": asset.type_name.name,
         })
+
+    del processed_combos, _loc_sys_cache, _loc_name_cache, char_map, audit_ids
+    import gc
+    gc.collect()
 
     return system_map
 
@@ -243,6 +256,11 @@ def get_hostile_asset_locations(user_id: int) -> Dict[str, dict]:
                 "records": records
             }
             logger.info(f"Hostile asset system: {display_name} owned by {oname}")
+
+    # CRITICAL FIX: Clean up memoization cache
+    del _hostile_memo
+    import gc
+    gc.collect()
 
     return hostile_map
 
@@ -375,6 +393,12 @@ def render_assets(user_id: int) -> Optional[str]:
             )
 
         html_output += '</tbody></table>'
+
+        # CRITICAL FIX: Clean up memoization cache
+        del _hostile_memo
+        import gc
+        gc.collect()
+
         return html_output
     except Exception as e:
         logger.exception(f"Error rendering assets for user {user_id}")

@@ -90,20 +90,26 @@ _owner_name_cache: Dict[int, Tuple[str, datetime]] = {}
 def get_pings(message_type: str) -> str:
     """
     Given a MessageType instance, return a string of pings separated by spaces.
+    OPTIMIZED: Fetch all message types once instead of 4 separate queries.
     """
     cfg = BigBrotherConfig.get_solo()
     pings = []
 
-    if cfg.pingrole1_messages.all().filter(name=message_type).exists():  # Ping role1 when message type is subscribed.
+    pingrole1_types = set(cfg.pingrole1_messages.values_list('name', flat=True))
+    pingrole2_types = set(cfg.pingrole2_messages.values_list('name', flat=True))
+    here_types = set(cfg.here_messages.values_list('name', flat=True))
+    everyone_types = set(cfg.everyone_messages.values_list('name', flat=True))
+
+    if message_type in pingrole1_types:
         pings.append(f"<@&{cfg.pingroleID}>")
 
-    if cfg.pingrole2_messages.all().filter(name=message_type).exists():  # Ping role2 when configured.
+    if message_type in pingrole2_types:
         pings.append(f"<@&{cfg.pingroleID2}>")
 
-    if cfg.here_messages.all().filter(name=message_type).exists():  # Include @here when enabled.
+    if message_type in here_types:
         pings.append("@here")
 
-    if cfg.everyone_messages.all().filter(name=message_type).exists():  # Include @everyone when enabled.
+    if message_type in everyone_types:
         pings.append("@everyone")
 
     ping = " " + " ".join(pings) if pings else ""

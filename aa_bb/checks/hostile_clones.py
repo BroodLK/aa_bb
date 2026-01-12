@@ -150,6 +150,10 @@ def get_clones(user_id: int) -> Dict[int, dict]:
             status += " (Current Location)"
         add_location(getattr(jc.location_name, "system", None), jc.location_id, char.character_id, char.character_name, implants=implants, jump_clone_name=status)
 
+    del _loc_sys_cache, _loc_name_cache, char_map, audit_ids, active_locs
+    import gc
+    gc.collect()
+
     return system_map
 
 
@@ -217,6 +221,11 @@ def get_hostile_clone_locations(user_id: int) -> Dict[str, dict]:
                 "region": region_name,
                 "records": records
             }
+
+    # CRITICAL FIX: Clean up memoization cache
+    del _hostile_memo
+    import gc
+    gc.collect()
 
     return hostile_map
 
@@ -325,4 +334,10 @@ def render_clones(user_id: int) -> str:
         )
 
     html_parts.append("</tbody></table>")
+
+    # CRITICAL FIX: Clean up memoization cache
+    del _hostile_memo
+    import gc
+    gc.collect()
+
     return "".join(html_parts)
