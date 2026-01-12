@@ -8,6 +8,7 @@ create/rebalance compliance ticket channels.
 from __future__ import annotations
 
 import re
+import gc
 
 from allianceauth.authentication.models import UserProfile
 from allianceauth.services.hooks import get_extension_logger
@@ -126,7 +127,9 @@ def get_ticket_roles():
     return roles
 
 async def create_compliance_ticket(bot, user_id, discord_user_id: int, reason: str, message: str, include_user: bool = True, **kwargs):
+    # Close old connections and clean up
     close_old_connections()
+
     tcfg = await sync_to_async(TicketToolConfig.get_solo)()
     category_id = tcfg.Category_ID
     if not category_id:
@@ -224,6 +227,9 @@ async def create_compliance_ticket(bot, user_id, discord_user_id: int, reason: s
         reason=reason,
         ticket_id=ticket_number,
     )
+
+    # Clean up
+    close_old_connections()
 
 
 async def create_compliance_thread(bot, user_id, discord_user_id: int, reason: str, message: str, thread_name: str, thread_id: int = None, include_user: bool = True, **kwargs):
@@ -399,6 +405,9 @@ async def create_compliance_thread(bot, user_id, discord_user_id: int, reason: s
         reason=reason,
         ticket_id=await sync_to_async(get_next_ticket_number)(),
     )
+
+    # Clean up
+    close_old_connections()
 
 
 async def send_ticket_reminder(bot, channel_id: int, user_id: int, message: str, **kwargs):
@@ -907,7 +916,9 @@ async def rebalance_ticket_categories(bot, **kwargs):
     Try to keep earlier categories in the ticket family as full as possible by moving
     ticket channels leftwards. Delete empty overflow categories (suffix >= 2).
     """
+    # Close old connections and clean up
     close_old_connections()
+
     cfg = await sync_to_async(TicketToolConfig.get_solo)()
     if not cfg.Category_ID:  # nothing configured → nothing to rebalance
         return
@@ -967,3 +978,7 @@ async def rebalance_ticket_categories(bot, **kwargs):
                 await cat.delete(reason="Removing empty ticket overflow category")
             except discord.HTTPException:
                 pass
+
+    # Clean up
+    close_old_connections()
+    gc.collect()

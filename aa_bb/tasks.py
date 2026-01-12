@@ -1,8 +1,10 @@
 from django.db.utils import OperationalError
 import time
 import traceback
+import gc
 from django.utils import timezone
 from django.db.models import Q
+from django.db import close_old_connections
 from celery import shared_task, current_app
 
 from .models import (
@@ -65,11 +67,15 @@ def BB_update_single_user(user_id, char_name):
     Process updates for a single user.
     Broken out from BB_run_regular_updates for scalability.
     """
+    # Close old DB connections to prevent memory leaks
+    close_old_connections()
+
     logger.debug(f"✅  [AA-BB] - [BB_update_single_user] - START Update for user: {char_name} (ID: {user_id})")
 
     instance = BigBrotherConfig.get_solo()
     if not instance.is_active:
         logger.info(f"ℹ️  [AA-BB] - [BB_update_single_user] - BigBrother inactive. Skipping update for {char_name}.")
+        close_old_connections()
         return
 
     User = get_user_model()
@@ -77,6 +83,7 @@ def BB_update_single_user(user_id, char_name):
         user_obj = User.objects.get(id=user_id)
     except User.DoesNotExist:
         logger.error(f"ℹ️  [AA-BB] - [BB_update_single_user] - User {user_id} not found.")
+        close_old_connections()
         return
 
     limit_notifications = False
@@ -959,6 +966,18 @@ def BB_update_single_user(user_id, char_name):
                 logger.debug(f"✅  [AA-BB] - [BB_update_single_user] - No changes for {char_name}, skipping save")
 
             logger.info(f"✅  [AA-BB] - [BB_update_single_user] - END Update for user: {char_name} (ID: {user_id}) - Success")
+
+            # Clean up large variables to free memory
+            del cyno_result, skills_result, state_result, awox_data, awox_links, awox_map
+            del hostile_clones_result, hostile_assets_result
+            del sus_contacts_result, sus_contracts_result, sus_mails_result, sus_trans_result
+            del sp_age_ratio_result, changes
+            if 'all_chunks' in locals():
+                del all_chunks
+
+            # Force garbage collection and close connections
+            gc.collect()
+            close_old_connections()
             break
 
         except OperationalError as e:
@@ -980,6 +999,9 @@ def BB_update_single_user(user_id, char_name):
             raise
         except Exception as e:
             logger.error(f"ℹ️  [AA-BB] - [BB_update_single_user] - Failed to update user {char_name}: {e}", exc_info=True)
+            # Clean up on error
+            gc.collect()
+            close_old_connections()
             raise
 
 
@@ -1013,12 +1035,15 @@ def BB_run_regular_updates():
       • Persistence: after all comparisons, save `status` so the UI reflects the
         latest state even if no Discord messages were sent this run.
     """
+    # Close old DB connections to prevent memory leaks
+    close_old_connections()
+
     instance = BigBrotherConfig.get_solo()
 
     try:
         from django.contrib.auth import get_user_model
         User = get_user_model()
-        # find a superuser’s main to anchor corp/alliance fields
+        # find a superuser's main to anchor corp/alliance fields
         superusers = User.objects.filter(is_superuser=True)
         char = EveCharacter.objects.filter(
             character_ownership__user__in=superusers
@@ -1040,7 +1065,9 @@ def BB_run_regular_updates():
 
         # walk each eligible user and rebuild their status snapshot
         if instance.is_active:  # skip user iteration entirely when plugin disabled/unlicensed
-            users = list(get_users())
+            # Use iterator to prevent loading all users into memory at once
+            users_iterator = get_users()
+            users = list(users_iterator)
             total_users = len(users)
             logger.info(
                 f"✅  [AA-BB] - [BB_run_regular_updates] - Dispatching updates for {total_users} users (staggered)."
@@ -1137,8 +1164,16 @@ def BB_run_regular_updates():
         else:
             logger.warning("ℹ️  [AA-BB] - [BB_run_regular_updates] - Plugin is disabled (is_active=False), skipping user updates.")
 
+        # Clean up and force garbage collection
+        if 'users' in locals():
+            del users
+        gc.collect()
+        close_old_connections()
+
     except Exception as e:
         logger.error("ℹ️  [AA-BB] - [BB_run_regular_updates] - Task failed", exc_info=True)
+        gc.collect()
+        close_old_connections()
         tb_str = traceback.format_exc()
         tb_lines = [f"{get_pings('Error')} Big Brother encountered an unexpected error", "```python"] + tb_str.split("\n") + ["```"]
         for chunk in _chunk_embed_lines(tb_lines):
@@ -1169,6 +1204,8 @@ def BB_send_discord_notifications(subject: str, chunks: list[list[str]]) -> None
     Run this on a single-worker queue (concurrency=1) so embeds never
     interleave between users or checks.
     """
+    close_old_connections()
+
     logger.info(
         "✅  [AA-BB] - [BB_send_discord_notifications] - Dispatching %d embed chunks for %s",
         len(chunks),
@@ -1189,6 +1226,11 @@ def BB_send_discord_notifications(subject: str, chunks: list[list[str]]) -> None
             override_title="",  # keep titles minimal; content is in the body
         )
         time.sleep(0.25)  # tiny delay to be nice to the webhook
+
+    # Clean up after sending all chunks
+    del chunks
+    gc.collect()
+    close_old_connections()
 def _merge_id_text(existing_text: str | None, new_ids: set[int]) -> str:
     existing_ids: set[int] = set()
 

@@ -4,6 +4,8 @@ from .models import (
 from .app_settings import send_message, send_status_embed, _chunk_embed_lines
 from django.apps import apps
 from django.db.models import Q
+from django.db import close_old_connections
+import gc
 
 from celery import shared_task
 from allianceauth.services.hooks import get_extension_logger
@@ -15,22 +17,29 @@ def BB_send_recurring_stats():
     """
     Build and post recurring stats to the configured webhook.
     """
+    # Close old DB connections to prevent memory leaks
+    close_old_connections()
+
     cfg = BigBrotherConfig.get_solo()
     if not cfg.is_active:
+        close_old_connections()
         return
 
     webhook = cfg.stats_webhook or cfg.webhook
     if not webhook:
         logger.info("✅  [AA-BB] - [BB_send_recurring_stats] - Recurring stats enabled but no stats_webhook or main webhook configured; skipping.")
+        close_old_connections()
         return
 
     try:
         stats_cfg = RecurringStatsConfig.get_solo()
     except Exception:
         logger.warning("✅  [AA-BB] - [BB_send_recurring_stats] - RecurringStatsConfig missing; cannot send recurring stats.")
+        close_old_connections()
         return
 
     if not stats_cfg.enabled:
+        close_old_connections()
         return
 
     from django.utils import timezone
@@ -130,10 +139,8 @@ def BB_send_recurring_stats():
     # --- TOKENS ---
     if Token is not None and (stats_cfg.include_tokens or stats_cfg.include_unique_tokens):
         from django.db.models import Count
-        token_qs = Token.objects.all()
-
-        # Use single aggregate query for both metrics
-        agg = token_qs.aggregate(
+        # Use single aggregate query for both metrics (no queryset materialization)
+        agg = Token.objects.aggregate(
             total=Count('id'),
             unique=Count('character_id', distinct=True)
         )
@@ -144,14 +151,10 @@ def BB_send_recurring_stats():
 
     # --- AUDITS (corptools) ---
     if CharacterAudit is not None and stats_cfg.include_character_audits:
-        ca_qs = CharacterAudit.objects.all()
-
-        snapshot["character_audits_total"] = ca_qs.count()
+        snapshot["character_audits_total"] = CharacterAudit.objects.count()
 
     if CorporationAudit is not None and stats_cfg.include_corporation_audits:
-        cpa_qs = CorporationAudit.objects.all()
-
-        snapshot["corporation_audits_total"] = cpa_qs.count()
+        snapshot["corporation_audits_total"] = CorporationAudit.objects.count()
 
     # ---- DELTA CALCULATION ----
     previous = stats_cfg.last_snapshot or {}
@@ -264,3 +267,8 @@ def BB_send_recurring_stats():
     stats_cfg.last_run_at = now
     stats_cfg.last_snapshot = snapshot
     stats_cfg.save(update_fields=["last_run_at", "last_snapshot"])
+
+    # Clean up large data structures
+    del snapshot, previous, lines, selected_states
+    gc.collect()
+    close_old_connections()

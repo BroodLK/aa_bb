@@ -11,6 +11,7 @@ This file contains:
 import time
 import traceback
 import random
+import gc
 from datetime import timedelta
 import logging
 
@@ -80,7 +81,7 @@ except ImportError:
     CharacterWalletJournalEntry = None
     CorporationWalletJournalEntry = None
 
-from django.db import transaction, OperationalError
+from django.db import transaction, OperationalError, close_old_connections
 from allianceauth.services.hooks import get_extension_logger
 
 logger = get_extension_logger(__name__)
@@ -97,6 +98,8 @@ def CB_send_discord_notifications(subject: str, chunks: list[list[str]]) -> None
     - subject: usually the corp name
     - chunks: list of "lines lists" – each inner list becomes one embed body
     """
+    close_old_connections()
+
     logger.info(
         "✅  [AA-BB] - [CB_send_discord_notifications] - Dispatching %d embed chunks for %s",
         len(chunks),
@@ -118,14 +121,23 @@ def CB_send_discord_notifications(subject: str, chunks: list[list[str]]) -> None
         )
         time.sleep(0.25)  # tiny delay to be nice to the webhook
 
+    # Clean up after sending all chunks
+    del chunks
+    gc.collect()
+    close_old_connections()
+
 
 @shared_task
 def CB_update_single_corp(corp_id):
     """
     Process updates for a single corporation.
     """
+    # Close old DB connections to prevent memory leaks
+    close_old_connections()
+
     instance = BigBrotherConfig.get_solo()
     if not instance.is_active:
+        close_old_connections()
         return
 
     # Resolve corp name if missing
@@ -261,6 +273,15 @@ def CB_update_single_corp(corp_id):
             corpstatus.baseline_initialized = True
             corpstatus.updated = timezone.now()
             corpstatus.save()
+
+            # Clean up large variables to free memory
+            del hostile_assets_result, sus_contracts_result, sus_trans_result, corp_changes
+            if 'all_chunks' in locals():
+                del all_chunks
+
+            # Force garbage collection and close connections
+            gc.collect()
+            close_old_connections()
             break
 
         except OperationalError as e:
@@ -278,6 +299,9 @@ def CB_update_single_corp(corp_id):
             raise
         except Exception as e:
             logger.error(f"ℹ️  [AA-BB] - [CB_update_single_corp] - Failed to update corp {corp_id}: {e}", exc_info=True)
+            # Clean up on error
+            gc.collect()
+            close_old_connections()
             raise
 
 
@@ -286,6 +310,9 @@ def CB_run_regular_updates():
     """
     Update CorpBrother caches: hostile assets, contracts, transactions, LoA, and PAPs.
     """
+    # Close old DB connections to prevent memory leaks
+    close_old_connections()
+
     instance = BigBrotherConfig.get_solo()
     instance.refresh_from_db()
 
@@ -358,11 +385,20 @@ def CB_run_regular_updates():
             # Dispatch with staggered delays to smooth load
             for idx, corp_id in enumerate(corps):
                 CB_update_single_corp.apply_async(args=[corp_id], countdown=idx * 0.5)
+
+            # Clean up corp list
+            del corps
         else:
             logger.warning("ℹ️  [AA-BB] - [CB_run_regular_updates] - Plugin is disabled (is_active=False), skipping corp updates.")
 
+        # Force garbage collection and close connections
+        gc.collect()
+        close_old_connections()
+
     except Exception as e:
         logger.error("ℹ️  [AA-BB] - [CB_run_regular_updates] - Task failed", exc_info=True)
+        gc.collect()
+        close_old_connections()
         tb_str = traceback.format_exc()
         tb_lines = [f"{get_pings('Error')} Corp Brother encountered an unexpected error", "```python"] + tb_str.split("\n") + ["```"]
         for chunk in _chunk_embed_lines(tb_lines):
@@ -391,10 +427,14 @@ def check_member_compliance():
       • Reports missing characters per corp/alliance (via EveWho).
       • Sends a single consolidated Discord message with all findings.
     """
+    # Close old DB connections to prevent memory leaks
+    close_old_connections()
+
     instance = BigBrotherConfig.get_solo()
     instance.refresh_from_db()
     if not instance.is_active:  # plugin disabled → skip expensive checks
         logger.warning("ℹ️  [AA-BB] - [check_member_compliance] - Plugin is disabled (is_active=False), skipping compliance sweep.")
+        close_old_connections()
         return
     profiles_qs = get_user_profiles()
     if instance.limit_to_main_corp:
@@ -509,6 +549,14 @@ def check_member_compliance():
                 lines=chunk,
                 color=0xFF0000,
             )
+
+    # Clean up large data structures
+    if 'missing_characters' in locals():
+        del missing_characters
+    if 'users' in locals():
+        del users
+    gc.collect()
+    close_old_connections()
 
 import requests
 
