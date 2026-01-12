@@ -9,6 +9,8 @@
 
         function toggleMarketFieldset() {
             if (marketCheckbox.is(':checked')) {
+                const parentRow = marketCheckbox.closest('.form-row');
+                marketFieldset.insertAfter(parentRow);
                 marketFieldset.show();
             } else {
                 marketFieldset.hide();
@@ -26,6 +28,8 @@
 
         function toggleCustomHaulingField() {
             if (haulingCheckbox.is(':checked')) {
+                const parentRow = haulingCheckbox.closest('.form-row');
+                customHaulingField.insertAfter(parentRow);
                 customHaulingField.show();
             } else {
                 customHaulingField.hide();

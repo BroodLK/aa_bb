@@ -45,65 +45,11 @@
             updateVisibility(); // Initial state
         }
 
-        // Add expand/collapse all buttons for compliance fieldsets
-        addExpandCollapseButtons();
-    });
-
-    function addExpandCollapseButtons() {
-        // Find the form
-        const form = document.querySelector('form');
-        if (!form) return;
-
-        // Find all compliance check fieldsets
+        // Ensure all compliance fieldsets are expanded and not collapsible
         const complianceFieldsets = document.querySelectorAll('.compliance-check-fieldset');
-        if (complianceFieldsets.length === 0) return;
-
-        // Create button container
-        const buttonContainer = document.createElement('div');
-        buttonContainer.style.cssText = 'margin: 20px 0; padding: 10px; background: #f8f8f8; border: 1px solid #ddd; border-radius: 4px;';
-
-        const expandAllBtn = document.createElement('button');
-        expandAllBtn.type = 'button';
-        expandAllBtn.textContent = '▼ Expand All Compliance Checks';
-        expandAllBtn.style.cssText = 'margin-right: 10px; padding: 8px 16px; background: #417690; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 500;';
-        expandAllBtn.addEventListener('click', function() {
-            complianceFieldsets.forEach(fs => {
-                if (fs.classList.contains('collapsed')) {
-                    const h2 = fs.querySelector('h2');
-                    if (h2) h2.click();
-                }
-            });
+        complianceFieldsets.forEach(fs => {
+            fs.classList.remove('collapsed');
+            fs.classList.remove('collapse');
         });
-
-        const collapseAllBtn = document.createElement('button');
-        collapseAllBtn.type = 'button';
-        collapseAllBtn.textContent = '▲ Collapse All Compliance Checks';
-        collapseAllBtn.style.cssText = 'padding: 8px 16px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 500;';
-        collapseAllBtn.addEventListener('click', function() {
-            complianceFieldsets.forEach(fs => {
-                if (!fs.classList.contains('collapsed')) {
-                    const h2 = fs.querySelector('h2');
-                    if (h2) h2.click();
-                }
-            });
-        });
-
-        buttonContainer.appendChild(expandAllBtn);
-        buttonContainer.appendChild(collapseAllBtn);
-
-        // Insert before the first compliance fieldset
-        if (complianceFieldsets[0]) {
-            complianceFieldsets[0].parentNode.insertBefore(buttonContainer, complianceFieldsets[0]);
-        }
-
-        // Add hover effects
-        [expandAllBtn, collapseAllBtn].forEach(btn => {
-            btn.addEventListener('mouseenter', function() {
-                this.style.opacity = '0.9';
-            });
-            btn.addEventListener('mouseleave', function() {
-                this.style.opacity = '1';
-            });
-        });
-    }
+    });
 }

@@ -294,7 +294,7 @@ class BB_ConfigAdmin(SingletonModelAdmin):
     )
 
     class Media:
-        js = ("aa_bb/js/admin_market_toggle.js",)
+        js = ("aa_bb/js/admin_bb_config.js",)
 
     def has_add_permission(self, request):
         """Prevent duplicate singleton rows."""
