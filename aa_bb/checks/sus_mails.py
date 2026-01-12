@@ -276,6 +276,13 @@ def get_user_hostile_mails(user_id: int) -> Dict[int, str]:
     cfg = BigBrotherConfig.get_solo()
 
     all_qs = gather_user_mails(user_id)
+
+    # Limit to recent mails only to prevent memory bloat (last 30 days)
+    from datetime import timedelta
+    from django.utils import timezone
+    thirty_days_ago = timezone.now() - timedelta(days=30)
+    all_qs = all_qs.filter(timestamp__gte=thirty_days_ago)
+
     all_ids = list(all_qs.values_list("id_key", flat=True))
 
     seen_ids = set(

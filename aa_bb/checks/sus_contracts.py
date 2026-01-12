@@ -102,17 +102,34 @@ def get_user_contracts(qs) -> Dict[int, Dict]:
 
     # Bulk fetch EntityInfoCache entries
     eids = {l[0] for l in lookups}
-    cache_entries = EntityInfoCache.objects.filter(entity_id__in=eids)
+    # Limit cache query to recent entries to prevent memory bloat
+    from datetime import timedelta
+    cutoff = timezone.now() - timedelta(days=90)
+    cache_entries = EntityInfoCache.objects.filter(entity_id__in=eids, as_of__gte=cutoff)
 
-    # Map them by (entity_id, as_of)
+    # Map them by (entity_id, as_of) - use dict comprehension with size limit
     info_map = {
         (ce.entity_id, ce.as_of): ce.data
         for ce in cache_entries
     }
 
+    # Clear old cache entries if map is too large (prevent unbounded growth)
+    if len(info_map) > 10000:
+        logger.warning(f"EntityInfoCache map size {len(info_map)} exceeded limit, will trigger cleanup")
+        # Trigger async cleanup (don't block here)
+        from ..tasks import cleanup_entity_cache
+        cleanup_entity_cache.apply_async(countdown=60)
+
     def _get_info(eid: int, when: datetime) -> dict:
         if not eid:
-            return get_entity_info(None, when)
+            return {
+                "name": "Public",
+                "type": "public",
+                "corp_id": None,
+                "corp_name": "-",
+                "alli_id": None,
+                "alli_name": "-",
+            }
 
         dt_hour = when.replace(minute=0, second=0, microsecond=0)
         cached = info_map.get((eid, dt_hour))
@@ -153,6 +170,10 @@ def get_user_contracts(qs) -> Dict[int, Dict]:
             "assignee_alliance": ainfo["alli_name"],
             "assignee_alliance_id": ainfo["alli_id"],
             "status": c.status,
+            "price": c.price,
+            "reward": c.reward,
+            "collateral": c.collateral,
+            "buyout": c.buyout,
             "start_location_id": getattr(c, "start_location_id", None),
             "start_location": resolve_location_name(getattr(c, "start_location_id", None)) or "Unknown Location",
             "end_location_id": getattr(c, "end_location_id", None),
@@ -236,8 +257,15 @@ def get_user_hostile_contracts(user_id: int) -> Dict[int, str]:
     safe_entities = get_safe_entities()
 
     all_qs = gather_user_contracts(user_id)
+
+    # Limit to recent contracts only to prevent memory bloat (last 30 days)
+    from datetime import timedelta
+    thirty_days_ago = timezone.now() - timedelta(days=30)
+    all_qs = all_qs.filter(date_issued__gte=thirty_days_ago)
+
     all_ids = list(all_qs.values_list("contract_id", flat=True))
 
+    # Use database-side filtering instead of loading all seen_ids into memory
     seen_ids = set(
         ProcessedContract.objects.filter(contract_id__in=all_ids).values_list("contract_id", flat=True)
     )
@@ -336,11 +364,23 @@ def get_user_hostile_contracts(user_id: int) -> Dict[int, str]:
                 else:
                     loc_text = f"{c['start_location']} → {c['end_location']}"
 
+                financials = []
+                if c.get('price'): financials.append(f"Price: {c['price']:,} ISK")
+                if c.get('reward'): financials.append(f"Reward: {c['reward']:,} ISK")
+                if c.get('collateral'): financials.append(f"Collateral: {c['collateral']:,} ISK")
+                if c.get('buyout'): financials.append(f"Buyout: {c['buyout']:,} ISK")
+                fin_text = " | ".join(financials) if financials else ""
+
                 note_text = (
                     f"- **{c['contract_type']}** ({c['issued_date']} → {c['end_date']})"
                     f"\n  - **From:** {c['issuer_name']} ({c['issuer_corporation']} | {c['issuer_alliance']})"
                     f"\n  - **To:** {c['assignee_name']} ({c['assignee_corporation']} | {c['assignee_alliance']})"
                     f"\n  - **Location:** {loc_text}"
+                )
+                if fin_text:
+                    note_text += f"\n  - **Financials:** {fin_text}"
+
+                note_text += (
                     f"\n  - **Flags:**"
                     f"\n    - {flags_text}"
                 )

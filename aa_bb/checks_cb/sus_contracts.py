@@ -94,6 +94,16 @@ def get_user_contracts(qs) -> Dict[int, Dict]:
     _info_cache: Dict[tuple[int, int], dict] = {}
 
     def _cached_info(eid: int, when: datetime) -> dict:
+        if not eid:
+            return {
+                "name": "Public",
+                "type": "public",
+                "corp_id": None,
+                "corp_name": "-",
+                "alli_id": None,
+                "alli_name": "-",
+            }
+
         key = (int(eid or 0), int(when.date().toordinal()))
         if key in _info_cache:
             return _info_cache[key]
@@ -138,6 +148,10 @@ def get_user_contracts(qs) -> Dict[int, Dict]:
             'assignee_alliance':        ainfo["alli_name"],
             'assignee_alliance_id':     ainfo["alli_id"],
             'status':                   c.status,
+            'price':                    c.price,
+            'reward':                   c.reward,
+            'collateral':               c.collateral,
+            'buyout':                   c.buyout,
             'start_location_id':        getattr(c, "start_location_id", None),
             'start_location':           resolve_location_name(getattr(c, "start_location_id", None)) or "Unknown Location",
             'end_location_id':          getattr(c, "end_location_id", None),

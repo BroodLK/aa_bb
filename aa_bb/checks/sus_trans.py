@@ -361,6 +361,13 @@ def render_transactions(user_id: int) -> str:
 
 def get_user_hostile_transactions(user_id: int) -> Dict[int, str]:
     qs_all = gather_user_transactions(user_id)
+
+    # Limit to recent transactions only to prevent memory bloat (last 30 days)
+    from datetime import timedelta
+    from django.utils import timezone
+    thirty_days_ago = timezone.now() - timedelta(days=30)
+    qs_all = qs_all.filter(date__gte=thirty_days_ago)
+
     all_ids = list(qs_all.values_list("entry_id", flat=True))
 
     seen = set(
