@@ -78,7 +78,7 @@ def BB_send_recurring_stats():
         profiles_qs = UserProfile.objects.all()
 
         # Use single aggregate query instead of multiple counts
-        state_counts = profiles_qs.values('state').annotate(count=Count('id'))
+        state_counts = profiles_qs.values('state').annotate(count=Count('pk'))
         auth_by_state = {str(row['state']): row['count'] for row in state_counts if row['state']}
         auth_total = sum(auth_by_state.values())
 
@@ -91,7 +91,7 @@ def BB_send_recurring_stats():
         dq = DiscordUser.objects.select_related("user__profile__state")
 
         # Use aggregate query
-        state_counts = dq.values('user__profile__state').annotate(count=Count('id'))
+        state_counts = dq.values('user__profile__state').annotate(count=Count('pk'))
         discord_by_state = {str(row['user__profile__state']): row['count'] for row in state_counts if row['user__profile__state']}
         discord_total = sum(discord_by_state.values())
 
@@ -104,7 +104,7 @@ def BB_send_recurring_stats():
         mq = MumbleUser.objects.select_related("user__profile__state")
 
         # Use aggregate query
-        state_counts = mq.values('user__profile__state').annotate(count=Count('id'))
+        state_counts = mq.values('user__profile__state').annotate(count=Count('pk'))
         mumble_by_state = {str(row['user__profile__state']): row['count'] for row in state_counts if row['user__profile__state']}
         mumble_total = sum(mumble_by_state.values())
 

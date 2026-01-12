@@ -249,6 +249,12 @@ def get_user_hostile_mails(user_id: int) -> Dict[int, str]:
         new_qs = all_qs.filter(id_key__in=new_ids)
         new_rows = get_user_mails(new_qs)
 
+        # Mark all new mails as processed to prevent re-processing safe ones
+        ProcessedMail.objects.bulk_create(
+            [ProcessedMail(mail_id=mid) for mid in new_ids],
+            ignore_conflicts=True,
+        )
+
         from ..app_settings import get_safe_entities
         safe_entities = get_safe_entities()
 
@@ -256,10 +262,6 @@ def get_user_hostile_mails(user_id: int) -> Dict[int, str]:
 
         pms: dict[int, ProcessedMail] = {}
         if hostile_rows:
-            ProcessedMail.objects.bulk_create(
-                [ProcessedMail(mail_id=mid) for mid in hostile_rows.keys()],
-                ignore_conflicts=True,
-            )
             pms = {
                 pm.mail_id: pm
                 for pm in ProcessedMail.objects.filter(mail_id__in=hostile_rows.keys())

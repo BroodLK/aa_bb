@@ -331,6 +331,12 @@ def get_user_hostile_transactions(user_id: int) -> Dict[int, str]:
         new_qs = qs_all.filter(entry_id__in=new)
         rows = get_user_transactions(new_qs)
 
+        # Mark all new transactions as processed to prevent re-processing safe ones
+        ProcessedTransaction.objects.bulk_create(
+            [ProcessedTransaction(entry_id=eid) for eid in new],
+            ignore_conflicts=True,
+        )
+
         user_chars = get_user_characters(user_id)
         user_ids = set(user_chars.keys())
 
@@ -338,11 +344,8 @@ def get_user_hostile_transactions(user_id: int) -> Dict[int, str]:
         safe_entities = get_safe_entities()
 
         hostile_rows: dict[int, dict] = {eid: tx for eid, tx in rows.items() if is_transaction_hostile(tx, user_ids, safe_entities=safe_entities)}
+        pts: dict[int, ProcessedTransaction] = {}
         if hostile_rows:
-            ProcessedTransaction.objects.bulk_create(
-                [ProcessedTransaction(entry_id=eid) for eid in hostile_rows.keys()],
-                ignore_conflicts=True,
-            )
             pts = {
                 pt.entry_id: pt
                 for pt in ProcessedTransaction.objects.filter(entry_id__in=hostile_rows.keys())

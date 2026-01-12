@@ -1426,8 +1426,6 @@ class SusContractNote(models.Model):
         return f"Contract {self.contract.contract_id} note for user {self.user_id}"
 
 
-    from django.db import models
-
 class ProcessedTransaction(models.Model):
     """
     Tracks WalletJournalEntry IDs that already have generated notes.

@@ -221,6 +221,12 @@ def get_user_hostile_contracts(user_id: int) -> Dict[int, str]:
         new_qs = all_qs.filter(contract_id__in=new_ids)
         new_rows = get_user_contracts(new_qs)
 
+        # Mark all new contracts as processed to prevent re-processing safe or excluded ones
+        ProcessedContract.objects.bulk_create(
+            [ProcessedContract(contract_id=cid) for cid in new_ids],
+            ignore_conflicts=True,
+        )
+
         # Filter hostile contracts, excluding courier contracts with hauling corps if enabled
         hostile_rows: dict[int, dict] = {}
         for cid, c in new_rows.items():
@@ -236,11 +242,6 @@ def get_user_hostile_contracts(user_id: int) -> Dict[int, str]:
             if is_contract_row_hostile(c, safe_entities=safe_entities):
                 hostile_rows[cid] = c
         if hostile_rows:
-            ProcessedContract.objects.bulk_create(
-                [ProcessedContract(contract_id=cid) for cid in hostile_rows.keys()],
-                ignore_conflicts=True,
-            )
-
             pcs = {
                 pc.contract_id: pc
                 for pc in ProcessedContract.objects.filter(contract_id__in=hostile_rows.keys())

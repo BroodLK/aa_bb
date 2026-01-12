@@ -338,6 +338,10 @@ def get_entity_info(entity_id: int, as_of: timezone.datetime) -> Dict:
       }
     Caches the result in the DB for 2 hours.
     """
+    # Normalize timestamp to the hour to maximize cache hits and minimize DB bloat.
+    if as_of:
+        as_of = as_of.replace(minute=0, second=0, microsecond=0)
+
     if entity_id is None:
         # Default placeholder ID if input is missing.
         entity_id = 342545170
