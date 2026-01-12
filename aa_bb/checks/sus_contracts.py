@@ -207,11 +207,34 @@ def get_user_hostile_contracts(user_id: int) -> Dict[int, str]:
     notes: Dict[int, str] = {}
     new_ids = [cid for cid in all_ids if cid not in seen_ids]
 
+    # Build hauling corp exclusion set
+    hauling_corps = set()
+    if cfg.exclude_hauling_corps_from_courier:
+        # Built-in major hauling corps
+        hauling_corps = {98681117, 98079862, 98421812, 384667640, 1495741119}
+        # Add custom corps from config
+        if cfg.custom_hauling_corps:
+            custom_corps = [int(c.strip()) for c in cfg.custom_hauling_corps.split(",") if c.strip().isdigit()]
+            hauling_corps.update(custom_corps)
+
     if new_ids:
         new_qs = all_qs.filter(contract_id__in=new_ids)
         new_rows = get_user_contracts(new_qs)
 
-        hostile_rows: dict[int, dict] = {cid: c for cid, c in new_rows.items() if is_contract_row_hostile(c, safe_entities=safe_entities)}
+        # Filter hostile contracts, excluding courier contracts with hauling corps if enabled
+        hostile_rows: dict[int, dict] = {}
+        for cid, c in new_rows.items():
+            # Check if this is a courier contract with hauling corp (if exclusion enabled)
+            if (cfg.exclude_hauling_corps_from_courier and
+                c.get("contract_type") == "courier" and
+                (c.get("issuer_corporation_id") in hauling_corps or
+                 c.get("assignee_corporation_id") in hauling_corps)):
+                # Skip this courier contract
+                continue
+
+            # Check if contract is hostile
+            if is_contract_row_hostile(c, safe_entities=safe_entities):
+                hostile_rows[cid] = c
         if hostile_rows:
             ProcessedContract.objects.bulk_create(
                 [ProcessedContract(contract_id=cid) for cid in hostile_rows.keys()],

@@ -175,7 +175,7 @@ def CB_update_single_corp(corp_id):
                         asset_lines.append(f"   - {loc_name}")
 
                 link_list = "\n".join(asset_lines)
-                logger.info(f"✅  [AA-BB] - [CB_update_single_corp] - {corp_name} new assets {link_list}")
+                logger.debug(f"✅  [AA-BB] - [CB_update_single_corp] - {corp_name} new assets {link_list}")
                 if corpstatus.has_hostile_assets != has_hostile_assets:
                     if not has_hostile_assets:
                         corp_changes.append(f"## Hostile Corp Assets: 🟢")
@@ -462,7 +462,7 @@ def check_member_compliance():
                 chars_str = "\n".join(corp_chars)
                 missing_characters.append(f"- {corp_name}\n{chars_str}")
 
-    logger.info(f"✅  [AA-BB] - [check_member_compliance] - ali_ids: {str(ali_ids)}")
+    logger.debug(f"✅  [AA-BB] - [check_member_compliance] - ali_ids: {str(ali_ids)}")
     if ali_ids:  # optional alliance-level audits
         # Batch query all alliance characters upfront
         all_ali_ids = [int(a.strip()) for a in ali_ids.split(",") if a.strip().isdigit()]
@@ -475,16 +475,16 @@ def check_member_compliance():
                 linked_chars_by_ali.setdefault(rec['alliance_id'], set()).add(rec['character_name'])
 
         for ali_id in all_ali_ids:
-            logger.info(f"✅  [AA-BB] - [check_member_compliance] - ali_id: {str(ali_id)}")
+            logger.debug(f"✅  [AA-BB] - [check_member_compliance] - ali_id: {str(ali_id)}")
             ali_chars = []
             linked_chars = linked_chars_by_ali.get(ali_id, set())
-            logger.info(f"✅  [AA-BB] - [check_member_compliance] - linked_chars: {str(linked_chars)}")
+            logger.debug(f"✅  [AA-BB] - [check_member_compliance] - linked_chars: {str(linked_chars)}")
 
             ali_name = get_alliance_name(ali_id)
-            logger.info(f"✅  [AA-BB] - [check_member_compliance] - ali_name: {str(ali_name)}")
+            logger.debug(f"✅  [AA-BB] - [check_member_compliance] - ali_name: {str(ali_name)}")
             # Get characters from EveWho API
             all_ali_members = get_ali_character_names(ali_id)
-            logger.info(f"✅  [AA-BB] - [check_member_compliance] - all_ali_members: {str(all_ali_members)}")
+            logger.debug(f"✅  [AA-BB] - [check_member_compliance] - all_ali_members: {str(all_ali_members)}")
             # Find missing characters
             for char_name in all_ali_members:
                 if char_name not in linked_chars:  # missing from Auth → flag
@@ -494,7 +494,7 @@ def check_member_compliance():
                 missing_characters.append(f"- {ali_name}\n{chars_str}")
     compliance_msg = ""
     if missing_characters:  # Prepend EveWho gaps when any exist.
-        logger.info(f"✅  [AA-BB] - [check_member_compliance] - missing_characters: {str(missing_characters)}")
+        logger.debug(f"✅  [AA-BB] - [check_member_compliance] - missing_characters: {str(missing_characters)}")
         joined_msg = '\n'.join(missing_characters)
         compliance_msg += f"\n## Missing tokens for member characters:\n{joined_msg}"
 

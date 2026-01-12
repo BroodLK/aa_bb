@@ -678,7 +678,7 @@ class TicketCommands(commands.Cog):
     async def mark_ticket_as_exception(
         self,
         ctx: discord.ApplicationContext,
-        reason: str = None
+        reason: discord.Option(str, "Reason for the exception", required=False, default=None) = None
     ):
         """Mark a ticket as an exception with an optional reason."""
         await ctx.defer(ephemeral=True)

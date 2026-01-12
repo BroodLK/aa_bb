@@ -37,27 +37,19 @@ from .models import (
 class BB_ConfigAdmin(SingletonModelAdmin):
     fieldsets = (
         (
-            "Core Activation",
+            "🎯 Core Settings",
             {
                 "fields": (
                     "is_active",
-                    "is_warmer_active",
-                    "is_loa_active",
-                    "is_paps_active",
-                    "are_daily_messages_active",
-                    "are_recurring_stats_active",
-                    "are_opt_messages1_active",
-                    "are_opt_messages2_active",
-                    "are_opt_messages3_active",
-                    "are_opt_messages4_active",
-                    "are_opt_messages5_active",
-                    "loa_max_logoff_days",
+                    "limit_to_main_corp",
                 )
             },
         ),
         (
-            "Notifications",
+            "🔔 Notification Toggles",
             {
+                "classes": ("collapse",),
+                "description": "Enable/disable specific notification types sent to Discord",
                 "fields": (
                     "ct_notify",
                     "awox_notify",
@@ -67,32 +59,22 @@ class BB_ConfigAdmin(SingletonModelAdmin):
                     "clone_state_notify",
                     "asset_notify",
                     "contact_notify",
+                    "exclude_neutral_contacts",
                     "contract_notify",
                     "mail_notify",
                     "transaction_notify",
                     "show_market_transactions",
                     "new_user_notify",
+                    "ticket_notify_man",
+                    "ticket_notify_auto",
                 ),
             },
         ),
         (
-            "Update Performance",
+            "💰 Market Transaction Settings",
             {
-                "fields": (
-                    "clone_state_always_recheck",
-                    "update_stagger_seconds",
-                    "update_cache_ttl_hours",
-                    "update_maintenance_window_start",
-                    "update_maintenance_window_end",
-                    "update_backlog_threshold",
-                    "update_backlog_notify",
-                ),
-            },
-        ),
-        (
-            "Market Transaction Settings",
-            {
-                "classes": ("market-transaction-settings-fieldset",),
+                "classes": ("collapse", "market-transaction-settings-fieldset",),
+                "description": "Configure market transaction monitoring and alerting",
                 "fields": (
                     "market_transactions_show_major_hubs",
                     "market_transactions_show_secondary_hubs",
@@ -108,74 +90,10 @@ class BB_ConfigAdmin(SingletonModelAdmin):
             },
         ),
         (
-            "Blacklist Settings",
+            "🚫 Hostile & Whitelist Configuration",
             {
-                "fields": (
-                    "alliance_blacklist_url",
-                    "external_blacklist_url",
-                )
-            },
-        ),
-        (
-            "Ping / Messaging Roles",
-            {
-                "fields": (
-                    "pingroleID",
-                    "pingroleID2",
-                    "pingrole1_messages",
-                    "pingrole2_messages",
-                    "here_messages",
-                    "everyone_messages",
-                )
-            },
-        ),
-        (
-            "Webhooks",
-            {
-                "fields": (
-                    "webhook",
-                    "loawebhook",
-                    "dailywebhook",
-                    "optwebhook1",
-                    "optwebhook2",
-                    "optwebhook3",
-                    "optwebhook4",
-                    "optwebhook5",
-                    "user_compliance_webhook",
-                    "corp_compliance_webhook",
-                    "stats_webhook",
-                )
-            },
-        ),
-        (
-            "Schedules",
-            {
-                "fields": (
-                    "dailyschedule",
-                    "optschedule1",
-                    "optschedule2",
-                    "optschedule3",
-                    "optschedule4",
-                    "optschedule5",
-                    "stats_schedule",
-                ),
-            },
-        ),
-        (
-            "User State & Membership",
-            {
-                "fields": (
-                    "limit_to_main_corp",
-                    "bb_guest_states",
-                    "bb_member_states",
-                    "member_corporations",
-                    "member_alliances",
-                )
-            },
-        ),
-        (
-            "Hostile / Whitelist Rules",
-            {
+                "classes": ("collapse",),
+                "description": "Define hostile and whitelisted entities, systems, and structures",
                 "fields": (
                     "hostile_alliances",
                     "hostile_corporations",
@@ -192,6 +110,10 @@ class BB_ConfigAdmin(SingletonModelAdmin):
                     "exclude_high_sec",
                     "exclude_low_sec",
                     "hostile_assets_ships_only",
+                    "exclude_hauling_corps_from_courier",
+                    "custom_hauling_corps",
+                    "alliance_blacklist_url",
+                    "external_blacklist_url",
                     # aa-contacts import (conditionally add fields)
                     *(
                         (
@@ -207,9 +129,101 @@ class BB_ConfigAdmin(SingletonModelAdmin):
             },
         ),
         (
-            "Scopes",
+            "👥 User States & Membership",
             {
                 "classes": ("collapse",),
+                "description": "Define which states and corps/alliances are monitored",
+                "fields": (
+                    "bb_guest_states",
+                    "bb_member_states",
+                    "member_corporations",
+                    "member_alliances",
+                )
+            },
+        ),
+        (
+            "📢 Discord Webhooks",
+            {
+                "classes": ("collapse",),
+                "description": "Configure Discord webhook URLs for various notification types",
+                "fields": (
+                    "webhook",
+                    "user_compliance_webhook",
+                    "corp_compliance_webhook",
+                    "loawebhook",
+                    "stats_webhook",
+                    "dailywebhook",
+                    "optwebhook1",
+                    "optwebhook2",
+                    "optwebhook3",
+                    "optwebhook4",
+                    "optwebhook5",
+                )
+            },
+        ),
+        (
+            "💬 Ping Roles & Message Types",
+            {
+                "classes": ("collapse",),
+                "description": "Map message categories to Discord role pings",
+                "fields": (
+                    "pingroleID",
+                    "pingroleID2",
+                    "pingrole1_messages",
+                    "pingrole2_messages",
+                    "here_messages",
+                    "everyone_messages",
+                )
+            },
+        ),
+        (
+            "📅 Feature Activation & Schedules",
+            {
+                "classes": ("collapse",),
+                "description": "Enable features and configure their schedules",
+                "fields": (
+                    "is_warmer_active",
+                    "is_loa_active",
+                    "loa_max_logoff_days",
+                    "is_paps_active",
+                    "are_recurring_stats_active",
+                    "stats_schedule",
+                    "are_daily_messages_active",
+                    "dailyschedule",
+                    "are_opt_messages1_active",
+                    "optschedule1",
+                    "are_opt_messages2_active",
+                    "optschedule2",
+                    "are_opt_messages3_active",
+                    "optschedule3",
+                    "are_opt_messages4_active",
+                    "optschedule4",
+                    "are_opt_messages5_active",
+                    "optschedule5",
+                ),
+            },
+        ),
+        (
+            "⚡ Performance & Update Settings",
+            {
+                "classes": ("collapse",),
+                "description": "Control update frequency, caching, and performance tuning",
+                "fields": (
+                    "clone_state_always_recheck",
+                    "update_stagger_seconds",
+                    "update_cache_ttl_hours",
+                    "update_maintenance_window_start",
+                    "update_maintenance_window_end",
+                    "update_backlog_threshold",
+                    "update_backlog_notify",
+                ),
+            },
+        ),
+        (
+            "🔑 Required ESI Scopes",
+            {
+                "classes": ("collapse",),
+                "description": "ESI scopes required for character and corporation data access",
                 "fields": (
                     "character_scopes",
                     "corporation_scopes",
@@ -217,8 +231,10 @@ class BB_ConfigAdmin(SingletonModelAdmin):
             },
         ),
         (
-            "Main Corp / Alliance",
+            "🏢 Main Corp / Alliance Info",
             {
+                "classes": ("collapse",),
+                "description": "Auto-populated information about your main corporation and alliance",
                 "fields": (
                     "main_corporation_id",
                     "main_corporation",
@@ -296,10 +312,18 @@ class TicketToolConfigAdmin(SingletonModelAdmin):
 
     def get_fieldsets(self, request, obj=None):
         fieldsets = [
-            (None, {
+            ("🎫 Ticket System Configuration", {
+                'description': 'Configure how tickets are created and managed',
                 'fields': ('ticket_type', 'role_id', 'hr_forum_webhook', 'Forum_Channel_ID', 'ticket_counter', 'excluded_users')
             }),
         ]
+
+        if discordbot_active():
+            fieldsets.insert(1, ('🏛️ Private Channel Settings (Bot)', {
+                'classes': ('collapse', 'private-channel-fieldset',),
+                'description': 'Category ID for private ticket channels (only for private_channel ticket type)',
+                'fields': ('Category_ID',)
+            }))
 
         # Corp Compliance Check - only show compliance_filter if charlink is installed
         corp_check_fields = []
@@ -307,50 +331,64 @@ class TicketToolConfigAdmin(SingletonModelAdmin):
             corp_check_fields.append('compliance_filter')
         corp_check_fields.extend(['corp_check_enabled', 'corp_check_include_user', 'corp_check', 'corp_check_frequency', 'corp_check_reason', 'corp_check_reminder'])
 
-        fieldsets.append(('Corp Compliance Check', {
+        fieldsets.append(('🏢 Corp Compliance Check', {
+            'classes': ('collapse', 'compliance-check-fieldset',),
+            'description': 'Verify users meet corp/alliance requirements',
             'fields': tuple(corp_check_fields)
         }))
 
         fieldsets.extend([
-            ('Inactivity Check', {
+            ('⏰ Inactivity Check', {
+                'classes': ('collapse', 'compliance-check-fieldset',),
+                'description': 'Monitor user activity and last login time',
                 'fields': ('afk_check_enabled', 'afk_check_include_user', 'Max_Afk_Days', 'afk_check', 'afk_check_frequency', 'afk_check_reason', 'afk_check_reminder')
             }),
-            ('Discord Inactivity Check', {
-                'fields': ('discord_inactivity_enabled', 'discord_inactivity_include_user', 'discord_inactivity_days', 'discord_inactivity_reason')
-            }),
-            ('Character Removal Check', {
+            ('❌ Character Removal Check', {
+                'classes': ('collapse', 'compliance-check-fieldset',),
+                'description': 'Alert when characters are removed from authentication',
                 'fields': ('char_removed_enabled', 'char_removed_include_user', 'char_removed_reason')
             }),
-            ('AWOX Check', {
+            ('💥 AWOX Kill Monitor', {
+                'classes': ('collapse', 'compliance-check-fieldset',),
+                'description': 'Track and alert on friendly fire incidents',
                 'fields': ('awox_monitor_enabled', 'awox_kill_include_user', 'awox_kill_reason')
             }),
         ])
 
         if discordbot_active():
-            fieldsets.insert(1, ('Private Channel Settings (Bot)', {
-                'fields': ('Category_ID',)
-            }))
-
-            # Find the index of Inactivity Check to insert Discord Link Check after it
+            # Insert Discord checks together
+            discord_fieldsets = [
+                ('💬 Discord Link Check', {
+                    'classes': ('collapse', 'compliance-check-fieldset',),
+                    'description': 'Verify users have linked their Discord account',
+                    'fields': ('discord_check_enabled', 'discord_check', 'discord_check_frequency', 'discord_check_reason', 'discord_check_reminder')
+                }),
+                ('🔇 Discord Inactivity Check', {
+                    'classes': ('collapse', 'compliance-check-fieldset',),
+                    'description': 'Monitor Discord activity and message participation',
+                    'fields': ('discord_inactivity_enabled', 'discord_inactivity_include_user', 'discord_inactivity_days', 'discord_inactivity_reason')
+                }),
+            ]
+            # Find position after Inactivity Check
             idx = 0
             for i, (name, _) in enumerate(fieldsets):
-                if name == 'Inactivity Check':
+                if 'Inactivity Check' in name:
                     idx = i + 1
                     break
-
-            fieldsets.insert(idx, ('Discord Link Check', {
-                'fields': ('discord_check_enabled', 'discord_check', 'discord_check_frequency', 'discord_check_reason', 'discord_check_reminder')
-            }))
+            for fs in reversed(discord_fieldsets):
+                fieldsets.insert(idx, fs)
 
         if afat_active():
-            fieldsets.append(('PAP Compliance Check', {
+            fieldsets.append(('📊 PAP Compliance Check', {
+                'classes': ('collapse', 'compliance-check-fieldset',),
+                'description': 'Monitor fleet participation (PAPs) requirements',
                 'fields': ('paps_check_enabled', 'paps_check_include_user', 'max_months_without_pap_compliance', 'starting_pap_compliance', 'paps_check', 'paps_check_frequency', 'paps_check_reason', 'paps_check_reminder')
             }))
 
         return fieldsets
 
     class Media:
-        js = ("aa_bb/js/admin_ticket_type_toggle.js",)
+        js = ("aa_bb/js/admin_ticket_config.js",)
 
     def get_form(self, request, obj=None, **kwargs):
         from django import forms

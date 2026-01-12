@@ -65,7 +65,7 @@ def BB_update_single_user(user_id, char_name):
     Process updates for a single user.
     Broken out from BB_run_regular_updates for scalability.
     """
-    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - START Update for user: {char_name} (ID: {user_id})")
+    logger.debug(f"✅  [AA-BB] - [BB_update_single_user] - START Update for user: {char_name} (ID: {user_id})")
 
     instance = BigBrotherConfig.get_solo()
     if not instance.is_active:
@@ -185,6 +185,7 @@ def BB_update_single_user(user_id, char_name):
             logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Status loaded (created={created}). Calculating changes...")
 
             changes = []
+            status_changed = created  # Track if we need to save (always save if newly created)
 
             def as_dict(x):
                 return x if isinstance(x, dict) else {}  # utility to guard against None/non-dict entries
@@ -222,7 +223,7 @@ def BB_update_single_user(user_id, char_name):
                     if instance.clone_state_notify:
                         changes.append(f"###{pinggg} Clone state change detected:{''.join(flagggs)}")
                     status.clone_status = state_result
-                    status.save()
+                    status_changed = True
 
             if set(sp_age_ratio_result) != set(status.sp_age_ratio_result or []):  # detect changes in SP-to-age ratios
                 flaggs = []
@@ -269,8 +270,10 @@ def BB_update_single_user(user_id, char_name):
                     if instance.sp_inject_notify:
                         changes.append(f"## {get_pings('SP Injected')} Skill Injection detected:\n{sp_list}")
 
-            status.sp_age_ratio_result = sp_age_ratio_result
-            status.save()
+            # Only update sp_age_ratio if it actually changed
+            if sp_age_ratio_result != (status.sp_age_ratio_result or {}):
+                status.sp_age_ratio_result = sp_age_ratio_result
+                status_changed = True
 
             if status.has_awox_kills != has_awox or set(awox_links) != set(
                 status.awox_kill_links or []):  # new awox activity?
@@ -298,6 +301,7 @@ def BB_update_single_user(user_id, char_name):
                         if instance.awox_notify:
                             changes.append(f"### AWOX Kill Status: 🟢")
                     status.has_awox_kills = has_awox
+                    status_changed = True
                     logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} changed")
                 if new_links:  # send notifications only for links not yet alerted on
                     # Identify which of the new links the user was an attacker in
@@ -325,8 +329,7 @@ def BB_update_single_user(user_id, char_name):
                 if new:  # merge newly seen links into the cached list
                     # notify
                     status.awox_kill_links = list(old | new)
-                    status.updated = timezone.now()
-                    status.save()
+                    status_changed = True
 
             if status.has_cyno != has_cyno or norm(cyno_result) != norm(status.cyno or {}):  # cyno readiness changed?
 
@@ -334,6 +337,7 @@ def BB_update_single_user(user_id, char_name):
                 if status.has_cyno != has_cyno:  # flip the top-level boolean when overall readiness changes
                     # User: Only trigger if "Can Light" = True (has_cyno is based on can_light)
                     status.has_cyno = has_cyno
+                    status_changed = True
 
                 # 2) Grab the old vs. new JSON blobs
                 old_cyno: dict = status.cyno or {}
@@ -477,6 +481,7 @@ def BB_update_single_user(user_id, char_name):
 
                 # 4) Save new blob
                 status.cyno = new_cyno
+                status_changed = True
 
             if status.has_skills != has_skills or skills_norm(skills_result) != skills_norm(
                 status.skills or {}):  # skill list changed?
@@ -484,6 +489,7 @@ def BB_update_single_user(user_id, char_name):
                 if status.has_skills != has_skills:
                     # User: trigger ONLY for new skills (has_skills crossing 0 to 1 handled in character loop)
                     status.has_skills = has_skills
+                    status_changed = True
 
                 # 2) Grab the old vs. new JSON blobs
                 old_skills: dict = status.skills or {}
@@ -596,6 +602,7 @@ def BB_update_single_user(user_id, char_name):
                         changes.extend(skill_updates)
 
                 status.skills = new_skills
+                status_changed = True
             if status.has_hostile_assets != has_hostile_assets or set(hostile_assets_result) != set(
                 status.hostile_assets or []
             ):
@@ -654,7 +661,9 @@ def BB_update_single_user(user_id, char_name):
                     logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} new hostile asset systems: {', '.join(sorted(new_systems))}")
 
                 status.has_hostile_assets = has_hostile_assets
+                status_changed = True
                 status.hostile_assets = hostile_assets_result
+                status_changed = True
 
             if status.has_hostile_clones != has_hostile_clones or set(hostile_clones_result) != set(
                 status.hostile_clones or []
@@ -710,7 +719,9 @@ def BB_update_single_user(user_id, char_name):
                     logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} new hostile clone systems: {', '.join(sorted(new_systems))}")
 
                 status.has_hostile_clones = has_hostile_clones
+                status_changed = True
                 status.hostile_clones = hostile_clones_result
+                status_changed = True
 
             if status.has_sus_contacts != has_sus_contacts or set(sus_contacts_result) != set(
                 as_dict(status.sus_contacts) or {}):  # suspect contacts changed?
@@ -750,7 +761,9 @@ def BB_update_single_user(user_id, char_name):
                             changes.append(f"{res} {ping}")
 
                 status.has_sus_contacts = has_sus_contacts
+                status_changed = True
                 status.sus_contacts = sus_contacts_result
+                status_changed = True
 
             if status.has_sus_contracts != has_sus_contracts or set(sus_contracts_result) != set(
                 as_dict(status.sus_contracts) or {}):  # suspicious contracts changed?
@@ -793,7 +806,9 @@ def BB_update_single_user(user_id, char_name):
                             changes.append(f"## New Suspicious Contracts:\n" + "\n".join(contract_lines))
 
                 status.has_sus_contracts = has_sus_contracts
+                status_changed = True
                 status.sus_contracts = sus_contracts_result
+                status_changed = True
 
             if status.has_sus_mails != has_sus_mails or set(sus_mails_result) != set(
                 as_dict(status.sus_mails) or {}):  # suspicious mails changed?
@@ -836,7 +851,9 @@ def BB_update_single_user(user_id, char_name):
                             changes.append(f"### New Suspicious Mails:\n" + "\n".join(mail_lines))
 
                 status.has_sus_mails = has_sus_mails
+                status_changed = True
                 status.sus_mails = sus_mails_result
+                status_changed = True
 
             if status.has_sus_trans != has_sus_trans or set(sus_trans_result) != set(
                 as_dict(status.sus_trans) or {}):  # suspicious wallet txns changed?
@@ -868,7 +885,9 @@ def BB_update_single_user(user_id, char_name):
                     if instance.transaction_notify:
                         changes.append(f"### New Suspicious Transactions{get_pings('New Suspicious Transactions')}:\n{link_list}")
                 status.has_sus_trans = has_sus_trans
+                status_changed = True
                 status.sus_trans = sus_trans_result
+                status_changed = True
 
             if not status.baseline_initialized:
                 # First time auditing this user - respect new_user_notify setting
@@ -930,9 +949,14 @@ def BB_update_single_user(user_id, char_name):
                     )
                     BB_send_discord_notifications.delay(char_name, all_chunks)
 
-            status.baseline_initialized = True
-            status.updated = timezone.now()
-            status.save()
+            # Only save if something actually changed or this is a new user
+            if status_changed or not status.baseline_initialized:
+                status.baseline_initialized = True
+                status.updated = timezone.now()
+                status.save()
+                logger.debug(f"✅  [AA-BB] - [BB_update_single_user] - Saved status for {char_name} (changed: {status_changed})")
+            else:
+                logger.debug(f"✅  [AA-BB] - [BB_update_single_user] - No changes for {char_name}, skipping save")
 
             logger.info(f"✅  [AA-BB] - [BB_update_single_user] - END Update for user: {char_name} (ID: {user_id}) - Success")
             break

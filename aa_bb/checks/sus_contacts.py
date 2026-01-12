@@ -244,7 +244,8 @@ def get_user_hostile_notifications(user_id: int) -> dict[int, str]:
     hostile_corps = cfg.hostile_corporations
     hostile_allis = cfg.hostile_alliances
     safe_entities = get_safe_entities()
-    logger.info(f"{hostile_allis}")
+    exclude_neutral = cfg.exclude_neutral_contacts
+    logger.debug(f"{hostile_allis}")
 
     for cid, info in contacts.items():
         ctype     = info['contact_type']      # 'character' | 'corporation' | 'alliance'
@@ -265,6 +266,10 @@ def get_user_hostile_notifications(user_id: int) -> dict[int, str]:
 
         # skip if user already has negative standing (redundant)
         if s < 0:
+            continue
+
+        # skip neutral contacts if the exclude_neutral_contacts setting is enabled
+        if exclude_neutral and s == 0:
             continue
 
         alerts: list[str] = []

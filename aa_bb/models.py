@@ -474,10 +474,30 @@ class BigBrotherConfig(SingletonModel):
         verbose_name=_("Hostile Contact Change Discord Notifications")
     )
 
+    exclude_neutral_contacts = models.BooleanField(
+        default=False,
+        help_text=_("If enabled, contacts with neutral standing (0) to hostile entities will be excluded from user checks and notifications"),
+        verbose_name=_("Exclude Neutral Contacts from Checks")
+    )
+
     contract_notify = models.BooleanField(
         default=True,
         help_text=_("Whether to send Contract Change notifications to discord"),
         verbose_name=_("Hostile Contract Discord Notifications")
+    )
+
+    exclude_hauling_corps_from_courier = models.BooleanField(
+        default=False,
+        help_text=_("If enabled, courier contracts handled by major hauling corporations will be excluded from checks"),
+        verbose_name=_("Exclude Hauling Corps from Courier Contracts")
+    )
+
+    custom_hauling_corps = models.TextField(
+        blank=True,
+        default="",
+        help_text=_("Additional corporation IDs (comma-separated) to exclude from courier contract checks when the above setting is enabled. "
+                    "Built-in: MOONFIRE (98681117), Push Industries (98079862), Purple Frog (98421812), Black Frog (384667640), Red Frog (1495741119)"),
+        verbose_name=_("Custom Hauling Corporation IDs")
     )
 
     ct_notify = models.BooleanField(
