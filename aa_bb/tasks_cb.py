@@ -900,68 +900,69 @@ def BB_daily_DB_cleanup():
         pass
 
     # -- CONTRACTS --
-    # Get all contract_ids that exist in Contract
-    existing_CorporateContract_ids = set(
-        CorporateContract.objects.values_list('contract_id', flat=True)
+    # Use database-side subqueries to avoid loading all IDs into memory
+    from django.db.models import Q, Exists, OuterRef
+
+    # Find ProcessedContracts with no matching source record (memory-efficient)
+    orphaned_processed_contracts = ProcessedContract.objects.filter(
+        ~Exists(CorporateContract.objects.filter(contract_id=OuterRef('contract_id'))) &
+        ~Exists(Contract.objects.filter(contract_id=OuterRef('contract_id')))
     )
-    existing_playercontract_ids = set(
-        Contract.objects.values_list('contract_id', flat=True)
-    )
-    existing_contract_ids = existing_CorporateContract_ids | existing_playercontract_ids
 
-    # Find ProcessedContract entries not in Contract
-    orphaned_processed_contracts = ProcessedContract.objects.exclude(contract_id__in=existing_contract_ids)
-    orphaned_contract_ids = list(orphaned_processed_contracts.values_list('contract_id', flat=True))
+    # Get count before deletion for reporting
+    count_proc = orphaned_processed_contracts.count()
 
-    # Delete orphans in SusContractNote (OneToOneField links to ProcessedContract)
-    sus_contracts_to_delete = SusContractNote.objects.filter(contract_id__in=orphaned_contract_ids)
+    if count_proc > 0:
+        # Delete related SusContractNotes and ProcessedContracts
+        with transaction.atomic():
+            count_sus = SusContractNote.objects.filter(
+                contract__in=orphaned_processed_contracts
+            ).delete()[0]
+            orphaned_processed_contracts.delete()
 
-    with transaction.atomic():
-        count_sus = sus_contracts_to_delete.delete()[0]
-        count_proc = orphaned_processed_contracts.delete()[0]
-
-    if count_proc > 0 or count_sus > 0:
         flags.append(f"- Deleted {count_proc} old ProcessedContract and {count_sus} SusContractNote records.")
 
     # -- MAILS --
-    existing_mail_ids = set(
-        MailMessage.objects.values_list('id_key', flat=True)
+    # Use database-side subquery to avoid loading all mail IDs into memory
+    orphaned_processed_mails = ProcessedMail.objects.filter(
+        ~Exists(MailMessage.objects.filter(id_key=OuterRef('mail_id')))
     )
 
-    orphaned_processed_mails = ProcessedMail.objects.exclude(mail_id__in=existing_mail_ids)
-    orphaned_mail_ids = list(orphaned_processed_mails.values_list('mail_id', flat=True))
+    count_proc = orphaned_processed_mails.count()
 
-    sus_mails_to_delete = SusMailNote.objects.filter(mail_id__in=orphaned_mail_ids)
+    if count_proc > 0:
+        with transaction.atomic():
+            count_sus = SusMailNote.objects.filter(
+                mail__in=orphaned_processed_mails
+            ).delete()[0]
+            orphaned_processed_mails.delete()
 
-    with transaction.atomic():
-        count_sus = sus_mails_to_delete.delete()[0]
-        count_proc = orphaned_processed_mails.delete()[0]
-
-    if count_proc > 0 or count_sus > 0:
         flags.append(f"- Deleted {count_proc} old ProcessedMail and {count_sus} SusMailNote records.")
 
     # -- TRANSACTIONS --
-    existing_entry_ids = (
-        set(CharacterWalletJournalEntry.objects.values_list('entry_id', flat=True))
-        | set(CorporationWalletJournalEntry.objects.values_list('entry_id', flat=True))
+    # Use database-side subquery to avoid loading all transaction IDs into memory
+    orphaned_processed_transactions = ProcessedTransaction.objects.filter(
+        ~Exists(CharacterWalletJournalEntry.objects.filter(entry_id=OuterRef('entry_id'))) &
+        ~Exists(CorporationWalletJournalEntry.objects.filter(entry_id=OuterRef('entry_id')))
     )
 
-    orphaned_processed_transactions = ProcessedTransaction.objects.exclude(entry_id__in=existing_entry_ids)
-    orphaned_entry_ids = list(orphaned_processed_transactions.values_list('entry_id', flat=True))
+    count_proc = orphaned_processed_transactions.count()
 
-    sus_transactions_to_delete = SusTransactionNote.objects.filter(transaction_id__in=orphaned_entry_ids)
+    if count_proc > 0:
+        with transaction.atomic():
+            count_sus = SusTransactionNote.objects.filter(
+                transaction__in=orphaned_processed_transactions
+            ).delete()[0]
+            orphaned_processed_transactions.delete()
 
-    with transaction.atomic():
-        count_sus = sus_transactions_to_delete.delete()[0]
-        count_proc = orphaned_processed_transactions.delete()[0]
-
-    if count_proc > 0 or count_sus > 0:
         flags.append(f"- Deleted {count_proc} old ProcessedTransaction and {count_sus} SusTransactionNote records.")
 
     # -- PAP COMPLIANCE: drop entries for non-members --
     try:
-        member_profile_ids = list(get_user_profiles().values_list('id', flat=True))
-        non_member_pc_qs = PapCompliance.objects.exclude(user_profile_id__in=member_profile_ids)
+        # Use database-side subquery to avoid loading all profile IDs into memory
+        non_member_pc_qs = PapCompliance.objects.filter(
+            ~Exists(get_user_profiles().filter(id=OuterRef('user_profile_id')))
+        )
         deleted_pc = non_member_pc_qs.delete()[0]
         if deleted_pc > 0:
             flags.append(f"- Deleted {deleted_pc} PapCompliance records for non-members.")
