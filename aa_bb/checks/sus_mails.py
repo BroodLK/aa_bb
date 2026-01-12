@@ -29,7 +29,8 @@ else:
     def check_char_corp_bl(_cid: int) -> bool:
         return False
 
-from ..models import BigBrotherConfig, ProcessedMail, SusMailNote
+from django.db.models import Q
+from ..models import BigBrotherConfig, ProcessedMail, SusMailNote, EntityInfoCache
 
 logger = get_extension_logger(__name__)
 
@@ -73,24 +74,55 @@ def gather_user_mails(user_id: int):
 
 
 def get_user_mails(qs) -> Dict[int, Dict]:
-    result: Dict[int, Dict] = {}
-    _info_cache: dict[tuple[int, int], dict] = {}
+    # Use a list to avoid re-evaluating the queryset
+    entries = list(qs)
+    if not entries:
+        return {}
 
-    def _cached_info(eid: int, when: datetime) -> dict:
-        key = (int(eid or 0), int(when.date().toordinal()))
-        if key in _info_cache:
-            return _info_cache[key]
+    result: Dict[int, Dict] = {}
+
+    # Pre-collect all entity IDs and their normalized timestamps for bulk fetching info
+    # EntityInfoCache normalizes to the hour.
+    lookups = set()
+    for m in entries:
+        dt_hour = m.timestamp.replace(minute=0, second=0, microsecond=0)
+        if m.from_id:
+            lookups.add((m.from_id, dt_hour))
+        for mr in m.recipients.all():
+            if mr.recipient_id:
+                lookups.add((mr.recipient_id, dt_hour))
+
+    # Bulk fetch EntityInfoCache entries
+    eids = {l[0] for l in lookups}
+    cache_entries = EntityInfoCache.objects.filter(entity_id__in=eids)
+
+    # Map them by (entity_id, as_of)
+    info_map = {
+        (ce.entity_id, ce.as_of): ce.data
+        for ce in cache_entries
+    }
+
+    def _get_info(eid: int, when: datetime) -> dict:
+        if not eid:
+            return get_entity_info(None, when)
+
+        dt_hour = when.replace(minute=0, second=0, microsecond=0)
+        cached = info_map.get((eid, dt_hour))
+        if cached:
+            return cached
+
+        # Fallback to single fetch
         info = get_entity_info(eid, when)
-        _info_cache[key] = info
+        info_map[(eid, dt_hour)] = info
         return info
 
-    for m in qs:
+    for m in entries:
         mid = m.id_key
         sent = m.timestamp
-        timeee = getattr(m, "timestamp", timezone.now())
+        timeee = m.timestamp or timezone.now()
 
         sender_id = m.from_id
-        sinfo = _cached_info(sender_id, timeee)
+        sinfo = _get_info(sender_id, timeee)
 
         recipient_names = []
         recipient_ids = []
@@ -99,15 +131,18 @@ def get_user_mails(qs) -> Dict[int, Dict]:
         recipient_alliances = []
         recipient_alliance_ids = []
 
+        r_info_cache = {}
+
         for mr in m.recipients.all():
             rid = mr.recipient_id
-            rinfo = _cached_info(rid, timeee)
+            rinfo = _get_info(rid, timeee)
             recipient_ids.append(rid)
             recipient_names.append(rinfo["name"])
             recipient_corps.append(rinfo["corp_name"])
             recipient_corp_ids.append(rinfo["corp_id"])
             recipient_alliances.append(rinfo["alli_name"])
             recipient_alliance_ids.append(rinfo["alli_id"])
+            r_info_cache[rid] = rinfo
 
         result[mid] = {
             "message_id": mid,
@@ -126,6 +161,10 @@ def get_user_mails(qs) -> Dict[int, Dict]:
             "recipient_alliances": recipient_alliances,
             "recipient_alliance_ids": recipient_alliance_ids,
             "status": "Read" if m.is_read else "Unread",
+            "info_cache": {
+                sender_id: sinfo,
+                **r_info_cache
+            }
         }
 
     logger.debug("Extracted %d mails", len(result))
@@ -138,12 +177,12 @@ def get_cell_style_for_mail_cell(column: str, row: dict, index: Optional[int] = 
     # sender cell
     if column.startswith('sender_'):
         sid = row.get('sender_id')
-        if get_hostile_state(sid, when=when):
+        if get_hostile_state(sid, when=when, entity_info_cache=row.get("info_cache")):
             return 'color: red;'
     # recipient cell
     if column.startswith('recipient_') and index is not None:
         rid = row['recipient_ids'][index]
-        if get_hostile_state(rid, when=when):
+        if get_hostile_state(rid, when=when, entity_info_cache=row.get("info_cache")):
             return 'color: red;'
     return ''
 
@@ -165,7 +204,8 @@ def is_mail_row_hostile(row: dict, safe_entities: set = None) -> bool:
     return is_hostile_unified(
         involved_ids=involved,
         when=row.get("sent_date"),
-        safe_entities=safe_entities
+        safe_entities=safe_entities,
+        entity_info_cache=row.get("info_cache")
     )
 
 

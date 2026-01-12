@@ -63,7 +63,8 @@ if EVEUNIVERSE_INSTALLED:
     except ImportError:
         EVEUNIVERSE_INSTALLED = False
 
-from ..models import BigBrotherConfig, ProcessedTransaction, SusTransactionNote, EveItemPrice
+from django.db.models import Q
+from ..models import BigBrotherConfig, ProcessedTransaction, SusTransactionNote, EveItemPrice, EntityInfoCache
 
 SUS_TYPES = ("player_trading", "corporation_account_withdrawal", "player_donation")
 
@@ -90,7 +91,7 @@ def _find_alliance_at(history: list, date: datetime) -> Optional[int]:
     return None
 
 
-def gather_user_transactions(corp_id: int):
+def gather_user_transactions(corp_id: int, ref_types: list = None):
     """
     Return a queryset of every wallet journal entry for the corp divisions.
 
@@ -105,106 +106,147 @@ def gather_user_transactions(corp_id: int):
         return CorporationWalletJournalEntry.objects.none()
 
     qs = CorporationWalletJournalEntry.objects.filter(division__corporation=corp_audit)
+
+    if ref_types:
+        qs = qs.filter(ref_type__in=ref_types)
+
     logger.info(f"Gathered {qs.count()} wallet entries for corp {corp_id}")
     return qs
 
 
 def get_user_transactions(qs) -> Dict[int, Dict]:
-    """
-    Transform raw WalletJournalEntry queryset into structured dict
-    with first_party (first_party) and second_party (second_party) info,
-    resolving corp/alliance at transaction time.
-    """
+    # Use a list to avoid re-evaluating the queryset
+    entries = list(qs)
+    if not entries:
+        return {}
+
     result: Dict[int, Dict] = {}
 
-    _info_cache: Dict[tuple[int, int], dict] = {}
+    # Bulk fetch CorporationMarketTransaction if needed
+    market_tx_ids = [
+        e.context_id for e in entries
+        if e.context_id_type == "market_transaction_id" and e.context_id
+    ]
+    market_tx_map = {}
+    if market_tx_ids and CorporationMarketTransaction:
+        market_tx_map = {
+            m.transaction_id: m
+            for m in CorporationMarketTransaction.objects.filter(
+                transaction_id__in=market_tx_ids
+            ).select_related("location")
+        }
 
-    def _cached_info(eid: int, when: datetime) -> dict:
-        key = (int(eid or 0), int(when.date().toordinal()))
-        if key in _info_cache:
-            return _info_cache[key]
+    # Pre-collect all entity IDs and their normalized timestamps for bulk fetching info
+    # EntityInfoCache normalizes to the hour.
+    lookups = set()
+    for entry in entries:
+        dt_hour = entry.date.replace(minute=0, second=0, microsecond=0)
+        if entry.first_party_id:
+            lookups.add((entry.first_party_id, dt_hour))
+        if entry.second_party_id:
+            lookups.add((entry.second_party_id, dt_hour))
+        if entry.context_id_type == "character_id" and entry.context_id:
+            lookups.add((entry.context_id, dt_hour))
+
+    # Bulk fetch EntityInfoCache entries
+    eids = {l[0] for l in lookups}
+    cache_entries = EntityInfoCache.objects.filter(entity_id__in=eids)
+
+    # Map them by (entity_id, as_of)
+    info_map = {
+        (ce.entity_id, ce.as_of): ce.data
+        for ce in cache_entries
+    }
+
+    def _get_info(eid: int, when: datetime) -> dict:
+        if not eid:
+            return get_entity_info(None, when)
+
+        dt_hour = when.replace(minute=0, second=0, microsecond=0)
+        cached = info_map.get((eid, dt_hour))
+        if cached:
+            return cached
+
+        # Fallback to single fetch
         info = get_entity_info(eid, when)
-        if not info:
-            info = {'name': 'Unknown', 'corp_id': None, 'corp_name': 'Unknown', 'alli_id': None, 'alli_name': 'Unknown'}
-        _info_cache[key] = info
+        info_map[(eid, dt_hour)] = info
         return info
 
-    for entry in qs:
+    for entry in entries:
         tx_id = entry.entry_id
         tx_date = entry.date
 
-        # first_party = first_party_id
         first_party_id = entry.first_party_id
-        iinfo = _cached_info(first_party_id, tx_date)
+        iinfo = _get_info(first_party_id, tx_date)
 
-        # second_party = second_party_id
         second_party_id = entry.second_party_id
-        ainfo = _cached_info(second_party_id, tx_date)
+        ainfo = _get_info(second_party_id, tx_date)
 
-        context = ""
         context_id = entry.context_id
         context_type = entry.context_id_type
         system_id = None
         location_id = None
         type_id = None
         quantity = 1
-        if context_type == "structure_id":  # Provide human-readable structure context.
+
+        if context_type == "structure_id":
             name = resolve_location_name(context_id)
             context = f"Structure: {name}" if name else f"Structure ID: {context_id}"
             location_id = context_id
             system_id = resolve_location_system_id(context_id)
-        elif context_type == "character_id":  # Link to a specific character.
-            char_info = _cached_info(context_id, tx_date)
-            char_name = char_info['name'] if char_info else 'Unknown'
-            context = f"Character: {char_name}"
-        elif context_type == "eve_system":  # System-level context from journal entry.
+        elif context_type == "character_id":
+            cinfo = _get_info(context_id, tx_date)
+            context = f"Character: {cinfo['name']}"
+        elif context_type == "eve_system":
             context = "EVE System"
             system_id = context_id
             location_id = context_id
-        elif context_type is None:  # No extra context provided.
+        elif context_type is None:
             context = "None"
-        elif context_type == "market_transaction_id":  # Reference to market transaction.
+        elif context_type == "market_transaction_id":
             context = f"Market Transaction ID: {context_id}"
-            if CorporationMarketTransaction:
-                m_tx = CorporationMarketTransaction.objects.filter(transaction_id=context_id).first()
-                if m_tx:
-                    location_id = m_tx.location_id if hasattr(m_tx, "location_id") else None
-                    system_id = m_tx.location.system_id if hasattr(m_tx.location, "system_id") else None
-                    type_id = m_tx.type_id
-                    quantity = m_tx.quantity
-        else:  # Fallback for any future context types.
+            m_tx = market_tx_map.get(context_id)
+            if m_tx:
+                location_id = getattr(m_tx, "location_id", None)
+                if hasattr(m_tx, "location") and m_tx.location:
+                    system_id = getattr(m_tx.location, "system_id", None)
+                type_id = m_tx.type_id
+                quantity = m_tx.quantity
+        else:
             context = f"{context_type}: {context_id}"
 
-        amount =  "{:,}".format(entry.amount)
-        balance =  "{:,}".format(entry.balance)
-
         result[tx_id] = {
-            'entry_id': tx_id,
-            'date': tx_date,
-            'amount': amount,
-            'raw_amount': float(entry.amount),
-            'balance': balance,
-            'description': entry.description,
-            'reason': entry.reason,
-            'first_party_id': first_party_id,
-            'first_party_name': iinfo['name'],
-            'first_party_corporation_id': iinfo['corp_id'],
-            'first_party_corporation': iinfo['corp_name'],
-            'first_party_alliance_id': iinfo['alli_id'],
-            'first_party_alliance': iinfo['alli_name'],
-            'second_party_id': second_party_id,
-            'second_party_name': ainfo['name'],
-            'second_party_corporation_id': ainfo['corp_id'],
-            'second_party_corporation': ainfo['corp_name'],
-            'second_party_alliance_id': ainfo['alli_id'],
-            'second_party_alliance': ainfo['alli_name'],
-            'context': context,
-            'type': entry.ref_type,
-            'system_id': system_id,
-            'location_id': location_id,
-            'type_id': type_id,
-            'quantity': quantity,
+            "entry_id": tx_id,
+            "date": tx_date,
+            "amount": "{:,}".format(entry.amount),
+            "raw_amount": float(entry.amount),
+            "balance": "{:,}".format(entry.balance),
+            "description": entry.description,
+            "reason": entry.reason,
+            "first_party_id": first_party_id,
+            "first_party_name": iinfo["name"],
+            "first_party_corporation_id": iinfo["corp_id"],
+            "first_party_corporation": iinfo["corp_name"],
+            "first_party_alliance_id": iinfo["alli_id"],
+            "first_party_alliance": iinfo["alli_name"],
+            "second_party_id": second_party_id,
+            "second_party_name": ainfo["name"],
+            "second_party_corporation_id": ainfo["corp_id"],
+            "second_party_corporation": ainfo["corp_name"],
+            "second_party_alliance_id": ainfo["alli_id"],
+            "second_party_alliance": ainfo["alli_name"],
+            "context": context,
+            "type": entry.ref_type,
+            "system_id": system_id,
+            "location_id": location_id,
+            "type_id": type_id,
+            "quantity": quantity,
+            "info_cache": {
+                first_party_id: iinfo,
+                second_party_id: ainfo,
+            }
         }
+
     return result
 
 
@@ -230,7 +272,8 @@ def is_transaction_hostile(tx: dict, safe_entities: set = None) -> bool:
         market_item_id=tx.get("type_id"),
         market_unit_price=abs(tx.get("raw_amount")) / (tx.get("quantity") or 1) if tx.get("raw_amount") is not None else None,
         when=tx.get("date"),
-        safe_entities=safe_entities
+        safe_entities=safe_entities,
+        entity_info_cache=tx.get("info_cache")
     )
 
 

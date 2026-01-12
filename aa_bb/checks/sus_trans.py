@@ -68,7 +68,8 @@ if EVEUNIVERSE_INSTALLED:
     except ImportError:
         EVEUNIVERSE_INSTALLED = False
 
-from ..models import BigBrotherConfig, ProcessedTransaction, SusTransactionNote, EveItemPrice
+from django.db.models import Q
+from ..models import BigBrotherConfig, ProcessedTransaction, SusTransactionNote, EveItemPrice, EntityInfoCache
 
 SUS_TYPES = ("player_trading", "corporation_account_withdrawal", "player_donation")
 
@@ -91,7 +92,7 @@ def _find_alliance_at(history: list, date: datetime) -> Optional[int]:
     return None
 
 
-def gather_user_transactions(user_id: int):
+def gather_user_transactions(user_id: int, ref_types: list = None):
     if not corptools_active() or WalletJournalEntry is None:
         return []
 
@@ -99,55 +100,90 @@ def gather_user_transactions(user_id: int):
     user_ids = set(user_chars.keys())
     logger.info(f"gather_user_transactions for user {user_id}: user_chars={list(user_ids)}")
 
-    # Check total entries in database
-    total_entries = WalletJournalEntry.objects.count()
-    logger.info(f"Total CharacterWalletJournalEntry records in database: {total_entries}")
-
-    # Check entries for user's characters
-    char_entries = WalletJournalEntry.objects.filter(character__character__character_id__in=user_ids)
-    logger.info(f"Entries for user's characters: {char_entries.count()}")
-
-    if char_entries.exists():
-        sample = char_entries.first()
-        logger.info(f"Sample entry: character_id={sample.character.character.character_id}, first_party={sample.first_party_id}, second_party={sample.second_party_id}, ref_type={sample.ref_type}")
-
-    from django.db.models import Q
     # Filter by character ownership (entries belonging to user's characters)
     qs = WalletJournalEntry.objects.filter(character__character__character_id__in=user_ids)
+
+    if ref_types:
+        qs = qs.filter(ref_type__in=ref_types)
 
     # Also filter to transactions involving external parties
     # Keep only transactions where at least one party is NOT the user
     qs = qs.filter(Q(first_party_id__in=user_ids) | Q(second_party_id__in=user_ids))
-    logger.info(f"After filtering by first_party_id or second_party_id in user_ids: {qs.count()}")
-
     qs = qs.exclude(first_party_id__in=user_ids, second_party_id__in=user_ids)
-    logger.info(f"After excluding internal transactions: {qs.count()}")
 
     return qs
 
 
 def get_user_transactions(qs) -> Dict[int, Dict]:
+    # Use a list to avoid re-evaluating the queryset
+    entries = list(qs)
+    if not entries:
+        return {}
+
     result: Dict[int, Dict] = {}
 
-    _info_cache: dict[tuple[int, int], dict] = {}
+    # Bulk fetch CharacterMarketTransaction if needed
+    market_tx_ids = [
+        e.context_id for e in entries
+        if e.context_id_type == "market_transaction_id" and e.context_id
+    ]
+    market_tx_map = {}
+    if market_tx_ids and CharacterMarketTransaction:
+        market_tx_map = {
+            m.transaction_id: m
+            for m in CharacterMarketTransaction.objects.filter(
+                transaction_id__in=market_tx_ids
+            ).select_related("location")
+        }
 
-    def _cached_info(eid: int, when: datetime) -> dict:
-        key = (int(eid or 0), int(when.date().toordinal()))
-        if key in _info_cache:
-            return _info_cache[key]
+    # Pre-collect all entity IDs and their normalized timestamps for bulk fetching info
+    # EntityInfoCache normalizes to the hour.
+    lookups = set()
+    for entry in entries:
+        dt_hour = entry.date.replace(minute=0, second=0, microsecond=0)
+        if entry.first_party_id:
+            lookups.add((entry.first_party_id, dt_hour))
+        if entry.second_party_id:
+            lookups.add((entry.second_party_id, dt_hour))
+        if entry.context_id_type == "character_id" and entry.context_id:
+            lookups.add((entry.context_id, dt_hour))
+
+    # Bulk fetch EntityInfoCache entries
+    # To avoid a massive Q-object chain for very large batches, we fetch by entity_id
+    # and then filter in memory.
+    eids = {l[0] for l in lookups}
+    cache_entries = EntityInfoCache.objects.filter(entity_id__in=eids)
+
+    # Map them by (entity_id, as_of)
+    info_map = {
+        (ce.entity_id, ce.as_of): ce.data
+        for ce in cache_entries
+    }
+
+    def _get_info(eid: int, when: datetime) -> dict:
+        if not eid:
+            return get_entity_info(None, when)
+
+        dt_hour = when.replace(minute=0, second=0, microsecond=0)
+        cached = info_map.get((eid, dt_hour))
+        if cached:
+            return cached
+
+        # Fallback to single fetch if not in our pre-fetched map
+        # and update local map to avoid repeating the work
         info = get_entity_info(eid, when)
-        _info_cache[key] = info
+        info_map[(eid, dt_hour)] = info
         return info
 
-    for entry in qs:
+    for entry in entries:
         tx_id = entry.entry_id
         tx_date = entry.date
 
         first_party_id = entry.first_party_id
-        iinfo = _cached_info(first_party_id, tx_date)
+        iinfo = _get_info(first_party_id, tx_date)
 
         second_party_id = entry.second_party_id
-        ainfo = _cached_info(second_party_id, tx_date)
+        ainfo = _get_info(second_party_id, tx_date)
 
         context_id = entry.context_id
         context_type = entry.context_id_type
@@ -155,13 +191,15 @@ def get_user_transactions(qs) -> Dict[int, Dict]:
         location_id = None
         type_id = None
         quantity = 1
+
         if context_type == "structure_id":
             name = resolve_location_name(context_id)
             context = f"Structure: {name}" if name else f"Structure ID: {context_id}"
             location_id = context_id
             system_id = resolve_location_system_id(context_id)
         elif context_type == "character_id":
-            context = f"Character: {_cached_info(context_id, tx_date)['name']}"
+            cinfo = _get_info(context_id, tx_date)
+            context = f"Character: {cinfo['name']}"
         elif context_type == "eve_system":
             context = "EVE System"
             system_id = context_id
@@ -170,13 +208,13 @@ def get_user_transactions(qs) -> Dict[int, Dict]:
             context = "None"
         elif context_type == "market_transaction_id":
             context = f"Market Transaction ID: {context_id}"
-            if CharacterMarketTransaction:
-                m_tx = CharacterMarketTransaction.objects.filter(transaction_id=context_id).first()
-                if m_tx:
-                    location_id = m_tx.location_id if hasattr(m_tx, "location_id") else None
-                    system_id = m_tx.location.system_id if hasattr(m_tx.location, "system_id") else None
-                    type_id = m_tx.type_id
-                    quantity = m_tx.quantity
+            m_tx = market_tx_map.get(context_id)
+            if m_tx:
+                location_id = getattr(m_tx, "location_id", None)
+                if hasattr(m_tx, "location") and m_tx.location:
+                    system_id = getattr(m_tx.location, "system_id", None)
+                type_id = m_tx.type_id
+                quantity = m_tx.quantity
         else:
             context = f"{context_type}: {context_id}"
 
@@ -206,6 +244,10 @@ def get_user_transactions(qs) -> Dict[int, Dict]:
             "location_id": location_id,
             "type_id": type_id,
             "quantity": quantity,
+            "info_cache": {
+                first_party_id: iinfo,
+                second_party_id: ainfo,
+            }
         }
 
     return result
@@ -235,7 +277,8 @@ def is_transaction_hostile(tx: dict, user_ids: set = None, safe_entities: set = 
         market_item_id=tx.get("type_id"),
         market_unit_price=abs(tx.get("raw_amount")) / (tx.get("quantity") or 1) if tx.get("raw_amount") is not None else None,
         when=tx.get("date"),
-        safe_entities=safe_entities
+        safe_entities=safe_entities,
+        entity_info_cache=tx.get("info_cache")
     )
 
 

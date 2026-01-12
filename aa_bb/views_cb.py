@@ -608,8 +608,13 @@ def stream_transactions_sse(request):
     if not corptools_active():
         return HttpResponseForbidden("Corptools required")
 
+    cfg = BigBrotherConfig.get_solo()
+    ref_types = list(SUS_TYPES)
+    if cfg.show_market_transactions:
+        ref_types.extend(["market_escrow", "market_transaction"])
+
     try:
-        qs = gather_user_transactions(user_id)
+        qs = gather_user_transactions(user_id, ref_types=ref_types)
         if hasattr(qs, 'order_by'):
             qs = qs.order_by('-date')
         total = qs.count() if hasattr(qs, 'count') else len(qs)

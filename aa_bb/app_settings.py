@@ -1321,7 +1321,8 @@ def is_hostile_unified(
     market_unit_price: float = None,
     entity_type: str = None,
     when: datetime = None,
-    safe_entities: set[int] = None
+    safe_entities: set[int] = None,
+    entity_info_cache: Dict[int, Dict] = None
 ) -> bool:
     """
     Unified hostility processor following the 23-step priority logic.
@@ -1384,7 +1385,7 @@ def is_hostile_unified(
             if eid in safe_entities:
                 continue
             # Check context (corp/alliance membership)
-            info = get_entity_info(eid, now_ts)
+            info = (entity_info_cache or {}).get(eid) or get_entity_info(eid, now_ts)
             if info and (info.get('corp_id') in safe_entities or info.get('alli_id') in safe_entities):
                 continue
             all_safe = False
@@ -1397,7 +1398,7 @@ def is_hostile_unified(
         if l_oid in safe_entities:
             return False
         # Check parent corp/alliance context
-        l_info = get_entity_info(l_oid, now_ts)
+        l_info = (entity_info_cache or {}).get(l_oid) or get_entity_info(l_oid, now_ts)
         if l_info and (l_info.get('corp_id') in safe_entities or l_info.get('alli_id') in safe_entities):
             return False
 
@@ -1406,7 +1407,7 @@ def is_hostile_unified(
         if l_oid in safe_entities:
             return False
         # Check parent corp/alliance context
-        l_info = get_entity_info(l_oid, now_ts)
+        l_info = (entity_info_cache or {}).get(l_oid) or get_entity_info(l_oid, now_ts)
         if l_info and (l_info.get('corp_id') in safe_entities or l_info.get('alli_id') in safe_entities):
             return False
 
@@ -1421,7 +1422,7 @@ def is_hostile_unified(
                     if s_oid in safe_entities:
                         return False
                     # Check parent corp/alliance context
-                    s_info = get_entity_info(s_oid, now_ts)
+                    s_info = (entity_info_cache or {}).get(s_oid) or get_entity_info(s_oid, now_ts)
                     if s_info and (s_info.get('corp_id') in safe_entities or s_info.get('alli_id') in safe_entities):
                         return False
             except (ValueError, TypeError):
@@ -1539,7 +1540,7 @@ def is_hostile_unified(
             # 20. Explicit hostile list (direct ID or historical context)
             if eid in hostile_corps or eid in hostile_allis:
                 return True
-            info = get_entity_info(eid, when or timezone.now())
+            info = (entity_info_cache or {}).get(eid) or get_entity_info(eid, when or timezone.now())
             if info:
                 if info.get('corp_id') in hostile_corps or info.get('alli_id') in hostile_allis:
                     return True
@@ -1576,7 +1577,7 @@ def is_hostile_unified(
     return False
 
 
-def get_id_hostile_state(entity_id: int, when: datetime = None, safe_entities: set = None) -> bool:
+def get_id_hostile_state(entity_id: int, when: datetime = None, safe_entities: set = None, entity_info_cache: Dict[int, Dict] = None) -> bool:
     """
     Mega-helper function to determine if an ID is considered hostile.
     Automatically resolves if the ID is a Character, Corporation, Alliance,
@@ -1594,20 +1595,20 @@ def get_id_hostile_state(entity_id: int, when: datetime = None, safe_entities: s
     if (30000000 <= entity_id < 40000000) or \
        (60000000 <= entity_id < 64000000) or \
        is_player_structure(entity_id):
-        return is_hostile_unified(location_id=entity_id, when=when, safe_entities=safe_entities)
+        return is_hostile_unified(location_id=entity_id, when=when, safe_entities=safe_entities, entity_info_cache=entity_info_cache)
 
     # 2. Resolve entity type via ESI/Cache
     entity_type = get_eve_entity_type(entity_id)
 
     # 3. Handle based on resolved type
     if entity_type in ('solar_system', 'station', 'structure'):
-        return is_hostile_unified(location_id=entity_id, when=when, safe_entities=safe_entities)
+        return is_hostile_unified(location_id=entity_id, when=when, safe_entities=safe_entities, entity_info_cache=entity_info_cache)
 
     # 4. Default to entity hostility (Character, Corp, Alliance, Faction)
-    return is_hostile_unified(involved_ids=[entity_id], entity_type=entity_type, when=when, safe_entities=safe_entities)
+    return is_hostile_unified(involved_ids=[entity_id], entity_type=entity_type, when=when, safe_entities=safe_entities, entity_info_cache=entity_info_cache)
 
 
-def get_hostile_state(entity_id: int, entity_type: str = None, system_id: int = None, when: datetime = None, safe_entities: set = None) -> bool:
+def get_hostile_state(entity_id: int, entity_type: str = None, system_id: int = None, when: datetime = None, safe_entities: set = None, entity_info_cache: Dict[int, Dict] = None) -> bool:
     """
     Determine the hostile state of an entity or location.
     Returns True if hostile, False if safe.
@@ -1625,10 +1626,10 @@ def get_hostile_state(entity_id: int, entity_type: str = None, system_id: int = 
        (30000000 <= entity_id < 40000000) or \
        (60000000 <= entity_id < 64000000) or \
        is_player_structure(entity_id):
-        return is_hostile_unified(location_id=entity_id, system_id=system_id, when=when, safe_entities=safe_entities)
+        return is_hostile_unified(location_id=entity_id, system_id=system_id, when=when, safe_entities=safe_entities, entity_info_cache=entity_info_cache)
 
     # Entity Hostility (Character, Corporation, Alliance, Faction)
-    return is_hostile_unified(involved_ids=[entity_id], entity_type=entity_type, when=when, safe_entities=safe_entities)
+    return is_hostile_unified(involved_ids=[entity_id], entity_type=entity_type, when=when, safe_entities=safe_entities, entity_info_cache=entity_info_cache)
 
 
 def is_entity_hostile(entity_id: int, entity_type: str = None, when: datetime = None, safe_entities: set = None) -> bool:

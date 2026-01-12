@@ -34,7 +34,8 @@ else:
     def check_char_corp_bl(_cid: int) -> bool:
         return False
 
-from ..models import BigBrotherConfig, ProcessedContract, SusContractNote
+from django.db.models import Q
+from ..models import BigBrotherConfig, ProcessedContract, SusContractNote, EntityInfoCache
 
 logger = get_extension_logger(__name__)
 
@@ -76,32 +77,63 @@ def gather_user_contracts(user_id: int):
 
 
 def get_user_contracts(qs) -> Dict[int, Dict]:
-    try:
-        logger.debug("Hydrating %d contracts", qs.count())
-    except Exception:
-        pass
+    # Use a list to avoid re-evaluating the queryset
+    entries = list(qs)
+    if not entries:
+        return {}
 
     result: Dict[int, Dict] = {}
-    _info_cache: dict[tuple[int, int], dict] = {}
 
-    def _cached_info(eid: int, when: datetime) -> dict:
-        key = (int(eid or 0), int(when.date().toordinal()))
-        if key in _info_cache:
-            return _info_cache[key]
+    # Pre-collect all entity IDs and their normalized timestamps for bulk fetching info
+    # EntityInfoCache normalizes to the hour.
+    lookups = set()
+    for c in entries:
+        issue = c.date_issued
+        timeee = getattr(c, "timestamp", None) or issue or timezone.now()
+        dt_hour = timeee.replace(minute=0, second=0, microsecond=0)
+
+        # issuer_name.eve_id is issuer character id
+        issuer_id = c.issuer_name.eve_id
+        lookups.add((issuer_id, dt_hour))
+
+        assignee_id = c.assignee_id if c.assignee_id != 0 else c.acceptor_id
+        if assignee_id:
+            lookups.add((assignee_id, dt_hour))
+
+    # Bulk fetch EntityInfoCache entries
+    eids = {l[0] for l in lookups}
+    cache_entries = EntityInfoCache.objects.filter(entity_id__in=eids)
+
+    # Map them by (entity_id, as_of)
+    info_map = {
+        (ce.entity_id, ce.as_of): ce.data
+        for ce in cache_entries
+    }
+
+    def _get_info(eid: int, when: datetime) -> dict:
+        if not eid:
+            return get_entity_info(None, when)
+
+        dt_hour = when.replace(minute=0, second=0, microsecond=0)
+        cached = info_map.get((eid, dt_hour))
+        if cached:
+            return cached
+
+        # Fallback to single fetch
         info = get_entity_info(eid, when)
-        _info_cache[key] = info
+        info_map[(eid, dt_hour)] = info
         return info
 
-    for c in qs:
+    for c in entries:
         cid = c.contract_id
         issue = c.date_issued
         timeee = getattr(c, "timestamp", None) or issue or timezone.now()
 
         issuer_id = c.issuer_name.eve_id
-        iinfo = _cached_info(issuer_id, timeee)
+        iinfo = _get_info(issuer_id, timeee)
 
         assignee_id = c.assignee_id if c.assignee_id != 0 else c.acceptor_id
-        ainfo = _cached_info(assignee_id, timeee)
+        ainfo = _get_info(assignee_id, timeee)
 
         result[cid] = {
             "contract_id": cid,
@@ -125,6 +157,10 @@ def get_user_contracts(qs) -> Dict[int, Dict]:
             "start_location": resolve_location_name(getattr(c, "start_location_id", None)) or "Unknown Location",
             "end_location_id": getattr(c, "end_location_id", None),
             "end_location": resolve_location_name(getattr(c, "end_location_id", None)) or "Unknown Location",
+            "info_cache": {
+                issuer_id: iinfo,
+                assignee_id: ainfo
+            }
         }
 
     logger.debug("Hydrated %d contract rows", len(result))
@@ -133,36 +169,37 @@ def get_user_contracts(qs) -> Dict[int, Dict]:
 
 def get_cell_style_for_contract_row(column: str, row: dict) -> str:
     when = row.get("issued_date")
+    info_cache = row.get("info_cache")
     if column == "issuer_name":
         iid = row.get("issuer_id")
-        if get_hostile_state(iid, 'character', when=when):
+        if get_hostile_state(iid, 'character', when=when, entity_info_cache=info_cache):
             return "color: red;"
     if column == "assignee_name":
         aid = row.get("assignee_id")
-        if get_hostile_state(aid, 'character', when=when):
+        if get_hostile_state(aid, 'character', when=when, entity_info_cache=info_cache):
             return "color: red;"
 
     if column == "issuer_corporation":
         cid = row.get("issuer_corporation_id")
-        if get_hostile_state(cid, 'corporation', when=when):
+        if get_hostile_state(cid, 'corporation', when=when, entity_info_cache=info_cache):
             return "color: red;"
         return ""
 
     if column == "issuer_alliance":
         aid = row.get("issuer_alliance_id")
-        if get_hostile_state(aid, 'alliance', when=when):
+        if get_hostile_state(aid, 'alliance', when=when, entity_info_cache=info_cache):
             return "color: red;"
         return ""
 
     if column == "assignee_corporation":
         cid = row.get("assignee_corporation_id")
-        if get_hostile_state(cid, 'corporation', when=when):
+        if get_hostile_state(cid, 'corporation', when=when, entity_info_cache=info_cache):
             return "color: red;"
         return ""
 
     if column == "assignee_alliance":
         aid = row.get("assignee_alliance_id")
-        if get_hostile_state(aid, 'alliance', when=when):
+        if get_hostile_state(aid, 'alliance', when=when, entity_info_cache=info_cache):
             return "color: red;"
         return ""
 
@@ -179,14 +216,15 @@ def is_contract_row_hostile(row: dict, safe_entities: set = None) -> bool:
     when = row.get("issued_date")
     start_loc = row.get("start_location_id")
     end_loc = row.get("end_location_id")
+    info_cache = row.get("info_cache")
 
     # Unified check handles Rule 1 (Safe entities), location rules, and entity rules.
     # Check start location
-    if is_hostile_unified(involved_ids=[issuer_id, assignee_id], location_id=start_loc, when=when, safe_entities=safe_entities):
+    if is_hostile_unified(involved_ids=[issuer_id, assignee_id], location_id=start_loc, when=when, safe_entities=safe_entities, entity_info_cache=info_cache):
         return True
 
     # Check end location
-    if is_hostile_unified(involved_ids=[issuer_id, assignee_id], location_id=end_loc, when=when, safe_entities=safe_entities):
+    if is_hostile_unified(involved_ids=[issuer_id, assignee_id], location_id=end_loc, when=when, safe_entities=safe_entities, entity_info_cache=info_cache):
         return True
 
     return False

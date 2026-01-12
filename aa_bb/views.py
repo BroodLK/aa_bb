@@ -47,6 +47,7 @@ from aa_bb.checks.sus_mails import (
     is_mail_row_hostile,
     get_cell_style_for_mail_cell,
     gather_user_mails,
+    get_user_mails,
     render_mails,
 )
 from aa_bb.checks.sus_trans import (
@@ -550,68 +551,37 @@ def stream_contracts_sse(request: WSGIRequest):
             yield "event: done\ndata:0\n\n"
             return
 
-        for c in qs:
-            processed += 1
-            # Ping to keep connection alive
-            yield ": ping\n\n"
+        batch_size = 50
+        for i in range(0, total, batch_size):
+            batch = qs[i : i + batch_size]
+            contracts_map = get_user_contracts(batch)
 
-            issued = getattr(c, "date_issued", timezone.now())
-            issuer_id = c.issuer_name.eve_id
-            yield ": ping\n\n"
-            cid = c.contract_id
-            if c.assignee_id != 0:  # Contracts may target assignee or acceptor; prefer assignee when set.
-                assignee_id = c.assignee_id
-            else:
-                assignee_id = c.acceptor_id
-            yield ": ping\n\n"
-            #logger.info(f"getting info for {issuer_id}")
-            iinfo     = get_entity_info(issuer_id, issued)
-            yield ": ping\n\n"
-            #logger.info(f"getting info for {assignee_id}")
-            ainfo     = get_entity_info(assignee_id, issued)
-            yield ": ping\n\n"
+            # Sort them if possible, by issued_date desc
+            sorted_keys = sorted(contracts_map.keys(), key=lambda k: contracts_map[k]['issued_date'], reverse=True)
 
-            # Hydrate just this one
+            for cid in sorted_keys:
+                row = contracts_map[cid]
+                processed += 1
+                if processed % 5 == 0:
+                    yield ": ping\n\n"
 
-            row = {
-                'contract_id':              cid,
-                'issued_date':              issued,
-                'end_date':                 c.date_completed or c.date_expired,
-                'contract_type':            c.contract_type,
-                'issuer_name':              iinfo["name"],
-                'issuer_id':                issuer_id,
-                'issuer_corporation':       iinfo["corp_name"],
-                'issuer_corporation_id':    iinfo["corp_id"],
-                'issuer_alliance':          iinfo["alli_name"],
-                'issuer_alliance_id':       iinfo["alli_id"],
-                'assignee_name':            ainfo["name"],
-                'assignee_id':              assignee_id,
-                'assignee_corporation':     ainfo["corp_name"],
-                'assignee_corporation_id':  ainfo["corp_id"],
-                'assignee_alliance':        ainfo["alli_name"],
-                'assignee_alliance_id':     ainfo["alli_id"],
-                'status':                   c.status,
-                'start_location':           resolve_location_name(getattr(c, "start_location_id", None)),
-                'end_location':             resolve_location_name(getattr(c, "end_location_id", None)),
-            }
+                style_map = {
+                    col: get_cell_style_for_contract_row(col, row)
+                    for col in row
+                }
+                row['cell_styles'] = style_map
 
-            style_map = {
-                col: get_cell_style_for_contract_row(col, row)
-                for col in row
-            }
-            yield ": ping\n\n"
-            row['cell_styles'] = style_map
+                if is_contract_row_hostile(row):  # Emit rows that match hostile heuristics.
+                    hostile_count += 1
+                    tr_html = _render_contract_row_html(row)
+                    yield f"event: contract\ndata:{json.dumps(tr_html)}\n\n"
 
-            if is_contract_row_hostile(row):  # Emit rows that match hostile heuristics.
-                hostile_count += 1
-                tr_html = _render_contract_row_html(row)
-                yield f"event: contract\ndata:{json.dumps(tr_html)}\n\n"
-
-            # Progress update
-            yield (
-                "event: progress\n"
-                f"data:{processed},{total},{hostile_count}\n\n"
-            )
+                # Progress update
+                if processed % 5 == 0 or processed == total:
+                    yield (
+                        "event: progress\n"
+                        f"data:{processed},{total},{hostile_count}\n\n"
+                    )
             connection.close()
 
         # Done
@@ -754,70 +724,32 @@ def stream_mails_sse(request):
             yield "event: done\ndata:0\n\n"
             return
 
-        for m in qs:
-            processed += 1
-            # per-mail ping
-            yield ": ping\n\n"
+        batch_size = 50
+        for i in range(0, total, batch_size):
+            batch = qs[i : i + batch_size]
+            mails_map = get_user_mails(batch)
 
-            sent = getattr(m, "timestamp", timezone.now())
+            # Sort them if possible, by sent_date desc
+            sorted_keys = sorted(mails_map.keys(), key=lambda k: mails_map[k]['sent_date'], reverse=True)
 
-            # 1) hydrate sender
-            sender_id = m.from_id
-            #logger.info(f"getting info for {sender_id}")
-            sinfo     = get_entity_info(sender_id, sent)
-            yield ": ping\n\n"  # immediately after expensive call
+            for mid in sorted_keys:
+                row = mails_map[mid]
+                processed += 1
+                if processed % 5 == 0:
+                    yield ": ping\n\n"
 
-            # 2) hydrate each recipient
-            recipient_ids           = []
-            recipient_names         = []
-            recipient_corps         = []
-            recipient_corp_ids      = []
-            recipient_alliances     = []
-            recipient_alliance_ids  = []
-            for mr in m.recipients.all():
-                rid   = mr.recipient_id
-                #logger.info(f"getting info for {rid}")
-                rinfo = get_entity_info(rid, sent)
-                yield ": ping\n\n"  # after each recipient lookup
+                # check hostility and, if hostile, stream the <tr>
+                if is_mail_row_hostile(row):  # Emit only hostile mail rows.
+                    hostile_count += 1
+                    tr = _render_mail_row_html(row)
+                    yield f"event: mail\ndata:{json.dumps(tr)}\n\n"
 
-                recipient_ids.append(rid)
-                recipient_names.append(rinfo["name"])
-                recipient_corps.append(rinfo["corp_name"])
-                recipient_corp_ids.append(rinfo["corp_id"])
-                recipient_alliances.append(rinfo["alli_name"])
-                recipient_alliance_ids.append(rinfo["alli_id"])
-
-            # build the single-mail row dict
-            row = {
-                "message_id":              m.id_key,
-                "sent_date":               sent,
-                "subject":                 m.subject or "",
-                "sender_name":             sinfo["name"],
-                "sender_id":               sender_id,
-                "sender_corporation":      sinfo["corp_name"],
-                "sender_corporation_id":   sinfo["corp_id"],
-                "sender_alliance":         sinfo["alli_name"],
-                "sender_alliance_id":      sinfo["alli_id"],
-                "recipient_names":         recipient_names,
-                "recipient_ids":           recipient_ids,
-                "recipient_corps":         recipient_corps,
-                "recipient_corp_ids":      recipient_corp_ids,
-                "recipient_alliances":     recipient_alliances,
-                "recipient_alliance_ids":  recipient_alliance_ids,
-                "status":                  "Read" if m.is_read else "Unread",
-            }
-
-            # 3) check hostility and, if hostile, stream the <tr>
-            if is_mail_row_hostile(row):  # Emit only hostile mail rows.
-                hostile_count += 1
-                tr = _render_mail_row_html(row)
-                yield f"event: mail\ndata:{json.dumps(tr)}\n\n"
-
-            # 4) final per-mail progress
-            yield (
-                "event: progress\n"
-                f"data:{processed},{total},{hostile_count}\n\n"
-            )
+                # final per-mail progress
+                if processed % 5 == 0 or processed == total:
+                    yield (
+                        "event: progress\n"
+                        f"data:{processed},{total},{hostile_count}\n\n"
+                    )
             connection.close()
 
         # done
@@ -845,13 +777,18 @@ def stream_transactions_sse(request):
     if not corptools_active():
         return HttpResponseForbidden("Corptools required")
 
+    cfg = BigBrotherConfig.get_solo()
+    ref_types = list(SUS_TYPES)
+    if cfg.show_market_transactions:
+        ref_types.extend(["market_escrow", "market_transaction"])
+
     try:
-        qs = gather_user_transactions(user_id)
+        qs = gather_user_transactions(user_id, ref_types=ref_types)
         if hasattr(qs, 'order_by'):
             # Journal entries are best viewed in descending date order
             qs = qs.order_by('-date')
         total = qs.count() if hasattr(qs, 'count') else len(qs)
-        logger.info(f"Transaction stream for {option}: found {total} total transactions")
+        logger.info(f"Transaction stream for {option}: found {total} total transactions (filtered by {ref_types})")
         connection.close()
     except Exception as e:
         logger.error(f"Error initializing transaction stream for {option}: {e}", exc_info=True)
