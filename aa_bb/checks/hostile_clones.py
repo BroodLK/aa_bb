@@ -58,9 +58,12 @@ def get_clones(user_id: int) -> Dict[int, dict]:
     """
     if not corptools_active() or CharacterAudit is None:
         return {}
-    try:
-        user = User.objects.get(pk=user_id)
-    except User.DoesNotExist:
+
+    audits = CharacterAudit.objects.filter(character__character_ownership__user_id=user_id).select_related("character")
+    audit_ids = [a.pk for a in audits]
+    char_map = {a.pk: a.character for a in audits}
+
+    if not audit_ids:
         return {}
 
     system_map: Dict[int, dict] = {}
@@ -112,50 +115,40 @@ def get_clones(user_id: int) -> Dict[int, dict]:
             "jump_clone_name": jump_clone_name or "Jump Clone"
         })
 
-    # iterate through all characters owned by the user
-    for co in CharacterOwnership.objects.filter(user=user).select_related("character"):
-        char_name = co.character.character_name
-        char_id = co.character.character_id
-        try:
-            char_audit = CharacterAudit.objects.get(character=co.character)
-        except CharacterAudit.DoesNotExist:
+    # Bulk fetch current locations
+    active_locs = {}
+    if CharacterLocation:
+        active_locs = {
+            cl.character_id: cl.current_location_id
+            for cl in CharacterLocation.objects.filter(character_id__in=audit_ids)
+        }
+
+    # Bulk fetch home clones
+    home_clones = Clone.objects.select_related("location_name__system").filter(character_id__in=audit_ids)
+    for hc in home_clones:
+        char = char_map.get(hc.character_id)
+        if not char:
             continue
+        status = "Home Station"
+        if hc.location_id == active_locs.get(hc.character_id):
+            status += " (Current Location)"
+        add_location(getattr(hc.location_name, "system", None), hc.location_id, char.character_id, char.character_name, jump_clone_name=status)
 
-        # Get current active location
-        active_location_id = None
-        if CharacterLocation:
-            try:
-                char_loc = CharacterLocation.objects.get(character=char_audit)
-                active_location_id = char_loc.current_location_id
-            except CharacterLocation.DoesNotExist:
-                pass
-
-        # Home clone
-        try:
-            home_clone = Clone.objects.select_related(
-                "location_name__system"
-            ).get(character=char_audit)
-            loc = home_clone.location_name
-            status = "Home Station"
-            if home_clone.location_id == active_location_id:
-                status += " (Current Location)"
-            add_location(getattr(loc, "system", None), home_clone.location_id, char_id, char_name, jump_clone_name=status)
-        except Clone.DoesNotExist:
-            pass
-
-        # Jump clones
-        jump_clones = (
-            JumpClone.objects.select_related("location_name__system")
-            .prefetch_related("implant_set__type_name")
-            .filter(character=char_audit)
-        )
-        for jc in jump_clones:
-            loc = jc.location_name
-            implants = [i.type_name.name for i in jc.implant_set.all() if i.type_name]
-            status = jc.name or "Jump Clone"
-            if jc.location_id == active_location_id:
-                status += " (Current Location)"
-            add_location(getattr(loc, "system", None), jc.location_id, char_id, char_name, implants=implants, jump_clone_name=status)
+    # Bulk fetch jump clones
+    jump_clones = (
+        JumpClone.objects.select_related("location_name__system")
+        .prefetch_related("implant_set__type_name")
+        .filter(character_id__in=audit_ids)
+    )
+    for jc in jump_clones:
+        char = char_map.get(jc.character_id)
+        if not char:
+            continue
+        implants = [i.type_name.name for i in jc.implant_set.all() if i.type_name]
+        status = jc.name or "Jump Clone"
+        if jc.location_id == active_locs.get(jc.character_id):
+            status += " (Current Location)"
+        add_location(getattr(jc.location_name, "system", None), jc.location_id, char.character_id, char.character_name, implants=implants, jump_clone_name=status)
 
     return system_map
 

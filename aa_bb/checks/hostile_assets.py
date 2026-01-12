@@ -55,25 +55,55 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
     """
     if not corptools_active() or CharacterAudit is None:
         return {}
-    try:
-        user = User.objects.get(pk=user_id)
-    except User.DoesNotExist:
+
+    # Optimized fetching of all assets for all user characters in one go
+    audits = CharacterAudit.objects.filter(character__character_ownership__user_id=user_id).select_related("character")
+    audit_ids = [a.pk for a in audits]
+    char_map = {a.pk: a.character for a in audits}
+
+    if not audit_ids:
         return {}
+
+    assets = (
+        CharacterAsset.objects.filter(character_id__in=audit_ids)
+        .select_related("location_name__system", "type_name")
+        .exclude(location_flag__iexact="solar_system")
+    )
 
     system_map: Dict[int, dict] = {}
     _loc_sys_cache = {}
     _loc_name_cache = {}
+    processed_combos = set()
 
-    def add_asset(system_obj, location_id, location_name, char_id, char_name, type_id, type_name):
-        """Store the asset details organized by system and location."""
+    for asset in assets:
+        if (asset.location_flag or "").lower() == "assetsafety":
+            continue
+
+        if not asset.type_name:
+            continue
+
+        char = char_map.get(asset.character_id)
+        if not char:
+            continue
+
+        # Unique combo check: (character, location, type)
+        # Prevents redundant processing of multiple stacks of the same item
+        combo = (char.character_id, asset.location_id, asset.type_name.type_id)
+        if combo in processed_combos:
+            continue
+        processed_combos.add(combo)
+
+        loc = asset.location_name
+        system_obj = getattr(loc, "system", None) if loc else None
+        location_id = asset.location_id
+
         key = None
         sys_name = None
 
         if system_obj:
-            key = getattr(system_obj, "pk", None)
+            key = system_obj.pk
             sys_name = system_obj.name
         elif location_id:
-            # Attempt to resolve system name
             if location_id in _loc_sys_cache:
                 key = _loc_sys_cache[location_id]
             else:
@@ -88,79 +118,35 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
                     _loc_name_cache[key] = sys_name
 
         if not key:
-            return
+            continue
 
         if key not in system_map:
             system_map[key] = {"name": sys_name, "locations": {}}
 
-        # Determine location name to use as key/label
         loc_key = location_id or 0
         if loc_key not in system_map[key]["locations"]:
-            if location_name:
-                resolved_loc_name = location_name
-            else:
+            # Determine location name
+            loc_name = None
+            if loc:
+                loc_name = loc.location_name
+            if not loc_name:
                 if loc_key in _loc_name_cache:
-                    resolved_loc_name = _loc_name_cache[loc_key]
+                    loc_name = _loc_name_cache[loc_key]
                 else:
-                    resolved_loc_name = resolve_location_name(loc_key) or f"Unknown Location {loc_key}"
-                    _loc_name_cache[loc_key] = resolved_loc_name
+                    loc_name = resolve_location_name(loc_key) or f"Unknown Location {loc_key}"
+                    _loc_name_cache[loc_key] = loc_name
 
             system_map[key]["locations"][loc_key] = {
-                "name": resolved_loc_name,
+                "name": loc_name,
                 "assets": [],
             }
 
         system_map[key]["locations"][loc_key]["assets"].append({
-            "char_id": char_id,
-            "char_name": char_name,
-            "type_id": type_id,
-            "type_name": type_name,
+            "char_id": char.character_id,
+            "char_name": char.character_name,
+            "type_id": asset.type_name.type_id,
+            "type_name": asset.type_name.name,
         })
-
-    # for each EVE character owned by this user
-    for co in CharacterOwnership.objects.filter(user=user).select_related("character"):
-        try:
-            char_audit = CharacterAudit.objects.get(character=co.character)
-        except CharacterAudit.DoesNotExist:
-            continue
-
-        assets = (
-            CharacterAsset.objects.select_related(
-                "location_name__system",
-                "type_name__group__category",
-            )
-            .filter(character=char_audit)
-            .exclude(location_flag__iexact="solar_system")
-        )
-
-        for asset in assets:
-            if (asset.location_flag or "").lower() == "assetsafety":
-                continue
-
-            loc = asset.location_name
-            system_obj = getattr(loc, "system", None) if loc else None
-
-            # Optimization: use cached name from select_related if available
-            loc_name = None
-            if loc:
-                loc_name = loc.location_name
-
-            if not loc_name:
-                loc_key = asset.location_id
-                if loc_key in _loc_name_cache:
-                    loc_name = _loc_name_cache[loc_key]
-                else:
-                    loc_name = resolve_location_name(loc_key)
-                    _loc_name_cache[loc_key] = loc_name
-
-            if not asset.type_name:
-                continue
-
-            add_asset(
-                system_obj, asset.location_id, loc_name,
-                co.character.character_id, co.character.character_name,
-                asset.type_name.type_id, asset.type_name.name
-            )
 
     return system_map
 
@@ -178,6 +164,8 @@ def get_hostile_asset_locations(user_id: int) -> Dict[str, dict]:
     hostile_map: Dict[str, dict] = {}
     from ..app_settings import get_safe_entities
     safe_entities = get_safe_entities()
+    cfg = BigBrotherConfig.get_solo()
+    ships_only = cfg.hostile_assets_ships_only
     _hostile_memo = {}
 
     for system_id, data in systems.items():
@@ -202,32 +190,43 @@ def get_hostile_asset_locations(user_id: int) -> Dict[str, dict]:
             location_has_hostile = False
 
             for asset in loc_data.get("assets", []):
-                # Memoize check results for character+location+type
-                memo_key = (asset["char_id"], loc_id, system_id, asset["type_id"])
+                char_id = asset["char_id"]
+                char_name = asset["char_name"]
+                type_id = asset["type_id"]
+
+                # Memoize check results for character+location (ignoring type for the base check)
+                memo_key = (char_id, loc_id, system_id)
                 if memo_key in _hostile_memo:
-                    is_hostile = _hostile_memo[memo_key]
+                    is_hostile_at_loc = _hostile_memo[memo_key]
                 else:
-                    # Use unified check for each asset
-                    is_hostile = is_hostile_unified(
-                        involved_ids=[asset["char_id"]],
+                    # Check base hostility for character at this location
+                    is_hostile_at_loc = is_hostile_unified(
+                        involved_ids=[char_id],
                         location_id=loc_id,
                         system_id=system_id,
                         is_asset=True,
-                        asset_type_id=asset["type_id"],
+                        asset_type_id=None,
                         when=timezone.now(),
                         safe_entities=safe_entities
                     )
-                    _hostile_memo[memo_key] = is_hostile
+                    _hostile_memo[memo_key] = is_hostile_at_loc
 
-                if is_hostile:
-                    system_has_hostile = True
-                    location_has_hostile = True
-                    cname = asset["char_name"]
-                    if is_ship(asset["type_id"]):
-                        char_ships_at_loc.setdefault(cname, set()).add(asset["type_name"])
+                is_hostile_asset = False
+                if is_hostile_at_loc:
+                    if not ships_only:
+                        is_hostile_asset = True
+
+                    if is_ship(type_id):
+                        char_ships_at_loc.setdefault(char_name, set()).add(asset["type_name"])
+                        if ships_only:
+                            is_hostile_asset = True
                     else:
                         # Ensure character is recorded even if no ships (e.g. just modules/items)
-                        char_ships_at_loc.setdefault(cname, set())
+                        char_ships_at_loc.setdefault(char_name, set())
+
+                if is_hostile_asset:
+                    system_has_hostile = True
+                    location_has_hostile = True
 
             if location_has_hostile:
                 for cname, ships in char_ships_at_loc.items():
@@ -262,6 +261,8 @@ def render_assets(user_id: int) -> Optional[str]:
         rows: List[Dict] = []
         from ..app_settings import get_safe_entities
         safe_entities = get_safe_entities()
+        cfg = BigBrotherConfig.get_solo()
+        ships_only = cfg.hostile_assets_ships_only
         _hostile_memo = {}
 
         for system_id, data in systems.items():
@@ -281,31 +282,38 @@ def render_assets(user_id: int) -> Optional[str]:
                 # Actually we can group by char for rendering
                 char_assets = {}
                 for asset in loc_data.get("assets", []):
+                    char_id = asset["char_id"]
                     char_name = asset["char_name"]
-                    if char_name not in char_assets:
-                        char_assets[char_name] = {"ships": [], "is_hostile": False, "char_id": asset["char_id"]}
+                    type_id = asset["type_id"]
 
-                    # Memoize check results for character+location+type
-                    memo_key = (asset["char_id"], loc_id, system_id, asset["type_id"])
+                    if char_name not in char_assets:
+                        char_assets[char_name] = {"ships": [], "is_hostile": False, "char_id": char_id}
+
+                    # Memoize check results for character+location (ignoring type for base check)
+                    memo_key = (char_id, loc_id, system_id)
                     if memo_key in _hostile_memo:
-                        is_hostile = _hostile_memo[memo_key]
+                        is_hostile_at_loc = _hostile_memo[memo_key]
                     else:
-                        # Check if this specific asset is hostile
-                        is_hostile = is_hostile_unified(
-                            involved_ids=[asset["char_id"]],
+                        # Check base hostility for character at this location
+                        is_hostile_at_loc = is_hostile_unified(
+                            involved_ids=[char_id],
                             location_id=loc_id,
                             system_id=system_id,
                             is_asset=True,
-                            asset_type_id=asset["type_id"],
+                            asset_type_id=None,
                             when=timezone.now(),
                             safe_entities=safe_entities
                         )
-                        _hostile_memo[memo_key] = is_hostile
+                        _hostile_memo[memo_key] = is_hostile_at_loc
 
-                    if is_hostile:
-                        char_assets[char_name]["is_hostile"] = True
-                        if is_ship(asset["type_id"]):
+                    if is_hostile_at_loc:
+                        if not ships_only:
+                            char_assets[char_name]["is_hostile"] = True
+
+                        if is_ship(type_id):
                             char_assets[char_name]["ships"].append(asset["type_name"])
+                            if ships_only:
+                                char_assets[char_name]["is_hostile"] = True
 
                 for char_name, cdata in char_assets.items():
                     ship_str = ", ".join(sorted(cdata["ships"])) if cdata["ships"] else ""
