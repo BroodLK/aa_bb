@@ -15,3 +15,6 @@ __pycache__
 /coverage.xml
 alliance_auth.sqlite3
 .output.txt
+/test_output.txt
+/find_dupes.py
+/debug_admin.py

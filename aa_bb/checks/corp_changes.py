@@ -6,11 +6,11 @@ helpers that other sections (e.g. cyno readiness) use to determine how
 long a member has been in corp.
 """
 
-import logging
 from datetime import timedelta
 from django.utils.html import format_html
 from django.utils.timezone import now, timezone
 from allianceauth.authentication.models import CharacterOwnership
+from allianceauth.services.hooks import get_extension_logger
 from ..models import BigBrotherConfig, FrequentCorpChangesCache, CurrentStintCache
 from ..app_settings import (
     ensure_datetime,
@@ -21,7 +21,7 @@ from ..app_settings import (
     get_character_employment,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_extension_logger(__name__)
 TTL_SHORT = timedelta(hours=4)
 
 # External site favicons, fetched each time directly from the source
@@ -106,7 +106,7 @@ def get_frequent_corp_changes(user_id):
             membership_range = f"{start.date()} - {end.date()}"
 
             # Corp cell with external site favicons (fetched live)
-            corp_color = ' class="text-danger' if (hostile_corps and corp_id in hostile_corps) else ''  # Highlight hostile corps.
+            corp_color = ' class="text-danger"' if (hostile_corps and corp_id in hostile_corps) else ''  # Highlight hostile corps.
             corp_cell = (
                 f'<span{corp_color}>{corp_name}</span>'
                 f'<a href="https://zkillboard.com/corporation/{corp_id}/" target="_blank">'

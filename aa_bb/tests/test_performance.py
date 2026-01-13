@@ -81,7 +81,7 @@ class PerformanceTest(TestCase):
         with patch('aa_bb.checks.sus_trans.get_user_characters') as mock_get_chars, \
              patch('aa_bb.checks.sus_trans.get_user_transactions') as mock_get_txs, \
              patch('aa_bb.checks.sus_trans.is_transaction_hostile') as mock_hostile, \
-             patch('aa_bb.checks.sus_trans.is_above_threshold') as mock_threshold, \
+             patch('aa_bb.app_settings.is_above_market_threshold') as mock_threshold, \
              patch('aa_bb.checks.sus_trans.BigBrotherConfig.get_solo') as mock_get_solo:
 
             mock_config = MagicMock()
@@ -103,7 +103,7 @@ class PerformanceTest(TestCase):
 
     def test_is_above_threshold_logic_performance(self):
         """Test the performance of the price threshold logic itself."""
-        from aa_bb.checks.sus_trans import is_above_threshold
+        from aa_bb.app_settings import is_above_market_threshold
 
         tx = {
             "type_id": 34,
@@ -112,8 +112,8 @@ class PerformanceTest(TestCase):
         }
 
         # Mocking external price fetches
-        with patch('aa_bb.checks.sus_trans.EVEUNIVERSE_INSTALLED', False), \
-             patch('aa_bb.checks.sus_trans.get_or_create_prices') as mock_prices:
+        with patch('aa_bb.app_settings.EVEUNIVERSE_INSTALLED', False), \
+             patch('aa_bb.app_settings.get_or_create_prices') as mock_prices:
 
             mock_price_obj = MagicMock()
             mock_price_obj.buy = 1.0
@@ -122,7 +122,7 @@ class PerformanceTest(TestCase):
 
             start_time = time.time()
             for _ in range(1000):
-                is_above_threshold(tx, 10.0)
+                is_above_market_threshold(tx["type_id"], tx["raw_amount"], 10.0)
             end_time = time.time()
 
             avg_time = (end_time - start_time) / 1000

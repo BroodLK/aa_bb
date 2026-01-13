@@ -1,3 +1,29 @@
+## [3.2.8] - 2026-01-12
+
+### Added
+- **Compliance Ticket System**:
+    - Discord slash commands for ticket management: `/resolve_compliance_ticket` and `/mark_ticket_as_exception`.
+    - Automatic resolution of compliance tickets when corresponding Discord threads are archived, locked, or deleted.
+    - Exception system to prevent repeated pings for persistent but acknowledged compliance issues.
+    - Unified history on the Auth ticket page showing comments from both Discord and Auth.
+- **Audit & Hostility Detection**:
+    - Unified 23-step priority logic for hostility detection across assets, clones, and transactions.
+    - Support for ignoring well-known and custom hauling corporations in courier contracts.
+- **Visual & UI Enhancements**:
+    - Reorganized BigBrother and TicketTool admin pages
+
+### Fixed
+- Refined nullsec hostility checks to prioritize individual structure/station ownership.
+- Fixed logic for assets in solar systems (space) to prevent unnecessary warnings.
+- Fixed BigBrother sidebar menu showing active when it wasn't issue.
+- Refined cyno notifications to only trigger when skills cause ships are present. No more notifications for buying/selling/losing a ship, only when it changes the status from "can light = false" to true
+- Improved data hydration for suspicious contracts, including financial details and better handling of public contracts.
+- Prevented incorrect superuser fallbacks for pings when a target user has no Discord account linked.
+
+### Other
+- Reduced non-debug logging noise.
+
+
 ## [3.2.7] - 2026-01-8
 - Removed `Charlink`, `allianceauth-discordbot` and `psycopg2-binary` as required dependencies
 - Added rate limiting to Discord thread/channel creation.

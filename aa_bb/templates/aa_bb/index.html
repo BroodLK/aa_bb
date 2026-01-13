@@ -26,7 +26,7 @@
     /* Body rows */
     .table.compliance > tbody > tr > td {
         border-top: 1px solid var(--bs-gray-600);
-        border-bottom: 1px solid var(--bs-gray-dark);
+        border-bottom: 1px solid var(--bs-gray-600);
         border-left: 1px solid var(--bs-gray-dark);
         border-right: 1px solid var(--bs-gray-dark);
     }
@@ -42,7 +42,7 @@
     /* Body rows */
     .table.stats > tbody > tr > td {
         border-top: 1px solid var(--bs-gray-600);
-        border-bottom: 1px solid var(--bs-gray-dark);
+        border-bottom: 1px solid var(--bs-gray-600);
         border-left: 1px solid var(--bs-gray-dark);
         border-right: 1px solid var(--bs-gray-dark);
     }
@@ -130,13 +130,14 @@ document.addEventListener('DOMContentLoaded', () => {
   const MAIL_VISIBLE = [
     "sent_date", "subject",
     "sender_name", "sender_corporation", "sender_alliance",
-    "recipient_names", "recipient_corps", "recipient_alliances", "status"
+    "recipient_names", "recipient_corps", "recipient_alliances",
+    "content", "status"
   ];
   const CONTR_VISIBLE = [
     "issued_date", "end_date",
     "contract_type", "issuer_name", "issuer_corporation",
     "issuer_alliance", "assignee_name", "assignee_corporation",
-    "assignee_alliance", "status"
+    "assignee_alliance", "status", "start_location", "end_location"
   ];
   const TOTAL_CARDS      = CARD_DEFINITIONS.length;
   const SUS_CONTR_KEY    = 'sus_contr';
@@ -162,6 +163,17 @@ document.addEventListener('DOMContentLoaded', () => {
     contractMessage.style.display = 'none';
   }
 
+  function getEmptyMessage(text) {
+    return `
+      <table class="table stats">
+        <tbody>
+          <tr>
+            <td class="text-center">${text}</td>
+          </tr>
+        </tbody>
+      </table>`;
+  }
+
   function renderCard(idx, title, content, status) {
     const collapseId = `collapse${idx}`;
     const cardId     = `card${idx}`;
@@ -182,7 +194,7 @@ document.addEventListener('DOMContentLoaded', () => {
         ${icon}
       </div>
       <div id="${collapseId}" class="collapse">
-        <div class="card-body">${content !== null && content !== undefined ? content : (status ? 'No issues found' : 'Error loading data')}</div>
+        <div class="card-body">${content !== null && content !== undefined ? content : (status ? getEmptyMessage('No issues found') : getEmptyMessage('Error loading data'))}</div>
       </div>
     `;
     container.appendChild(cardDiv);
@@ -251,24 +263,23 @@ document.addEventListener('DOMContentLoaded', () => {
         const clean = hostileCount === 0;
         if (clean) {
           updateCardStatus(idx, true);
-
-          // inject a “no hostile” row
-          const tbody = cardBody.querySelector('#contracts-body');
-          const colspan = thead.querySelectorAll('th').length;
-          tbody.insertAdjacentHTML('beforeend',
-            `<tr><td colspan="${colspan}" class="text-center text-muted">
-               No hostile contracts found
-             </td></tr>`
-          );
+          cardBody.innerHTML = getEmptyMessage('No hostile contracts found');
         }
         resolve(clean);
       });
 
+      source.addEventListener('error', e => {
+        source.close();
+        const errorData = JSON.parse(e.data);
+        cardBody.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${errorData}</div>`;
+        updateCardStatus(idx, false);
+        reject(new Error(errorData));
+      });
+
       source.onerror = err => {
         source.close();
-        errorMessages.innerHTML =
-          '<div class="alert alert-warning">Contract stream failed, please wait for the cache to warm up and try again or get your IT to increase(or set to 0) your gunicorn timeout in supervisor.conf</div>';
-        updateCardStatus(idx, true);
+        cardBody.innerHTML = `<div class="alert alert-warning"><strong>Stream Error:</strong> Connection lost or timed out. Please wait for cache warming and try again.</div>`;
+        updateCardStatus(idx, false);
         reject(err);
       };
     });
@@ -320,24 +331,23 @@ document.addEventListener('DOMContentLoaded', () => {
         const clean = hostileCount === 0;
         if (clean) {
           updateCardStatus(idx, true);
-
-          // inject a “no hostile” mail row
-          const tbody = cardBody.querySelector('tbody');
-          const colspan = MAIL_VISIBLE.length;
-          tbody.insertAdjacentHTML('beforeend',
-            `<tr><td colspan="${colspan}" class="text-center text-muted">
-               No hostile mails found
-             </td></tr>`
-          );
+          cardBody.innerHTML = getEmptyMessage('No hostile mails found');
         }
         resolve(clean);
       });
 
+      source.addEventListener('error', e => {
+        source.close();
+        const errorData = JSON.parse(e.data);
+        cardBody.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${errorData}</div>`;
+        updateCardStatus(idx, false);
+        reject(new Error(errorData));
+      });
+
       source.onerror = err => {
         source.close();
-        errorMessages.innerHTML =
-          '<div class="alert alert-warning">Mail stream failed, please wait for the cache to warm up and try again or get your IT to increase(or set to 0) your gunicorn timeout in supervisor.conf</div>';
-        updateCardStatus(idx, true);
+        cardBody.innerHTML = `<div class="alert alert-warning"><strong>Stream Error:</strong> Connection lost or timed out. Please wait for cache warming and try again.</div>`;
+        updateCardStatus(idx, false);
         reject(err);
       };
     });
@@ -390,22 +400,23 @@ document.addEventListener('DOMContentLoaded', () => {
         const clean = hostileCount === 0;
         if (clean) {
           updateCardStatus(idx, true);
-          // inject “no hostile” row
-          const colspan = thead.querySelectorAll('th').length || 1;
-          tbody.insertAdjacentHTML('beforeend',
-            `<tr><td colspan="${colspan}" class="text-center text-muted">
-               No hostile transactions found
-             </td></tr>`
-          );
+          cardBody.innerHTML = getEmptyMessage('No hostile transactions found');
         }
         resolve(clean);
       });
 
+      source.addEventListener('error', e => {
+        source.close();
+        const errorData = JSON.parse(e.data);
+        cardBody.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${errorData}</div>`;
+        updateCardStatus(idx, false);
+        reject(new Error(errorData));
+      });
+
       source.onerror = err => {
         source.close();
-        errorMessages.innerHTML =
-          '<div class="alert alert-warning">Transaction stream failed, please wait for the cache to warm up and try again or get your IT to increase(or set to 0) your gunicorn timeout in supervisor.conf</div>';
-        updateCardStatus(idx, true);
+        cardBody.innerHTML = `<div class="alert alert-warning"><strong>Stream Error:</strong> Connection lost or timed out. Please wait for cache warming and try again.</div>`;
+        updateCardStatus(idx, false);
         reject(err);
       };
     });
@@ -424,8 +435,8 @@ document.addEventListener('DOMContentLoaded', () => {
           .forEach(el => el.remove());
     header.insertAdjacentHTML('beforeend',
       isClean
-        ? '<span class="text-success">🟢</span>'
-        : '<span class="text-danger">🔴</span>'
+        ? '<span class="text-success"><i class="fa-solid fa-circle"></i></span>'
+        : '<span class="text-danger"><i class="fa-solid fa-circle"></i></span>'
     );
   }
 

@@ -6,13 +6,13 @@ live and highlight systems owned by alliances on the hostile list.
 """
 
 from allianceauth.eveonline.models import EveCorporationInfo
-from ..app_settings import get_system_owner, resolve_location_name, resolve_location_system_id, get_hostile_state, corptools_active
+from allianceauth.services.hooks import get_extension_logger
+from ..app_settings import get_system_owner, resolve_location_name, resolve_location_system_id, get_hostile_state, corptools_active, is_hostile_unified
 from ..models import BigBrotherConfig
 from django.utils.html import format_html
 from typing import List, Optional, Dict
-import logging
 
-logger = logging.getLogger(__name__)
+logger = get_extension_logger(__name__)
 
 try:
     if corptools_active():
@@ -26,30 +26,32 @@ except ImportError:
     CorpAsset = None
     EveLocation = None
 
-def get_asset_locations(corp_id: int) -> Dict[int, Optional[str]]:
+def get_asset_locations(corp_id: int) -> Dict[int, dict]:
     """
-    Return a dict mapping system IDs to their names (or None if unnamed)
-    where the given corporation has one or more assets in space.
+    Return a dict mapping system IDs to structured data:
+    {
+        system_id: {
+            "name": system_name,
+            "locations": {
+                loc_id: {
+                    "name": loc_name,
+                    "has_assets": True
+                }
+            }
+        }
+    }
     """
     if not corptools_active() or CorporationAudit is None:
         return {}
     try:
         corp_info = EveCorporationInfo.objects.get(corporation_id=corp_id)
         corp_audit = CorporationAudit.objects.get(corporation=corp_info)
-    except CorporationAudit.DoesNotExist:
+    except (CorporationAudit.DoesNotExist, EveCorporationInfo.DoesNotExist):
         return {}
 
-    system_map: Dict[int, Optional[str]] = {}
-
-    def add_system(system_obj, loc_id=None):
-        """Track the system when the asset resolves to a solar system."""
-        if system_obj:  # Skip placeholder corp assets with missing solar system.
-            key = getattr(system_obj, 'pk', None)
-            system_map[key] = system_obj.name
-        elif loc_id:
-            sid = resolve_location_system_id(loc_id)
-            if sid:
-                system_map[sid] = resolve_location_name(sid)
+    system_map: Dict[int, dict] = {}
+    _loc_sys_cache = {}
+    _loc_name_cache = {}
 
     # All corp assets (exclude ones where location_flag is "solar_system")
     assets = CorpAsset.objects.select_related('location_name__system') \
@@ -58,54 +60,96 @@ def get_asset_locations(corp_id: int) -> Dict[int, Optional[str]]:
 
     for asset in assets:
         loc = asset.location_name
-        add_system(getattr(loc, 'system', None), getattr(loc, 'id', None))
+        loc_id = getattr(loc, 'id', None)
+        system_obj = getattr(loc, 'system', None)
 
-    sorted_items = sorted(
-        system_map.items(),
-        key=lambda kv: (kv[1] or "").lower()
-    )
-    return dict(sorted_items)
+        sid = None
+        if system_obj:
+            sid = system_obj.pk
+            s_name = system_obj.name
+        elif loc_id:
+            if loc_id in _loc_sys_cache:
+                sid = _loc_sys_cache[loc_id]
+            else:
+                sid = resolve_location_system_id(loc_id)
+                _loc_sys_cache[loc_id] = sid
 
-def get_corp_hostile_asset_locations(corp_id: int) -> Dict[str, str]:
+            if sid:
+                if sid in _loc_name_cache:
+                    s_name = _loc_name_cache[sid]
+                else:
+                    s_name = resolve_location_name(sid)
+                    _loc_name_cache[sid] = s_name
+
+        if sid:
+            if sid not in system_map:
+                system_map[sid] = {"name": s_name, "locations": {}}
+
+            if loc_id:
+                if loc_id not in system_map[sid]["locations"]:
+                    l_name = "Unknown Location"
+                    if loc_id in _loc_name_cache:
+                        l_name = _loc_name_cache[loc_id]
+                    else:
+                        l_name = resolve_location_name(loc_id)
+                        _loc_name_cache[loc_id] = l_name
+
+                    system_map[sid]["locations"][loc_id] = {"name": l_name}
+
+    return system_map
+
+def get_corp_hostile_asset_locations(corp_id: int) -> Dict[str, dict]:
     """
-    Return {system name -> owner name} entries for hostile corp asset locations.
-
-    Only systems that cannot be resolved or that belong to a hostile alliance
-    are included in the response.
+    Return {system name -> structured hostile data} for hostile corp asset locations.
+    Uses the unified processor logic.
     """
-    # get_asset_locations now returns Dict[int, Optional[str]]
     systems = get_asset_locations(corp_id)
-    if not systems:  # No corp assets means nothing to audit.
+    if not systems:
         return {}
 
-    # parse hostile alliance IDs
-    hostile_str = BigBrotherConfig.get_solo().hostile_alliances or ""
-    hostile_ids = {int(s) for s in hostile_str.split(",") if s.strip().isdigit()}
-    logger.debug(f"Hostile alliance IDs: {hostile_ids}")
+    hostile_map: Dict[str, dict] = {}
+    from ..app_settings import get_safe_entities
+    safe_entities = get_safe_entities()
 
-    hostile_map: Dict[str, str] = {}
-
-    # iterate system_id, system_name pairs
-    for system_id, system_name in systems.items():
+    for system_id, data in systems.items():
+        system_name = data.get("name")
         display_name = system_name or f"Unknown ({system_id})"
 
-        # Check hostility using mega-helper
-        if get_hostile_state(system_id, 'solar_system'):
-            # build the dict that get_system_owner expects
+        system_has_hostile = False
+        records = []
+
+        # Check each location in this system
+        for loc_id, loc_data in data.get("locations", {}).items():
+            loc_name = loc_data["name"]
+
+            # Check hostility using unified processor
+            if is_hostile_unified(
+                involved_ids=[corp_id],
+                location_id=loc_id,
+                system_id=system_id,
+                is_asset=True,
+                safe_entities=safe_entities
+            ):
+                system_has_hostile = True
+                records.append({
+                    "location_name": loc_name
+                })
+
+        if system_has_hostile:
             owner_info = get_system_owner({
                 "id":   system_id,
                 "name": display_name
             })
 
             oname = owner_info.get("owner_name") or "Unresolvable"
-            oid = owner_info.get("owner_id")
-            rname = owner_info.get("region_name")
+            rname = owner_info.get("region_name") or "Unknown Region"
 
-            summary = oname
-            if rname and rname != "Unknown Region":
-                summary = f"{oname} | Region: {rname}"
-            hostile_map[display_name] = summary
-            logger.info(f"Hostile asset system: {display_name} owned by {summary} ({oid})")
+            hostile_map[display_name] = {
+                "owner": oname,
+                "region": rname,
+                "records": records
+            }
+            logger.info(f"Hostile corp asset system: {display_name} owned by {oname}")
 
     return hostile_map
 
@@ -113,43 +157,46 @@ def get_corp_hostile_asset_locations(corp_id: int) -> Dict[str, str]:
 def render_assets(corp_id: int) -> Optional[str]:
     """
     Render an HTML table of systems where the corporation owns assets in space.
-
-    The table mirrors the member-level view but operates on corp audits and
-    highlights hostile sovereignty holders in red.
+    Highlights hostile sovereignty holders in red using the unified processor.
     """
     systems = get_asset_locations(corp_id)
-    logger.info(f"corp id {corp_id}, systems {len(systems)}")
-    if not systems:  # Short-circuit when no corp assets exist.
-        return None
+    if not systems:
+        return '<table class="table stats"><tbody><tr><td class="text-center">No hostile assets found.</td></tr></tbody></table>'
 
-    # Parse hostile IDs into a set of ints
-    hostile_str = BigBrotherConfig.get_solo().hostile_alliances or ""
-    hostile_ids = {int(s) for s in hostile_str.split(",") if s.strip().isdigit()}
-    #logger.debug(f"Hostile IDs for assets: {hostile_ids}")
+    html_output = '<table class="table table-striped">'
+    html_output += '<thead><tr><th>System</th><th>Location</th><th>Owner</th><th>Region</th></tr></thead><tbody>'
+    from ..app_settings import get_safe_entities
+    safe_entities = get_safe_entities()
 
-    html = '<table class="table table-striped">'
-    html += '<thead><tr><th>System</th><th>Owner</th><th>Region</th></tr></thead><tbody>'
-
-    for system_id, system_name in systems.items():
-        # build the dict your get_system_owner() wants:
+    for system_id, data in systems.items():
+        system_name = data.get("name")
         display_name = system_name or f"Unknown ({system_id})"
         owner_info = get_system_owner({
             "id":   system_id,
             "name": display_name
         })
-        rname = "—"
-        hostile = get_hostile_state(system_id, 'solar_system')
-        oname = "—"
 
-        if owner_info:  # Only resolve sovereignty details when SDE returns something.
-            rname = owner_info.get("region_name") or "—"
-            oname = owner_info.get("owner_name") or "—"
+        oname = owner_info.get("owner_name") or "—"
+        rname = owner_info.get("region_name") or "—"
 
-        if hostile:  # Paint hostile ownership red for attention.
-            row_tpl = '<tr><td>{}</td><td style="color: red;">{}</td><td>{}</td></tr>'
-        else:  # Neutral owners get default styling.
-            row_tpl = '<tr><td>{}</td><td>{}</td><td>{}</td></tr>'
-        html += format_html(row_tpl, display_name, oname, rname)
+        for loc_id, loc_data in data.get("locations", {}).items():
+            loc_name = loc_data["name"]
 
-    html += "</tbody></table>"
-    return html
+            # Check hostility using unified processor
+            hostile = is_hostile_unified(
+                involved_ids=[corp_id],
+                location_id=loc_id,
+                system_id=system_id,
+                is_asset=True,
+                safe_entities=safe_entities
+            )
+
+            if hostile:
+                row_tpl = '<tr><td>{}</td><td>{}</td><td style="color: red;" class="text-danger">{}</td><td>{}</td></tr>'
+            else:
+                row_tpl = '<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>'
+
+            html_output += format_html(row_tpl, display_name, loc_name, oname, rname)
+
+    html_output += "</tbody></table>"
+    return html_output

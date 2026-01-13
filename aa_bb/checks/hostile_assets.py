@@ -6,6 +6,7 @@ that can be sent when a user has assets in systems owned by enemies.
 """
 
 from allianceauth.authentication.models import CharacterOwnership
+from allianceauth.services.hooks import get_extension_logger
 from django.contrib.auth.models import User
 from ..app_settings import (
     get_system_owner,
@@ -17,14 +18,16 @@ from ..app_settings import (
     is_highsec,
     is_lowsec,
     corptools_active,
+    is_hostile_unified,
+    is_ship,
 )
+from django.utils import timezone
 from ..models import BigBrotherConfig
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 from typing import List, Optional, Dict
-import logging
 
-logger = logging.getLogger(__name__)
+logger = get_extension_logger(__name__)
 
 try:
     if corptools_active():
@@ -49,248 +52,215 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
     """
     Return a dict mapping system IDs to a dict containing their name and a list of locations
     (stations/structures) where any of the given user's characters has one or more assets.
+
+    OPTIMIZED: Limits asset processing and cleans up memory.
     """
     if not corptools_active() or CharacterAudit is None:
         return {}
-    try:
-        user = User.objects.get(pk=user_id)
-    except User.DoesNotExist:
+
+    # Optimized fetching of all assets for all user characters in one go
+    audits = CharacterAudit.objects.filter(character__character_ownership__user_id=user_id).select_related("character")
+    audit_ids = [a.pk for a in audits]
+    char_map = {a.pk: a.character for a in audits}
+
+    if not audit_ids:
         return {}
 
-    system_map: Dict[int, dict] = {}
+    assets = (
+        CharacterAsset.objects.filter(character_id__in=audit_ids)
+        .select_related("location_name__system", "type_name")
+        .exclude(location_flag__iexact="solar_system")[:5000]  # Limit to prevent memory explosion
+    )
 
-    def add_asset(system_obj, location_id, location_name, char_name, ship_name=None):
-        """Store the asset details organized by system and location."""
+    system_map: Dict[int, dict] = {}
+    _loc_sys_cache = {}
+    _loc_name_cache = {}
+    processed_combos = set()
+
+    max_combos = 10000  # Safety limit
+
+    for asset in assets:
+        if (asset.location_flag or "").lower() == "assetsafety":
+            continue
+
+        if not asset.type_name:
+            continue
+
+        char = char_map.get(asset.character_id)
+        if not char:
+            continue
+
+        # Unique combo check: (character, location, type)
+        # Prevents redundant processing of multiple stacks of the same item
+        combo = (char.character_id, asset.location_id, asset.type_name.type_id)
+        if combo in processed_combos:
+            continue
+
+        if len(processed_combos) >= max_combos:
+            logger.warning(f"[hostile_assets] User {user_id} hit {max_combos} asset combo limit, stopping processing")
+            break
+
+        processed_combos.add(combo)
+
+        loc = asset.location_name
+        system_obj = getattr(loc, "system", None) if loc else None
+        location_id = asset.location_id
+
         key = None
         sys_name = None
 
         if system_obj:
-            key = getattr(system_obj, "pk", None)
+            key = system_obj.pk
             sys_name = system_obj.name
         elif location_id:
-            # Attempt to resolve system name
-            key = resolve_location_system_id(location_id)
+            if location_id in _loc_sys_cache:
+                key = _loc_sys_cache[location_id]
+            else:
+                key = resolve_location_system_id(location_id)
+                _loc_sys_cache[location_id] = key
+
             if key:
-                sys_name = resolve_location_name(key)
+                if key in _loc_name_cache:
+                    sys_name = _loc_name_cache[key]
+                else:
+                    sys_name = resolve_location_name(key)
+                    _loc_name_cache[key] = sys_name
 
         if not key:
-            return
+            continue
 
         if key not in system_map:
             system_map[key] = {"name": sys_name, "locations": {}}
 
-        # Determine location name to use as key/label
         loc_key = location_id or 0
         if loc_key not in system_map[key]["locations"]:
+            # Determine location name
+            loc_name = None
+            if loc:
+                loc_name = loc.location_name
+            if not loc_name:
+                if loc_key in _loc_name_cache:
+                    loc_name = _loc_name_cache[loc_key]
+                else:
+                    loc_name = resolve_location_name(loc_key) or f"Unknown Location {loc_key}"
+                    _loc_name_cache[loc_key] = loc_name
+
             system_map[key]["locations"][loc_key] = {
-                "name": location_name or f"Unknown Location {location_id}",
-                "characters": {},
+                "name": loc_name,
+                "assets": [],
             }
 
-        if char_name not in system_map[key]["locations"][loc_key]["characters"]:
-            system_map[key]["locations"][loc_key]["characters"][char_name] = []
+        system_map[key]["locations"][loc_key]["assets"].append({
+            "char_id": char.character_id,
+            "char_name": char.character_name,
+            "type_id": asset.type_name.type_id,
+            "type_name": asset.type_name.name,
+        })
 
-        if ship_name:
-            system_map[key]["locations"][loc_key]["characters"][char_name].append(
-                ship_name
-            )
-
-    # for each EVE character owned by this user
-    for co in CharacterOwnership.objects.filter(user=user).select_related("character"):
-        try:
-            char_audit = CharacterAudit.objects.get(character=co.character)
-        except CharacterAudit.DoesNotExist:
-            continue
-
-        # all their assets in space (exclude station containers, etc.)
-        assets = (
-            CharacterAsset.objects.select_related(
-                "location_name__system",
-                "type_name__group__category",
-            )
-            .filter(
-                character=char_audit,
-                location_type="station",
-            )
-            .exclude(location_flag="solar_system")
-        )
-
-        for asset in assets:
-            if (asset.location_flag or "").lower() == "assetsafety":
-                continue
-
-            loc = asset.location_name
-            system_obj = getattr(loc, "system", None) if loc else None
-            loc_name = resolve_location_name(asset.location_id) or f"Location {asset.location_id}"
-
-            ship_name = None
-            try:
-                if asset.type_name.group.category.name == "Ship":
-                    ship_name = asset.type_name.name
-            except AttributeError:
-                pass
-
-            add_asset(
-                system_obj, asset.location_id, loc_name, co.character.character_name, ship_name
-            )
+    del processed_combos, _loc_sys_cache, _loc_name_cache, char_map, audit_ids
+    import gc
+    gc.collect()
 
     return system_map
 
 
-def get_hostile_asset_locations(user_id: int) -> Dict[str, str]:
+def get_hostile_asset_locations(user_id: int) -> Dict[str, dict]:
     """
-    Returns a mapping of system display name -> owner/asset summary string
+    Returns a mapping of system display name -> structured hostile data
     for systems where the user's characters have assets in space and the
-    system is considered hostile under the configured rules.
-
-    The summary string includes:
-      - the owning alliance/corp (or "Unresolvable"),
-      - optional ship names present in that system,
-      - optional character names that have assets there.
+    system is considered hostile under the unified processor logic.
     """
     systems = get_asset_locations(user_id)
     if not systems:
         return {}
 
-    cfg = BigBrotherConfig.get_solo()
-
-    hostile_ids = _parse_id_list(cfg.hostile_alliances or "")
-    hostile_corp_ids = _parse_id_list(cfg.hostile_corporations or "")
-
-    excluded_system_ids = _parse_id_list(cfg.excluded_systems or "")
-    excluded_station_ids = _parse_id_list(cfg.excluded_stations or "")
-
-    consider_nullsec = cfg.consider_nullsec_hostile
-    consider_structures = cfg.consider_all_structures_hostile
-    consider_npc = getattr(cfg, "consider_npc_stations_hostile", False)
-    ships_only = getattr(cfg, "hostile_assets_ships_only", False)
-
+    hostile_map: Dict[str, dict] = {}
+    from ..app_settings import get_safe_entities
     safe_entities = get_safe_entities()
-
-    logger.debug("Hostile alliance IDs: %s", hostile_ids)
-    logger.debug("Hostile corporation IDs: %s", hostile_corp_ids)
-
-    hostile_map: Dict[str, str] = {}
+    cfg = BigBrotherConfig.get_solo()
+    ships_only = cfg.hostile_assets_ships_only
+    _hostile_memo = {}
 
     for system_id, data in systems.items():
-        # System whitelist – never mark these as hostile
-        if system_id in excluded_system_ids:
-            continue
-
-        if cfg.exclude_high_sec and is_highsec(system_id):
-            continue
-        if cfg.exclude_low_sec and is_lowsec(system_id):
-            continue
-
         system_name = data.get("name")
         display_name = system_name or f"Unknown ({system_id})"
 
-        # Base system hostility
+        # We need the system owner info for the summary
         owner_info = get_system_owner({"id": system_id, "name": display_name})
-        oid: Optional[int] = None
-        oname = "—"
-        base_hostile = False
+        oname = owner_info.get("owner_name", "Unresolvable") if owner_info else "Unresolvable"
+        rname = owner_info.get("region_name", "Unknown Region") if owner_info else "Unknown Region"
 
-        if owner_info:
-            try:
-                oid = int(owner_info["owner_id"]) if owner_info["owner_id"] else None
-            except (ValueError, TypeError):
-                oid = None
+        system_has_hostile = False
+        # structured data: list of records
+        records = []
 
-            if oid is not None:
-                oname = owner_info["owner_name"] or f"ID {oid}"
-                base_hostile = (
-                    (oid in hostile_ids)
-                    or (oid in hostile_corp_ids)
-                    or ("Unresolvable" in oname)
-                )
-        else:
-            oname = "Unresolvable"
-            base_hostile = True
-
-        nullsec_flag = False
-        if consider_nullsec and is_nullsec(system_id):
-            if oid is None or oid not in safe_entities:
-                nullsec_flag = True
-
-        system_hostile = False
         # Check each location in this system
         for loc_id, loc_data in data.get("locations", {}).items():
-            if not loc_id or loc_id in excluded_station_ids:
-                continue
+            loc_name = loc_data["name"]
 
-            loc_hostile = False
-            is_struct = is_player_structure(loc_id)
+            # Map of char_name -> set of ships for this specific location
+            char_ships_at_loc = {}
+            location_has_hostile = False
 
-            # Get location owner specifically
-            loc_owner_info = get_system_owner({"id": loc_id})
-            l_oid = None
-            l_oname = "Unresolvable"
-            if loc_owner_info:
-                try:
-                    l_oid = int(loc_owner_info["owner_id"]) if loc_owner_info["owner_id"] else None
-                except (ValueError, TypeError):
-                    pass
-                l_oname = loc_owner_info.get("owner_name") or (f"ID {l_oid}" if l_oid else "Unresolvable")
+            for asset in loc_data.get("assets", []):
+                char_id = asset["char_id"]
+                char_name = asset["char_name"]
+                type_id = asset["type_id"]
 
-            if is_struct:
-                # Friendly structure overrides system hostility
-                if l_oid and l_oid in safe_entities:
-                    continue
+                # Memoize check results for character+location (ignoring type for the base check)
+                memo_key = (char_id, loc_id, system_id)
+                if memo_key in _hostile_memo:
+                    is_hostile_at_loc = _hostile_memo[memo_key]
+                else:
+                    # Check base hostility for character at this location
+                    is_hostile_at_loc = is_hostile_unified(
+                        involved_ids=[char_id],
+                        location_id=loc_id,
+                        system_id=system_id,
+                        is_asset=True,
+                        asset_type_id=None,
+                        when=timezone.now(),
+                        safe_entities=safe_entities
+                    )
+                    _hostile_memo[memo_key] = is_hostile_at_loc
 
-                if l_oid and (l_oid in hostile_ids or l_oid in hostile_corp_ids):
-                    loc_hostile = True
-                elif "Unresolvable" in l_oname:
-                    loc_hostile = True
-                elif consider_structures:
-                    loc_hostile = True
-            else:
-                # NPC Station
-                if consider_npc:
-                    loc_hostile = True
-                elif base_hostile or nullsec_flag:
-                    loc_hostile = True
+                is_hostile_asset = False
+                if is_hostile_at_loc:
+                    if not ships_only:
+                        is_hostile_asset = True
 
-            if loc_hostile:
-                system_hostile = True
-                break
+                    if is_ship(type_id):
+                        char_ships_at_loc.setdefault(char_name, set()).add(asset["type_name"])
+                        if ships_only:
+                            is_hostile_asset = True
+                    else:
+                        # Ensure character is recorded even if no ships (e.g. just modules/items)
+                        char_ships_at_loc.setdefault(char_name, set())
 
-        if not system_hostile:
-            continue
+                if is_hostile_asset:
+                    system_has_hostile = True
+                    location_has_hostile = True
 
-        all_ships: list[str] = []
-        char_names = set()
+            if location_has_hostile:
+                for cname, ships in char_ships_at_loc.items():
+                    records.append({
+                        "char_name": cname,
+                        "location_name": loc_name,
+                        "ships": sorted(list(ships))
+                    })
 
-        for loc in data.get("locations", {}).values():
-            for char_name, char_ships in loc.get("characters", {}).items():
-                char_names.add(char_name)
-                all_ships.extend(char_ships)
+        if system_has_hostile:
+            hostile_map[display_name] = {
+                "owner": oname,
+                "region": rname,
+                "records": records
+            }
+            logger.info(f"Hostile asset system: {display_name} owned by {oname}")
 
-        if ships_only and not all_ships:
-            # Config says: ignore systems where we only have non-ship assets
-            continue
-
-        # Build the owner/detail string
-        parts = [oname]
-        rname = owner_info.get("region_name")
-        if rname and rname != "Unknown Region":
-            parts.append(f"Region: {rname}")
-
-        if all_ships:
-            parts.append("Ships: " + ", ".join(sorted(all_ships)))
-
-        if char_names:
-            parts.append("Chars: " + ", ".join(sorted(char_names)))
-
-        owner_summary = " | ".join(parts)
-
-        hostile_map[display_name] = owner_summary
-        logger.info(
-            "Hostile asset system: %s owned by %s (%s)",
-            display_name,
-            owner_summary,
-            oid,
-        )
+    # CRITICAL FIX: Clean up memoization cache
+    del _hostile_memo
+    import gc
+    gc.collect()
 
     return hostile_map
 
@@ -299,176 +269,137 @@ def get_hostile_asset_locations(user_id: int) -> Dict[str, str]:
 def render_assets(user_id: int) -> Optional[str]:
     """
     Returns an HTML table listing each system where the user's characters have assets,
-    the system's sovereign owner, and highlights in red any owner on the hostile list,
-    respecting nullsec / structure / NPC / whitelist / ship-only settings.
+    the system's sovereign owner, and highlights in red any asset considered hostile.
     """
-    systems = get_asset_locations(user_id)
-    if not systems:
-        return None
+    try:
+        systems = get_asset_locations(user_id)
+        if not systems:
+            return None
 
-    cfg = BigBrotherConfig.get_solo()
+        rows: List[Dict] = []
+        from ..app_settings import get_safe_entities
+        safe_entities = get_safe_entities()
+        cfg = BigBrotherConfig.get_solo()
+        ships_only = cfg.hostile_assets_ships_only
+        _hostile_memo = {}
 
-    hostile_ids = _parse_id_list(cfg.hostile_alliances or "")
-    hostile_corp_ids = _parse_id_list(cfg.hostile_corporations or "")
+        for system_id, data in systems.items():
+            system_name = data.get("name")
+            display_name = system_name or f"Unknown ({system_id})"
 
-    excluded_system_ids = _parse_id_list(cfg.excluded_systems or "")
-    excluded_station_ids = _parse_id_list(cfg.excluded_stations or "")
+            # Base system owner info for the table
+            owner_info = get_system_owner({"id": system_id, "name": display_name})
+            oname = owner_info.get("owner_name", "Unresolvable") if owner_info else "Unresolvable"
+            region_name = owner_info.get("region_name", "Unknown Region") if owner_info else "Unknown Region"
 
-    consider_nullsec = cfg.consider_nullsec_hostile
-    consider_structures = cfg.consider_all_structures_hostile
-    consider_npc = getattr(cfg, "consider_npc_stations_hostile", False)
-    ships_only = getattr(cfg, "hostile_assets_ships_only", False)
+            # Iterate locations inside system
+            for loc_id, loc_data in data.get("locations", {}).items():
+                loc_name = loc_data["name"]
 
-    safe_entities = get_safe_entities()
+                # Check each asset group (char/type combo)
+                # Actually we can group by char for rendering
+                char_assets = {}
+                for asset in loc_data.get("assets", []):
+                    char_id = asset["char_id"]
+                    char_name = asset["char_name"]
+                    type_id = asset["type_id"]
 
-    rows: List[Dict] = []
+                    if char_name not in char_assets:
+                        char_assets[char_name] = {"ships": [], "is_hostile": False, "char_id": char_id}
 
-    for system_id, data in systems.items():
-        # System whitelist – skip entirely
-        if system_id in excluded_system_ids:
-            continue
+                    # Memoize check results for character+location (ignoring type for base check)
+                    memo_key = (char_id, loc_id, system_id)
+                    if memo_key in _hostile_memo:
+                        is_hostile_at_loc = _hostile_memo[memo_key]
+                    else:
+                        # Check base hostility for character at this location
+                        is_hostile_at_loc = is_hostile_unified(
+                            involved_ids=[char_id],
+                            location_id=loc_id,
+                            system_id=system_id,
+                            is_asset=True,
+                            asset_type_id=None,
+                            when=timezone.now(),
+                            safe_entities=safe_entities
+                        )
+                        _hostile_memo[memo_key] = is_hostile_at_loc
 
-        system_name = data["name"]
-        display_name = system_name or f"Unknown ({system_id})"
+                    if is_hostile_at_loc:
+                        if not ships_only:
+                            char_assets[char_name]["is_hostile"] = True
 
-        # Base system hostility
-        owner_info = get_system_owner({"id": system_id, "name": display_name})
-        oid: Optional[int] = None
-        oname = "—"
-        base_hostile = False
+                        if is_ship(type_id):
+                            char_assets[char_name]["ships"].append(asset["type_name"])
+                            if ships_only:
+                                char_assets[char_name]["is_hostile"] = True
 
-        if owner_info:
-            try:
-                oid = int(owner_info["owner_id"]) if owner_info["owner_id"] else None
-            except (ValueError, TypeError):
-                oid = None
-
-            if oid is not None:
-                oname = owner_info["owner_name"] or f"ID {oid}"
-                base_hostile = (
-                    (oid in hostile_ids)
-                    or (oid in hostile_corp_ids)
-                    or ("Unresolvable" in oname)
-                )
-        else:
-            oname = "Unresolvable"
-            base_hostile = True
-
-        nullsec_flag = False
-        if consider_nullsec and is_nullsec(system_id):
-            if oid is None or oid not in safe_entities:
-                nullsec_flag = True
-
-        system_base_hostile = base_hostile or nullsec_flag
-
-        # Iterate locations inside system
-        for loc_id, loc_data in data["locations"].items():
-            # Station/structure whitelist
-            if loc_id in excluded_station_ids:
-                continue
-
-            loc_hostile = False
-            is_struct = is_player_structure(loc_id)
-
-            # Get location owner specifically
-            loc_owner_info = get_system_owner({"id": loc_id})
-            l_oid = None
-            l_oname = "Unresolvable"
-            if loc_owner_info:
-                try:
-                    l_oid = int(loc_owner_info["owner_id"]) if loc_owner_info["owner_id"] else None
-                except (ValueError, TypeError):
-                    pass
-                l_oname = loc_owner_info.get("owner_name") or (f"ID {l_oid}" if l_oid else "Unresolvable")
-
-            if is_struct:
-                # Friendly structure overrides system hostility
-                if l_oid and l_oid in safe_entities:
-                    loc_hostile = False
-                elif l_oid and (l_oid in hostile_ids or l_oid in hostile_corp_ids):
-                    loc_hostile = True
-                elif "Unresolvable" in l_oname:
-                    loc_hostile = True
-                elif consider_structures:
-                    loc_hostile = True
-            else:
-                # NPC Station
-                if consider_npc:
-                    loc_hostile = True
-                elif base_hostile or nullsec_flag:
-                    loc_hostile = True
-
-            loc_name = loc_data["name"]
-
-            for char_name, ships in loc_data["characters"].items():
-                # Optionally ignore non-ship assets entirely
-                if ships_only and not ships:
-                    continue
-
-                ship_str = ", ".join(ships) if ships else ""
-                rows.append(
-                    {
+                for char_name, cdata in char_assets.items():
+                    ship_str = ", ".join(sorted(cdata["ships"])) if cdata["ships"] else ""
+                    rows.append({
                         "system": display_name,
                         "location": loc_name,
                         "character": char_name,
                         "owner": oname,
-                        "region": owner_info.get("region_name") if owner_info else "Unknown Region",
-                        "hostile": loc_hostile,
+                        "region": region_name,
+                        "hostile": cdata["is_hostile"],
                         "ships": ship_str,
-                    }
-                )
+                    })
 
-    if not rows:
-        return "<p>No hostile assets found.</p>"
+        if not rows:
+            return '<table class="table stats"><tbody><tr><td class="text-center">No hostile assets found.</td></tr></tbody></table>'
 
-    rows.sort(
-        key=lambda x: (
-            not x["hostile"],
-            x["system"],
-            x["location"],
-            x["character"],
-        )
-    )
+        # Sort rows: hostile first, then by system, location, character
+        rows.sort(key=lambda x: (not x["hostile"], x["system"], x["location"], x["character"]))
 
-    html = '<table class="table table-striped table-hover stats">'
-    html += (
-        '<thead>'
-        '  <tr>'
-        '      <th style="width: 15%">System</th>'
-        '      <th style="width: 20%">Station</th>'
-        '      <th style="width: 15%">Character</th>'
-        '      <th style="width: 15%">Owner</th>'
-        '      <th style="width: 15%">Region</th>'
-        '      <th style="width: 20%">Hostile Asset</th>'
-        '  </tr>'
-        '</thead>'
-        '<tbody>'
-    )
-
-    for row in rows:
-        system_cell = row["system"]
-        owner_cell = row["owner"]
-        region_cell = row.get("region", "Unknown Region")
-        hostile_ship = row["ships"] if row["hostile"] else ""
-        if row["hostile"]:
-            owner_cell = mark_safe(f'<span class="text-danger">{owner_cell}</span>')
-
-        html += format_html(
-            '   <tr>'
-            '       <td>{}</td>'
-            '       <td>{}</td>'
-            '       <td>{}</td>'
-            '       <td>{}</td>'
-            '       <td>{}</td>'
-            '       <td>{}</td>'
-            '   </tr>',
-            system_cell,
-            row["location"],
-            row["character"],
-            owner_cell,
-            region_cell,
-            hostile_ship,
+        html_output = '<table class="table table-striped table-hover stats">'
+        html_output += (
+            '<thead>'
+            '  <tr>'
+            '      <th style="width: 15%">System</th>'
+            '      <th style="width: 20%">Station</th>'
+            '      <th style="width: 15%">Character</th>'
+            '      <th style="width: 15%">Owner</th>'
+            '      <th style="width: 15%">Region</th>'
+            '      <th style="width: 20%">Hostile Asset</th>'
+            '  </tr>'
+            '</thead>'
+            '<tbody>'
         )
 
-    html += '</tbody></table>'
-    return html
+        for row in rows:
+            system_cell = row["system"]
+            owner_cell = row["owner"]
+            region_cell = row["region"]
+            hostile_ship = row["ships"] if row["hostile"] else ""
+
+            if row["hostile"]:
+                owner_cell = mark_safe(f'<span class="text-danger">{owner_cell}</span>')
+
+            html_output += format_html(
+                '   <tr>'
+                '       <td>{}</td>'
+                '       <td>{}</td>'
+                '       <td>{}</td>'
+                '       <td>{}</td>'
+                '       <td>{}</td>'
+                '       <td>{}</td>'
+                '   </tr>',
+                system_cell,
+                row["location"],
+                row["character"],
+                owner_cell,
+                region_cell,
+                hostile_ship,
+            )
+
+        html_output += '</tbody></table>'
+
+        # CRITICAL FIX: Clean up memoization cache
+        del _hostile_memo
+        import gc
+        gc.collect()
+
+        return html_output
+    except Exception as e:
+        logger.exception(f"Error rendering assets for user {user_id}")
+        return f"<p class='text-danger'>Error rendering assets: {str(e)}</p>"

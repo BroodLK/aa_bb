@@ -8,8 +8,9 @@ messages without duplicating all the plumbing.
 from collections import deque
 
 from allianceauth.authentication.models import UserProfile, CharacterOwnership
-import logging
+from allianceauth.services.hooks import get_extension_logger
 import re
+import logging
 import subprocess
 import sys
 import requests
@@ -24,7 +25,12 @@ from django.db.models import Q
 from .models import (
     Alliance_names, Corporation_names, Character_names, BigBrotherConfig, id_types,
     EntityInfoCache, CharacterEmploymentCache, CorporationInfoCache, AllianceHistoryCache, SovereigntyMapCache,
+    EveItemPrice,
 )
+
+MAJOR_HUBS = {30000142, 30002187, 30002659, 30002510, 30002053}
+SECONDARY_HUBS = {30002661, 30003733, 30001389, 30000144}
+EVEUNIVERSE_INSTALLED = apps.is_installed("eveuniverse")
 
 from dateutil.parser import parse as parse_datetime
 import time
@@ -40,7 +46,7 @@ from eveuniverse.models import EveSolarSystem
 from django.core.cache import cache
 from django.conf import settings
 
-logger = logging.getLogger(__name__)
+logger = get_extension_logger(__name__)
 
 DATASOURCE = "tranquility"
 VERBOSE_WEBHOOK_LOGGING = True
@@ -84,20 +90,26 @@ _owner_name_cache: Dict[int, Tuple[str, datetime]] = {}
 def get_pings(message_type: str) -> str:
     """
     Given a MessageType instance, return a string of pings separated by spaces.
+    OPTIMIZED: Fetch all message types once instead of 4 separate queries.
     """
     cfg = BigBrotherConfig.get_solo()
     pings = []
 
-    if cfg.pingrole1_messages.all().filter(name=message_type).exists():  # Ping role1 when message type is subscribed.
+    pingrole1_types = set(cfg.pingrole1_messages.values_list('name', flat=True))
+    pingrole2_types = set(cfg.pingrole2_messages.values_list('name', flat=True))
+    here_types = set(cfg.here_messages.values_list('name', flat=True))
+    everyone_types = set(cfg.everyone_messages.values_list('name', flat=True))
+
+    if message_type in pingrole1_types:
         pings.append(f"<@&{cfg.pingroleID}>")
 
-    if cfg.pingrole2_messages.all().filter(name=message_type).exists():  # Ping role2 when configured.
+    if message_type in pingrole2_types:
         pings.append(f"<@&{cfg.pingroleID2}>")
 
-    if cfg.here_messages.all().filter(name=message_type).exists():  # Include @here when enabled.
+    if message_type in here_types:
         pings.append("@here")
 
-    if cfg.everyone_messages.all().filter(name=message_type).exists():  # Include @everyone when enabled.
+    if message_type in everyone_types:
         pings.append("@everyone")
 
     ping = " " + " ".join(pings) if pings else ""
@@ -214,7 +226,7 @@ def get_eve_entity_type(
             obj.save()
     except IntegrityError:
         # another thread/process inserted it first; safe to ignore
-        logging.debug(f"ID {eve_id} was cached by another process.")
+        logger.debug(f"ID {eve_id} was cached by another process.")
 
     return entity_type
 
@@ -228,6 +240,9 @@ def get_character_id(name: str) -> int | None:
     with caching implemented through the Django model. Uses `esi.client` and
     self-heals duplicate name rows by reconciling via ESI.
     """
+    if not name:
+        return None
+    name = str(name)
     # Step 1: Fast-path from DB when exactly one record exists
     try:
         record = Character_names.objects.get(name=name)
@@ -329,6 +344,10 @@ def get_entity_info(entity_id: int, as_of: timezone.datetime) -> Dict:
       }
     Caches the result in the DB for 2 hours.
     """
+    # Normalize timestamp to the hour to maximize cache hits and minimize DB bloat.
+    if as_of:
+        as_of = as_of.replace(minute=0, second=0, microsecond=0)
+
     if entity_id is None:
         # Default placeholder ID if input is missing.
         entity_id = 342545170
@@ -340,8 +359,6 @@ def get_entity_info(entity_id: int, as_of: timezone.datetime) -> Dict:
     # 1) Attempt to fetch fresh-enough cache entry
     try:
         cache = EntityInfoCache.objects.get(entity_id=entity_id, as_of=as_of)
-        cache.updated = timezone.now()
-        cache.save()
         if now - cache.updated < _EXPIRY:  # Serve cached data when still within TTL.
             #logger.debug(f"cache hit: entity={entity_id} @ {as_of}")
             return cache.data
@@ -699,8 +716,6 @@ def _fetch_alliance_history(corp_id, expiry_key, cached_history=None):
         logger.warning(f"Failed to fetch alliance history for corp {corp_id}: {e}")
         return []
 
-logger = logging.getLogger(__name__)
-
 ALLIANCE_TTL = timedelta(hours=24)
 
 def _parse_datetime(value):
@@ -938,18 +953,23 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
     Get sovereignty owner of an EVE system by name.
     Always returns a dict with keys: owner_id, owner_name, owner_type, region_id, region_name.
     """
-    owner_id = "0"
-    owner_name = "Unresolvable Init"
-    owner_type = "unknown"
-    region_id = "0"
-    region_name = "Unknown Region"
-
-    # 1) Pull name and ID from the passed-in dict
     system_id_raw = system.get("id")
     try:
         system_id = int(system_id_raw) if system_id_raw is not None else None
     except (ValueError, TypeError):
         system_id = None
+
+    if system_id:
+        cache_key = f"aa_bb_system_owner_{system_id}"
+        cached = cache.get(cache_key)
+        if cached:
+            return cached
+
+    owner_id = "0"
+    owner_name = "Unresolvable"
+    owner_type = "unknown"
+    region_id = "0"
+    region_name = "Unknown Region"
 
     system_nam = system.get("name")
     system_name = str()
@@ -969,16 +989,49 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
                 pass
 
         # Check for individual location ownership (Structure or Station) BEFORE falling back to system SOV
+        res = None
         if system_id:
-            # Player Structure
+            # Player Structure (Upwell)
             if is_player_structure(system_id):
                 try:
                     from corptools.models import Structure
                     struct = Structure.objects.filter(structure_id=system_id).select_related("corporation__corporation").first()
                     if struct and struct.corporation and struct.corporation.corporation:
-                        return {
+                        res = {
                             "owner_id": str(struct.corporation.corporation.corporation_id),
                             "owner_name": struct.corporation.corporation.corporation_name,
+                            "owner_type": "corporation",
+                            "region_id": region_id,
+                            "region_name": region_name
+                        }
+                except Exception:
+                    pass
+
+            # POCO
+            if not res:
+                try:
+                    from corptools.models import Poco
+                    poco = Poco.objects.filter(office_id=system_id).select_related("corporation__corporation").first()
+                    if poco and poco.corporation and poco.corporation.corporation:
+                        res = {
+                            "owner_id": str(poco.corporation.corporation.corporation_id),
+                            "owner_name": poco.corporation.corporation.corporation_name,
+                            "owner_type": "corporation",
+                            "region_id": region_id,
+                            "region_name": region_name
+                        }
+                except Exception:
+                    pass
+
+            # Starbase (POS)
+            if not res:
+                try:
+                    from corptools.models import Starbase
+                    pos = Starbase.objects.filter(starbase_id=system_id).select_related("corporation__corporation").first()
+                    if pos and pos.corporation and pos.corporation.corporation:
+                        res = {
+                            "owner_id": str(pos.corporation.corporation.corporation_id),
+                            "owner_name": pos.corporation.corporation.corporation_name,
                             "owner_type": "corporation",
                             "region_id": region_id,
                             "region_name": region_name
@@ -992,7 +1045,7 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
                     from eveuniverse.models import EveStation
                     station_obj = EveStation.objects.get(id=system_id)
                     if station_obj.owner_id:
-                        return {
+                        res = {
                             "owner_id": str(station_obj.owner_id),
                             "owner_name": resolve_corporation_name(station_obj.owner_id),
                             "owner_type": "corporation",
@@ -1001,6 +1054,11 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
                         }
                 except Exception:
                     pass
+
+        if res:
+            if system_id:
+                cache.set(f"aa_bb_system_owner_{system_id}", res, 3600)
+            return res
 
         sov_map = _get_sov_map()
         # If it's a structure or station, we want the system it's in for SOV
@@ -1014,7 +1072,7 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
                     try:
                         from eveuniverse.models import EveSolarSystem
                         sys_obj = EveSolarSystem.objects.get(id=target_sov_id)
-                        return {
+                        res = {
                             "owner_id": "0",
                             "owner_name": "Unclaimed",
                             "owner_type": "unknown",
@@ -1024,35 +1082,41 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
                     except Exception:
                         pass
 
-            # If it's specifically a player structure ID that we can't resolve owner for
-            if system_id and is_player_structure(system_id):
-                return {
-                    "owner_id": owner_id,
-                    "owner_name": "Unresolvable structure due to lack of docking rights",
-                    "owner_type": owner_type,
-                    "region_id": region_id,
-                    "region_name": region_name
-                }
+            if not res:
+                # If it's specifically a player structure ID that we can't resolve owner for
+                if system_id and is_player_structure(system_id):
+                    res = {
+                        "owner_id": owner_id,
+                        "owner_name": "Unresolvable structure due to lack of docking rights",
+                        "owner_type": owner_type,
+                        "region_id": region_id,
+                        "region_name": region_name
+                    }
+                else:
+                    res = {
+                        "owner_id": owner_id,
+                        "owner_name": "Unresolvable location",
+                        "owner_type": owner_type,
+                        "region_id": region_id,
+                        "region_name": region_name
+                    }
 
-            return {
-                "owner_id": owner_id,
-                "owner_name": "Unresolvable location",
-                "owner_type": owner_type,
-                "region_id": region_id,
-                "region_name": region_name
-            }
+            if system_id:
+                cache.set(f"aa_bb_system_owner_{system_id}", res, 3600)
+            return res
 
     except Exception as e:
         logger.exception(f"Failed to fetch sovereignty for system ID {system_id}: {e}")
         e_short = e.__class__.__name__
         e_detail = getattr(e, 'code', None) or getattr(e, 'status', None) or str(e)
-        return {
+        res = {
             "owner_id": owner_id,
             "owner_name": f"Unresolvable sov, {e_short}{e_detail}",
             "owner_type": owner_type,
             "region_id": region_id,
             "region_name": region_name
         }
+        return res
 
     # 3) Determine owner ID and type
     alliance_id = entry.get("alliance_id")
@@ -1064,13 +1128,16 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
         owner_id = str(faction_id)
         owner_type = "faction"
     else:
-        return {
+        res = {
             "owner_id": "0",
             "owner_name": "Unclaimed",
             "owner_type": "unknown",
             "region_id": region_id,
             "region_name": region_name
         }
+        if system_id:
+            cache.set(f"aa_bb_system_owner_{system_id}", res, 3600)
+        return res
 
     # 4) Resolve owner name
     try:
@@ -1080,16 +1147,443 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
         owner_id = "0"
         owner_type = "unknown"
 
-    return {
+    res = {
         "owner_id": owner_id,
         "owner_name": owner_name,
         "owner_type": owner_type,
         "region_id": region_id,
         "region_name": region_name
     }
+    if system_id:
+        cache.set(f"aa_bb_system_owner_{system_id}", res, 3600)
+    return res
 
 
-def get_id_hostile_state(entity_id: int, when: datetime = None) -> bool:
+def get_or_create_prices(item_id, force_refresh=True):
+    """
+    Fetch or retrieve EVE item prices from cache or external APIs (Janice/Fuzzwork).
+    """
+    cfg = BigBrotherConfig.get_solo()
+
+    # Check local cache first
+    try:
+        price_obj = EveItemPrice.objects.get(eve_type_id=item_id)
+        # If it's fresh (less than configured days), return it
+        if not force_refresh or price_obj.updated > timezone.now() - timedelta(days=cfg.market_transactions_price_max_age):
+            return price_obj
+    except EveItemPrice.DoesNotExist:
+        price_obj = None
+
+    if not force_refresh and price_obj:
+        return price_obj
+
+    # Need to fetch/refresh
+    primary = cfg.market_transactions_price_method
+    methods = [primary]
+    if primary == 'Janice':
+        methods.append('Fuzzwork')
+    else:
+        methods.append('Janice')
+
+    buy = None
+    sell = None
+
+    for method in methods:
+        if method == 'Janice':
+            api_key = cfg.market_transactions_janice_api_key
+            if not api_key:
+                continue
+            try:
+                response = requests.get(
+                    f"https://janice.e-351.com/api/rest/v2/pricer/{item_id}",
+                    headers={
+                        "Content-Type": "text/plain",
+                        "X-ApiKey": api_key,
+                        "accept": "application/json",
+                    },
+                    timeout=10
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    if "immediatePrices" in data:
+                        if cfg.market_transactions_price_instant:
+                            buy = float(data["immediatePrices"]["buyPrice5DayMedian"])
+                            sell = float(data["immediatePrices"]["sellPrice5DayMedian"])
+                        else:
+                            buy = float(data["top5AveragePrices"]["buyPrice5DayMedian"])
+                            sell = float(data["top5AveragePrices"]["sellPrice5DayMedian"])
+                        break
+            except Exception as e:
+                logger.error(f"Janice price fetch failed for {item_id}: {e}")
+
+        elif method == 'Fuzzwork':
+            station_id = cfg.market_transactions_fuzzwork_station_id or 60003760
+            try:
+                response = requests.get(
+                    "https://market.fuzzwork.co.uk/aggregates/",
+                    params={
+                        "types": item_id,
+                        "station": station_id,
+                    },
+                    timeout=10
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    if str(item_id) in data:
+                        item_data = data[str(item_id)]
+                        if cfg.market_transactions_price_instant:
+                            buy = float(item_data["buy"]["max"])
+                            sell = float(item_data["sell"]["min"])
+                        else:
+                            buy = float(item_data["buy"]["percentile"])
+                            sell = float(item_data["sell"]["percentile"])
+                        break
+            except Exception as e:
+                logger.error(f"Fuzzwork price fetch failed for {item_id}: {e}")
+
+    if buy is not None and sell is not None:
+        if price_obj:
+            price_obj.buy = buy
+            price_obj.sell = sell
+            price_obj.save()
+            return price_obj
+        else:
+            return EveItemPrice.objects.create(
+                eve_type_id=item_id,
+                buy=buy,
+                sell=sell
+            )
+
+    return price_obj
+
+
+def is_above_market_threshold(type_id, unit_price, threshold_percent):
+    """
+    Checks if a unit price exceeds the market average by more than a threshold %.
+    Follows 'above only' logic as requested.
+    """
+    if not type_id or unit_price is None or unit_price == 0:
+        return False
+
+    avg_price = None
+
+    if EVEUNIVERSE_INSTALLED:
+        cfg = BigBrotherConfig.get_solo()
+        try:
+            from eveuniverse.models import EveMarketPrice
+            price_obj = EveMarketPrice.objects.filter(eve_type_id=type_id).first()
+            if price_obj and price_obj.average_price and price_obj.average_price > 0:
+                # Check age
+                if hasattr(price_obj, 'updated_at') and price_obj.updated_at > timezone.now() - timedelta(days=cfg.market_transactions_price_max_age):
+                    avg_price = float(price_obj.average_price)
+        except Exception:
+            logger.exception("Error checking EveUniverse price")
+
+    if avg_price is None:
+        # Fallback to local cache / Janice / Fuzzwork
+        try:
+            local_price = get_or_create_prices(type_id, force_refresh=False)
+            if local_price:
+                avg_price = (local_price.buy + local_price.sell) / 2
+
+                # Check if we need to force refresh
+                if avg_price > 0:
+                    diff_percent = ((unit_price - avg_price) / avg_price) * 100
+                    if diff_percent > threshold_percent:
+                        # Price looks high, but maybe cache is stale. Force refresh.
+                        local_price = get_or_create_prices(type_id, force_refresh=True)
+                        if local_price:
+                            avg_price = (local_price.buy + local_price.sell) / 2
+            else:
+                # No price at all, must fetch
+                local_price = get_or_create_prices(type_id, force_refresh=True)
+                if local_price:
+                    avg_price = (local_price.buy + local_price.sell) / 2
+        except Exception:
+            logger.exception("Error checking fallback prices")
+
+    if avg_price is None or avg_price <= 0:
+        return None
+
+    try:
+        # ABOVE ONLY logic: (Unit - Avg) / Avg > Threshold
+        diff_percent = ((unit_price - avg_price) / avg_price) * 100
+        if diff_percent > threshold_percent:
+            return True
+    except Exception:
+        logger.exception("Error checking price threshold")
+
+    return False
+
+
+def is_hostile_unified(
+    involved_ids: List[int] = None,
+    location_id: int = None,
+    system_id: int = None,
+    is_asset: bool = False,
+    asset_type_id: int = None,
+    is_market: bool = False,
+    market_item_id: int = None,
+    market_unit_price: float = None,
+    entity_type: str = None,
+    when: datetime = None,
+    safe_entities: set[int] = None,
+    entity_info_cache: Dict[int, Dict] = None
+) -> bool:
+    """
+    Unified hostility processor following the 23-step priority logic.
+    Returns True if hostile, False if safe.
+    """
+    cfg = BigBrotherConfig.get_solo()
+    if safe_entities is None:
+        safe_entities = get_safe_entities()
+
+    # Location resolution for Rules 1-8, 10-12, 15-18
+    actual_system_id = system_id or (resolve_location_system_id(location_id) if location_id else None)
+    now_ts = when or timezone.now()
+
+    # Resolve location owner for Rules 1-4
+    l_oid = 0
+    l_otype = None
+    l_oname = ""
+    is_station = False
+    if location_id:
+        try:
+            loc_id_int = int(location_id)
+            is_station = 60000000 <= loc_id_int < 64000000
+        except (ValueError, TypeError):
+            pass
+
+    if location_id or actual_system_id:
+        l_owner_info = get_system_owner({"id": location_id or actual_system_id})
+        if l_owner_info:
+            try:
+                l_oid = int(l_owner_info.get("owner_id") or 0)
+                l_otype = l_owner_info.get("owner_type")
+                l_oname = l_owner_info.get("owner_name") or ""
+            except (ValueError, TypeError):
+                l_oname = "Unresolvable"
+        else:
+            l_oname = "Unresolvable"
+
+    # Determine if this is a player-controlled structure (Upwell, POS, or POCO)
+    # If we found a corporation owner and it's not a known NPC station, treat it as a player structure.
+    is_player_struct = is_player_structure(location_id) or (l_otype == "corporation" and not is_station)
+
+    # 1. Is it taking place between (everyone involved) entities on the members, ignored, or whitelists?
+    # For assets/clones, we also consider the location/system owners in the safety check.
+    check_safe_ids = set(involved_ids or [])
+    if is_asset and location_id:
+        if l_oid:
+            check_safe_ids.add(l_oid)
+        else:
+            # Unresolvable location. We can't say it's all safe yet, as Rules 15-16 handle system hostility.
+            # We add a dummy ID to prevent early 'False' return if Rule 1 would have otherwise triggered.
+            check_safe_ids.add(-1)
+
+    if check_safe_ids:
+        all_safe = True
+        for eid in check_safe_ids:
+            if not eid or eid == -1:
+                all_safe = False
+                break
+            eid = int(eid)
+            if eid in safe_entities:
+                continue
+            # Check context (corp/alliance membership)
+            info = (entity_info_cache or {}).get(eid) or get_entity_info(eid, now_ts)
+            if info and (info.get('corp_id') in safe_entities or info.get('alli_id') in safe_entities):
+                continue
+            all_safe = False
+            break
+        if all_safe:
+            return False
+
+    # 2. Citadel / Player Structure owned by safe entity
+    if location_id and is_player_struct and l_oid:
+        if l_oid in safe_entities:
+            return False
+        # Check parent corp/alliance context
+        l_info = (entity_info_cache or {}).get(l_oid) or get_entity_info(l_oid, now_ts)
+        if l_info and (l_info.get('corp_id') in safe_entities or l_info.get('alli_id') in safe_entities):
+            return False
+
+    # 3. NPC Station owned by safe entity (e.g. Faction stations)
+    if location_id and is_station and l_oid:
+        if l_oid in safe_entities:
+            return False
+        # Check parent corp/alliance context
+        l_info = (entity_info_cache or {}).get(l_oid) or get_entity_info(l_oid, now_ts)
+        if l_info and (l_info.get('corp_id') in safe_entities or l_info.get('alli_id') in safe_entities):
+            return False
+
+    # 4. System owned by safe entity
+    # Fall back to system sovereignty for unresolvable structures or non-player-controlled locations
+    if actual_system_id and (not is_player_struct or l_oid == 0):
+        s_owner_info = get_system_owner({"id": actual_system_id})
+        if s_owner_info:
+            try:
+                s_oid = int(s_owner_info.get("owner_id") or 0)
+                if s_oid:
+                    if s_oid in safe_entities:
+                        return False
+                    # Check parent corp/alliance context
+                    s_info = (entity_info_cache or {}).get(s_oid) or get_entity_info(s_oid, now_ts)
+                    if s_info and (s_info.get('corp_id') in safe_entities or s_info.get('alli_id') in safe_entities):
+                        return False
+            except (ValueError, TypeError):
+                pass
+
+    # 5. Excluded system
+    if actual_system_id:
+        excluded_systems = {int(x) for x in (cfg.excluded_systems or "").split(",") if x.strip().isdigit()}
+        if actual_system_id in excluded_systems:
+            return False
+
+    # 6. Excluded station
+    if location_id:
+        excluded_stations = {int(x) for x in (cfg.excluded_stations or "").split(",") if x.strip().isdigit()}
+        if int(location_id) in excluded_stations:
+            return False
+
+    # 7. High sec exclusion
+    if actual_system_id and cfg.exclude_high_sec and is_highsec(actual_system_id):
+        return False
+
+    # 8. Low sec exclusion
+    if actual_system_id and cfg.exclude_low_sec and is_lowsec(actual_system_id):
+        return False
+
+    # 8.5 Asset in space (Solar System location) is safe
+    if is_asset and location_id:
+        try:
+            loc_id_int = int(location_id)
+            if 30000000 <= loc_id_int <= 34000000:
+                return False
+        except (ValueError, TypeError):
+            pass
+
+    # 9. Asset ships only
+    if is_asset and cfg.hostile_assets_ships_only:
+        if asset_type_id and not is_ship(asset_type_id):
+            return False
+
+    # 10-14. Market rules
+    if is_market:
+        if not cfg.show_market_transactions:
+            return False
+
+        # 10. Major hubs
+        if not cfg.market_transactions_show_major_hubs and actual_system_id in MAJOR_HUBS:
+            return False
+
+        # 11. Secondary hubs
+        if not cfg.market_transactions_show_secondary_hubs and actual_system_id in SECONDARY_HUBS:
+            return False
+
+        # 12. Excluded systems
+        if cfg.market_transactions_excluded_systems:
+            m_excluded = {int(x) for x in cfg.market_transactions_excluded_systems.split(",") if x.strip().isdigit()}
+            if actual_system_id in m_excluded:
+                return False
+
+        # 13-14. Market price threshold
+        if cfg.show_market_transactions and cfg.market_transactions_threshold_alert:
+            if market_item_id and market_unit_price is not None:
+                res = is_above_market_threshold(market_item_id, market_unit_price, cfg.market_transactions_threshold_percent)
+                if res is True:
+                    return True  # HOSTILE (Rule 14 yes)
+                elif res is False:
+                    return False  # SAFE (Rule 14 else)
+                # If None (Unknown), CONTINUE to Rule 15 (Rule 13 "continue checks")
+
+    # 15. Consider citadels/structures hostile
+    if location_id and is_player_struct and cfg.consider_all_structures_hostile and l_oname != "Unresolvable":
+        return True
+
+    # 16. Consider NPC stations hostile
+    if location_id and 60000000 <= int(location_id) < 64000000 and cfg.consider_npc_stations_hostile and l_oname != "Unresolvable":
+        return True
+
+    # 17. Consider null sec hostile
+    # Gated: don't trigger if already handled by structure/station rules above
+    if actual_system_id and cfg.consider_nullsec_hostile and is_nullsec(actual_system_id):
+        if (not is_player_struct and not is_station) or l_oname == "Unresolvable":
+            return True
+
+    # 18. Consider low sec hostile
+    if actual_system_id and cfg.consider_lowsec_hostile and is_lowsec(actual_system_id):
+        if (not is_player_struct and not is_station) or l_oname == "Unresolvable":
+            return True
+
+    # 19-20. Blacklist and Explicit Hostile
+    check_ids = set(involved_ids or [])
+    if l_oid:
+        try:
+            check_ids.add(int(l_oid))
+        except (ValueError, TypeError):
+            pass
+    if actual_system_id:
+        s_owner_info = get_system_owner({"id": actual_system_id})
+        if s_owner_info and s_owner_info.get("owner_id"):
+            try:
+                check_ids.add(int(s_owner_info.get("owner_id")))
+            except (ValueError, TypeError):
+                pass
+
+    if check_ids:
+        hostile_corps = {int(x) for x in (cfg.hostile_corporations or "").split(",") if x.strip().isdigit()}
+        hostile_allis = {int(x) for x in (cfg.hostile_alliances or "").split(",") if x.strip().isdigit()}
+        for eid in check_ids:
+            if not eid:
+                continue
+            eid = int(eid)
+            # 19. Blacklist
+            if aablacklist_active():
+                from aa_bb.checks.add_to_blacklist import check_char_add_to_bl
+                if check_char_add_to_bl(eid):
+                    return True
+            # 20. Explicit hostile list (direct ID or historical context)
+            if eid in hostile_corps or eid in hostile_allis:
+                return True
+            info = (entity_info_cache or {}).get(eid) or get_entity_info(eid, when or timezone.now())
+            if info:
+                if info.get('corp_id') in hostile_corps or info.get('alli_id') in hostile_allis:
+                    return True
+
+    # 21. NPC Safe
+    if involved_ids:
+        for eid in involved_ids:
+            if eid and (is_npc_character(eid) or is_npc_corporation(eid)):
+                return False
+
+    # 22. Unknown Hostile
+    if cfg.hostile_everyone_else:
+        # If the only reason for check is an unresolvable location,
+        # and all involved parties are safe (or there are none), treat as safe.
+        if location_id and (l_oname == "Unresolvable" or l_oname.startswith("Unresolvable")):
+            all_involved_safe = True
+            if involved_ids:
+                for eid in involved_ids:
+                    if not eid:
+                        continue
+                    eid = int(eid)
+                    if eid in safe_entities:
+                        continue
+                    # Check context (corp/alliance membership)
+                    info = get_entity_info(eid, now_ts)
+                    if not (info and (info.get('corp_id') in safe_entities or info.get('alli_id') in safe_entities)):
+                        all_involved_safe = False
+                        break
+            if all_involved_safe:
+                return False
+        return True
+
+    # 23. Safe
+    return False
+
+
+def get_id_hostile_state(entity_id: int, when: datetime = None, safe_entities: set = None, entity_info_cache: Dict[int, Dict] = None) -> bool:
     """
     Mega-helper function to determine if an ID is considered hostile.
     Automatically resolves if the ID is a Character, Corporation, Alliance,
@@ -1107,26 +1601,23 @@ def get_id_hostile_state(entity_id: int, when: datetime = None) -> bool:
     if (30000000 <= entity_id < 40000000) or \
        (60000000 <= entity_id < 64000000) or \
        is_player_structure(entity_id):
-        return is_location_hostile(entity_id)
+        return is_hostile_unified(location_id=entity_id, when=when, safe_entities=safe_entities, entity_info_cache=entity_info_cache)
 
     # 2. Resolve entity type via ESI/Cache
     entity_type = get_eve_entity_type(entity_id)
 
     # 3. Handle based on resolved type
     if entity_type in ('solar_system', 'station', 'structure'):
-        return is_location_hostile(entity_id)
+        return is_hostile_unified(location_id=entity_id, when=when, safe_entities=safe_entities, entity_info_cache=entity_info_cache)
 
     # 4. Default to entity hostility (Character, Corp, Alliance, Faction)
-    return is_entity_hostile(entity_id, entity_type, when=when)
+    return is_hostile_unified(involved_ids=[entity_id], entity_type=entity_type, when=when, safe_entities=safe_entities, entity_info_cache=entity_info_cache)
 
 
-def get_hostile_state(entity_id: int, entity_type: str = None, system_id: int = None, when: datetime = None) -> bool:
+def get_hostile_state(entity_id: int, entity_type: str = None, system_id: int = None, when: datetime = None, safe_entities: set = None, entity_info_cache: Dict[int, Dict] = None) -> bool:
     """
     Determine the hostile state of an entity or location.
     Returns True if hostile, False if safe.
-
-    If it's a location (solar_system, station, structure), it uses location-specific
-    hostility logic including sovereignty and structure overrides.
     """
     if not entity_id:
         return False
@@ -1135,175 +1626,31 @@ def get_hostile_state(entity_id: int, entity_type: str = None, system_id: int = 
         entity_id = int(entity_id)
     except (ValueError, TypeError):
         return False
-
-    # If we have extra info (type or system), we can optimize.
-    # Otherwise, use the mega-helper.
-    if not entity_type and not system_id:
-        return get_id_hostile_state(entity_id, when=when)
 
     # Location Hostility (System, Station, Structure)
     if entity_type in ('solar_system', 'station', 'structure') or \
        (30000000 <= entity_id < 40000000) or \
        (60000000 <= entity_id < 64000000) or \
        is_player_structure(entity_id):
-        return is_location_hostile(entity_id, system_id)
+        return is_hostile_unified(location_id=entity_id, system_id=system_id, when=when, safe_entities=safe_entities, entity_info_cache=entity_info_cache)
 
     # Entity Hostility (Character, Corporation, Alliance, Faction)
-    return is_entity_hostile(entity_id, entity_type, when=when)
+    return is_hostile_unified(involved_ids=[entity_id], entity_type=entity_type, when=when, safe_entities=safe_entities, entity_info_cache=entity_info_cache)
 
 
-def is_entity_hostile(entity_id: int, entity_type: str = None, when: datetime = None) -> bool:
+def is_entity_hostile(entity_id: int, entity_type: str = None, when: datetime = None, safe_entities: set = None) -> bool:
     """
     Logic for entity (char, corp, alliance, faction) hostility.
     """
-    if not entity_id:
-        return False
-    try:
-        entity_id = int(entity_id)
-    except (ValueError, TypeError):
-        return False
-
-    cfg = BigBrotherConfig.get_solo()
-    safe_entities = get_safe_entities()
-
-    # Explicitly Safe
-    if entity_id in safe_entities:
-        return False
-
-    if not entity_type:
-        entity_type = get_eve_entity_type(entity_id)
-
-    # Explicitly Hostile
-    hostile_corps = {int(s) for s in (cfg.hostile_corporations or "").split(",") if s.strip().isdigit()}
-    hostile_allis = {int(s) for s in (cfg.hostile_alliances or "").split(",") if s.strip().isdigit()}
-
-    if entity_type == 'corporation' and entity_id in hostile_corps:
-        return True
-    if entity_type in ('alliance', 'faction') and entity_id in hostile_allis:
-        return True
-
-    if entity_type == 'character':
-        # Blacklist check
-        if aablacklist_active():
-            from aa_bb.checks.add_to_blacklist import check_char_add_to_bl
-            if check_char_add_to_bl(entity_id):
-                return True
-
-        # Check corporation and alliance context for this character
-        # Use get_entity_info to get (potentially historical) corp/alli
-        info = get_entity_info(entity_id, when or timezone.now())
-        if info:
-            # 1. Safe context (whitelist/member) wins
-            if info.get('corp_id') in safe_entities or info.get('alli_id') in safe_entities:
-                return False
-            # 2. Hostile context
-            if info.get('corp_id') in hostile_corps:
-                return True
-            if info.get('alli_id') in hostile_allis:
-                return True
-
-    # Hostile Everyone Else
-    if cfg.hostile_everyone_else:
-        # Ignore NPCs
-        if entity_type == 'character' and is_npc_character(entity_id):
-            return False
-        if entity_type == 'corporation' and is_npc_corporation(entity_id):
-            return False
-
-        # Characters belong to corps/alliances (already checked above if character)
-        return True
-
-    return False
+    return is_hostile_unified(involved_ids=[entity_id], entity_type=entity_type, when=when, safe_entities=safe_entities)
 
 
-def is_location_hostile(location_id: int, system_id: int = None) -> bool:
+def is_location_hostile(location_id: int, system_id: int = None, safe_entities: set = None) -> bool:
     """
     Determines if a given location (structure, station, or system) is considered hostile.
     Returns True if hostile, False if safe.
     """
-    if not location_id and not system_id:
-        return False
-
-    cfg = BigBrotherConfig.get_solo()
-
-    target_system = system_id or (resolve_location_system_id(location_id) if location_id else None)
-    if target_system:
-        if cfg.exclude_high_sec and is_highsec(target_system):
-            return False
-        if cfg.exclude_low_sec and is_lowsec(target_system):
-            return False
-
-    # Resolve location owner
-    owner_info = get_system_owner({"id": location_id or system_id})
-    oid = 0
-    oname = ""
-    otype = None
-    if owner_info:
-        try:
-            oid = int(owner_info.get("owner_id", 0))
-        except (ValueError, TypeError):
-            oid = 0
-        oname = owner_info.get("owner_name", "")
-        otype = owner_info.get("owner_type")
-
-    # If it's a structure
-    if location_id and is_player_structure(location_id):
-        # Friendly structure overrides system hostility
-        if oid and not is_entity_hostile(oid, otype):
-            return False
-        # Hostile structure
-        if oid and is_entity_hostile(oid, otype):
-            return True
-
-        if cfg.consider_all_structures_hostile:
-            return True
-
-        if "Unresolvable" in oname:
-            return True
-
-    # If it's an NPC station
-    if location_id and 60000000 <= int(location_id) < 64000000:
-        if cfg.consider_npc_stations_hostile:
-            return True
-
-    # Check system-level hostility
-    target_system = system_id or (resolve_location_system_id(location_id) if location_id else None)
-    if target_system:
-        # If the location we checked was a structure, oid is structure owner.
-        # We might also need to check system (sov) owner for nullsec flags.
-        if target_system != location_id:
-            sys_owner_info = get_system_owner({"id": target_system})
-            try:
-                soid = int(sys_owner_info.get("owner_id", 0))
-                sotype = sys_owner_info.get("owner_type")
-            except (ValueError, TypeError):
-                soid = 0
-                sotype = None
-        else:
-            soid = oid
-            sotype = otype
-
-        # Base hostility from system owner
-        if soid and is_entity_hostile(soid, sotype):
-            return True
-
-        # Consider nullsec hostile
-        if cfg.consider_nullsec_hostile and is_nullsec(target_system):
-            # Safe if system is owned by us/allies
-            if soid and not is_entity_hostile(soid, sotype):
-                return False
-            # Otherwise, if we are in a friendly structure (handled above), it's safe.
-            # If we are here, it's either an NPC station or a hostile/unknown structure.
-            return True
-
-    # General fallback for hostile lists if not already caught
-    if oid and is_entity_hostile(oid, otype):
-        return True
-
-    if "Unresolvable" in oname:
-        return True
-
-    return False
+    return is_hostile_unified(location_id=location_id, system_id=system_id, safe_entities=safe_entities)
 
 
 
@@ -1345,6 +1692,9 @@ def get_user_profiles():
 
 def get_user_id(character_name):
     """Translate a main-character name into the owning Auth user id."""
+    if not character_name:
+        return None
+    character_name = str(character_name)
     try:
         ownership = CharacterOwnership.objects.select_related('user').get(character__character_name=character_name)
         return ownership.user.id
@@ -1401,42 +1751,82 @@ def resolve_location_name(location_id: int) -> Optional[str]:
     except (ValueError, TypeError):
         return None
 
+    cache_key = f"aa_bb_loc_name_{location_id}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    name = None
     # 1) Solar System
     if 30000000 <= location_id <= 34000000:
         try:
             from eveuniverse.models import EveSolarSystem
-            return EveSolarSystem.objects.get(id=location_id).name
+            name = EveSolarSystem.objects.get(id=location_id).name
         except Exception:
             pass
 
     # 2) NPC Station
-    if 60000000 <= location_id <= 64000000:
+    if not name and 60000000 <= location_id <= 64000000:
         try:
             from eveuniverse.models import EveStation
-            return EveStation.objects.get(id=location_id).name
+            name = EveStation.objects.get(id=location_id).name
         except Exception:
             pass
 
-    # 3) Player Structure
-    if is_player_structure(location_id):
+    # 3) Player Structure (Upwell)
+    if not name and is_player_structure(location_id):
         try:
             from corptools.models import Structure
             struct = Structure.objects.filter(structure_id=location_id).first()
             if struct:
-                return struct.name
+                name = struct.name
+        except Exception:
+            pass
+
+    # 4) POCO
+    if not name:
+        try:
+            from corptools.models import Poco
+            poco = Poco.objects.filter(office_id=location_id).first()
+            if poco:
+                name = poco.name
+        except Exception:
+            pass
+
+    # 5) Starbase (POS)
+    if not name:
+        try:
+            from corptools.models import Starbase
+            pos = Starbase.objects.filter(starbase_id=location_id).first()
+            if pos:
+                name = pos.name
         except Exception:
             pass
 
     # Fallback to EveLocation
-    try:
-        from corptools.models import EveLocation
-        loc = EveLocation.objects.filter(location_id=location_id).first()
-        if loc:
-            return loc.location_name
-    except Exception:
-        pass
+    if not name:
+        try:
+            from corptools.models import EveLocation
+            loc = EveLocation.objects.filter(location_id=location_id).first()
+            if loc:
+                name = loc.location_name
+        except Exception:
+            pass
 
-    return None
+    # Fallback to system name if location is unresolvable
+    if not name and location_id:
+        try:
+            sys_id = resolve_location_system_id(location_id)
+            if sys_id and sys_id != location_id:
+                sys_name = resolve_location_name(sys_id)
+                if sys_name:
+                    name = f"Structure in {sys_name}"
+        except Exception:
+            pass
+
+    if name:
+        cache.set(cache_key, name, 86400)
+    return name
 
 def resolve_location_system_id(location_id: int) -> Optional[int]:
     """
@@ -1450,44 +1840,140 @@ def resolve_location_system_id(location_id: int) -> Optional[int]:
     except (ValueError, TypeError):
         return None
 
+    cache_key = f"aa_bb_loc_sys_id_{location_id}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    sys_id = None
     # 1) Solar System
     if 30000000 <= location_id <= 34000000:
-        return location_id
+        sys_id = location_id
 
     # 2) NPC Station
-    if 60000000 <= location_id <= 64000000:
+    if not sys_id and 60000000 <= location_id <= 64000000:
         try:
             from eveuniverse.models import EveStation
             station = EveStation.objects.get(id=location_id)
-            return station.eve_solar_system_id
+            sys_id = station.eve_solar_system_id
         except Exception:
             pass
 
-    # 3) Player Structure
-    if is_player_structure(location_id):
+    # 3) Player Structure (Upwell)
+    if not sys_id and is_player_structure(location_id):
         try:
             from corptools.models import Structure, EveLocation
             struct = Structure.objects.filter(structure_id=location_id).first()
             if struct:
-                return struct.system_id
-
-            # Fallback to EveLocation for non-owned structures
-            loc = EveLocation.objects.filter(location_id=location_id).first()
-            if loc and loc.system_id:
-                return loc.system_id
+                sys_id = struct.system_id
+            else:
+                # Fallback to EveLocation for non-owned structures
+                loc = EveLocation.objects.filter(location_id=location_id).first()
+                if loc and loc.system_id:
+                    sys_id = loc.system_id
         except Exception:
             pass
 
+    # 4) POCO
+    if not sys_id:
+        try:
+            from corptools.models import Poco
+            poco = Poco.objects.filter(office_id=location_id).first()
+            if poco and poco.system_id:
+                sys_id = poco.system_id
+        except Exception:
+            pass
+
+    # 5) Starbase (POS)
+    if not sys_id:
+        try:
+            from corptools.models import Starbase
+            pos = Starbase.objects.filter(starbase_id=location_id).first()
+            if pos and pos.system_id:
+                sys_id = pos.system_id
+        except Exception:
+            pass
+
+    if sys_id:
+        cache.set(cache_key, sys_id, 86400)
+    return sys_id
+
+
+def get_location_owner(location_id: int) -> Optional[Dict[str, str]]:
+    """
+    Returns owner info for a location (citadel/structure) if it's a player structure.
+    Returns None for NPC stations, solar systems, or if owner can't be resolved.
+
+    Returns dict with keys: owner_id, owner_name, owner_type
+    """
+    if not location_id:
+        return None
+
+    try:
+        location_id = int(location_id)
+    except (ValueError, TypeError):
+        return None
+
+    # Only resolve for player structures (citadels/upwell)
+    if not is_player_structure(location_id):
+        return None
+
+    try:
+        from corptools.models import Structure
+        struct = Structure.objects.filter(structure_id=location_id).select_related("corporation__corporation").first()
+        if struct and struct.corporation and struct.corporation.corporation:
+            return {
+                "owner_id": str(struct.corporation.corporation.corporation_id),
+                "owner_name": struct.corporation.corporation.corporation_name,
+                "owner_type": "corporation"
+            }
+    except Exception:
+        pass
+
     return None
+
 
 def is_ship(type_id):
     """Checks if a type_id belongs to a ship."""
-    return False
+    if not type_id:
+        return False
+
+    cache_key = f"aa_bb_is_ship_{type_id}"
+    res = cache.get(cache_key)
+    if res is not None:
+        return res
+
+    is_ship_bool = False
+    try:
+        if corptools_active():
+            from corptools.models import EveItemType
+            it = EveItemType.objects.select_related('group__category').get(pk=type_id)
+            if it.group and it.group.category and it.group.category.name == "Ship":
+                is_ship_bool = True
+        elif EVEUNIVERSE_INSTALLED:
+            from eveuniverse.models import EveType
+            it = EveType.objects.select_related('eve_group__eve_category').get(pk=type_id)
+            if it.eve_group and it.eve_group.eve_category and it.eve_group.eve_category.name == "Ship":
+                is_ship_bool = True
+    except Exception:
+        pass
+
+    cache.set(cache_key, is_ship_bool, 86400)
+    return is_ship_bool
+
+_safe_entities_cache = None
+_safe_entities_cache_time = 0
 
 def get_safe_entities():
     """
     Returns a set of safe entity IDs (whitelist, ignored, members).
+    Caches result for 1 minute to avoid excessive re-parsing in tight loops.
     """
+    global _safe_entities_cache, _safe_entities_cache_time
+    now = time.time()
+    if _safe_entities_cache is not None and now - _safe_entities_cache_time < 60:
+        return _safe_entities_cache
+
     from .models import BigBrotherConfig
     cfg = BigBrotherConfig.get_solo()
 
@@ -1511,10 +1997,12 @@ def get_safe_entities():
 
     # Main corp/alliance
     if cfg.main_corporation_id:
-        ids.add(cfg.main_corporation_id)
+        ids.add(int(cfg.main_corporation_id))
     if cfg.main_alliance_id:
-        ids.add(cfg.main_alliance_id)
+        ids.add(int(cfg.main_alliance_id))
 
+    _safe_entities_cache = ids
+    _safe_entities_cache_time = now
     return ids
 
 def get_owner_name():

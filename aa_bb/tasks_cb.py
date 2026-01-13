@@ -11,6 +11,7 @@ This file contains:
 import time
 import traceback
 import random
+import gc
 from datetime import timedelta
 import logging
 
@@ -80,7 +81,7 @@ except ImportError:
     CharacterWalletJournalEntry = None
     CorporationWalletJournalEntry = None
 
-from django.db import transaction, OperationalError
+from django.db import transaction, OperationalError, close_old_connections
 from allianceauth.services.hooks import get_extension_logger
 
 logger = get_extension_logger(__name__)
@@ -97,6 +98,8 @@ def CB_send_discord_notifications(subject: str, chunks: list[list[str]]) -> None
     - subject: usually the corp name
     - chunks: list of "lines lists" – each inner list becomes one embed body
     """
+    close_old_connections()
+
     logger.info(
         "✅  [AA-BB] - [CB_send_discord_notifications] - Dispatching %d embed chunks for %s",
         len(chunks),
@@ -118,14 +121,23 @@ def CB_send_discord_notifications(subject: str, chunks: list[list[str]]) -> None
         )
         time.sleep(0.25)  # tiny delay to be nice to the webhook
 
+    # Clean up after sending all chunks
+    del chunks
+    gc.collect()
+    close_old_connections()
+
 
 @shared_task
 def CB_update_single_corp(corp_id):
     """
     Process updates for a single corporation.
     """
+    # Close old DB connections to prevent memory leaks
+    close_old_connections()
+
     instance = BigBrotherConfig.get_solo()
     if not instance.is_active:
+        close_old_connections()
         return
 
     # Resolve corp name if missing
@@ -156,18 +168,31 @@ def CB_update_single_corp(corp_id):
 
             # Hostile Assets
             if corpstatus.has_hostile_assets != has_hostile_assets or set(hostile_assets_result) != set(corpstatus.hostile_assets or []):
-                old_links = set(corpstatus.hostile_assets or [])
-                new_links = set(hostile_assets_result) - old_links
-                link_list = "\n".join(
-                    f"- {system} owned by {hostile_assets_result[system]}"
-                    for system in (set(hostile_assets_result) - set(corpstatus.hostile_assets or []))
-                )
-                logger.info(f"✅  [AA-BB] - [CB_update_single_corp] - {corp_name} new assets {link_list}")
+                old_systems = set(corpstatus.hostile_assets or [])
+                new_systems = set(hostile_assets_result) - old_systems
+
+                asset_lines = []
+                for system in sorted(new_systems):
+                    data = hostile_assets_result.get(system)
+                    if not data or not isinstance(data, dict):
+                        continue
+
+                    owner = data.get("owner", "Unresolvable")
+                    region = data.get("region", "Unknown Region")
+                    records = data.get("records", [])
+
+                    asset_lines.append(f"- {system} ({owner} | Region: {region})")
+                    for rec in records:
+                        loc_name = rec.get("location_name", "Unknown Location")
+                        asset_lines.append(f"   - {loc_name}")
+
+                link_list = "\n".join(asset_lines)
+                logger.debug(f"✅  [AA-BB] - [CB_update_single_corp] - {corp_name} new assets {link_list}")
                 if corpstatus.has_hostile_assets != has_hostile_assets:
                     if not has_hostile_assets:
                         corp_changes.append(f"## Hostile Corp Assets: 🟢")
 
-                if new_links:
+                if asset_lines:
                     corp_changes.append(f"##{get_pings('New Hostile Assets')} New Hostile Assets:\n{link_list}")
 
                 corpstatus.has_hostile_assets = has_hostile_assets
@@ -185,13 +210,16 @@ def CB_update_single_corp(corp_id):
                         corp_changes.append(f"## Sus Corp Contracts: 🟢")
 
                 if new_links:
-                    corp_changes.append(f"## New Sus Contracts:")
-                    for issuer_id in new_links:
+                    contract_lines = []
+                    for issuer_id in sorted(new_links):
                         res = sus_contracts_result[issuer_id]
                         ping = get_pings('New Sus Contracts')
                         if res.startswith("- A -"):
                             ping = ""
-                        corp_changes.append(f"{res} {ping}")
+                        contract_lines.append(f"{res} {ping}")
+
+                    if contract_lines:
+                        corp_changes.append(f"## New Sus Contracts:\n" + "\n".join(contract_lines))
 
                 corpstatus.has_sus_contracts = has_sus_contracts
                 corpstatus.sus_contracts = sus_contracts_result
@@ -208,9 +236,8 @@ def CB_update_single_corp(corp_id):
                         corp_changes.append(f"## Sus Corp Transactions: 🟢")
 
                 if new_links:
-                    corp_changes.append(f"## New Sus Transactions{get_pings('New Sus Transactions')}:\n{link_list}")
-                    link_list_tx = "\n".join(f"{sus_trans_result[issuer_id]}" for issuer_id in new_links)
-                    corp_changes.append(f"## New Sus Transactions{get_pings('New Sus Transactions')}:\n{link_list_tx}")
+                    link_list_tx = "\n".join(f"{sus_trans_result[issuer_id]}" for issuer_id in sorted(new_links))
+                    corp_changes.append(f"### New Sus Transactions{get_pings('New Sus Transactions')}:\n{link_list_tx}")
 
                 corpstatus.has_sus_trans = has_sus_trans
                 corpstatus.sus_trans = sus_trans_result
@@ -246,6 +273,15 @@ def CB_update_single_corp(corp_id):
             corpstatus.baseline_initialized = True
             corpstatus.updated = timezone.now()
             corpstatus.save()
+
+            # Clean up large variables to free memory
+            del hostile_assets_result, sus_contracts_result, sus_trans_result, corp_changes
+            if 'all_chunks' in locals():
+                del all_chunks
+
+            # Force garbage collection and close connections
+            gc.collect()
+            close_old_connections()
             break
 
         except OperationalError as e:
@@ -263,6 +299,9 @@ def CB_update_single_corp(corp_id):
             raise
         except Exception as e:
             logger.error(f"ℹ️  [AA-BB] - [CB_update_single_corp] - Failed to update corp {corp_id}: {e}", exc_info=True)
+            # Clean up on error
+            gc.collect()
+            close_old_connections()
             raise
 
 
@@ -271,6 +310,9 @@ def CB_run_regular_updates():
     """
     Update CorpBrother caches: hostile assets, contracts, transactions, LoA, and PAPs.
     """
+    # Close old DB connections to prevent memory leaks
+    close_old_connections()
+
     instance = BigBrotherConfig.get_solo()
     instance.refresh_from_db()
 
@@ -286,7 +328,8 @@ def CB_run_regular_updates():
                 qs = qs.filter(Q(corporation_id__in=member_corps) | Q(alliance_id__in=member_allis))
 
             corps = list(
-                qs.values_list("corporation_id", flat=True)
+                qs.select_related('alliance')
+                .values_list("corporation_id", flat=True)
                 .order_by("corporation_name")
                 .filter(corporationaudit__isnull=False)
             )
@@ -294,11 +337,16 @@ def CB_run_regular_updates():
             total_corps = len(corps)
             logger.info(f"✅  [AA-BB] - [CB_run_regular_updates] - Dispatching updates for {total_corps} corps.")
 
-            # Backlog check
+            # Backlog check (cached to avoid repeated expensive introspection)
             try:
-                from celery import current_app
-                inspector = current_app.control.inspect()
-                if inspector:
+                from django.core.cache import cache
+                backlog_cache_key = "cb_update_backlog_check"
+                remaining_count = cache.get(backlog_cache_key)
+
+                if remaining_count is None:
+                    from celery import current_app
+                    inspector = current_app.control.inspect()
+                if remaining_count is None and inspector:
                     active = inspector.active() or {}
                     reserved = inspector.reserved() or {}
                     task_name = CB_update_single_corp.name
@@ -315,29 +363,42 @@ def CB_run_regular_updates():
                                 if t.get('name') == task_name:
                                     remaining_count += 1
 
-                    if remaining_count > 0 and instance.update_backlog_notify:
-                        # For corps we might use the same threshold or a fixed one?
-                        # Let's use the same threshold but against total_corps?
-                        # Actually, let's just use a fixed small number or similar logic.
-                        if total_corps > 0:
-                            percent = (remaining_count / total_corps) * 100
-                            if percent > instance.update_backlog_threshold:
-                                logger.warning(f"ℹ️  [AA-BB] - [CB_run_regular_updates] - Corp Update backlog detected: {remaining_count} tasks remaining")
-                                send_status_embed(
-                                    subject="Corp Update Backlog Alert",
-                                    lines=[f"{get_pings('Error')} {remaining_count} corps are still being processed from the previous run."],
-                                    color=0xFF0000,
-                                )
+                    # Cache for 60 seconds to avoid repeated expensive introspection
+                    cache.set(backlog_cache_key, remaining_count, 60)
+
+                if remaining_count and remaining_count > 0 and instance.update_backlog_notify:
+                    # For corps we might use the same threshold or a fixed one?
+                    # Let's use the same threshold but against total_corps?
+                    # Actually, let's just use a fixed small number or similar logic.
+                    if total_corps > 0:
+                        percent = (remaining_count / total_corps) * 100
+                        if percent > instance.update_backlog_threshold:
+                            logger.warning(f"ℹ️  [AA-BB] - [CB_run_regular_updates] - Corp Update backlog detected: {remaining_count} tasks remaining")
+                            send_status_embed(
+                                subject="Corp Update Backlog Alert",
+                                lines=[f"{get_pings('Error')} {remaining_count} corps are still being processed from the previous run."],
+                                color=0xFF0000,
+                            )
             except Exception as e:
                 logger.error(f"ℹ️  [AA-BB] - [CB_run_regular_updates] - Failed to check for backlog: {e}")
 
-            for corp_id in corps:
-                CB_update_single_corp.delay(corp_id)
+            # Dispatch with staggered delays to smooth load
+            for idx, corp_id in enumerate(corps):
+                CB_update_single_corp.apply_async(args=[corp_id], countdown=idx * 0.5)
+
+            # Clean up corp list
+            del corps
         else:
             logger.warning("ℹ️  [AA-BB] - [CB_run_regular_updates] - Plugin is disabled (is_active=False), skipping corp updates.")
 
+        # Force garbage collection and close connections
+        gc.collect()
+        close_old_connections()
+
     except Exception as e:
         logger.error("ℹ️  [AA-BB] - [CB_run_regular_updates] - Task failed", exc_info=True)
+        gc.collect()
+        close_old_connections()
         tb_str = traceback.format_exc()
         tb_lines = [f"{get_pings('Error')} Corp Brother encountered an unexpected error", "```python"] + tb_str.split("\n") + ["```"]
         for chunk in _chunk_embed_lines(tb_lines):
@@ -366,10 +427,14 @@ def check_member_compliance():
       • Reports missing characters per corp/alliance (via EveWho).
       • Sends a single consolidated Discord message with all findings.
     """
+    # Close old DB connections to prevent memory leaks
+    close_old_connections()
+
     instance = BigBrotherConfig.get_solo()
     instance.refresh_from_db()
     if not instance.is_active:  # plugin disabled → skip expensive checks
         logger.warning("ℹ️  [AA-BB] - [check_member_compliance] - Plugin is disabled (is_active=False), skipping compliance sweep.")
+        close_old_connections()
         return
     profiles_qs = get_user_profiles()
     if instance.limit_to_main_corp:
@@ -411,18 +476,20 @@ def check_member_compliance():
         corp_ids = instance.member_corporations
         ali_ids = instance.member_alliances
 
-    if corp_ids:  # optionally check extra corp ids even if they’re outside auth
-        for corp_id in corp_ids.split(","):
-            corp_chars = []
-            corp_id = corp_id.strip()
-            if not corp_id:  # ignore blank entries
-                continue
+    if corp_ids:  # optionally check extra corp ids even if they're outside auth
+        # Batch query all corp characters upfront
+        all_corp_ids = [int(c.strip()) for c in corp_ids.split(",") if c.strip().isdigit()]
+        linked_chars_by_corp = {}
+        if all_corp_ids:
+            all_linked = EveCharacter.objects.filter(
+                corporation_id__in=all_corp_ids
+            ).values('corporation_id', 'character_name')
+            for rec in all_linked:
+                linked_chars_by_corp.setdefault(rec['corporation_id'], set()).add(rec['character_name'])
 
-            # Get characters linked in your DB
-            linked_chars = list(
-                EveCharacter.objects.filter(corporation_id=corp_id)
-                .values_list("character_name", flat=True)
-            )
+        for corp_id in all_corp_ids:
+            corp_chars = []
+            linked_chars = linked_chars_by_corp.get(corp_id, set())
 
             corp_name = get_corporation_info(corp_id)["name"]
             # Get characters from EveWho API
@@ -435,28 +502,29 @@ def check_member_compliance():
                 chars_str = "\n".join(corp_chars)
                 missing_characters.append(f"- {corp_name}\n{chars_str}")
 
-    logger.info(f"✅  [AA-BB] - [check_member_compliance] - ali_ids: {str(ali_ids)}")
+    logger.debug(f"✅  [AA-BB] - [check_member_compliance] - ali_ids: {str(ali_ids)}")
     if ali_ids:  # optional alliance-level audits
-        for ali_id in ali_ids.split(","):
-            logger.info(f"✅  [AA-BB] - [check_member_compliance] - ali_id: {str(ali_id)}")
-            ali_chars = []
-            ali_id = ali_id.strip()
-            logger.info(f"✅  [AA-BB] - [check_member_compliance] - ali_id: {str(ali_id)}")
-            if not ali_id:  # Ignore empty strings
-                continue
+        # Batch query all alliance characters upfront
+        all_ali_ids = [int(a.strip()) for a in ali_ids.split(",") if a.strip().isdigit()]
+        linked_chars_by_ali = {}
+        if all_ali_ids:
+            all_linked = EveCharacter.objects.filter(
+                alliance_id__in=all_ali_ids
+            ).values('alliance_id', 'character_name')
+            for rec in all_linked:
+                linked_chars_by_ali.setdefault(rec['alliance_id'], set()).add(rec['character_name'])
 
-            # Get characters linked in your DB
-            linked_chars = list(
-                EveCharacter.objects.filter(alliance_id=ali_id)
-                .values_list("character_name", flat=True)
-            )
-            logger.info(f"✅  [AA-BB] - [check_member_compliance] - linked_chars: {str(linked_chars)}")
+        for ali_id in all_ali_ids:
+            logger.debug(f"✅  [AA-BB] - [check_member_compliance] - ali_id: {str(ali_id)}")
+            ali_chars = []
+            linked_chars = linked_chars_by_ali.get(ali_id, set())
+            logger.debug(f"✅  [AA-BB] - [check_member_compliance] - linked_chars: {str(linked_chars)}")
 
             ali_name = get_alliance_name(ali_id)
-            logger.info(f"✅  [AA-BB] - [check_member_compliance] - ali_name: {str(ali_name)}")
+            logger.debug(f"✅  [AA-BB] - [check_member_compliance] - ali_name: {str(ali_name)}")
             # Get characters from EveWho API
             all_ali_members = get_ali_character_names(ali_id)
-            logger.info(f"✅  [AA-BB] - [check_member_compliance] - all_ali_members: {str(all_ali_members)}")
+            logger.debug(f"✅  [AA-BB] - [check_member_compliance] - all_ali_members: {str(all_ali_members)}")
             # Find missing characters
             for char_name in all_ali_members:
                 if char_name not in linked_chars:  # missing from Auth → flag
@@ -466,7 +534,7 @@ def check_member_compliance():
                 missing_characters.append(f"- {ali_name}\n{chars_str}")
     compliance_msg = ""
     if missing_characters:  # Prepend EveWho gaps when any exist.
-        logger.info(f"✅  [AA-BB] - [check_member_compliance] - missing_characters: {str(missing_characters)}")
+        logger.debug(f"✅  [AA-BB] - [check_member_compliance] - missing_characters: {str(missing_characters)}")
         joined_msg = '\n'.join(missing_characters)
         compliance_msg += f"\n## Missing tokens for member characters:\n{joined_msg}"
 
@@ -481,6 +549,14 @@ def check_member_compliance():
                 lines=chunk,
                 color=0xFF0000,
             )
+
+    # Clean up large data structures
+    if 'missing_characters' in locals():
+        del missing_characters
+    if 'users' in locals():
+        del users
+    gc.collect()
+    close_old_connections()
 
 import requests
 
@@ -872,68 +948,69 @@ def BB_daily_DB_cleanup():
         pass
 
     # -- CONTRACTS --
-    # Get all contract_ids that exist in Contract
-    existing_CorporateContract_ids = set(
-        CorporateContract.objects.values_list('contract_id', flat=True)
+    # Use database-side subqueries to avoid loading all IDs into memory
+    from django.db.models import Q, Exists, OuterRef
+
+    # Find ProcessedContracts with no matching source record (memory-efficient)
+    orphaned_processed_contracts = ProcessedContract.objects.filter(
+        ~Exists(CorporateContract.objects.filter(contract_id=OuterRef('contract_id'))) &
+        ~Exists(Contract.objects.filter(contract_id=OuterRef('contract_id')))
     )
-    existing_playercontract_ids = set(
-        Contract.objects.values_list('contract_id', flat=True)
-    )
-    existing_contract_ids = existing_CorporateContract_ids | existing_playercontract_ids
 
-    # Find ProcessedContract entries not in Contract
-    orphaned_processed_contracts = ProcessedContract.objects.exclude(contract_id__in=existing_contract_ids)
-    orphaned_contract_ids = list(orphaned_processed_contracts.values_list('contract_id', flat=True))
+    # Get count before deletion for reporting
+    count_proc = orphaned_processed_contracts.count()
 
-    # Delete orphans in SusContractNote (OneToOneField links to ProcessedContract)
-    sus_contracts_to_delete = SusContractNote.objects.filter(contract_id__in=orphaned_contract_ids)
+    if count_proc > 0:
+        # Delete related SusContractNotes and ProcessedContracts
+        with transaction.atomic():
+            count_sus = SusContractNote.objects.filter(
+                contract__in=orphaned_processed_contracts
+            ).delete()[0]
+            orphaned_processed_contracts.delete()
 
-    with transaction.atomic():
-        count_sus = sus_contracts_to_delete.delete()[0]
-        count_proc = orphaned_processed_contracts.delete()[0]
-
-    if count_proc > 0 or count_sus > 0:
         flags.append(f"- Deleted {count_proc} old ProcessedContract and {count_sus} SusContractNote records.")
 
     # -- MAILS --
-    existing_mail_ids = set(
-        MailMessage.objects.values_list('id_key', flat=True)
+    # Use database-side subquery to avoid loading all mail IDs into memory
+    orphaned_processed_mails = ProcessedMail.objects.filter(
+        ~Exists(MailMessage.objects.filter(id_key=OuterRef('mail_id')))
     )
 
-    orphaned_processed_mails = ProcessedMail.objects.exclude(mail_id__in=existing_mail_ids)
-    orphaned_mail_ids = list(orphaned_processed_mails.values_list('mail_id', flat=True))
+    count_proc = orphaned_processed_mails.count()
 
-    sus_mails_to_delete = SusMailNote.objects.filter(mail_id__in=orphaned_mail_ids)
+    if count_proc > 0:
+        with transaction.atomic():
+            count_sus = SusMailNote.objects.filter(
+                mail__in=orphaned_processed_mails
+            ).delete()[0]
+            orphaned_processed_mails.delete()
 
-    with transaction.atomic():
-        count_sus = sus_mails_to_delete.delete()[0]
-        count_proc = orphaned_processed_mails.delete()[0]
-
-    if count_proc > 0 or count_sus > 0:
         flags.append(f"- Deleted {count_proc} old ProcessedMail and {count_sus} SusMailNote records.")
 
     # -- TRANSACTIONS --
-    existing_entry_ids = (
-        set(CharacterWalletJournalEntry.objects.values_list('entry_id', flat=True))
-        | set(CorporationWalletJournalEntry.objects.values_list('entry_id', flat=True))
+    # Use database-side subquery to avoid loading all transaction IDs into memory
+    orphaned_processed_transactions = ProcessedTransaction.objects.filter(
+        ~Exists(CharacterWalletJournalEntry.objects.filter(entry_id=OuterRef('entry_id'))) &
+        ~Exists(CorporationWalletJournalEntry.objects.filter(entry_id=OuterRef('entry_id')))
     )
 
-    orphaned_processed_transactions = ProcessedTransaction.objects.exclude(entry_id__in=existing_entry_ids)
-    orphaned_entry_ids = list(orphaned_processed_transactions.values_list('entry_id', flat=True))
+    count_proc = orphaned_processed_transactions.count()
 
-    sus_transactions_to_delete = SusTransactionNote.objects.filter(transaction_id__in=orphaned_entry_ids)
+    if count_proc > 0:
+        with transaction.atomic():
+            count_sus = SusTransactionNote.objects.filter(
+                transaction__in=orphaned_processed_transactions
+            ).delete()[0]
+            orphaned_processed_transactions.delete()
 
-    with transaction.atomic():
-        count_sus = sus_transactions_to_delete.delete()[0]
-        count_proc = orphaned_processed_transactions.delete()[0]
-
-    if count_proc > 0 or count_sus > 0:
         flags.append(f"- Deleted {count_proc} old ProcessedTransaction and {count_sus} SusTransactionNote records.")
 
     # -- PAP COMPLIANCE: drop entries for non-members --
     try:
-        member_profile_ids = list(get_user_profiles().values_list('id', flat=True))
-        non_member_pc_qs = PapCompliance.objects.exclude(user_profile_id__in=member_profile_ids)
+        # Use database-side subquery to avoid loading all profile IDs into memory
+        non_member_pc_qs = PapCompliance.objects.filter(
+            ~Exists(get_user_profiles().filter(id=OuterRef('user_profile_id')))
+        )
         deleted_pc = non_member_pc_qs.delete()[0]
         if deleted_pc > 0:
             flags.append(f"- Deleted {deleted_pc} PapCompliance records for non-members.")

@@ -5,10 +5,12 @@ These helpers tidy up CharacterContact rows, group them by standing, color-code 
 entities, and expose utilities for producing notification text.
 """
 
-import html
-import logging
+from allianceauth.services.hooks import get_extension_logger
 
-logger = logging.getLogger(__name__)
+
+import html
+
+logger = get_extension_logger(__name__)
 
 from ..app_settings import (
     is_npc_corporation,
@@ -22,6 +24,7 @@ from ..app_settings import (
     aablacklist_active,
     get_hostile_state,
     corptools_active,
+    is_hostile_unified,
 )
 from django.utils import timezone
 
@@ -185,25 +188,84 @@ def group_contacts_by_standing(contacts: dict[int, dict]) -> dict[int, list[tupl
 
 
 
+def _get_contact_alerts(cid: int, info: dict) -> list[str]:
+    """
+    Internal helper to determine why a contact is flagged as suspicious.
+    Returns a list of alert strings.
+    """
+    alerts = []
+    ctype = info['contact_type']
+    coid = info.get('coid')
+    corp_name = info.get('corporation')
+    aid = info.get('aid')
+    alli_name = info.get('alliance')
+
+    if ctype == 'character':
+        if aablacklist_active() and check_char_add_to_bl(cid):
+            alerts.append("Character on Blacklist")
+
+        # Check if the character itself or its parents are hostile
+        if get_hostile_state(cid, 'character'):
+            if coid and get_hostile_state(coid, 'corporation'):
+                alerts.append(f"Corporation ({corp_name}) is hostile")
+            if aid and get_hostile_state(aid, 'alliance'):
+                alerts.append(f"Alliance ({alli_name}) is hostile")
+
+            if not alerts:
+                alerts.append("Character is hostile")
+
+    elif ctype == 'corporation':
+        if get_hostile_state(cid, 'corporation'):
+            if aid and get_hostile_state(aid, 'alliance'):
+                alerts.append(f"Alliance ({alli_name}) is hostile")
+            if not alerts:
+                alerts.append("Corporation is hostile")
+
+    elif ctype == 'alliance':
+        if get_hostile_state(cid, 'alliance'):
+            alerts.append("Alliance is hostile")
+
+    return alerts
+
+
 def render_contacts(user_id: int) -> str:
     """
     Render the user's contacts into HTML grouped by standing.
+    Only shows contacts that are considered suspicious/hostile.
     """
     contacts = get_user_contacts(user_id)
-    groups = group_contacts_by_standing(contacts)
+    cfg = BigBrotherConfig.get_solo()
+    exclude_neutral = cfg.exclude_neutral_contacts
 
-    if not contacts:  # No contact records available; show placeholder.
-        return '<p>No contacts found.</p>'
+    suspicious_contacts = {}
+    for cid, info in contacts.items():
+        s = info.get('standing', 0)
+        # skip if user already has negative standing (not "suspicious", just expected hostile)
+        if s < 0:
+            continue
+        # skip neutral contacts if enabled
+        if exclude_neutral and s == 0:
+            continue
+
+        alerts = _get_contact_alerts(cid, info)
+        if alerts:
+            info['alerts'] = alerts
+            suspicious_contacts[cid] = info
+
+    if not suspicious_contacts:
+        return '<table class="table stats"><tbody><tr><td class="text-center">No hostile contacts found.</td></tr></tbody></table>'
+
+    groups = group_contacts_by_standing(suspicious_contacts)
 
     html_parts = ['<div class="contact-groups">']
     for bucket, entries in sorted(groups.items(), reverse=True):
-        label = f"Standing {bucket:+d}"
-        html_parts.append(f'<h3>{label}</h3>')
-        if not entries:  # No contacts in this category.
-            html_parts.append('<p>No contacts in this category.</p>')
+        if not entries:
             continue
 
-        headers = ['character', 'corporation', 'alliance']
+        label = f"Standing {bucket:+d}"
+        html_parts.append(f'<h3>{label}</h3>')
+
+        headers = ['character', 'corporation', 'alliance', 'reason', 'owner']
         html_parts.append('<table class="table table-striped table-hover stats">')
         html_parts.append('  <thead>')
         html_parts.append('    <tr>')
@@ -215,10 +277,17 @@ def render_contacts(user_id: int) -> str:
         for cid, entry in entries:
             html_parts.append('    <tr>')
             for h in headers:
-                val = entry.get(h, '')
-                display_val = ', '.join(map(str, val)) if isinstance(val, list) else val  # Join multiple character names.
-                style = get_cell_style_for_row(cid, h, entry)
-                html_parts.append(f'      <td style="{style}">{html.escape(str(display_val))}</td>')
+                style = ""
+                if h == 'reason':
+                    display_val = "<br>".join([f'<span class="text-danger">{html.escape(a)}</span>' for a in entry.get('alerts', [])])
+                elif h == 'owner':
+                    display_val = html.escape(", ".join(entry.get('characters', [])))
+                else:
+                    val = entry.get(h, '')
+                    display_val = html.escape(str(val))
+                    style = get_cell_style_for_row(cid, h, entry)
+
+                html_parts.append(f'      <td style="{style}">{display_val}</td>')
             html_parts.append('    </tr>')
         html_parts.append('  </tbody>')
         html_parts.append('</table>')
@@ -226,8 +295,6 @@ def render_contacts(user_id: int) -> str:
 
     return '\n'.join(html_parts)
 
-import logging
-logger = logging.getLogger(__name__)
 
 def get_user_hostile_notifications(user_id: int) -> dict[int, str]:
     """
@@ -239,58 +306,33 @@ def get_user_hostile_notifications(user_id: int) -> dict[int, str]:
     notifications: dict[int, str] = {}
 
     cfg = BigBrotherConfig.get_solo()
-    hostile_corps = cfg.hostile_corporations
-    hostile_allis = cfg.hostile_alliances
-    safe_entities = get_safe_entities()
-    logger.info(f"{hostile_allis}")
+    exclude_neutral = cfg.exclude_neutral_contacts
 
     for cid, info in contacts.items():
-        ctype     = info['contact_type']      # 'character' | 'corporation' | 'alliance'
-        if ctype == 'character':
-            cname = info.get('character') or ''
-        elif ctype == 'corporation':
-            cname = info.get('corporation') or ''
-        elif ctype == 'alliance':
-            cname = info.get('alliance') or ''
-        else:
-            cname = info.get('contact_name') or ''
-        chars     = info.get('characters', set())
-        coid      = info.get('coid')
-        corp_name = info.get('corporation')
-        aid       = info.get('aid')
-        alli_name = info.get('alliance')
-        s         = info.get('standing', 0)
+        s = info.get('standing', 0)
 
         # skip if user already has negative standing (redundant)
         if s < 0:
             continue
 
-        alerts: list[str] = []
+        # skip neutral contacts if the exclude_neutral_contacts setting is enabled
+        if exclude_neutral and s == 0:
+            continue
 
-        if get_hostile_state(cid, ctype):
-            if ctype == 'character':
-                if aablacklist_active() and check_char_add_to_bl(cid):
-                    alerts.append(f"**{cname}** is on blacklist")
-                else:
-                    alerts.append(f"**{cname}** is on hostile list")
-            else:
-                alerts.append(f"{ctype} **{cname}** is on hostile list")
-
-        # Even if the contact itself isn't hostile, its corp/alliance might be
-        if ctype == 'character':
-            if coid and get_hostile_state(coid, 'corporation'):
-                alerts.append(f"corporation **{corp_name}** is on hostile list")
-            if aid and get_hostile_state(aid, 'alliance'):
-                alerts.append(f"alliance **{alli_name}** is on hostile list")
-        elif ctype == 'corporation':
-            if aid and get_hostile_state(aid, 'alliance'):
-                alerts.append(f"alliance **{alli_name}** is on hostile list")
-
+        alerts = _get_contact_alerts(cid, info)
         if alerts:
+            ctype = info['contact_type']      # 'character' | 'corporation' | 'alliance'
+            cname = info.get('character') or info.get('corporation') or info.get('alliance') or info.get('contact_name') or ''
+            chars = info.get('characters', [])
             char_list = ', '.join(sorted(chars)) if chars else 'no characters'
+
+            formatted_alerts = [f"**{a}**" for a in alerts]
+            flags_text = "\n    - ".join(formatted_alerts)
+
             message = (
-                f"- A {s} **{ctype}** type contact **{cname}** found on **{char_list}**, flags: "
-                + "; ".join(alerts)
+                f"- A **{ctype}** type contact **{cname}** (Standing: {s:.2f}) found on **{char_list}**:"
+                f"\n  Flags:"
+                f"\n    - {flags_text}"
             )
             notifications[cid] = message
 

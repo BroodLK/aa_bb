@@ -1,3 +1,4 @@
+import sys
 from datetime import timedelta, time
 
 from django.db import models
@@ -12,10 +13,10 @@ from django.utils import timezone
 from allianceauth.authentication.models import State, UserProfile
 from allianceauth.groupmanagement.models import AuthGroup
 from allianceauth.eveonline.models import EveAllianceInfo, EveCorporationInfo
+from allianceauth.services.hooks import get_extension_logger
 
-import logging
 
-logger = logging.getLogger(__name__)
+logger = get_extension_logger(__name__)
 
 from django.utils.translation import gettext_lazy as _
 from django.apps import apps
@@ -474,10 +475,30 @@ class BigBrotherConfig(SingletonModel):
         verbose_name=_("Hostile Contact Change Discord Notifications")
     )
 
+    exclude_neutral_contacts = models.BooleanField(
+        default=False,
+        help_text=_("If enabled, contacts with neutral standing (0) to hostile entities will be excluded from user checks and notifications"),
+        verbose_name=_("Exclude Neutral Contacts from Checks")
+    )
+
     contract_notify = models.BooleanField(
         default=True,
         help_text=_("Whether to send Contract Change notifications to discord"),
         verbose_name=_("Hostile Contract Discord Notifications")
+    )
+
+    exclude_hauling_corps_from_courier = models.BooleanField(
+        default=False,
+        help_text=_("If enabled, courier contracts handled by major hauling corporations will be excluded from checks"),
+        verbose_name=_("Exclude Hauling Corps from Courier Contracts")
+    )
+
+    custom_hauling_corps = models.TextField(
+        blank=True,
+        default="",
+        help_text=_("Additional corporation IDs (comma-separated) to exclude from courier contract checks when the above setting is enabled. "
+                    "Built-in: MOONFIRE (98681117), Push Industries (98079862), Purple Frog (98421812), Black Frog (384667640), Red Frog (1495741119)"),
+        verbose_name=_("Custom Hauling Corporation IDs")
     )
 
     ct_notify = models.BooleanField(
@@ -502,6 +523,12 @@ class BigBrotherConfig(SingletonModel):
         default=True,
         help_text=_("Whether to send Suspicious Transaction notifications to discord"),
         verbose_name=_("Suspicious Transaction Notifications")
+    )
+
+    hide_unaudited_users = models.BooleanField(
+        default=False,
+        help_text=_("If enabled, users who have no audited characters will be hidden from the main dashboard dropdown."),
+        verbose_name=_("Hide Unaudited Users")
     )
 
     show_market_transactions = models.BooleanField(
@@ -793,6 +820,12 @@ class BigBrotherConfig(SingletonModel):
         default=False,
         help_text=_("Consider all nullsec regions as hostile?"),
         verbose_name=_("Consider Nullsec as Hostile")
+    )
+
+    consider_lowsec_hostile = models.BooleanField(
+        default=False,
+        help_text=_("Consider all lowsec regions as hostile?"),
+        verbose_name=_("Consider Lowsec as Hostile")
     )
 
     consider_all_structures_hostile = models.BooleanField(
@@ -1400,8 +1433,6 @@ class SusContractNote(models.Model):
         return f"Contract {self.contract.contract_id} note for user {self.user_id}"
 
 
-    from django.db import models
-
 class ProcessedTransaction(models.Model):
     """
     Tracks WalletJournalEntry IDs that already have generated notes.
@@ -1604,7 +1635,7 @@ class TicketToolConfig(SingletonModel):
       AFK monitoring, and Discord link checks.
     - Max_Afk_Days / afk_check: trailing max and post-ticket grace period.
     - discord_check fields: mirror the AFK logic but for Discord link status.
-    - Category_ID / staff_roles / Role_ID: Discord metadata controlling which
+    - Category_ID / role_id: Discord metadata controlling which
       category hosts the ticket, which roles gain access, and which role is pinged.
     - excluded_users: AllianceAuth users that should never receive automated tickets.
     """
@@ -1788,14 +1819,14 @@ class TicketToolConfig(SingletonModel):
     )
 
     discord_check_reason = models.TextField(
-        default="<@&{role}>,<@{namee}>, doesn't have their discord linked on corp auth, try to contact them and if unable, kick them out",
+        default="<@&{role}>,**{namee}**, doesn't have their discord linked on corp auth, try to contact them and if unable, kick them out",
         blank=True,
         null=True,
         help_text="Message to send with {role} and {namee} variables"
     )
 
     discord_check_reminder = models.TextField(
-        default="<@&{role}>,<@{namee}>'s compliance issue is still unresolved, try to contact them and if unable within {days} day(s) kick them out.",
+        default="<@&{role}>,**{namee}**'s compliance issue is still unresolved, try to contact them and if unable within {days} day(s) kick them out.",
         blank=True,
         null=True,
         help_text="Message to send with {role}, {namee} and {days} variables"
@@ -1816,16 +1847,9 @@ class TicketToolConfig(SingletonModel):
         verbose_name=_("Channel/Thread ID")
     )
 
-    staff_roles = models.TextField(
+    role_id = models.TextField(
         blank=True,
-        help_text="Comma-separated list of staff role IDs or names allowed on tickets"
-    )
-
-    Role_ID = models.PositiveBigIntegerField(
-        default=0,
-        null=True,
-        blank=True,
-        help_text="Role ID to get pinged alongside the non compliant user"
+        help_text="Comma-separated list of role IDs to add to ticket channels/threads"
     )
 
     excluded_users = models.ManyToManyField(
@@ -1890,7 +1914,7 @@ class TicketToolConfig(SingletonModel):
 
 
 # Dynamically add compliance_filter field if charlink is installed
-if CHARLINK_INSTALLED:
+if CHARLINK_INSTALLED and 'makemigrations' not in sys.argv and 'migrate' not in sys.argv:
     TicketToolConfig.add_to_class(
         'compliance_filter',
         models.ForeignKey(
@@ -2165,6 +2189,8 @@ class ComplianceTicket(models.Model):
     last_reminder_sent = models.IntegerField(default=0)
 
     is_resolved = models.BooleanField(default=False)
+    is_exception = models.BooleanField(default=False, help_text="Ticket is marked as an exception and won't receive reminders or be recreated")
+    exception_reason = models.TextField(blank=True, null=True, help_text="Reason why this ticket was marked as an exception")
 
     class Meta:
         verbose_name = "Compliance Ticket"

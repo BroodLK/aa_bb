@@ -35,7 +35,7 @@ class Migration(migrations.Migration):
                 ('discord_check_reminder', models.TextField(blank=True, default="<@&{role}>,<@{namee}>'s compliance issue is still unresolved, try to contact them and if unable within {days} day(s) kick them out.", help_text='Message to send with {role}, {namee} and {days} variables', null=True)),
                 ('Category_ID', models.CharField(help_text='Category ID to create the tickets in', max_length=255)),
                 ('Role_ID', models.CharField(help_text='Role ID to get pinged alongside the non compliant user', max_length=255)),
-                ('compliance_filter', models.ForeignKey(blank=True, help_text='Select your compliance filter', null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='compliance_filter', to='charlink.compliancefilter')),
+                # compliance_filter field is added conditionally via add_to_class() in models.py if charlink is installed
             ],
             options={
                 'abstract': False,

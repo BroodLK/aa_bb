@@ -3,16 +3,15 @@ Corporate wallet journal analysis helpers mirroring the member-level checks.
 """
 
 import html
-import logging
 import requests
 from typing import Dict, Optional, List
 from datetime import datetime, timedelta
 from django.utils import timezone
 
 from allianceauth.eveonline.models import EveCorporationInfo
+from allianceauth.services.hooks import get_extension_logger
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger = get_extension_logger(__name__)
 
 from ..app_settings import (
     get_eve_entity_type,
@@ -24,7 +23,10 @@ from ..app_settings import (
     is_location_hostile,
     get_system_owner,
     get_hostile_state,
+    is_highsec,
+    is_lowsec,
     corptools_active,
+    is_hostile_unified
 )
 
 if aablacklist_active():
@@ -35,9 +37,13 @@ try:
         from corptools.models import (
             CorporationAudit,
             CorporationWalletJournalEntry,
-            CorporationMarketTransaction,
             Structure,
         )
+        # Try to import CorporationMarketTransaction, but don't fail if it doesn't exist
+        try:
+            from corptools.models import CorporationMarketTransaction
+        except ImportError:
+            CorporationMarketTransaction = None
     else:
         CorporationAudit = None
         CorporationWalletJournalEntry = None
@@ -57,174 +63,10 @@ if EVEUNIVERSE_INSTALLED:
     except ImportError:
         EVEUNIVERSE_INSTALLED = False
 
-from ..models import BigBrotherConfig, ProcessedTransaction, SusTransactionNote, EveItemPrice
+from django.db.models import Q
+from ..models import BigBrotherConfig, ProcessedTransaction, SusTransactionNote, EveItemPrice, EntityInfoCache
 
 SUS_TYPES = ("player_trading", "corporation_account_withdrawal", "player_donation")
-
-MAJOR_HUBS = {30000142, 30002187, 30002659, 30002510, 30002053}
-SECONDARY_HUBS = {30002661, 30003733, 30001389, 30000144}
-
-
-def is_major_hub(tx: dict) -> bool:
-    system_id = tx.get("system_id")
-    if not system_id:
-        return False
-    return int(system_id) in MAJOR_HUBS
-
-
-def is_secondary_hub(tx: dict) -> bool:
-    system_id = tx.get("system_id")
-    if not system_id:
-        return False
-    return int(system_id) in SECONDARY_HUBS
-
-
-def is_excluded_system(tx: dict, excluded_str: str) -> bool:
-    if not excluded_str:
-        return False
-    system_id = tx.get("system_id")
-    if not system_id:
-        return False
-    excluded_ids = {int(s.strip()) for s in excluded_str.split(",") if s.strip().isdigit()}
-    return int(system_id) in excluded_ids
-
-
-def get_or_create_prices(item_id):
-    cfg = BigBrotherConfig.get_solo()
-
-    # Check local cache first
-    try:
-        price_obj = EveItemPrice.objects.get(eve_type_id=item_id)
-        # If it's fresh (less than configured days), return it
-        if price_obj.updated > timezone.now() - timedelta(days=cfg.market_transactions_price_max_age):
-            return price_obj
-    except EveItemPrice.DoesNotExist:
-        price_obj = None
-
-    # Need to fetch/refresh
-    primary = cfg.market_transactions_price_method
-    methods = [primary]
-    if primary == 'Janice':
-        methods.append('Fuzzwork')
-    else:
-        methods.append('Janice')
-
-    buy = None
-    sell = None
-
-    for method in methods:
-        if method == 'Janice':
-            api_key = cfg.market_transactions_janice_api_key
-            if not api_key:
-                continue
-            try:
-                response = requests.get(
-                    f"https://janice.e-351.com/api/rest/v2/pricer/{item_id}",
-                    headers={
-                        "Content-Type": "text/plain",
-                        "X-ApiKey": api_key,
-                        "accept": "application/json",
-                    },
-                    timeout=10
-                )
-                if response.status_code == 200:
-                    data = response.json()
-                    if "immediatePrices" in data:
-                        if cfg.market_transactions_price_instant:
-                            buy = float(data["immediatePrices"]["buyPrice5DayMedian"])
-                            sell = float(data["immediatePrices"]["sellPrice5DayMedian"])
-                        else:
-                            buy = float(data["top5AveragePrices"]["buyPrice5DayMedian"])
-                            sell = float(data["top5AveragePrices"]["sellPrice5DayMedian"])
-                        break
-            except Exception as e:
-                logger.error(f"Janice price fetch failed for {item_id}: {e}")
-
-        elif method == 'Fuzzwork':
-            station_id = cfg.market_transactions_fuzzwork_station_id or 60003760
-            try:
-                response = requests.get(
-                    "https://market.fuzzwork.co.uk/aggregates/",
-                    params={
-                        "types": item_id,
-                        "station": station_id,
-                    },
-                    timeout=10
-                )
-                if response.status_code == 200:
-                    data = response.json()
-                    if str(item_id) in data:
-                        item_data = data[str(item_id)]
-                        if cfg.market_transactions_price_instant:
-                            buy = float(item_data["buy"]["max"])
-                            sell = float(item_data["sell"]["min"])
-                        else:
-                            buy = float(item_data["buy"]["percentile"])
-                            sell = float(item_data["sell"]["percentile"])
-                        break
-            except Exception as e:
-                logger.error(f"Fuzzwork price fetch failed for {item_id}: {e}")
-
-    if buy is not None and sell is not None:
-        if price_obj:
-            price_obj.buy = buy
-            price_obj.sell = sell
-            price_obj.save()
-            return price_obj
-        else:
-            return EveItemPrice.objects.create(
-                eve_type_id=item_id,
-                buy=buy,
-                sell=sell
-            )
-
-    return price_obj
-
-
-def is_above_threshold(tx: dict, threshold_percent: float) -> bool:
-    type_id = tx.get("type_id")
-    amount = tx.get("raw_amount", 0)
-    if not type_id or amount == 0:
-        return True
-
-    avg_price = None
-
-    if EVEUNIVERSE_INSTALLED:
-        cfg = BigBrotherConfig.get_solo()
-        try:
-            price_obj = EveMarketPrice.objects.filter(eve_type_id=type_id).first()
-            if price_obj and price_obj.average_price and price_obj.average_price > 0:
-                # Check age
-                if hasattr(price_obj, 'updated_at') and price_obj.updated_at > timezone.now() - timedelta(days=cfg.market_transactions_price_max_age):
-                    avg_price = float(price_obj.average_price)
-        except Exception:
-            logger.exception("Error checking EveUniverse price")
-
-    if avg_price is None:
-        # Fallback to local cache / Janice / Fuzzwork
-        try:
-            local_price = get_or_create_prices(type_id)
-            if local_price:
-                avg_price = (local_price.buy + local_price.sell) / 2
-        except Exception:
-            logger.exception("Error checking fallback prices")
-
-    if avg_price is None or avg_price <= 0:
-        return True
-
-    try:
-        quantity = tx.get("quantity", 1)
-        if quantity == 0:
-            quantity = 1
-        unit_price = abs(amount) / quantity
-
-        diff_percent = (abs(unit_price - avg_price) / avg_price) * 100
-        if diff_percent > threshold_percent:
-            return True
-    except Exception:
-        logger.exception("Error checking price threshold")
-
-    return False
 
 def _find_employment_at(employment: list, date: datetime) -> Optional[dict]:
     """Compat helper that returns the corp active at the provided date."""
@@ -249,117 +91,168 @@ def _find_alliance_at(history: list, date: datetime) -> Optional[int]:
     return None
 
 
-def gather_user_transactions(corp_id: int):
+def gather_user_transactions(corp_id: int, ref_types: list = None):
     """
     Return a queryset of every wallet journal entry for the corp divisions.
 
     Parameter mirrors the member helper naming but expects a corporation id.
     """
     if not corptools_active() or CorporationWalletJournalEntry is None:
-        from ..models import ProcessedTransaction
-        return ProcessedTransaction.objects.none()
+        return []
     try:
         corp_info = EveCorporationInfo.objects.get(corporation_id=corp_id)
         corp_audit = CorporationAudit.objects.get(corporation=corp_info)
     except (EveCorporationInfo.DoesNotExist, CorporationAudit.DoesNotExist):
-        from ..models import ProcessedTransaction
-        return ProcessedTransaction.objects.none()
+        return CorporationWalletJournalEntry.objects.none()
 
     qs = CorporationWalletJournalEntry.objects.filter(division__corporation=corp_audit)
-    logger.info(f"qs:{qs.count()}")
+
+    if ref_types:
+        qs = qs.filter(ref_type__in=ref_types)
+
+    logger.info(f"Gathered {qs.count()} wallet entries for corp {corp_id}")
     return qs
 
 
 def get_user_transactions(qs) -> Dict[int, Dict]:
-    """
-    Transform raw WalletJournalEntry queryset into structured dict
-    with first_party (first_party) and second_party (second_party) info,
-    resolving corp/alliance at transaction time.
-    """
+    # Use a list to avoid re-evaluating the queryset
+    entries = list(qs)
+    if not entries:
+        return {}
+
     result: Dict[int, Dict] = {}
-    for entry in qs:
+
+    # Bulk fetch CorporationMarketTransaction if needed
+    market_tx_ids = [
+        e.context_id for e in entries
+        if e.context_id_type == "market_transaction_id" and e.context_id
+    ]
+    market_tx_map = {}
+    if market_tx_ids and CorporationMarketTransaction:
+        market_tx_map = {
+            m.transaction_id: m
+            for m in CorporationMarketTransaction.objects.filter(
+                transaction_id__in=market_tx_ids
+            ).select_related("location")
+        }
+
+    # Pre-collect all entity IDs and their normalized timestamps for bulk fetching info
+    # EntityInfoCache normalizes to the hour.
+    lookups = set()
+    for entry in entries:
+        dt_hour = entry.date.replace(minute=0, second=0, microsecond=0)
+        if entry.first_party_id:
+            lookups.add((entry.first_party_id, dt_hour))
+        if entry.second_party_id:
+            lookups.add((entry.second_party_id, dt_hour))
+        if entry.context_id_type == "character_id" and entry.context_id:
+            lookups.add((entry.context_id, dt_hour))
+
+    # Bulk fetch EntityInfoCache entries
+    eids = {l[0] for l in lookups}
+    cache_entries = EntityInfoCache.objects.filter(entity_id__in=eids)
+
+    # Map them by (entity_id, as_of)
+    info_map = {
+        (ce.entity_id, ce.as_of): ce.data
+        for ce in cache_entries
+    }
+
+    def _get_info(eid: int, when: datetime) -> dict:
+        if not eid:
+            return get_entity_info(None, when)
+
+        dt_hour = when.replace(minute=0, second=0, microsecond=0)
+        cached = info_map.get((eid, dt_hour))
+        if cached:
+            return cached
+
+        # Fallback to single fetch
+        info = get_entity_info(eid, when)
+        info_map[(eid, dt_hour)] = info
+        return info
+
+    for entry in entries:
         tx_id = entry.entry_id
         tx_date = entry.date
 
-        # first_party = first_party_id
         first_party_id = entry.first_party_id
-        first_party_type = get_eve_entity_type(first_party_id)
-        iinfo = get_entity_info(first_party_id, tx_date)
+        iinfo = _get_info(first_party_id, tx_date)
 
-        # second_party = second_party_id
         second_party_id = entry.second_party_id
-        second_party_type = get_eve_entity_type(second_party_id)
-        ainfo = get_entity_info(second_party_id, tx_date)
+        ainfo = _get_info(second_party_id, tx_date)
 
-        context = ""
         context_id = entry.context_id
         context_type = entry.context_id_type
         system_id = None
         location_id = None
         type_id = None
         quantity = 1
-        if context_type == "structure_id":  # Provide human-readable structure context.
+
+        if context_type == "structure_id":
             name = resolve_location_name(context_id)
             context = f"Structure: {name}" if name else f"Structure ID: {context_id}"
             location_id = context_id
             system_id = resolve_location_system_id(context_id)
-        elif context_type == "character_id":  # Link to a specific character.
-            context = f"Character: {get_entity_info(context_id, tx_date)['name']}"
-        elif context_type == "eve_system":  # System-level context from journal entry.
+        elif context_type == "character_id":
+            cinfo = _get_info(context_id, tx_date)
+            context = f"Character: {cinfo['name']}"
+        elif context_type == "eve_system":
             context = "EVE System"
             system_id = context_id
             location_id = context_id
-        elif context_type is None:  # No extra context provided.
+        elif context_type is None:
             context = "None"
-        elif context_type == "market_transaction_id":  # Reference to market transaction.
+        elif context_type == "market_transaction_id":
             context = f"Market Transaction ID: {context_id}"
-            if CorporationMarketTransaction:
-                m_tx = CorporationMarketTransaction.objects.filter(transaction_id=context_id).first()
-                if m_tx:
-                    location_id = m_tx.location_id if hasattr(m_tx, "location_id") else None
-                    system_id = m_tx.location.system_id if hasattr(m_tx.location, "system_id") else None
-                    type_id = m_tx.type_id
-                    quantity = m_tx.quantity
-        else:  # Fallback for any future context types.
+            m_tx = market_tx_map.get(context_id)
+            if m_tx:
+                location_id = getattr(m_tx, "location_id", None)
+                if hasattr(m_tx, "location") and m_tx.location:
+                    system_id = getattr(m_tx.location, "system_id", None)
+                type_id = m_tx.type_id
+                quantity = m_tx.quantity
+        else:
             context = f"{context_type}: {context_id}"
 
-        amount =  "{:,}".format(entry.amount)
-        balance =  "{:,}".format(entry.balance)
-
         result[tx_id] = {
-            'entry_id': tx_id,
-            'date': tx_date,
-            'amount': amount,
-            'raw_amount': float(entry.amount),
-            'balance': balance,
-            'description': entry.description,
-            'reason': entry.reason,
-            'first_party_id': first_party_id,
-            'first_party_name': iinfo['name'],
-            'first_party_corporation_id': iinfo['corp_id'],
-            'first_party_corporation': iinfo['corp_name'],
-            'first_party_alliance_id': iinfo['alli_id'],
-            'first_party_alliance': iinfo['alli_name'],
-            'second_party_id': second_party_id,
-            'second_party_name': ainfo['name'],
-            'second_party_corporation_id': ainfo['corp_id'],
-            'second_party_corporation': ainfo['corp_name'],
-            'second_party_alliance_id': ainfo['alli_id'],
-            'second_party_alliance': ainfo['alli_name'],
-            'context': context,
-            'type': entry.ref_type,
-            'system_id': system_id,
-            'location_id': location_id,
-            'type_id': type_id,
-            'quantity': quantity,
+            "entry_id": tx_id,
+            "date": tx_date,
+            "amount": "{:,}".format(entry.amount),
+            "raw_amount": float(entry.amount),
+            "balance": "{:,}".format(entry.balance),
+            "description": entry.description,
+            "reason": entry.reason,
+            "first_party_id": first_party_id,
+            "first_party_name": iinfo["name"],
+            "first_party_corporation_id": iinfo["corp_id"],
+            "first_party_corporation": iinfo["corp_name"],
+            "first_party_alliance_id": iinfo["alli_id"],
+            "first_party_alliance": iinfo["alli_name"],
+            "second_party_id": second_party_id,
+            "second_party_name": ainfo["name"],
+            "second_party_corporation_id": ainfo["corp_id"],
+            "second_party_corporation": ainfo["corp_name"],
+            "second_party_alliance_id": ainfo["alli_id"],
+            "second_party_alliance": ainfo["alli_name"],
+            "context": context,
+            "type": entry.ref_type,
+            "system_id": system_id,
+            "location_id": location_id,
+            "type_id": type_id,
+            "quantity": quantity,
+            "info_cache": {
+                first_party_id: iinfo,
+                second_party_id: ainfo,
+            }
         }
-    #logger.debug(f"Transformed {len(result)} transactions")
+
     return result
 
 
-def is_transaction_hostile(tx: dict) -> bool:
+def is_transaction_hostile(tx: dict, safe_entities: set = None) -> bool:
     """
-    Mark transaction as hostile if first_party or second_party or corps/alliances are blacklisted
+    Checks if a wallet transaction is considered hostile using the unified processor.
     """
     ttype = tx.get("type") or ""
     is_sus_type = any(st in ttype for st in SUS_TYPES)
@@ -368,123 +261,103 @@ def is_transaction_hostile(tx: dict) -> bool:
     if not (is_sus_type or is_market):
         return False
 
-    def _to_int(val):
-        try:
-            return int(val) if val is not None else None
-        except (ValueError, TypeError):
-            return None
+    fpid = tx.get("first_party_id")
+    spid = tx.get("second_party_id")
 
-    fpid = _to_int(tx.get("first_party_id"))
-    spid = _to_int(tx.get("second_party_id"))
-    fp_corp = _to_int(tx.get("first_party_corporation_id"))
-    sp_corp = _to_int(tx.get("second_party_corporation_id"))
-    fp_alli = _to_int(tx.get("first_party_alliance_id"))
-    sp_alli = _to_int(tx.get("second_party_alliance_id"))
-    when = tx.get("date")
-
-    if fp_corp and sp_corp and fp_corp == sp_corp:
-        return False
-
-    if fp_alli and sp_alli and fp_alli == sp_alli:
-        return False
-
-    cfg = BigBrotherConfig.get_solo()
-
-    # Determine if either party is hostile using mega-helper
-    fp_hostile = get_hostile_state(fpid, when=when)
-    sp_hostile = get_hostile_state(spid, when=when)
-
-    if fp_hostile or sp_hostile:
-        if is_market:
-            if not cfg.market_transactions_show_major_hubs and is_major_hub(tx):
-                return False
-            if not cfg.market_transactions_show_secondary_hubs and is_secondary_hub(tx):
-                return False
-            if is_excluded_system(tx, cfg.market_transactions_excluded_systems):
-                return False
-
-            if cfg.market_transactions_threshold_alert and cfg.market_transactions_threshold_percent > 0:
-                if not is_above_threshold(tx, cfg.market_transactions_threshold_percent):
-                    return False
-        return True
-
-    return False
+    return is_hostile_unified(
+        involved_ids=[fpid, spid],
+        location_id=tx.get("location_id"),
+        system_id=tx.get("system_id"),
+        is_market=is_market,
+        market_item_id=tx.get("type_id"),
+        market_unit_price=abs(tx.get("raw_amount")) / (tx.get("quantity") or 1) if tx.get("raw_amount") is not None else None,
+        when=tx.get("date"),
+        safe_entities=safe_entities,
+        entity_info_cache=tx.get("info_cache")
+    )
 
 
 def render_transactions(corp_id: int) -> str:
     """
     Render HTML table of recent hostile wallet transactions for the corp.
     """
-    qs = gather_user_transactions(corp_id)
-    txs = get_user_transactions(qs)
+    try:
+        qs = gather_user_transactions(corp_id)
+        txs = get_user_transactions(qs)
 
-    # sort by date desc
-    all_list = sorted(txs.values(), key=lambda x: x['date'], reverse=True)
-    hostile: List[dict] = []
-    for tx in all_list:
-        if is_transaction_hostile(tx):  # Keep only transactions that tripped hostility logic.
-            hostile.append(tx)
-    if not hostile:  # No hostile rows were identified.
-        return '<p>No hostile transactions found.</p>'
+        from ..app_settings import get_safe_entities
+        safe_entities = get_safe_entities()
 
-    limit = 50
-    display = hostile[:limit]
-    skipped = max(0, len(hostile) - limit)
+        # sort by date desc
+        all_list = sorted(txs.values(), key=lambda x: x['date'], reverse=True)
+        hostile: List[dict] = []
+        for tx in all_list:
+            if is_transaction_hostile(tx, safe_entities=safe_entities):  # Keep only transactions that tripped hostility logic.
+                hostile.append(tx)
+        if not hostile:  # No hostile rows were identified.
+            return '<p>No hostile transactions found.</p>'
 
-    # define headers to show
-    first = display[0]
-    HIDDEN = {'first_party_id','second_party_id','first_party_corporation_id','second_party_corporation_id',
-              'first_party_alliance_id','second_party_alliance_id','entry_id'}
-    headers = []
-    for column in first.keys():
-        if column not in HIDDEN:  # Hide ids/foreign keys that are not user-facing.
-            headers.append(column)
+        limit = 50
+        display = hostile[:limit]
+        skipped = max(0, len(hostile) - limit)
 
-    parts = ['<table class="table table-striped">','<thead>','<tr>']
-    for h in headers:
-        parts.append(f'<th>{html.escape(h.replace("_"," ").title())}</th>')
-    parts.extend(['</tr>','</thead>','<tbody>'])
+        # define headers to show
+        first = display[0]
+        HIDDEN = {'first_party_id','second_party_id','first_party_corporation_id','second_party_corporation_id',
+                  'first_party_alliance_id','second_party_alliance_id','entry_id'}
+        headers = []
+        for column in first.keys():
+            if column not in HIDDEN:  # Hide ids/foreign keys that are not user-facing.
+                headers.append(column)
 
-    cfg = BigBrotherConfig.get_solo()
-    hostile_corps = {s.strip() for s in (cfg.hostile_corporations or "").split(",") if s.strip()}
-    hostile_allis = {s.strip() for s in (cfg.hostile_alliances or "").split(",") if s.strip()}
+        parts = ['<table class="table table-striped table-hover stats">','<thead>','<tr>']
+        for h in headers:
+            parts.append(f'<th>{html.escape(h.replace("_"," ").title())}</th>')
+        parts.extend(['</tr>','</thead>','<tbody>'])
 
-    for t in display:
-        parts.append('<tr>')
-        for col in headers:
-            val = html.escape(str(t.get(col)))
-            style = ''
-            # reuse contract style logic by mapping to transaction
-            if col == 'type':  # Highlight suspicious ref types inline.
-                for key in SUS_TYPES:
-                    if key in t['type']:  # Suspect ref-type.
+        cfg = BigBrotherConfig.get_solo()
+        hostile_corps = {s.strip() for s in (cfg.hostile_corporations or "").split(",") if s.strip()}
+        hostile_allis = {s.strip() for s in (cfg.hostile_alliances or "").split(",") if s.strip()}
+
+        for t in display:
+            parts.append('<tr>')
+            for col in headers:
+                val = html.escape(str(t.get(col)))
+                style = ''
+                # reuse contract style logic by mapping to transaction
+                if col == 'type':  # Highlight suspicious ref types inline.
+                    for key in SUS_TYPES:
+                        if key in t['type']:  # Suspect ref-type.
+                            style = 'color: red;'
+                    if cfg.show_market_transactions:
+                        if "market_escrow" in t['type'] or "market_transaction" in t['type']:
+                            style = 'color: red;'
+                if col in ('first_party_name', 'second_party_name'):
+                    pid = t.get(col + '_id')
+                    if get_hostile_state(pid, 'character'):
                         style = 'color: red;'
-                if cfg.show_market_transactions:
-                    if "market_escrow" in t['type'] or "market_transaction" in t['type']:
+                if col.endswith('corporation'):
+                    cid = t.get(col + '_id')
+                    if get_hostile_state(cid, 'corporation'):
                         style = 'color: red;'
-            if col in ('first_party_name', 'second_party_name'):
-                pid = t.get(col + '_id')
-                if get_hostile_state(pid, 'character'):
-                    style = 'color: red;'
-            if col.endswith('corporation'):
-                cid = t.get(col + '_id')
-                if get_hostile_state(cid, 'corporation'):
-                    style = 'color: red;'
-            if col.endswith('alliance'):
-                aid = t.get(col + '_id')
-                if get_hostile_state(aid, 'alliance'):
-                    style = 'color: red;'
-            def make_td(val, style=""):
-                """Render a TD with optional inline style for hostile cues."""
-                style_attr = f' style="{style}"' if style else ""
-                return f"<td{style_attr}>{val}</td>"
-            parts.append(make_td(val, style))
-        parts.append('</tr>')
+                if col.endswith('alliance'):
+                    aid = t.get(col + '_id')
+                    if get_hostile_state(aid, 'alliance'):
+                        style = 'color: red;'
+                def make_td(val, style=""):
+                    """Render a TD with optional inline style for hostile cues."""
+                    style_attr = f' style="{style}"' if style else ""
+                    return f"<td{style_attr}>{val}</td>"
+                parts.append(make_td(val, style))
+            parts.append('</tr>')
 
-    parts.extend(['</tbody>','</table>'])
-    if skipped:  # Let the reviewer know older hostile rows are omitted.
-        parts.append(f'<p>Showing {limit} of {len(hostile)} hostile transactions; skipped {skipped} older ones.</p>')
-    return '\n'.join(parts)
+        parts.extend(['</tbody>','</table>'])
+        if skipped:  # Let the reviewer know older hostile rows are omitted.
+            parts.append(f'<p>Showing {limit} of {len(hostile)} hostile transactions; skipped {skipped} older ones.</p>')
+        return '\n'.join(parts)
+    except Exception as e:
+        logger.exception(f"Error rendering transactions for corp {corp_id}")
+        return f"<p class='text-danger'>Error rendering transactions: {str(e)}</p>"
 
 
 def get_corp_hostile_transactions(corp_id: int) -> Dict[int, str]:
@@ -508,11 +381,15 @@ def get_corp_hostile_transactions(corp_id: int) -> Dict[int, str]:
         new_qs = qs_all.filter(entry_id__in=new)
         del qs_all
         rows = get_user_transactions(new_qs)
+
+        from ..app_settings import get_safe_entities
+        safe_entities = get_safe_entities()
+
         for eid, tx in rows.items():
             pt, created = ProcessedTransaction.objects.get_or_create(entry_id=eid)
             if not created:  # Another worker finished first; do not duplicate notes.
                 continue
-            if not is_transaction_hostile(tx):  # Ignore non-hostile transactions.
+            if not is_transaction_hostile(tx, safe_entities=safe_entities):  # Ignore non-hostile transactions.
                 continue
             flags = []
             if tx['type']:  # Skip type analysis when CCP omitted the ref type.
@@ -551,16 +428,14 @@ def get_corp_hostile_transactions(corp_id: int) -> Dict[int, str]:
             flags_text = "\n    - ".join(flags)
 
             note = (
-                f"- **{tx['date']}**: "
-                f"\n  - amount **{tx['amount']}**, "
-                f"\n  - type **{tx['type']}**, "
-                f"\n  - reason **{tx['reason']}**, "
-                f"\n  - context **{tx['context']}**, "
-                f"\n  - from **{tx['first_party_name']}**(**{tx['first_party_corporation']}**/"
-                  f"**{tx['first_party_alliance']}**), "
-                f"\n  - to **{tx['second_party_name']}**(**{tx['second_party_corporation']}**/"
-                  f"**{tx['second_party_alliance']}**); "
-                f"\n  - flags:\n    - {flags_text}"
+                f"- **{tx['date']}** · **{tx['amount']} ISK**"
+                f"\n  - **Type:** {tx['type']}"
+                f"\n  - **From:** {tx['first_party_name']} ({tx['first_party_corporation']} | {tx['first_party_alliance']})"
+                f"\n  - **To:** {tx['second_party_name']} ({tx['second_party_corporation']} | {tx['second_party_alliance']})"
+                f"\n  - **Reason:** {tx['reason']}"
+                f"\n  - **Context:** {tx['context']}"
+                f"\n  - **Flags:**"
+                f"\n    - {flags_text}"
             )
             SusTransactionNote.objects.update_or_create(
                 transaction=pt,

@@ -6,15 +6,13 @@ highlight hostile counterparties, and cache note text for notifications.
 """
 
 import html
-import logging
-
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
-
 from typing import Dict, Optional, List
 from datetime import datetime
 
 from allianceauth.eveonline.models import EveCorporationInfo
+from allianceauth.services.hooks import get_extension_logger
+
+logger = get_extension_logger(__name__)
 
 from ..app_settings import (
     get_character_id,
@@ -27,6 +25,7 @@ from ..app_settings import (
     get_system_owner,
     get_hostile_state,
     corptools_active,
+    is_hostile_unified
 )
 
 if aablacklist_active():
@@ -74,14 +73,12 @@ def gather_user_contracts(corp_id: int):
     Fetch every CorporateContract row for the given corporation id.
     """
     if not corptools_active() or CorporateContract is None:
-        from ..models import ProcessedContract
-        return ProcessedContract.objects.none()
+        return []
     try:
         corp_info = EveCorporationInfo.objects.get(corporation_id=corp_id)
         corp_audit = CorporationAudit.objects.get(corporation=corp_info)
     except (EveCorporationInfo.DoesNotExist, CorporationAudit.DoesNotExist):
-        from ..models import ProcessedContract
-        return ProcessedContract.objects.none()
+        return CorporateContract.objects.none()
 
     qs = CorporateContract.objects.filter(corporation=corp_audit)
     return qs
@@ -92,20 +89,28 @@ def get_user_contracts(qs) -> Dict[int, Dict]:
     with corp/alliance names at the contract issue date, combined.
     Uses c.for_corporation to identify corporate assignees.
     """
-    logger.info(f"Number of contracts: {len(qs)}")
-    number = 0
     result: Dict[int, Dict] = {}
+
+    _info_cache: Dict[tuple[int, int], dict] = {}
+
+    def _cached_info(eid: int, when: datetime) -> dict:
+        key = (int(eid or 0), int(when.date().toordinal()))
+        if key in _info_cache:
+            return _info_cache[key]
+        info = get_entity_info(eid, when)
+        if not info:
+            info = {'name': 'Unknown', 'corp_id': None, 'corp_name': 'Unknown', 'alli_id': None, 'alli_name': 'Unknown'}
+        _info_cache[key] = info
+        return info
+
     for c in qs:
         cid = c.contract_id
         issue = c.date_issued
-        number += 1
-        logger.info(f"corp contract number: {number}")
+        timeee = issue or timezone.now()
 
         # -- issuer --
         issuer_id = get_character_id(c.issuer_name)
-        issuer_type = get_eve_entity_type(issuer_id)
-        timeee = getattr(c, "timestamp", timezone.now())
-        iinfo = get_entity_info(issuer_id, timeee)
+        iinfo = _cached_info(issuer_id, timeee)
 
         # -- assignee --
         if c.assignee_id != 0:  # Corporate contracts specify assignee_id directly.
@@ -113,9 +118,7 @@ def get_user_contracts(qs) -> Dict[int, Dict]:
         else:
             assignee_id = c.acceptor_id
 
-        assignee_type = get_eve_entity_type(assignee_id)
-        ainfo = get_entity_info(assignee_id, timeee)
-
+        ainfo = _cached_info(assignee_id, timeee)
 
         result[cid] = {
             'contract_id':              cid,
@@ -136,11 +139,10 @@ def get_user_contracts(qs) -> Dict[int, Dict]:
             'assignee_alliance_id':     ainfo["alli_id"],
             'status':                   c.status,
             'start_location_id':        getattr(c, "start_location_id", None),
-            'start_location':           resolve_location_name(getattr(c, "start_location_id", None)),
+            'start_location':           resolve_location_name(getattr(c, "start_location_id", None)) or "Unknown Location",
             'end_location_id':          getattr(c, "end_location_id", None),
-            'end_location':             resolve_location_name(getattr(c, "end_location_id", None)),
+            'end_location':             resolve_location_name(getattr(c, "end_location_id", None)) or "Unknown Location",
         }
-    logger.info(f"Number of contracts returned: {len(result)}")
     return result
 
 def get_cell_style_for_contract_row(column: str, row: dict) -> str:
@@ -190,40 +192,26 @@ def get_cell_style_for_contract_row(column: str, row: dict) -> str:
 
     return ''
 
-def is_contract_row_hostile(row: dict) -> bool:
-    def _to_int(val):
-        try:
-            return int(val) if val is not None else None
-        except (ValueError, TypeError):
-            return None
-
-    issuer_corp_id = _to_int(row.get("issuer_corporation_id"))
-    issuer_alli_id = _to_int(row.get("issuer_alliance_id"))
-    assignee_corp_id = _to_int(row.get("assignee_corporation_id"))
-    assignee_alli_id = _to_int(row.get("assignee_alliance_id"))
-    issuer_id = _to_int(row.get("issuer_id"))
-    assignee_id = _to_int(row.get("assignee_id"))
+def is_contract_row_hostile(row: dict, safe_entities: set = None) -> bool:
+    """
+    Checks if a contract is considered hostile using the unified processor.
+    Checks both start and end locations.
+    """
+    issuer_id = row.get("issuer_id")
+    assignee_id = row.get("assignee_id")
     when = row.get("issued_date")
+    start_loc = row.get("start_location_id")
+    end_loc = row.get("end_location_id")
 
-    # Same corporation check (consistency with transactions)
-    if issuer_corp_id and assignee_corp_id and issuer_corp_id == assignee_corp_id:
-        return False
-
-    # Check issuer and assignee hostility
-    issuer_hostile = get_hostile_state(issuer_id, when=when)
-    assignee_hostile = get_hostile_state(assignee_id, when=when)
-
-    if issuer_hostile or assignee_hostile:
+    # Check start location
+    if is_hostile_unified(involved_ids=[issuer_id, assignee_id], location_id=start_loc, when=when, safe_entities=safe_entities):
         return True
 
-    if is_location_hostile(row.get("start_location_id")):
-        return True
-    if is_location_hostile(row.get("end_location_id")):
+    # Check end location
+    if is_hostile_unified(involved_ids=[issuer_id, assignee_id], location_id=end_loc, when=when, safe_entities=safe_entities):
         return True
 
     return False
-
-
 
 
 def get_corp_hostile_contracts(corp_id: int) -> Dict[int, str]:
@@ -234,8 +222,8 @@ def get_corp_hostile_contracts(corp_id: int) -> Dict[int, str]:
     text while remaining idempotent.
     """
     cfg = BigBrotherConfig.get_solo()
-    hostile_corps = cfg.hostile_corporations
-    hostile_allis = cfg.hostile_alliances
+    from ..app_settings import get_safe_entities
+    safe_entities = get_safe_entities()
 
     # 1) Gather all raw contracts
     all_qs = gather_user_contracts(corp_id)
@@ -267,7 +255,7 @@ def get_corp_hostile_contracts(corp_id: int) -> Dict[int, str]:
             if not created:
                 continue
 
-            if not is_contract_row_hostile(c):  # Skip non-hostile contracts to limit note noise.
+            if not is_contract_row_hostile(c, safe_entities=safe_entities):  # Skip non-hostile contracts to limit note noise.
                 continue
 
             flags: List[str] = []
@@ -317,16 +305,12 @@ def get_corp_hostile_contracts(corp_id: int) -> Dict[int, str]:
             flags_text = "\n    - ".join(flags)
 
             note_text = (
-                f"- **{c['contract_type']}**: "
-                f"\n  - issued **{c['issued_date']}**, "
-                f"\n  - ended **{c['end_date']}**, "
-                f"\n  - from **{c['issuer_name']}**(**{c['issuer_corporation']}**/"
-                  f"**{c['issuer_alliance']}**), "
-                f"\n  - to **{c['assignee_name']}**(**{c['assignee_corporation']}**/"
-                  f"**{c['assignee_alliance']}**), "
-                f"\n  - start **{c['start_location']}**, "
-                f"\n  - end **{c['end_location']}**; "
-                f"\n  - flags:\n    - {flags_text}"
+                f"- **{c['contract_type']}** ({c['issued_date']} → {c['end_date']})"
+                f"\n  - **From:** {c['issuer_name']} ({c['issuer_corporation']} | {c['issuer_alliance']})"
+                f"\n  - **To:** {c['assignee_name']} ({c['assignee_corporation']} | {c['assignee_alliance']})"
+                f"\n  - **Location:** {c['start_location']} → {c['end_location']}"
+                f"\n  - **Flags:**"
+                f"\n    - {flags_text}"
             )
             SusContractNote.objects.update_or_create(
                 contract=pc,

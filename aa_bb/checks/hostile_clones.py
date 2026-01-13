@@ -3,12 +3,14 @@
 Clone location analysis helpers.
 
 Similar to the hostile asset check, these routines find home/jump clones,
-resolve who owns each system, and flag anything that sits in hostile space.
+resolve who owns each system, and flag anything that sits in hostile space
+using the unified processor.
 """
 
 from django.contrib.auth.models import User
-
+import html
 from allianceauth.authentication.models import CharacterOwnership
+from allianceauth.services.hooks import get_extension_logger
 
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
@@ -24,103 +26,52 @@ from ..app_settings import (
     is_highsec,
     is_lowsec,
     corptools_active,
+    is_hostile_unified,
+    get_location_owner,
 )
+from django.utils import timezone
 from ..models import BigBrotherConfig
-import logging
 
-logger = logging.getLogger(__name__)
+logger = get_extension_logger(__name__)
 
 try:
     if corptools_active():
-        from corptools.models import CharacterAudit, Clone, JumpClone, Implant
+        from corptools.models import CharacterAudit, Clone, JumpClone, Implant, CharacterLocation
     else:
         CharacterAudit = None
         Clone = None
         JumpClone = None
         Implant = None
+        CharacterLocation = None
 except ImportError:
     CharacterAudit = None
     Clone = None
     JumpClone = None
     Implant = None
+    CharacterLocation = None
 
 
-def get_clones(user_id: int) -> Dict[int, Optional[str]]:
+def get_clones(user_id: int) -> Dict[int, dict]:
     """
-    Return a dict mapping system IDs to their names (or None if unnamed)
+    Return a dict mapping system IDs to a dict containing their name and a list of locations
     where this user has clones.
     """
     if not corptools_active() or CharacterAudit is None:
         return {}
-    try:
-        user = User.objects.get(pk=user_id)
-    except User.DoesNotExist:
+
+    audits = CharacterAudit.objects.filter(character__character_ownership__user_id=user_id).select_related("character")
+    audit_ids = [a.pk for a in audits]
+    char_map = {a.pk: a.character for a in audits}
+
+    if not audit_ids:
         return {}
 
-    system_map: Dict[int, Optional[str]] = {}
-
-    def add_location(system_obj, loc_id):
-        """Store system name/id for the clone location."""
-        if system_obj:  # Clone located in a known system—store the friendly name.
-            # use .pk for primary key, map to its name
-            system_map[system_obj.pk] = system_obj.name
-        elif loc_id is not None:  # Fallback when EveLocation missing but ID available.
-            system_map[loc_id] = resolve_location_name(loc_id)
-
-    # iterate through all characters owned by the user
-    for co in CharacterOwnership.objects.filter(user=user).select_related("character"):
-        try:
-            char_audit = CharacterAudit.objects.get(character=co.character)
-        except CharacterAudit.DoesNotExist:
-            continue
-
-        # Home clone
-        try:
-            home_clone = Clone.objects.select_related(
-                "location_name__system"
-            ).get(character=char_audit)
-            loc = home_clone.location_name
-            add_location(getattr(loc, "system", None), home_clone.location_id)
-        except Clone.DoesNotExist:
-            pass
-
-        # Jump clones
-        jump_clones = JumpClone.objects.select_related(
-            "location_name__system"
-        ).filter(character=char_audit)
-        for jc in jump_clones:
-            loc = jc.location_name
-            add_location(getattr(loc, "system", None), jc.location_id)
-
-    # Optionally sort by name (None last) and return
-    sorted_items = sorted(system_map.items(), key=lambda kv: (kv[1] or "").lower())
-    return dict(sorted_items)
-
-
-def get_hostile_clone_locations(user_id: int) -> Dict[str, str]:
-    """
-    Returns a dict of system display name -> owner/clone summary string
-    for systems where this user has home or jump clones in space and the
-    system is considered hostile under the configured rules.
-
-    The summary string includes:
-      - the owning alliance/corp (or "Unresolvable"),
-      - optional character names that have clones in that system.
-    """
-    try:
-        user = User.objects.get(pk=user_id)
-    except User.DoesNotExist:
-        return {}
-
-    # Ensure corptools models are available (imported at module level)
-    if not corptools_active() or CharacterAudit is None:
-        return {}
-
-    # Build a map of system_id -> { "name": name, "locations": { loc_id: set(char_names) } }
     system_map: Dict[int, dict] = {}
+    _loc_sys_cache = {}
+    _loc_name_cache = {}
 
-    def add_location(system_obj, loc_id, char_name: str) -> None:
-        # Store system name/id and which character has a clone there.
+    def add_location(system_obj, loc_id, char_id, char_name, implants=None, jump_clone_name=None):
+        """Helper to safely extract system ID and name from various types."""
         sid = None
         sys_name = None
 
@@ -128,9 +79,18 @@ def get_hostile_clone_locations(user_id: int) -> Dict[str, str]:
             sid = getattr(system_obj, "pk", None)
             sys_name = system_obj.name
         elif loc_id is not None:
-            sid = resolve_location_system_id(loc_id)
+            if loc_id in _loc_sys_cache:
+                sid = _loc_sys_cache[loc_id]
+            else:
+                sid = resolve_location_system_id(loc_id)
+                _loc_sys_cache[loc_id] = sid
+
             if sid:
-                sys_name = resolve_location_name(sid)
+                if sid in _loc_name_cache:
+                    sys_name = _loc_name_cache[sid]
+                else:
+                    sys_name = resolve_location_name(sid)
+                    _loc_name_cache[sid] = sys_name
 
         if not sid:
             return
@@ -140,396 +100,244 @@ def get_hostile_clone_locations(user_id: int) -> Dict[str, str]:
 
         loc_key = loc_id or 0
         if loc_key not in system_map[sid]["locations"]:
-            system_map[sid]["locations"][loc_key] = set()
+            if loc_key in _loc_name_cache:
+                resolved_loc_name = _loc_name_cache[loc_key]
+            else:
+                resolved_loc_name = resolve_location_name(loc_id) or f"Location {loc_id}"
+                _loc_name_cache[loc_key] = resolved_loc_name
 
-        system_map[sid]["locations"][loc_key].add(char_name)
+            system_map[sid]["locations"][loc_key] = {"name": resolved_loc_name, "clones": []}
 
-    # Walk all owned characters and their clones
-    for co in CharacterOwnership.objects.filter(user=user).select_related("character"):
-        char_name = co.character.character_name
+        system_map[sid]["locations"][loc_key]["clones"].append({
+            "char_id": char_id,
+            "char_name": char_name,
+            "implants": implants or [],
+            "jump_clone_name": jump_clone_name or "Jump Clone"
+        })
 
-        try:
-            char_audit = CharacterAudit.objects.get(character=co.character)
-        except CharacterAudit.DoesNotExist:
+    # Bulk fetch current locations
+    active_locs = {}
+    if CharacterLocation:
+        active_locs = {
+            cl.character_id: cl.current_location_id
+            for cl in CharacterLocation.objects.filter(character_id__in=audit_ids)
+        }
+
+    # Bulk fetch home clones
+    home_clones = Clone.objects.select_related("location_name__system").filter(character_id__in=audit_ids)
+    for hc in home_clones:
+        char = char_map.get(hc.character_id)
+        if not char:
             continue
+        status = "Home Station"
+        if hc.location_id == active_locs.get(hc.character_id):
+            status += " (Current Location)"
+        add_location(getattr(hc.location_name, "system", None), hc.location_id, char.character_id, char.character_name, jump_clone_name=status)
 
-        # Home clone
-        try:
-            home_clone = Clone.objects.select_related("location_name__system").get(character=char_audit)
-            loc = home_clone.location_name
-            add_location(getattr(loc, "system", None), home_clone.location_id, char_name)
-        except Clone.DoesNotExist:
-            pass
+    # Bulk fetch jump clones
+    jump_clones = (
+        JumpClone.objects.select_related("location_name__system")
+        .prefetch_related("implant_set__type_name")
+        .filter(character_id__in=audit_ids)
+    )
+    for jc in jump_clones:
+        char = char_map.get(jc.character_id)
+        if not char:
+            continue
+        implants = [i.type_name.name for i in jc.implant_set.all() if i.type_name]
+        status = jc.name or "Jump Clone"
+        if jc.location_id == active_locs.get(jc.character_id):
+            status += " (Current Location)"
+        add_location(getattr(jc.location_name, "system", None), jc.location_id, char.character_id, char.character_name, implants=implants, jump_clone_name=status)
 
-        # Jump clones
-        jump_clones = JumpClone.objects.select_related("location_name__system").filter(character=char_audit)
-        for jc in jump_clones:
-            loc = jc.location_name
-            add_location(getattr(loc, "system", None), jc.location_id, char_name)
+    del _loc_sys_cache, _loc_name_cache, char_map, audit_ids, active_locs
+    import gc
+    gc.collect()
 
-    if not system_map:
+    return system_map
+
+
+def get_hostile_clone_locations(user_id: int) -> Dict[str, dict]:
+    """
+    Returns a dict of system display name -> structured hostile data
+    for systems where this user has home or jump clones in space and the
+    system is considered hostile under the unified processor logic.
+    """
+    systems = get_clones(user_id)
+    if not systems:
         return {}
 
-    cfg = BigBrotherConfig.get_solo()
-
-    hostile_ids = {int(s) for s in (cfg.hostile_alliances or "").split(",") if s.strip().isdigit()}
-    hostile_corp_ids = {int(s) for s in (cfg.hostile_corporations or "").split(",") if s.strip().isdigit()}
-
-    excluded_system_ids = {int(s) for s in (cfg.excluded_systems or "").split(",") if s.strip().isdigit()}
-    excluded_station_ids = {int(s) for s in (cfg.excluded_stations or "").split(",") if s.strip().isdigit()}
-
-    consider_nullsec = cfg.consider_nullsec_hostile
-    consider_structures = cfg.consider_all_structures_hostile
-    consider_npc = getattr(cfg, "consider_npc_stations_hostile", False)
-
+    hostile_map: Dict[str, dict] = {}
+    from ..app_settings import get_safe_entities
     safe_entities = get_safe_entities()
+    _hostile_memo = {}
 
-    hostile_map: Dict[str, str] = {}
-
-    # Sort systems by name for stable output
-    sorted_systems = sorted(system_map.items(), key=lambda x: (x[1]["name"] or "").lower())
-
-    for system_id, data in sorted_systems:
-        if system_id in excluded_system_ids:
-            continue
-
-        if cfg.exclude_high_sec and is_highsec(system_id):
-            continue
-        if cfg.exclude_low_sec and is_lowsec(system_id):
-            continue
-
+    for system_id, data in systems.items():
         system_name = data.get("name")
         display_name = system_name or f"ID {system_id}"
 
-        # Base system hostility
+        # System owner info for summary
         owner_info = get_system_owner({"id": system_id, "name": display_name})
-        oid: Optional[int] = None
-        oname = "—"
-        base_hostile = False
+        system_owner_name = owner_info.get("owner_name", "Unresolvable") if owner_info else "Unresolvable"
+        region_name = owner_info.get("region_name", "Unknown Region") if owner_info else "Unknown Region"
 
-        if owner_info:
-            try:
-                oid = int(owner_info["owner_id"]) if owner_info["owner_id"] else None
-            except (ValueError, TypeError):
-                oid = None
+        system_has_hostile = False
+        records = []
 
-            if oid is not None:
-                oname = owner_info["owner_name"] or f"ID {oid}"
-                base_hostile = (
-                    (oid in hostile_ids)
-                    or (oid in hostile_corp_ids)
-                    or ("Unresolvable" in oname)
-                )
-        else:
-            oname = "Unresolvable"
-            base_hostile = True
+        for loc_id, loc_data in data.get("locations", {}).items():
+            loc_name = loc_data["name"]
+            # Check if this is a citadel and get its owner
+            location_owner_info = get_location_owner(loc_id)
+            loc_owner = location_owner_info.get("owner_name", system_owner_name) if location_owner_info else system_owner_name
 
-        nullsec_flag = False
-        if consider_nullsec and is_nullsec(system_id):
-            if oid is None or oid not in safe_entities:
-                nullsec_flag = True
+            for clone in loc_data.get("clones", []):
+                # Memoize check results for character+location+system
+                memo_key = (clone["char_id"], loc_id, system_id)
+                if memo_key in _hostile_memo:
+                    is_hostile = _hostile_memo[memo_key]
+                else:
+                    is_hostile = is_hostile_unified(
+                        involved_ids=[clone["char_id"]],
+                        location_id=loc_id,
+                        system_id=system_id,
+                        is_asset=True,
+                        when=timezone.now(),
+                        safe_entities=safe_entities
+                    )
+                    _hostile_memo[memo_key] = is_hostile
 
-        system_hostile = False
-        # Check each location in this system
-        for loc_id in data.get("locations", {}):
-            if not loc_id or loc_id in excluded_station_ids:
-                continue
+                if is_hostile:
+                    system_has_hostile = True
+                    records.append({
+                        "char_name": clone['char_name'],
+                        "location_name": loc_name,
+                        "owner_name": loc_owner,
+                        "clone_name": clone['jump_clone_name']
+                    })
 
-            loc_hostile = False
-            is_struct = is_player_structure(loc_id)
+        if system_has_hostile:
+            hostile_map[display_name] = {
+                "owner": system_owner_name,
+                "region": region_name,
+                "records": records
+            }
 
-            # Get location owner specifically
-            loc_owner_info = get_system_owner({"id": loc_id})
-            l_oid = None
-            l_oname = "Unresolvable"
-            if loc_owner_info:
-                try:
-                    l_oid = int(loc_owner_info["owner_id"]) if loc_owner_info["owner_id"] else None
-                except (ValueError, TypeError):
-                    pass
-                l_oname = loc_owner_info.get("owner_name") or (f"ID {l_oid}" if l_oid else "Unresolvable")
-
-            if is_struct:
-                # Friendly structure overrides system hostility
-                if l_oid and l_oid in safe_entities:
-                    continue
-
-                if l_oid and (l_oid in hostile_ids or l_oid in hostile_corp_ids):
-                    loc_hostile = True
-                elif "Unresolvable" in l_oname:
-                    loc_hostile = True
-                elif consider_structures:
-                    loc_hostile = True
-            else:
-                # NPC Station
-                if consider_npc:
-                    loc_hostile = True
-                elif base_hostile or nullsec_flag:
-                    loc_hostile = True
-
-            if loc_hostile:
-                system_hostile = True
-                break
-
-        if system_hostile:
-            parts = [oname]
-            rname = owner_info.get("region_name")
-            if rname and rname != "Unknown Region":
-                parts.append(f"Region: {rname}")
-
-            char_names = set()
-            for loc_chars in data.get("locations", {}).values():
-                char_names.update(loc_chars)
-
-            if char_names:
-                parts.append("Chars: " + ", ".join(sorted(char_names)))
-
-            summary = " | ".join(parts)
-            hostile_map[display_name] = summary
-            logger.info("Hostile clone: %s owned by %s", display_name, summary)
+    # CRITICAL FIX: Clean up memoization cache
+    del _hostile_memo
+    import gc
+    gc.collect()
 
     return hostile_map
 
 
-def render_clones(user_id: int) -> Optional[str]:
+def render_clones(user_id: int) -> str:
     """
-    Returns an HTML table of clones, coloring hostile ones red,
-    and labeling & highlighting Unresolvable owners appropriately.
-    Hostile if:
-      - system owner alliance is in hostile_alliances / hostile_corporations, or
-      - system is nullsec and consider_nullsec_hostile is enabled, or
-      - in a hostile / NPC structure depending on config.
-    Respects system & station whitelists.
+    Render an HTML table of locations where the user has clones,
+    highlighting hostile locations using the unified processor.
     """
-    try:
-        user = User.objects.get(pk=user_id)
-    except User.DoesNotExist:
-        return None
-
-    clones_list: List[Dict] = []
-
-    for co in CharacterOwnership.objects.filter(user=user).select_related("character"):
-        try:
-            char_audit = CharacterAudit.objects.get(character=co.character)
-        except CharacterAudit.DoesNotExist:
-            continue
-
-        # Home clone
-        try:
-            home_clone = Clone.objects.select_related("location_name__system").get(character=char_audit)
-            loc = home_clone.location_name
-            system_obj = getattr(loc, "system", None)
-
-            sys_id = None
-            sys_name = None
-            if system_obj:
-                sys_id = system_obj.pk
-                sys_name = system_obj.name
-            else:
-                sys_id = resolve_location_system_id(home_clone.location_id)
-                if sys_id:
-                    sys_name = resolve_location_name(sys_id)
-
-            clones_list.append(
-                {
-                    "character": co.character.character_name,
-                    "id": sys_id,
-                    "location_id": home_clone.location_id,
-                    "name": sys_name,
-                    "jump_clone": "Active Clone",
-                    "implants": [],
-                }
-            )
-
-        except Clone.DoesNotExist:
-            pass
-
-        # Jump clones
-        jump_clones = (
-            JumpClone.objects.select_related("location_name__system")
-            .prefetch_related("implant_set__type_name")
-            .filter(character=char_audit)
-        )
-
-        for jc in jump_clones:
-            loc = jc.location_name
-            jump_name = jc.name
-            system_obj = getattr(loc, "system", None)
-
-            sys_id = None
-            sys_name = None
-            if system_obj:
-                sys_id = system_obj.pk
-                sys_name = system_obj.name
-            else:
-                sys_id = resolve_location_system_id(jc.location_id)
-                if sys_id:
-                    sys_name = resolve_location_name(sys_id)
-
-            implants = [i.type_name.name for i in jc.implant_set.all() if i.type_name]
-
-            clones_list.append(
-                {
-                    "character": co.character.character_name,
-                    "id": sys_id,
-                    "location_id": jc.location_id,
-                    "name": sys_name,
-                    "jump_clone": jump_name,
-                    "implants": implants,
-                }
-            )
-
-    if not clones_list:
-        return None
-
-    cfg = BigBrotherConfig.get_solo()
-    hostile_ids = {int(s) for s in (cfg.hostile_alliances or "").split(",") if s.strip().isdigit()}
-    hostile_corp_ids = {int(s) for s in (cfg.hostile_corporations or "").split(",") if s.strip().isdigit()}
-
-    excluded_system_ids = {int(s) for s in (cfg.excluded_systems or "").split(",") if s.strip().isdigit()}
-    excluded_station_ids = {int(s) for s in (cfg.excluded_stations or "").split(",") if s.strip().isdigit()}
-
-    consider_nullsec = cfg.consider_nullsec_hostile
-    consider_structures = cfg.consider_all_structures_hostile
-    consider_npc = getattr(cfg, "consider_npc_stations_hostile", False)
-
-    safe_entities = get_safe_entities()
-
-    rows: List[Dict] = []
-
-    # Final sort will put hostile rows on top.
-    clones_list.sort(key=lambda x: (x["character"], (x["name"] or "").lower()))
-
-    for clone in clones_list:
-        system_id = clone.get("id")
-        system_name = clone.get("name")
-        loc_id = clone.get("location_id")
-
-        if system_name:
-            display_name = system_name
-        elif system_id:
-            display_name = resolve_location_name(system_id) or f"System ID {system_id}"
-        elif loc_id:
-            display_name = resolve_location_name(loc_id) or f"Location ID {loc_id}"
-        else:
-            display_name = "Unknown"
-
-        if system_id and system_id in excluded_system_ids:
-            continue
-
-        # Manual hostility check
-        owner_info = get_system_owner({"id": system_id or loc_id, "name": display_name})
-        oid: Optional[int] = None
-        oname = "—"
-        base_hostile = False
-
-        if owner_info:
-            try:
-                oid = int(owner_info["owner_id"]) if owner_info["owner_id"] else None
-            except (ValueError, TypeError):
-                oid = None
-
-            if oid is not None:
-                oname = owner_info["owner_name"] or f"ID {oid}"
-                base_hostile = (
-                    (oid in hostile_ids)
-                    or (oid in hostile_corp_ids)
-                    or ("Unresolvable" in oname)
-                )
-        else:
-            oname = "Unresolvable"
-            base_hostile = True
-
-        nullsec_flag = False
-        if system_id and consider_nullsec and is_nullsec(system_id):
-            if oid is None or oid not in safe_entities:
-                nullsec_flag = True
-
-        hostile = False
-        is_struct = is_player_structure(loc_id)
-
-        # Get location owner specifically
-        loc_owner_info = get_system_owner({"id": loc_id})
-        l_oid = None
-        l_oname = "Unresolvable"
-        if loc_owner_info:
-            try:
-                l_oid = int(loc_owner_info["owner_id"]) if loc_owner_info["owner_id"] else None
-            except (ValueError, TypeError):
-                pass
-            l_oname = loc_owner_info.get("owner_name") or (f"ID {l_oid}" if l_oid else "Unresolvable")
-
-        if is_struct:
-            # Friendly structure overrides system hostility
-            if l_oid and l_oid in safe_entities:
-                hostile = False
-            elif l_oid and (l_oid in hostile_ids or l_oid in hostile_corp_ids):
-                hostile = True
-            elif "Unresolvable" in l_oname:
-                hostile = True
-            elif consider_structures:
-                hostile = True
-        else:
-            # NPC Station
-            if consider_npc:
-                hostile = True
-            elif base_hostile or nullsec_flag:
-                hostile = True
-
-        unresolvable = "Unresolvable" in l_oname
-
-        rows.append(
-            {
-                "character": clone["character"],
-                "system": display_name,
-                "jump_clone": clone["jump_clone"] or "",
-                "implants_html": mark_safe("<br>".join(clone["implants"])),
-                "owner": oname,
-                "region": owner_info.get("region_name") if owner_info else "Unknown Region",
-                "hostile": hostile,
-                "unresolvable": unresolvable,
-            }
-        )
-
-    if not rows:
+    systems = get_clones(user_id)
+    if not systems:
         return '<p>No clones found.</p>'
 
-    rows.sort(key=lambda r: (not r["hostile"], r["character"], r["system"]))
+    rows: List[Dict] = []
+    from ..app_settings import get_safe_entities
+    safe_entities = get_safe_entities()
+    _hostile_memo = {}
+
+    for system_id, data in systems.items():
+        system_name = data.get("name")
+        display_name = system_name or f"ID {system_id}"
+
+        owner_info = get_system_owner({"id": system_id, "name": display_name})
+        system_owner_name = owner_info.get("owner_name", "Unresolvable") if owner_info else "Unresolvable"
+        region_name = owner_info.get("region_name", "Unknown Region") if owner_info else "Unknown Region"
+
+        for loc_id, loc_data in data.get("locations", {}).items():
+            loc_name = loc_data["name"]
+
+            # Check if this is a citadel (player structure) and get its owner
+            location_owner_info = get_location_owner(loc_id)
+            if location_owner_info:
+                # Use citadel owner for clones in citadels
+                oname = location_owner_info.get("owner_name", system_owner_name)
+            else:
+                # Use system owner for NPC stations or space
+                oname = system_owner_name
+
+            for clone in loc_data.get("clones", []):
+                char_name = clone["char_name"]
+
+                # Memoize check results for character+location+system
+                memo_key = (clone["char_id"], loc_id, system_id)
+                if memo_key in _hostile_memo:
+                    is_hostile = _hostile_memo[memo_key]
+                else:
+                    is_hostile = is_hostile_unified(
+                        involved_ids=[clone["char_id"]],
+                        location_id=loc_id,
+                        system_id=system_id,
+                        is_asset=True,
+                        when=timezone.now(),
+                        safe_entities=safe_entities
+                    )
+                    _hostile_memo[memo_key] = is_hostile
+
+                rows.append({
+                    "system": display_name,
+                    "location": loc_name,
+                    "character": char_name,
+                    "owner": oname,
+                    "region": region_name,
+                    "hostile": is_hostile,
+                    "jump_clone": clone["jump_clone_name"],
+                    "implants_html": mark_safe("<br>".join(clone["implants"])),
+                })
+
+    if not rows:
+        return "<p>No clones found.</p>"
+
+    # Sort: hostile first, then system, location, character
+    rows.sort(key=lambda x: (not x["hostile"], x["system"], x["location"], x["character"]))
 
     html_parts = [
         '<table class="table table-striped table-hover stats">',
         "<thead>"
         "<tr>"
-        "<th>Character</th>"
-        "<th>System</th>"
-        "<th>Clone Status</th>"
-        "<th>Implants</th>"
-        "<th>Owner</th>"
-        "<th>Region</th>"
+        '<th style="width: 15%">System</th>'
+        '<th style="width: 20%">Station</th>'
+        '<th style="width: 15%">Character</th>'
+        '<th style="width: 10%">Clone Status</th>'
+        '<th style="width: 15%">Implants</th>'
+        '<th style="width: 15%">Owner</th>'
+        '<th style="width: 10%">Region</th>'
         "</tr>"
         "</thead>"
         "<tbody>",
     ]
 
     for row in rows:
-        region = row.get("region", "Unknown Region")
         owner_cell = row["owner"]
         if row["hostile"]:
             owner_cell = mark_safe(f'<span class="text-danger">{owner_cell}</span>')
-        elif row["unresolvable"]:
-            owner_cell = mark_safe(f'<span class="text-warning"><em>{owner_cell}</em></span>')
 
         html_parts.append(
             format_html(
-                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
-                row["character"],
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
                 row["system"],
+                row["location"],
+                row["character"],
                 row["jump_clone"],
                 row["implants_html"],
                 owner_cell,
-                region,
+                row["region"],
             )
         )
 
     html_parts.append("</tbody></table>")
+
+    # CRITICAL FIX: Clean up memoization cache
+    del _hostile_memo
+    import gc
+    gc.collect()
+
     return "".join(html_parts)

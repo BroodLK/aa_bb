@@ -1,13 +1,9 @@
 import html
-import logging
 import errno
 import socket
 import traceback
 import json
 import time
-
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.DEBUG)
 
 from django.contrib.auth.decorators import login_required, permission_required
 from django.db import connection
@@ -16,6 +12,7 @@ from django.http import (
     JsonResponse,
     HttpResponseBadRequest,
     StreamingHttpResponse,
+    HttpResponseForbidden,
 )
 from django.shortcuts import render
 from django.core.cache import cache
@@ -26,6 +23,9 @@ from celery import shared_task
 from celery.exceptions import Ignore
 
 from allianceauth.authentication.models import CharacterOwnership
+from allianceauth.services.hooks import get_extension_logger
+
+logger = get_extension_logger(__name__)
 
 from aa_bb.checks_cb.hostile_assets import render_assets
 from aa_bb.checks_cb.sus_trans import (
@@ -45,7 +45,7 @@ from aa_bb.checks_cb.sus_contracts import (
 from .app_settings import (
     get_user_characters, get_entity_info, get_character_id,
     resolve_corporation_name, aablacklist_active, resolve_location_name,
-    corptools_active
+    corptools_active, get_hostile_state
 )
 from .models import BigBrotherConfig, WarmProgress
 
@@ -120,9 +120,13 @@ def index(request: WSGIRequest):
               .order_by("corporation_name")
         )
 
+    cards = list(CARD_DEFINITIONS)
+    if not corptools_active():
+        cards = []
+
     context = {
         "dropdown_options": dropdown_options,
-        "CARD_DEFINITIONS": CARD_DEFINITIONS,
+        "CARD_DEFINITIONS": cards,
     }
     return render(request, "aa_cb/index.html", context)
 
@@ -136,7 +140,13 @@ def load_cards(request: WSGIRequest) -> JsonResponse:
     warm_entity_cache_task.delay(corp_id)
     cards = []
     for card in CARD_DEFINITIONS:
-        content, status = get_card_data(request, corp_id, card["key"])
+        try:
+            content, status = get_card_data(request, corp_id, card["key"])
+        except Exception as e:
+            logger.error(f"Error loading bulk card {card['key']} for corp {corp_id}: {e}", exc_info=True)
+            content = f"<p>Error: {str(e)}</p>"
+            status = False
+
         if content is None:
             return JsonResponse({
                 "title": card["title"],
@@ -155,6 +165,9 @@ def load_cards(request: WSGIRequest) -> JsonResponse:
 
 def get_user_id(character_name):
     """Lookup an auth user ID from a character name."""
+    if not character_name:
+        return None
+    character_name = str(character_name)
     try:
         ownership = CharacterOwnership.objects.select_related('user') \
             .get(character__character_name=character_name)
@@ -167,7 +180,7 @@ def get_card_data(request, corp_id: int, key: str):
     logger.warning("get_card_data")
     if key == "sus_asset":  # Only the asset card is currently implemented.
         content = render_assets(corp_id)
-        status  = not (content and "red" in content)
+        status  = not (content and "danger" in content)
 
     else:
         content = "WiP"
@@ -199,7 +212,12 @@ def load_card(request):
         # handled via paginated endpoints
         return JsonResponse({"key": key, "title": title})
 
-    content, status = get_card_data(request, corp_id, key)
+    try:
+        content, status = get_card_data(request, corp_id, key)
+    except Exception as e:
+        logger.error(f"Error loading card {key} for corp {corp_id}: {e}", exc_info=True)
+        return JsonResponse({"error": str(e)}, status=500)
+
     return JsonResponse({
         "title":   title,
         "content": content,
@@ -216,6 +234,9 @@ def warm_entity_cache_task(self, user_id):
     from .models import BigBrotherConfig
     cfg = BigBrotherConfig.get_solo()
     if not cfg.is_active or not cfg.is_warmer_active:
+        return
+
+    if not corptools_active():
         return
     user_main = resolve_corporation_name(user_id) or str(user_id)
     logger.info(f"corp_name: {user_main}")
@@ -278,7 +299,7 @@ def warm_entity_cache_task(self, user_id):
     )
 
     for candidate in candidates:
-        if candidate not in existing:  # Only fetch entity info that is missing from cache.
+        if candidate not in existing:  # Only fetch entity info when cache lacks the tuple.
             entries.append(candidate)
 
     total = len(entries)
@@ -308,7 +329,7 @@ def warm_cache(request):
     Immediately registers a WarmProgress row so queued tasks also appear.
     """
     if not BigBrotherConfig.get_solo().is_warmer_active:  # Allow admins to disable heavy warm jobs.
-        return
+        return JsonResponse({"error": "Warmer disabled"}, status=403)
     logger.warning(f"warm triggered")
     option  = request.GET.get("option", "")
     user_id = option
@@ -363,17 +384,16 @@ def get_warm_progress(request):
 @permission_required("aa_bb.basic_access_cb")
 def list_contract_ids(request):
     """
-    Return JSON list of all contract IDs and issue dates for the selected user.
+    Return JSON list of all contract IDs and issue dates for the selected corporation.
     """
     option = request.GET.get("option")
-    user_id = get_user_id(option)
-    if user_id is None:  # Unknown corp selection.
-        return JsonResponse({"error": "Unknown account"}, status=404)
+    if not option:
+        return JsonResponse({"error": "Missing corporation selection"}, status=400)
 
-    user_chars = get_user_characters(user_id)
-    qs = Contract.objects.filter(
-        character__character__character_id__in=user_chars
-    ).order_by('-date_issued').values_list('contract_id', 'date_issued')
+    qs = gather_user_contracts(option)
+    if hasattr(qs, 'order_by'):
+        qs = qs.order_by('-date_issued')
+    qs = qs.values_list('contract_id', 'date_issued')
 
     contracts = [
         {'id': cid, 'date': dt.isoformat()} for cid, dt in qs
@@ -388,20 +408,18 @@ def check_contract_batch(request):
     Check a slice of contracts for hostility by start/limit parameters.
     Returns JSON with `checked` count and list of `hostile_found`,
     each entry including a `cell_styles` dict for inline styling.
-    Now uses gather_user_contracts + get_user_contracts(qs) on the full set.
     """
     option = request.GET.get("option")
     start  = int(request.GET.get("start", 0))
     limit  = int(request.GET.get("limit", 10))
-    user_id = get_user_id(option)
-    if user_id is None:  # Need a valid account to inspect.
-        return JsonResponse({"error": "Unknown account"}, status=404)
+    if not option:
+        return JsonResponse({"error": "Missing corporation selection"}, status=400)
 
     # 1) Ensure the full QuerySet is available
-    cache_key = f"contract_qs_{user_id}"
+    cache_key = f"corp_contract_qs_{option}"
     qs_all = cache.get(cache_key)
-    if qs_all is None:  # Cache miss, gather and store for 5 minutes.
-        qs_all = gather_user_contracts(user_id)
+    if qs_all is None:
+        qs_all = gather_user_contracts(option)
         cache.set(cache_key, qs_all, 300)
 
     # 2) Slice out just this batch of model instances
@@ -447,17 +465,18 @@ def stream_contracts_sse(request: WSGIRequest):
     if not user_id:  # Require a corp identifier.
         return HttpResponseBadRequest("Unknown account")
 
-    qs    = gather_user_contracts(user_id)
-    total = qs.count()
-    connection.close()
-    if total == 0:  # Nothing to stream -> send a simple HTML response.
-        return StreamingHttpResponse(
-            "<p>No contracts found.</p>",
-            content_type="text/html"
-        )
+    if not corptools_active():
+        return HttpResponseForbidden("Corptools required")
+
+    try:
+        qs    = gather_user_contracts(user_id)
+        total = qs.count() if hasattr(qs, 'count') else len(qs)
+        connection.close()
+    except Exception as e:
+        logger.error(f"Error initializing contract stream for {option}: {e}", exc_info=True)
+        return HttpResponseBadRequest(f"Error loading contracts: {str(e)}")
 
     def generator():
-
         try:
             # Initial SSE heartbeat
             yield ": ok\n\n"
@@ -468,85 +487,44 @@ def stream_contracts_sse(request: WSGIRequest):
                 yield "event: done\ndata:0\n\n"
                 return
 
-            for c in qs:
-                processed += 1
-                # Ping to keep connection alive
-                yield ": ping\n\n"
+            batch_size = 50
+            for i in range(0, total, batch_size):
+                batch = qs[i : i + batch_size]
+                rows_map = get_user_contracts(batch)
+                # Sort keys to maintain some order; date desc is preferred
+                sorted_keys = sorted(rows_map.keys(), key=lambda k: rows_map[k]['issued_date'] or timezone.now(), reverse=True)
 
-                try:
-                    issued = getattr(c, "date_issued", timezone.now())
-                    issuer_id = get_character_id(c.issuer_name)
-                    yield ": ping\n\n"
-                    cid = c.contract_id
-                    if c.assignee_id != 0:  # Prefer assignee when present; fallback to acceptor.
-                        assignee_id = c.assignee_id
-                    else:
-                        assignee_id = c.acceptor_id
-                    yield ": ping\n\n"
-                    #logger.info(f"getting info for {issuer_id}")
-                    iinfo     = get_entity_info(issuer_id, issued)
-                    yield ": ping\n\n"
-                    #logger.info(f"getting info for {assignee_id}")
-                    ainfo     = get_entity_info(assignee_id, issued)
+                for cid in sorted_keys:
+                    row = rows_map[cid]
+                    processed += 1
+                    # Ping to keep connection alive
                     yield ": ping\n\n"
 
-                    # Hydrate just this one
-
-                    row = {
-                        'contract_id':              cid,
-                        'issued_date':              issued,
-                        'end_date':                 c.date_completed or c.date_expired,
-                        'contract_type':            c.contract_type,
-                        'issuer_name':              iinfo["name"],
-                        'issuer_id':                issuer_id,
-                        'issuer_corporation':       iinfo["corp_name"],
-                        'issuer_corporation_id':    iinfo["corp_id"],
-                        'issuer_alliance':          iinfo["alli_name"],
-                        'issuer_alliance_id':       iinfo["alli_id"],
-                        'assignee_name':            ainfo["name"],
-                        'assignee_id':              assignee_id,
-                        'assignee_corporation':     ainfo["corp_name"],
-                        'assignee_corporation_id':  ainfo["corp_id"],
-                        'assignee_alliance':        ainfo["alli_name"],
-                        'assignee_alliance_id':     ainfo["alli_id"],
-                        'status':                   c.status,
-                        'start_location':           resolve_location_name(getattr(c, "start_location_id", None)),
-                        'end_location':             resolve_location_name(getattr(c, "end_location_id", None)),
-                    }
-
-                    style_map = {
-                        col: get_cell_style_for_contract_row(col, row)
-                        for col in row
-                    }
-                    yield ": ping\n\n"
-                    row['cell_styles'] = style_map
-
-                    if is_contract_row_hostile(row):  # Emit only hostile rows.
-                        hostile_count += 1
-                        tr_html = _render_contract_row_html(row)
-                        yield f"event: contract\ndata:{json.dumps(tr_html)}\n\n"
-
-                    # Progress update
-                    yield (
-                        "event: progress\n"
-                        f"data:{processed},{total},{hostile_count}\n\n"
-                    )
-                    connection.close()
-                except (ConnectionResetError, BrokenPipeError):
-                    # client disconnected — stop quietly
-                    logger.debug("Client disconnected from contract SSE")
-                    return
-                except Exception:
-                    # Log full traceback and notify the client via SSE before exiting
-                    tb = traceback.format_exc()
-                    logger.exception(f"Error while processing contract stream\n{tb}")
-                    # Send a short error event (don't send huge tracebacks to clients)
-                    msg = f"Server error while streaming contracts.\n{tb}"
                     try:
-                        yield f"event: error\ndata:{json.dumps(msg)}\n\n"
+                        style_map = {
+                            col: get_cell_style_for_contract_row(col, row)
+                            for col in row
+                        }
+                        yield ": ping\n\n"
+                        row['cell_styles'] = style_map
+
+                        if is_contract_row_hostile(row):  # Emit only hostile rows.
+                            hostile_count += 1
+                            tr_html = _render_contract_row_html(row)
+                            yield f"event: contract\ndata:{json.dumps(tr_html)}\n\n"
+
+                        # Progress update
+                        yield (
+                            "event: progress\n"
+                            f"data:{processed},{total},{hostile_count}\n\n"
+                        )
+                    except (ConnectionResetError, BrokenPipeError):
+                        return
                     except Exception:
-                        pass
-                    return
+                        logger.exception(f"Error while processing contract {cid}")
+                        continue
+
+                connection.close()
 
             # Done
             yield "event: done\ndata:bye\n\n"
@@ -554,14 +532,9 @@ def stream_contracts_sse(request: WSGIRequest):
         except (ConnectionResetError, BrokenPipeError):
             logger.debug("Client disconnected from contract SSE (outer)")
             return
-        except Exception:
-            tb_str = traceback.format_exc()
-            logger.exception(f"Unexpected error in contract SSE generator\n{tb_str}")
-            # Best effort to notify the client
-            try:
-                yield f"event: error\ndata:{json.dumps('Unexpected server error')}\n\n"
-            except Exception:
-                pass
+        except Exception as e:
+            logger.error(f"Error in contract stream for {option}: {e}", exc_info=True)
+            yield f"event: error\ndata:{json.dumps(str(e))}\n\n"
             return
 
     resp = StreamingHttpResponse(generator(), content_type='text/event-stream')
@@ -632,98 +605,131 @@ def stream_transactions_sse(request):
     if not user_id:  # Need a corp selection for SSE.
         return HttpResponseBadRequest("Unknown account")
 
-    qs    = gather_user_transactions(user_id)
-    total = qs.count()
-    connection.close()
-    if total == 0:  # No transactions -> return short HTML.
-        return StreamingHttpResponse(
-            "<p>No transactions found.</p>",
-            content_type="text/html"
-        )
+    if not corptools_active():
+        return HttpResponseForbidden("Corptools required")
 
-    # Determine headers from a single hydrated row
-    sample = qs[:1]
-    sample_map    = get_user_transactions(sample)
-    sample_row    = next(iter(sample_map.values()))
-    HIDDEN        = {
-        'first_party_id','second_party_id',
-        'first_party_corporation_id','second_party_corporation_id',
-        'first_party_alliance_id','second_party_alliance_id',
-        'entry_id'
-    }
-    headers = [h for h in sample_row.keys() if h not in HIDDEN]
+    cfg = BigBrotherConfig.get_solo()
+    ref_types = list(SUS_TYPES)
+    if cfg.show_market_transactions:
+        ref_types.extend(["market_escrow", "market_transaction"])
+
+    try:
+        qs = gather_user_transactions(user_id, ref_types=ref_types)
+        if hasattr(qs, 'order_by'):
+            qs = qs.order_by('-date')
+        total = qs.count() if hasattr(qs, 'count') else len(qs)
+        connection.close()
+        if total == 0:  # No transactions -> return SSE stream with no data message
+            def empty_generator():
+                yield ": ok\n\n"
+                yield "event: message\ndata:No transactions found.\n\n"
+                yield "event: done\ndata:bye\n\n"
+            resp = StreamingHttpResponse(empty_generator(), content_type='text/event-stream')
+            resp["Cache-Control"] = "no-cache"
+            resp["X-Accel-Buffering"] = "no"
+            return resp
+
+        # Determine headers from a single hydrated row (after empty check)
+        sample_map = get_user_transactions(qs[:1])
+        sample_row = next(iter(sample_map.values()), None)
+        HIDDEN        = {
+            'first_party_id','second_party_id',
+            'first_party_corporation_id','second_party_corporation_id',
+            'first_party_alliance_id','second_party_alliance_id',
+            'entry_id'
+        }
+        if sample_row:  # Derive headers from real data when available.
+            headers = [h for h in sample_row.keys() if h not in HIDDEN]
+        else:
+            # Fallback to a safe default when sampling finds nothing
+            headers = [
+                'date', 'amount', 'balance', 'description', 'reason',
+                'first_party_name', 'first_party_corporation', 'first_party_alliance',
+                'second_party_name', 'second_party_corporation', 'second_party_alliance',
+                'context', 'type',
+            ]
+    except Exception as e:
+        logger.error(f"Error in stream_transactions_sse setup: {e}", exc_info=True)
+        return HttpResponseBadRequest(f"Error loading transactions: {str(e)}")
 
     def generator():
-        yield ": ok\n\n"                # initial heartbeat
-        processed = hostile_count = 0
+        try:
+            yield ": ok\n\n"                # initial heartbeat
+            processed = hostile_count = 0
 
-        # Emit table header row once
-        header_html = (
-            "<tr>" +
-            "".join(f"<th>{html.escape(h.replace('_',' ').title())}</th>" for h in headers) +
-            "</tr>"
-        )
-        yield f"event: header\ndata:{json.dumps(header_html)}\n\n"
-
-        cfg = BigBrotherConfig.get_solo()
-        hostile_corps = set((cfg.hostile_corporations or "").split(","))
-        hostile_allis = set((cfg.hostile_alliances or "").split(","))
-
-        for entry in qs:
-            processed += 1
-            yield ": ping\n\n"         # keep‐alive
-
-            # hydrate this one entry
-            row = get_user_transactions([entry])[entry.entry_id]
-
-            if is_transaction_hostile(row):  # Emit rows matching suspicious checks.
-                hostile_count += 1
-
-                # build the <tr> using same style logic as render_transactions()
-                cells = []
-                for col in headers:
-                    val = row.get(col, "")
-                    text = html.escape(str(val))
-                    style = ""
-                    # type‐based red
-                    if col == 'type':
-                        if any(st in row['type'] for st in SUS_TYPES):
-                            style = 'color:red;'
-                        if cfg.show_market_transactions:
-                            if "market_escrow" in row['type'] or "market_transaction" in row['type']:
-                                style = 'color:red;'
-                    # first/second party name
-                    if aablacklist_active():
-                        if col in ('first_party_name','second_party_name'):
-                            id_col = col.replace("_name", "_id")
-                            pid = row[id_col]
-                            if check_char_add_to_bl(pid):
-                                style = 'color:red;'
-                    # corps & alliances
-                    if col.endswith('corporation'):
-                        cid = row[f"{col}_id"]
-                        if cid and str(cid) in hostile_corps:
-                            style = 'color:red;'
-                    if col.endswith('alliance'):
-                        aid = row[f"{col}_id"]
-                        if aid and str(aid) in hostile_allis:
-                            style = 'color:red;'
-                    def make_td(text, style=""):
-                        style_attr = f' style="{style}"' if style else ""
-                        return f"<td{style_attr}>{text}</td>"
-                    cells.append(make_td(text, style))
-                tr_html = "<tr>" + "".join(cells) + "</tr>"
-                yield f"event: transaction\ndata:{json.dumps(tr_html)}\n\n"
-
-            # progress update
-            yield (
-                "event: progress\n"
-                f"data:{processed},{total},{hostile_count}\n\n"
+            # Emit table header row once
+            header_html = (
+                "<tr>" +
+                "".join(f"<th>{html.escape(h.replace('_',' ').title())}</th>" for h in headers) +
+                "</tr>"
             )
-            connection.close()
+            yield f"event: header\ndata:{json.dumps(header_html)}\n\n"
 
-        # Done
-        yield "event: done\ndata:bye\n\n"
+            cfg = BigBrotherConfig.get_solo()
+
+            batch_size = 100
+            for i in range(0, total, batch_size):
+                batch = qs[i:i + batch_size]
+                rows_map = get_user_transactions(batch)
+                # Sort keys to maintain some order if possible, though date desc is better
+                sorted_keys = sorted(rows_map.keys(), key=lambda k: rows_map[k]['date'], reverse=True)
+
+                for eid in sorted_keys:
+                    row = rows_map[eid]
+                    processed += 1
+                    if processed % 10 == 0:
+                        yield ": ping\n\n"         # keep‐alive
+
+                    if is_transaction_hostile(row):  # Only push rows that meet hostility rules.
+                        hostile_count += 1
+
+                        # build the <tr> using same style logic as render_transactions()
+                        cells = []
+                        for col in headers:
+                            val = row.get(col, "")
+                            text = html.escape(str(val))
+                            style = ""
+                            # type‐based red
+                            if col == 'type':
+                                if any(st in row['type'] for st in SUS_TYPES):
+                                    style = 'color:red;'
+                                if cfg.show_market_transactions:
+                                    if "market_escrow" in row['type'] or "market_transaction" in row['type']:
+                                        style = 'color:red;'
+                            # first/second party name
+                            if col in ('first_party_name','second_party_name'):
+                                pid = row[col.replace("_name", "_id")]
+                                if get_hostile_state(pid, 'character', when=row['date']):
+                                    style = 'color:red;'
+                            # corps & alliances
+                            if col.endswith('corporation'):
+                                cid = row[f"{col}_id"]
+                                if cid and get_hostile_state(cid, 'corporation', when=row['date']):
+                                    style = 'color:red;'
+                            if col.endswith('alliance'):
+                                aid = row[f"{col}_id"]
+                                if aid and get_hostile_state(aid, 'alliance', when=row['date']):
+                                    style = 'color:red;'
+                            def make_td(text, style=""):
+                                style_attr = f' style="{style}"' if style else ""
+                                return f"<td{style_attr}>{text}</td>"
+                            cells.append(make_td(text, style))
+                        tr_html = "<tr>" + "".join(cells) + "</tr>"
+                        yield f"event: transaction\ndata:{json.dumps(tr_html)}\n\n"
+
+                    # progress update every few rows to avoid flood
+                    if processed % 10 == 0 or processed == total:
+                        yield (
+                            "event: progress\n"
+                            f"data:{processed},{total},{hostile_count}\n\n"
+                        )
+                connection.close()
+
+            # Done
+            yield "event: done\ndata:bye\n\n"
+        except Exception as e:
+            logger.error(f"Error in transaction stream generator: {e}", exc_info=True)
+            yield f"event: error\ndata:{json.dumps(f'Stream error: {str(e)}')}\n\n"
 
 
 

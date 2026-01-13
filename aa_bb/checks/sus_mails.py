@@ -5,8 +5,10 @@ These helpers normalize MailMessage rows, detect suspicious senders or
 recipients, and persist short notes for repeated reporting.
 """
 
+from allianceauth.services.hooks import get_extension_logger
+
+
 import html
-import logging
 from typing import Dict, Optional, List
 from datetime import datetime
 from django.utils import timezone
@@ -18,6 +20,7 @@ from ..app_settings import (
     aablacklist_active,
     get_hostile_state,
     corptools_active,
+    is_hostile_unified,
 )
 
 if aablacklist_active():
@@ -26,10 +29,10 @@ else:
     def check_char_corp_bl(_cid: int) -> bool:
         return False
 
-from ..models import BigBrotherConfig, ProcessedMail, SusMailNote
+from django.db.models import Q
+from ..models import BigBrotherConfig, ProcessedMail, SusMailNote, EntityInfoCache
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger = get_extension_logger(__name__)
 
 try:
     if corptools_active():
@@ -62,8 +65,7 @@ def _find_alliance_at(history: List[dict], date: datetime) -> Optional[int]:
 
 def gather_user_mails(user_id: int):
     if not corptools_active() or MailMessage is None:
-        from ..models import ProcessedMail
-        return ProcessedMail.objects.none()
+        return []
     user_chars = get_user_characters(user_id)
     user_ids = set(user_chars.keys())
     return MailMessage.objects.filter(
@@ -72,24 +74,55 @@ def gather_user_mails(user_id: int):
 
 
 def get_user_mails(qs) -> Dict[int, Dict]:
-    result: Dict[int, Dict] = {}
-    _info_cache: dict[tuple[int, int], dict] = {}
+    # Use a list to avoid re-evaluating the queryset
+    entries = list(qs)
+    if not entries:
+        return {}
 
-    def _cached_info(eid: int, when: datetime) -> dict:
-        key = (int(eid or 0), int(when.date().toordinal()))
-        if key in _info_cache:
-            return _info_cache[key]
+    result: Dict[int, Dict] = {}
+
+    # Pre-collect all entity IDs and their normalized timestamps for bulk fetching info
+    # EntityInfoCache normalizes to the hour.
+    lookups = set()
+    for m in entries:
+        dt_hour = m.timestamp.replace(minute=0, second=0, microsecond=0)
+        if m.from_id:
+            lookups.add((m.from_id, dt_hour))
+        for mr in m.recipients.all():
+            if mr.recipient_id:
+                lookups.add((mr.recipient_id, dt_hour))
+
+    # Bulk fetch EntityInfoCache entries
+    eids = {l[0] for l in lookups}
+    cache_entries = EntityInfoCache.objects.filter(entity_id__in=eids)
+
+    # Map them by (entity_id, as_of)
+    info_map = {
+        (ce.entity_id, ce.as_of): ce.data
+        for ce in cache_entries
+    }
+
+    def _get_info(eid: int, when: datetime) -> dict:
+        if not eid:
+            return get_entity_info(None, when)
+
+        dt_hour = when.replace(minute=0, second=0, microsecond=0)
+        cached = info_map.get((eid, dt_hour))
+        if cached:
+            return cached
+
+        # Fallback to single fetch
         info = get_entity_info(eid, when)
-        _info_cache[key] = info
+        info_map[(eid, dt_hour)] = info
         return info
 
-    for m in qs:
+    for m in entries:
         mid = m.id_key
         sent = m.timestamp
-        timeee = getattr(m, "timestamp", timezone.now())
+        timeee = m.timestamp or timezone.now()
 
         sender_id = m.from_id
-        sinfo = _cached_info(sender_id, timeee)
+        sinfo = _get_info(sender_id, timeee)
 
         recipient_names = []
         recipient_ids = []
@@ -98,15 +131,18 @@ def get_user_mails(qs) -> Dict[int, Dict]:
         recipient_alliances = []
         recipient_alliance_ids = []
 
+        r_info_cache = {}
+
         for mr in m.recipients.all():
             rid = mr.recipient_id
-            rinfo = _cached_info(rid, timeee)
+            rinfo = _get_info(rid, timeee)
             recipient_ids.append(rid)
             recipient_names.append(rinfo["name"])
             recipient_corps.append(rinfo["corp_name"])
             recipient_corp_ids.append(rinfo["corp_id"])
             recipient_alliances.append(rinfo["alli_name"])
             recipient_alliance_ids.append(rinfo["alli_id"])
+            r_info_cache[rid] = rinfo
 
         result[mid] = {
             "message_id": mid,
@@ -125,6 +161,10 @@ def get_user_mails(qs) -> Dict[int, Dict]:
             "recipient_alliances": recipient_alliances,
             "recipient_alliance_ids": recipient_alliance_ids,
             "status": "Read" if m.is_read else "Unread",
+            "info_cache": {
+                sender_id: sinfo,
+                **r_info_cache
+            }
         }
 
     logger.debug("Extracted %d mails", len(result))
@@ -137,52 +177,36 @@ def get_cell_style_for_mail_cell(column: str, row: dict, index: Optional[int] = 
     # sender cell
     if column.startswith('sender_'):
         sid = row.get('sender_id')
-        if get_hostile_state(sid, when=when):
+        if get_hostile_state(sid, when=when, entity_info_cache=row.get("info_cache")):
             return 'color: red;'
     # recipient cell
     if column.startswith('recipient_') and index is not None:
         rid = row['recipient_ids'][index]
-        if get_hostile_state(rid, when=when):
+        if get_hostile_state(rid, when=when, entity_info_cache=row.get("info_cache")):
             return 'color: red;'
     return ''
 
 
-def is_mail_row_hostile(row: dict) -> bool:
-    def _to_int(val):
-        try:
-            return int(val) if val is not None else None
-        except (ValueError, TypeError):
-            return None
+def is_mail_row_hostile(row: dict, safe_entities: set = None) -> bool:
+    """
+    Checks if a mail is considered hostile using the unified processor.
+    """
+    sender_id = row.get("sender_id")
+    recipient_ids = row.get("recipient_ids", [])
+    involved = [sender_id] + list(recipient_ids)
 
-    sender_id = _to_int(row.get("sender_id"))
-    sender_corp_id = _to_int(row.get("sender_corporation_id"))
-    sender_alli_id = _to_int(row.get("sender_alliance_id"))
-    when = row.get("sent_date")
-
-    recipient_ids = [_to_int(rid) for rid in row.get("recipient_ids", [])]
-    recipient_corp_ids = [_to_int(rcid) for rcid in row.get("recipient_corp_ids", [])]
-    recipient_alli_ids = [_to_int(raid) for raid in row.get("recipient_alliance_ids", [])]
-
+    # CCP/GM check (Custom rule for mails)
     if row.get("sender_name"):
         for key in ["GM ", "CCP "]:
             if key in str(row["sender_name"]):
                 return True
 
-    # Same corporation check (sender and ALL recipients in same corp)
-    if sender_corp_id and all(rcid == sender_corp_id for rcid in recipient_corp_ids if rcid):
-        if recipient_corp_ids: # Ensure there is at least one recipient with a corp
-            return False
-
-    # Check sender hostility
-    if get_hostile_state(sender_id, when=when):
-        return True
-
-    # Check recipients hostility
-    for rid in recipient_ids:
-        if get_hostile_state(rid, when=when):
-            return True
-
-    return False
+    return is_hostile_unified(
+        involved_ids=involved,
+        when=row.get("sent_date"),
+        safe_entities=safe_entities,
+        entity_info_cache=row.get("info_cache")
+    )
 
 
 
@@ -192,13 +216,16 @@ def render_mails(user_id: int) -> str:
     """
     mails = get_user_mails(gather_user_mails(user_id))
     if not mails:  # User has no mail history yet.
-        return '<p>No mails found.</p>'
+        return '<table class="table stats"><tbody><tr><td class="text-center">No mails found.</td></tr></tbody></table>'
+
+    from ..app_settings import get_safe_entities
+    safe_entities = get_safe_entities()
 
     rows = sorted(mails.values(), key=lambda x: x['sent_date'], reverse=True)
-    hostile_rows = [r for r in rows if is_mail_row_hostile(r)]
+    hostile_rows = [r for r in rows if is_mail_row_hostile(r, safe_entities=safe_entities)]
     total = len(hostile_rows)
     if total == 0:  # Nothing matched the hostile criteria.
-        return '<p>No hostile mails found.</p>'
+        return '<table class="table stats"><tbody><tr><td class="text-center">No hostile mails found.</td></tr></tbody></table>'
 
     limit = 50
     display = hostile_rows[:limit]
@@ -226,12 +253,12 @@ def render_mails(user_id: int) -> str:
                 parts = []
                 for idx, item in enumerate(val):
                     style = get_cell_style_for_mail_cell(col, row, index=idx)
-                    prefix = f"<span style='{style}'>" if style else "<span>"
+                    prefix = f"<span style='{style}' class='text-danger'>" if style else "<span>"
                     parts.append(f"{prefix}{html.escape(str(item))}</span>")
                 cell = '<td>' + ', '.join(parts) + '</td>'
             else:
                 style = get_cell_style_for_mail_cell(col, row)
-                style_attr = f" style='{style}'" if style else ""
+                style_attr = f" style='{style}' class='text-danger'" if style else ""
                 cell = f"<td{style_attr}>{html.escape(str(val))}</td>"
 
             html_parts.append(cell)
@@ -262,14 +289,19 @@ def get_user_hostile_mails(user_id: int) -> Dict[int, str]:
         new_qs = all_qs.filter(id_key__in=new_ids)
         new_rows = get_user_mails(new_qs)
 
-        hostile_rows: dict[int, dict] = {mid: m for mid, m in new_rows.items() if is_mail_row_hostile(m)}
+        # Mark all new mails as processed to prevent re-processing safe ones
+        ProcessedMail.objects.bulk_create(
+            [ProcessedMail(mail_id=mid) for mid in new_ids],
+            ignore_conflicts=True,
+        )
+
+        from ..app_settings import get_safe_entities
+        safe_entities = get_safe_entities()
+
+        hostile_rows: dict[int, dict] = {mid: m for mid, m in new_rows.items() if is_mail_row_hostile(m, safe_entities=safe_entities)}
 
         pms: dict[int, ProcessedMail] = {}
         if hostile_rows:
-            ProcessedMail.objects.bulk_create(
-                [ProcessedMail(mail_id=mid) for mid in hostile_rows.keys()],
-                ignore_conflicts=True,
-            )
             pms = {
                 pm.mail_id: pm
                 for pm in ProcessedMail.objects.filter(mail_id__in=hostile_rows.keys())
@@ -294,11 +326,10 @@ def get_user_hostile_mails(user_id: int) -> Dict[int, str]:
             flags_text = "\n    - ".join(flags) if flags else "(no flags)"
 
             note_text = (
-                f"- **'{m['subject']}'**: "
-                f"\n  - sent {m['sent_date']}; "
-                f"\n  - from **{m['sender_name']}**(**{m['sender_corporation']}**/"
-                f"**{m['sender_alliance']}**), "
-                f"\n  - flags:\n    - {flags_text}"
+                f"- **'{m['subject']}'** (Sent: {m['sent_date']})"
+                f"\n  - **From:** {m['sender_name']} ({m['sender_corporation']} | {m['sender_alliance']})"
+                f"\n  - **Flags:**"
+                f"\n    - {flags_text}"
             )
 
             SusMailNote.objects.update_or_create(

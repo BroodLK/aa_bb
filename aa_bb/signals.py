@@ -10,15 +10,15 @@ from django.dispatch import receiver
 from django.db.models.signals import post_save, pre_delete
 
 from allianceauth.authentication.models import CharacterOwnership
+from allianceauth.services.hooks import get_extension_logger
 
 from .models import BigBrotherConfig, TicketToolConfig
 from .tasks_cb import BB_register_message_tasks
 from .tasks_tickets import get_webhook_for_reason
 from .app_settings import send_message, send_status_embed
 
-import logging
 
-logger = logging.getLogger(__name__)
+logger = get_extension_logger(__name__)
 
 try:
     from aadiscordbot.tasks import run_task_function

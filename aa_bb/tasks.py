@@ -1,8 +1,10 @@
 from django.db.utils import OperationalError
 import time
 import traceback
+import gc
 from django.utils import timezone
 from django.db.models import Q
+from django.db import close_old_connections
 from celery import shared_task, current_app
 
 from .models import (
@@ -57,43 +59,6 @@ VERBOSE_WEBHOOK_LOGGING = True
 
 
 
-def parse_hostile_summary(summary: str):
-    """
-    Parse the summary string from get_hostile_asset_locations /
-    get_hostile_clone_locations into (owner, region, ships, chars).
-
-    Expected format from helpers is:
-      "Owner Name | Region: Region Name | Ships: A, B | Chars: X, Y"
-    or
-      "Owner Name | Chars: X, Y"
-
-    Ships may be empty for clones.
-    """
-    owner = summary or "Unresolvable"
-    region = ""
-    ships = ""
-    chars: list[str] = []
-
-    if not summary:
-        return owner, region, ships, chars
-
-    parts = [p.strip() for p in summary.split("|") if p.strip()]
-    if parts:
-        owner = parts[0]
-
-    for seg in parts[1:]:
-        label, _, rest = seg.partition(":")
-        label = label.strip().lower()
-        value = rest.strip()
-        if label == "region":
-            region = value
-        elif label == "ships":
-            ships = value
-        elif label == "chars":
-            if value:
-                chars = [c.strip() for c in value.split(",") if c.strip()]
-
-    return owner, region, ships, chars
 
 
 @shared_task
@@ -102,11 +67,15 @@ def BB_update_single_user(user_id, char_name):
     Process updates for a single user.
     Broken out from BB_run_regular_updates for scalability.
     """
-    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - START Update for user: {char_name} (ID: {user_id})")
+    # Close old DB connections to prevent memory leaks
+    close_old_connections()
+
+    logger.debug(f"✅  [AA-BB] - [BB_update_single_user] - START Update for user: {char_name} (ID: {user_id})")
 
     instance = BigBrotherConfig.get_solo()
     if not instance.is_active:
         logger.info(f"ℹ️  [AA-BB] - [BB_update_single_user] - BigBrother inactive. Skipping update for {char_name}.")
+        close_old_connections()
         return
 
     User = get_user_model()
@@ -114,6 +83,7 @@ def BB_update_single_user(user_id, char_name):
         user_obj = User.objects.get(id=user_id)
     except User.DoesNotExist:
         logger.error(f"ℹ️  [AA-BB] - [BB_update_single_user] - User {user_id} not found.")
+        close_old_connections()
         return
 
     limit_notifications = False
@@ -222,6 +192,7 @@ def BB_update_single_user(user_id, char_name):
             logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Status loaded (created={created}). Calculating changes...")
 
             changes = []
+            status_changed = created  # Track if we need to save (always save if newly created)
 
             def as_dict(x):
                 return x if isinstance(x, dict) else {}  # utility to guard against None/non-dict entries
@@ -259,7 +230,7 @@ def BB_update_single_user(user_id, char_name):
                     if instance.clone_state_notify:
                         changes.append(f"###{pinggg} Clone state change detected:{''.join(flagggs)}")
                     status.clone_status = state_result
-                    status.save()
+                    status_changed = True
 
             if set(sp_age_ratio_result) != set(status.sp_age_ratio_result or []):  # detect changes in SP-to-age ratios
                 flaggs = []
@@ -306,8 +277,10 @@ def BB_update_single_user(user_id, char_name):
                     if instance.sp_inject_notify:
                         changes.append(f"## {get_pings('SP Injected')} Skill Injection detected:\n{sp_list}")
 
-            status.sp_age_ratio_result = sp_age_ratio_result
-            status.save()
+            # Only update sp_age_ratio if it actually changed
+            if sp_age_ratio_result != (status.sp_age_ratio_result or {}):
+                status.sp_age_ratio_result = sp_age_ratio_result
+                status_changed = True
 
             if status.has_awox_kills != has_awox or set(awox_links) != set(
                 status.awox_kill_links or []):  # new awox activity?
@@ -335,6 +308,7 @@ def BB_update_single_user(user_id, char_name):
                         if instance.awox_notify:
                             changes.append(f"### AWOX Kill Status: 🟢")
                     status.has_awox_kills = has_awox
+                    status_changed = True
                     logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} changed")
                 if new_links:  # send notifications only for links not yet alerted on
                     # Identify which of the new links the user was an attacker in
@@ -362,17 +336,15 @@ def BB_update_single_user(user_id, char_name):
                 if new:  # merge newly seen links into the cached list
                     # notify
                     status.awox_kill_links = list(old | new)
-                    status.updated = timezone.now()
-                    status.save()
+                    status_changed = True
 
             if status.has_cyno != has_cyno or norm(cyno_result) != norm(status.cyno or {}):  # cyno readiness changed?
 
                 # 1) Flag change for top-level boolean
                 if status.has_cyno != has_cyno:  # flip the top-level boolean when overall readiness changes
-                    if not has_cyno:
-                        if instance.cyno_notify:
-                            changes.append(f"### Cyno Status: 🟢")
+                    # User: Only trigger if "Can Light" = True (has_cyno is based on can_light)
                     status.has_cyno = has_cyno
+                    status_changed = True
 
                 # 2) Grab the old vs. new JSON blobs
                 old_cyno: dict = status.cyno or {}
@@ -438,25 +410,36 @@ def BB_update_single_user(user_id, char_name):
                         "i_carrier", "i_dread", "i_fax", "i_super", "i_titan", "i_jf", "i_rorq",
                     ]
 
-                    if changed_chars:  # only build table output when specific characters changed
-                        if instance.cyno_notify:
-                            changes.append(f"###{get_pings('All Cyno Changes')} Changes in cyno capabilities detected:")
+                    cyno_updates = []
 
                     for charname in changed_chars:
                         old_entry = old_cyno.get(charname, {})
                         new_entry = new_cyno.get(charname, {})
+
+                        # User: Only trigger if "Can Light" = True
+                        if not new_entry.get("can_light", False):
+                            continue
+
+                        # User: Never trigger if one of the "has ship" goes from True to False
+                        ship_lost = False
+                        for key in cyno_keys:
+                            if key.startswith("i_"):
+                                if int(old_entry.get(key, 0)) > int(new_entry.get(key, 0)):
+                                    ship_lost = True
+                                    break
+                        if ship_lost:
+                            continue
+
                         anything = any(
                             val in (1, 2, 3, 4, 5)
                             for val in new_entry.values()
                         )
                         if anything == False:  # skip characters that have no meaningful cyno skills
                             continue
-                        if new_entry.get("can_light", False) == True:  # highlight characters that can actively light cynos
-                            pingrole = get_pings('Can Light Cyno')
-                        else:
-                            pingrole = get_pings('Cyno Update')
-                        if instance.cyno_notify:
-                            changes.append(f"- **{charname}**{pingrole}:")
+
+                        pingrole = get_pings('Can Light Cyno')
+                        cyno_updates.append(f"- **{charname}**{pingrole}:")
+
                         table_lines = [
                             "(1 = trained but alpha, 2 = active)",
                             "Value                 | Old   | New",
@@ -468,18 +451,16 @@ def BB_update_single_user(user_id, char_name):
                             old_val = str(old_entry.get(key, 0))
                             new_val = str(new_entry.get(key, 0))
                             if old_val != new_val:
-                                if instance.cyno_notify:
-                                    table_lines.append(f"{display.ljust(21)} | {old_val.ljust(7)} | {new_val.ljust(6)}")
+                                table_lines.append(f"{display.ljust(21)} | {old_val.ljust(7)} | {new_val.ljust(6)}")
 
                         # Show can_light as a summary at bottom
                         can_light_old = old_entry.get("can_light", False)
                         can_light_new = new_entry.get("can_light", False)
-                        if instance.cyno_notify:
-                            table_lines.append("")
-                            table_lines.append(
-                                f"{'Can Light'.ljust(21)} | "
-                                f"{('Yes' if can_light_old else 'No').ljust(7)} | "
-                                f"{('Yes' if can_light_new else 'No').ljust(6)}")
+                        table_lines.append("")
+                        table_lines.append(
+                            f"{'Can Light'.ljust(21)} | "
+                            f"{('Yes' if can_light_old else 'No').ljust(7)} | "
+                            f"{('Yes' if can_light_new else 'No').ljust(6)}")
 
                         try:
                             cid = get_character_id(charname)
@@ -497,22 +478,25 @@ def BB_update_single_user(user_id, char_name):
                         except Exception as e:
                             logger.warning(f"ℹ️  [AA-BB] - [BB_update_single_user] - Could not fetch corp time for {charname}: {e}")
 
-
                         table_block = "```\n" + "\n".join(table_lines) + "\n```"
-                        if instance.cyno_notify:
-                            changes.append(table_block)
+                        cyno_updates.append(table_block)
+
+                    if cyno_updates and instance.cyno_notify:
+                        now_ts = timezone.now().strftime('%Y-%m-%d %H:%M:%S')
+                        changes.append(f"###{get_pings('All Cyno Changes')} Changes in cyno capabilities detected ({now_ts} UTC):")
+                        changes.extend(cyno_updates)
 
                 # 4) Save new blob
                 status.cyno = new_cyno
+                status_changed = True
 
             if status.has_skills != has_skills or skills_norm(skills_result) != skills_norm(
                 status.skills or {}):  # skill list changed?
-                # 1) If the boolean flag flipped, append the 🔴 / 🟢 as before
-                if status.has_skills != has_skills:  # emit a coarse-grained flag when the threshold crosses zero/any skills
-                    if not has_skills:
-                        if instance.cyno_notify:
-                            changes.append(f"### Skill Status: 🟢")
+                # 1) If the boolean flag flipped
+                if status.has_skills != has_skills:
+                    # User: trigger ONLY for new skills (has_skills crossing 0 to 1 handled in character loop)
                     status.has_skills = has_skills
+                    status_changed = True
 
                 # 2) Grab the old vs. new JSON blobs
                 old_skills: dict = status.skills or {}
@@ -569,9 +553,7 @@ def BB_update_single_user(user_id, char_name):
                         30651, 30652, 30653, 30650, 33856,
                     ]
 
-                    if changed_chars:  # preface the per-character tables with a summary line
-                        if instance.cyno_notify:
-                            changes.append(f"##{get_pings('skills')} Changes in skills detected:")
+                    skill_updates = []
 
                     for charname in changed_chars:
                         raw_old = old_skills.get(charname)
@@ -579,21 +561,8 @@ def BB_update_single_user(user_id, char_name):
 
                         raw_new = new_skills.get(charname)
                         new_entry = raw_new if isinstance(raw_new, dict) else {}
-                        anything = any(
-                            (
-                                new_entry.get(sid, {"trained": 0, "active": 0})["trained"] > 0
-                                or
-                                new_entry.get(sid, {"trained": 0, "active": 0})["active"] > 0
-                            )
-                            for sid in ordered_skill_ids
-                        )
-                        if anything == False:  # skip characters with zero relevant skills (just noise)
-                            continue
-                        logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {new_entry.values()}")
 
-                        if instance.cyno_notify:
-                            changes.append(f"- **{charname}**:")
-                        table_lines = [
+                        char_table_lines = [
                             "Skill              | Old       | New",
                             "------------------------------------",
                         ]
@@ -617,49 +586,66 @@ def BB_update_single_user(user_id, char_name):
                             if old_tr == new_tr and old_ac == new_ac:
                                 continue
 
+                            # User: shouldn't trigger unless the skill is new, like T3C goes from 0 to 1
+                            if not (old_tr == 0 and new_tr > 0):
+                                continue
+
                             old_fmt = f"{old_tr}/{old_ac}"
                             new_fmt = f"{new_tr}/{new_ac}"
                             name_padded = name.ljust(18)
 
-                            table_lines.append(
+                            char_table_lines.append(
                                 f"{name_padded} | {old_fmt.ljust(9)} | {new_fmt.ljust(8)}"
                             )
 
-                        if len(table_lines) > 2:
-                            table_block = "```\n" + "\n".join(table_lines) + "\n```"
-                            if instance.cyno_notify:
-                                changes.append(table_block)
+                        if len(char_table_lines) > 2:
+                            skill_updates.append(f"- **{charname}**:")
+                            table_block = "```\n" + "\n".join(char_table_lines) + "\n```"
+                            skill_updates.append(table_block)
+
+                    if skill_updates and instance.cyno_notify:
+                        now_ts = timezone.now().strftime('%Y-%m-%d %H:%M:%S')
+                        changes.append(f"##{get_pings('skills')} Changes in skills detected ({now_ts} UTC):")
+                        changes.extend(skill_updates)
 
                 status.skills = new_skills
+                status_changed = True
             if status.has_hostile_assets != has_hostile_assets or set(hostile_assets_result) != set(
                 status.hostile_assets or []
             ):
                 old_systems = set(status.hostile_assets or [])
                 new_systems = set(hostile_assets_result) - old_systems
 
-                # Build mapping: char -> list of (system, owner, region, ships)
-                assets_by_char: dict[str, list[tuple[str, str, str, str]]] = {}
+                # Build mapping: char -> list of (system, location, owner, region, ships)
+                assets_by_char: dict[str, list[tuple[str, str, str, str, str]]] = {}
 
                 for system in new_systems:
-                    summary = hostile_assets_result.get(system, "")
-                    owner, region, ships, chars = parse_hostile_summary(summary)
+                    data = hostile_assets_result.get(system)
+                    if not data or not isinstance(data, dict):
+                        continue
 
-                    # If helper didn't give chars for some reason, fall back
-                    if not chars:
-                        chars = ["Unknown Character"]
+                    owner = data.get("owner", "Unresolvable")
+                    region = data.get("region", "Unknown Region")
+                    records = data.get("records", [])
 
-                    for cname in chars:
+                    for rec in records:
+                        cname = rec.get("char_name", "Unknown Character")
+                        loc_name = rec.get("location_name", "Unknown Location")
+                        ships = ", ".join(rec.get("ships", []))
+
                         assets_by_char.setdefault(cname, []).append(
-                            (system, owner, region, ships)
+                            (system, loc_name, owner, region, ships)
                         )
 
                 lines: list[str] = []
                 for cname in sorted(assets_by_char.keys()):
                     lines.append(f"- {cname}")
-                    for system, owner, region, ships in assets_by_char[cname]:
-                        info = f"{system} ({owner})"
-                        if region:
-                            info = f"{system} ({owner} | {region})"
+                    for system, loc_name, owner, region, ships in assets_by_char[cname]:
+                        info = f"{loc_name} ({owner} | Region: {region})"
+                        # Use system name if loc_name is not available or too generic
+                        if not loc_name or loc_name == "Unknown Location":
+                             info = f"{system} ({owner} | Region: {region})"
+
                         lines.append(f"   - {info}")
                         if ships:
                             lines.append(f"    - {ships}")
@@ -682,7 +668,9 @@ def BB_update_single_user(user_id, char_name):
                     logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} new hostile asset systems: {', '.join(sorted(new_systems))}")
 
                 status.has_hostile_assets = has_hostile_assets
+                status_changed = True
                 status.hostile_assets = hostile_assets_result
+                status_changed = True
 
             if status.has_hostile_clones != has_hostile_clones or set(hostile_clones_result) != set(
                 status.hostile_clones or []
@@ -690,28 +678,35 @@ def BB_update_single_user(user_id, char_name):
                 old_systems = set(status.hostile_clones or [])
                 new_systems = set(hostile_clones_result) - old_systems
 
-                # Build mapping: char -> list of (system, owner, region)
-                clones_by_char: dict[str, list[tuple[str, str, str]]] = {}
+                # Build mapping: char -> list of (system, location, owner, region)
+                clones_by_char: dict[str, list[tuple[str, str, str, str]]] = {}
 
                 for system in new_systems:
-                    summary = hostile_clones_result.get(system, "")
-                    owner, region, _ships, chars = parse_hostile_summary(summary)
+                    data = hostile_clones_result.get(system)
+                    if not data or not isinstance(data, dict):
+                        continue
 
-                    if not chars:
-                        chars = ["Unknown Character"]
+                    system_owner = data.get("owner", "Unresolvable")
+                    region = data.get("region", "Unknown Region")
+                    records = data.get("records", [])
 
-                    for cname in chars:
+                    for rec in records:
+                        cname = rec.get("char_name", "Unknown Character")
+                        loc_name = rec.get("location_name", "Unknown Location")
+                        loc_owner = rec.get("owner_name", system_owner)
+                        clone_name = rec.get("clone_name", "Jump Clone")
+
                         clones_by_char.setdefault(cname, []).append(
-                            (system, owner, region)
+                            (system, loc_name, loc_owner, region, clone_name)
                         )
 
                 lines: list[str] = []
                 for cname in sorted(clones_by_char.keys()):
-                    lines.append(f"- {cname}")
-                    for system, owner, region in clones_by_char[cname]:
-                        info = f"{system} ({owner})"
-                        if region:
-                            info = f"{system} ({owner} | {region})"
+                    for system, loc_name, loc_owner, region, clone_name in clones_by_char[cname]:
+                        lines.append(f"- {cname} [{clone_name}]")
+                        info = f"{loc_name} ({loc_owner} | Region: {region})"
+                        if not loc_name or loc_name == "Unknown Location":
+                            info = f"{system} ({loc_owner} | Region: {region})"
                         lines.append(f"   - {info}")
 
                 if lines:
@@ -731,7 +726,9 @@ def BB_update_single_user(user_id, char_name):
                     logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} new hostile clone systems: {', '.join(sorted(new_systems))}")
 
                 status.has_hostile_clones = has_hostile_clones
+                status_changed = True
                 status.hostile_clones = hostile_clones_result
+                status_changed = True
 
             if status.has_sus_contacts != has_sus_contacts or set(sus_contacts_result) != set(
                 as_dict(status.sus_contacts) or {}):  # suspect contacts changed?
@@ -771,7 +768,9 @@ def BB_update_single_user(user_id, char_name):
                             changes.append(f"{res} {ping}")
 
                 status.has_sus_contacts = has_sus_contacts
+                status_changed = True
                 status.sus_contacts = sus_contacts_result
+                status_changed = True
 
             if status.has_sus_contracts != has_sus_contracts or set(sus_contracts_result) != set(
                 as_dict(status.sus_contracts) or {}):  # suspicious contracts changed?
@@ -802,16 +801,21 @@ def BB_update_single_user(user_id, char_name):
 
                 if new_links:  # write each new contract entry to the report
                     if instance.contract_notify:
-                        changes.append(f"## New Suspicious Contracts:")
-                        for issuer_id in new_links:
+                        contract_lines = []
+                        for issuer_id in sorted(new_links):
                             res = sus_contracts_result[issuer_id]
                             ping = get_pings('New Suspicious Contracts')
                             if res.startswith("- A -"):  # skip ping for alliance-level alerts
                                 ping = ""
-                            changes.append(f"{res} {ping}")
+                            contract_lines.append(f"{res} {ping}")
+
+                        if contract_lines:
+                            changes.append(f"## New Suspicious Contracts:\n" + "\n".join(contract_lines))
 
                 status.has_sus_contracts = has_sus_contracts
+                status_changed = True
                 status.sus_contracts = sus_contracts_result
+                status_changed = True
 
             if status.has_sus_mails != has_sus_mails or set(sus_mails_result) != set(
                 as_dict(status.sus_mails) or {}):  # suspicious mails changed?
@@ -842,16 +846,21 @@ def BB_update_single_user(user_id, char_name):
 
                 if new_links:  # enumerate the new mail entries for the report
                     if instance.mail_notify:
-                        changes.append(f"### New Suspicious Mails:")
-                        for issuer_id in new_links:
+                        mail_lines = []
+                        for issuer_id in sorted(new_links):
                             res = sus_mails_result[issuer_id]
                             ping = get_pings('New Suspicious Mails')
                             if res.startswith("- A -"):  # skip ping for alliance-level alerts
                                 ping = ""
-                            changes.append(f"{res} {ping}")
+                            mail_lines.append(f"{res} {ping}")
+
+                        if mail_lines:
+                            changes.append(f"### New Suspicious Mails:\n" + "\n".join(mail_lines))
 
                 status.has_sus_mails = has_sus_mails
+                status_changed = True
                 status.sus_mails = sus_mails_result
+                status_changed = True
 
             if status.has_sus_trans != has_sus_trans or set(sus_trans_result) != set(
                 as_dict(status.sus_trans) or {}):  # suspicious wallet txns changed?
@@ -883,7 +892,9 @@ def BB_update_single_user(user_id, char_name):
                     if instance.transaction_notify:
                         changes.append(f"### New Suspicious Transactions{get_pings('New Suspicious Transactions')}:\n{link_list}")
                 status.has_sus_trans = has_sus_trans
+                status_changed = True
                 status.sus_trans = sus_trans_result
+                status_changed = True
 
             if not status.baseline_initialized:
                 # First time auditing this user - respect new_user_notify setting
@@ -945,11 +956,28 @@ def BB_update_single_user(user_id, char_name):
                     )
                     BB_send_discord_notifications.delay(char_name, all_chunks)
 
-            status.baseline_initialized = True
-            status.updated = timezone.now()
-            status.save()
+            # Only save if something actually changed or this is a new user
+            if status_changed or not status.baseline_initialized:
+                status.baseline_initialized = True
+                status.updated = timezone.now()
+                status.save()
+                logger.debug(f"✅  [AA-BB] - [BB_update_single_user] - Saved status for {char_name} (changed: {status_changed})")
+            else:
+                logger.debug(f"✅  [AA-BB] - [BB_update_single_user] - No changes for {char_name}, skipping save")
 
             logger.info(f"✅  [AA-BB] - [BB_update_single_user] - END Update for user: {char_name} (ID: {user_id}) - Success")
+
+            # Clean up large variables to free memory
+            del cyno_result, skills_result, state_result, awox_data, awox_links, awox_map
+            del hostile_clones_result, hostile_assets_result
+            del sus_contacts_result, sus_contracts_result, sus_mails_result, sus_trans_result
+            del sp_age_ratio_result, changes
+            if 'all_chunks' in locals():
+                del all_chunks
+
+            # Force garbage collection and close connections
+            gc.collect()
+            close_old_connections()
             break
 
         except OperationalError as e:
@@ -971,6 +999,9 @@ def BB_update_single_user(user_id, char_name):
             raise
         except Exception as e:
             logger.error(f"ℹ️  [AA-BB] - [BB_update_single_user] - Failed to update user {char_name}: {e}", exc_info=True)
+            # Clean up on error
+            gc.collect()
+            close_old_connections()
             raise
 
 
@@ -1004,12 +1035,15 @@ def BB_run_regular_updates():
       • Persistence: after all comparisons, save `status` so the UI reflects the
         latest state even if no Discord messages were sent this run.
     """
+    # Close old DB connections to prevent memory leaks
+    close_old_connections()
+
     instance = BigBrotherConfig.get_solo()
 
     try:
         from django.contrib.auth import get_user_model
         User = get_user_model()
-        # find a superuser’s main to anchor corp/alliance fields
+        # find a superuser's main to anchor corp/alliance fields
         superusers = User.objects.filter(is_superuser=True)
         char = EveCharacter.objects.filter(
             character_ownership__user__in=superusers
@@ -1031,7 +1065,9 @@ def BB_run_regular_updates():
 
         # walk each eligible user and rebuild their status snapshot
         if instance.is_active:  # skip user iteration entirely when plugin disabled/unlicensed
-            users = list(get_users())
+            # Use iterator to prevent loading all users into memory at once
+            users_iterator = get_users()
+            users = list(users_iterator)
             total_users = len(users)
             logger.info(
                 f"✅  [AA-BB] - [BB_run_regular_updates] - Dispatching updates for {total_users} users (staggered)."
@@ -1128,8 +1164,16 @@ def BB_run_regular_updates():
         else:
             logger.warning("ℹ️  [AA-BB] - [BB_run_regular_updates] - Plugin is disabled (is_active=False), skipping user updates.")
 
+        # Clean up and force garbage collection
+        if 'users' in locals():
+            del users
+        gc.collect()
+        close_old_connections()
+
     except Exception as e:
         logger.error("ℹ️  [AA-BB] - [BB_run_regular_updates] - Task failed", exc_info=True)
+        gc.collect()
+        close_old_connections()
         tb_str = traceback.format_exc()
         tb_lines = [f"{get_pings('Error')} Big Brother encountered an unexpected error", "```python"] + tb_str.split("\n") + ["```"]
         for chunk in _chunk_embed_lines(tb_lines):
@@ -1160,6 +1204,8 @@ def BB_send_discord_notifications(subject: str, chunks: list[list[str]]) -> None
     Run this on a single-worker queue (concurrency=1) so embeds never
     interleave between users or checks.
     """
+    close_old_connections()
+
     logger.info(
         "✅  [AA-BB] - [BB_send_discord_notifications] - Dispatching %d embed chunks for %s",
         len(chunks),
@@ -1180,6 +1226,11 @@ def BB_send_discord_notifications(subject: str, chunks: list[list[str]]) -> None
             override_title="",  # keep titles minimal; content is in the body
         )
         time.sleep(0.25)  # tiny delay to be nice to the webhook
+
+    # Clean up after sending all chunks
+    del chunks
+    gc.collect()
+    close_old_connections()
 def _merge_id_text(existing_text: str | None, new_ids: set[int]) -> str:
     existing_ids: set[int] = set()
 

@@ -1,234 +1,215 @@
-Corptools not installed, corp checks will not work.
-Corptools not installed, corp checks will not work.
-✅  [AA-BB] - [Tasks_Tickets] - aadiscordbot not installed; compliance checks will not work.
-✅  [AA-BB] - [Signals] - aadiscordbot not installed, signaling won't work.
-DEBUG:celery.utils.functional:
-def warm_entity_cache_task(self, user_id):
-    return 1
-DEBUG:celery.utils.functional:
-def warm_entity_cache_task(self, user_id):
-    return 1
-Found 19 test(s).
-Creating test database for alias 'default'...
-C:\Users\brood\PycharmProjects\autosrp\.venv\Lib\site-packages\django\db\models\fields\__init__.py:1595: RuntimeWarning: DateTimeField RequestLog.date received a naive datetime (2018-12-07 08:56:33.846342) while time zone support is active.
-  warnings.warn(
-Starting Migration!
-this will look like it has hung but it is doing bulk migration of data in the background
-Starting Sync 0 to sync
-DEBUG:allianceauth.hooks:Creating new hook menu_item_hook
-DEBUG:allianceauth.hooks:Registering hook menu_item_hook for function None
-DEBUG:allianceauth.hooks:Searching for hooks
-DEBUG:allianceauth.hooks:Creating new hook dashboard_hook
-DEBUG:allianceauth.hooks:Registering hook dashboard_hook for function None
-DEBUG:allianceauth.hooks:Registering hook dashboard_hook for function None
-DEBUG:allianceauth.hooks:Registering hook dashboard_hook for function None
-DEBUG:allianceauth.hooks:Registering hook dashboard_hook for function None
-DEBUG:allianceauth.hooks:Registering hook menu_item_hook for function None
-DEBUG:allianceauth.hooks:Registering hook menu_item_hook for function None
-DEBUG:allianceauth.hooks:Creating new hook url_hook
-DEBUG:allianceauth.hooks:Registering hook url_hook for function None
-DEBUG:allianceauth.hooks:Creating new hook theme_hook
-DEBUG:allianceauth.hooks:Registering hook theme_hook for function None
-DEBUG:allianceauth.hooks:Registering hook theme_hook for function None
-DEBUG:allianceauth.hooks:Registering hook theme_hook for function None
-DEBUG:allianceauth.hooks:Registering hook menu_item_hook for function None
-DEBUG:allianceauth.hooks:Registering hook menu_item_hook for function None
-DEBUG:allianceauth.hooks:Registering hook url_hook for function None
-DEBUG:allianceauth.hooks:Creating new hook secure_group_filters
-DEBUG:allianceauth.hooks:Registering hook secure_group_filters for function None
-DEBUG:allianceauth.hooks:Creating new hook discord_cogs_hook
-DEBUG:allianceauth.hooks:Registering hook discord_cogs_hook for function None
-DEBUG:allianceauth.hooks:Registering hook menu_item_hook for function None
-DEBUG:allianceauth.hooks:Registering hook url_hook for function None
-DEBUG:allianceauth.hooks:Registering hook dashboard_hook for function None
-DEBUG:allianceauth.hooks:Registering hook secure_group_filters for function None
-DEBUG:matplotlib:matplotlib data path: C:\Users\brood\PycharmProjects\autosrp\.venv\Lib\site-packages\matplotlib\mpl-data
-DEBUG:matplotlib:CONFIGDIR=C:\Users\brood\.matplotlib
-DEBUG:matplotlib:interactive is False
-DEBUG:matplotlib:platform is win32
-DEBUG:matplotlib:CACHEDIR=C:\Users\brood\.matplotlib
-DEBUG:matplotlib.font_manager:Using fontManager instance from C:\Users\brood\.matplotlib\fontlist-v390.json
-DEBUG:allianceauth.hooks:Registering hook menu_item_hook for function None
-DEBUG:allianceauth.hooks:Registering hook url_hook for function None
-DEBUG:allianceauth.hooks:Registering hook menu_item_hook for function None
-DEBUG:allianceauth.hooks:Registering hook menu_item_hook for function None
-DEBUG:allianceauth.hooks:Registering hook url_hook for function None
-DEBUG:allianceauth.hooks:Registering hook menu_item_hook for function None
-DEBUG:allianceauth.hooks:Registering hook url_hook for function None
-DEBUG:allianceauth.hooks:Registering hook discord_cogs_hook for function None
-DEBUG:allianceauth.hooks:Got 9 hooks
-System check identified no issues (0 silenced).
-DEBUG:allianceauth.services.signals:Received pre_save from testuser
-DEBUG:allianceauth.authentication.signals:User testuser created. Creating default UserProfile.
-DEBUG:allianceauth.authentication.signals:Character Test Character has been saved. Assessing owner's state for changes.
-DEBUG:allianceauth.authentication.signals:Character Test Character is not a main character. No state assessment required.
-INFO:allianceauth.authentication.signals:Character Test Character has a new owner testuser. Creating ownership record.
-..DEBUG:allianceauth.services.signals:Received pre_save from testuser
-DEBUG:allianceauth.authentication.signals:User testuser created. Creating default UserProfile.
-DEBUG:allianceauth.authentication.signals:Character Main Character has been saved. Assessing owner's state for changes.
-DEBUG:allianceauth.authentication.signals:Character Main Character is not a main character. No state assessment required.
-INFO:allianceauth.authentication.signals:Character Main Character has a new owner testuser. Creating ownership record.
-[PERFORMANCE] determine_character_state avg time: 0.001602s
-.[PERFORMANCE] is_above_threshold logic avg time: 0.000039s
-.[PERFORMANCE] get_user_hostile_transactions (100 tx) avg time: 0.001003s
-...INFO:aa_bb.tasks_utils:✅  [AA-BB] - [Tasks] - Updated 'AA-BB: Some Optional Task' periodic task (enabled=False)
-INFO:aa_bb.tasks_utils:✅  [AA-BB] - [Tasks] - Updated 'AA-BB: Some Optional Task' periodic task (enabled=True)
-.INFO:aa_bb.tasks_utils:✅  [AA-BB] - [Tasks] - Updated 'AA-BB: BB Run Regular Updates' periodic task (enabled=True)
-.INFO:aa_bb.tasks_utils:Renaming periodic task 'BB run regular updates' to 'AA-BB: BB Run Regular Updates'
-INFO:aa_bb.tasks_utils:✅  [AA-BB] - [Tasks] - Updated 'AA-BB: BB Run Regular Updates' periodic task (enabled=False)
-.DEBUG:allianceauth.services.signals:Received pre_save from testuser
-DEBUG:allianceauth.authentication.signals:User testuser created. Creating default UserProfile.
-INFO:aa_bb.tasks:✅  [AA-BB] - [BB_update_single_user] - START Update for user: Test Char (ID: 1)
-INFO:aa_bb.tasks:✅  [AA-BB] - [BB_update_single_user] - [Test Char] Fetching Cyno Info...
-INFO:aa_bb.tasks:✅  [AA-BB] - [BB_update_single_user] - [Test Char] Fetching Skill Info...
-INFO:aa_bb.tasks:✅  [AA-BB] - [BB_update_single_user] - [Test Char] Determining Character State...
-INFO:aa_bb.tasks:✅  [AA-BB] - [BB_update_single_user] - [Test Char] Fetching AWOX Links...
-INFO:aa_bb.tasks:✅  [AA-BB] - [BB_update_single_user] - [Test Char] Fetching Hostile Clones...
-INFO:aa_bb.tasks:✅  [AA-BB] - [BB_update_single_user] - [Test Char] Fetching Hostile Assets...
-INFO:aa_bb.tasks:✅  [AA-BB] - [BB_update_single_user] - [Test Char] Fetching Sus Contacts/Contracts/Mails/Trans...
-INFO:aa_bb.tasks:✅  [AA-BB] - [BB_update_single_user] - [Test Char] Processing SP Ratios...
-INFO:aa_bb.tasks:✅  [AA-BB] - [BB_update_single_user] - [Test Char] Status loaded (created=True). Calculating changes...
-INFO:aa_bb.tasks:✅  [AA-BB] - [BB_update_single_user] - Test Char new assets:
-🔗 Some hostile contact
-INFO:aa_bb.tasks:✅  [AA-BB] - [BB_update_single_user] - Test Char status changed
-INFO:aa_bb.tasks:✅  [AA-BB] - [BB_update_single_user] - END Update for user: Test Char (ID: 1) - Success
-.DEBUG:allianceauth.authentication.signals:State BB_Member saved. Re-evaluating membership.
-DEBUG:allianceauth.authentication.signals:State BB_Guest saved. Re-evaluating membership.
-DEBUG:allianceauth.services.signals:Received pre_save from admin
-DEBUG:allianceauth.authentication.signals:User admin created. Creating default UserProfile.
-DEBUG:allianceauth.services.signals:Received pre_save from recruiter
-DEBUG:allianceauth.authentication.signals:User recruiter created. Creating default UserProfile.
-DEBUG:allianceauth.services.signals:Received pre_save from basic
-DEBUG:allianceauth.authentication.signals:User basic created. Creating default UserProfile.
-DEBUG:allianceauth.services.signals:Received pre_save from superuser
-DEBUG:allianceauth.authentication.signals:User superuser created. Creating default UserProfile.
-DEBUG:allianceauth.services.signals:Received m2m_changed from user admin permissions with action pre_add
-DEBUG:allianceauth.services.signals:sender: <class 'django.contrib.auth.models.User_user_permissions'>
-DEBUG:allianceauth.services.signals:Received m2m_changed from user admin permissions with action post_add
-DEBUG:allianceauth.services.signals:sender: <class 'django.contrib.auth.models.User_user_permissions'>
-DEBUG:allianceauth.services.signals:Received m2m_changed from user recruiter permissions with action pre_add
-DEBUG:allianceauth.services.signals:sender: <class 'django.contrib.auth.models.User_user_permissions'>
-DEBUG:allianceauth.services.signals:Received m2m_changed from user recruiter permissions with action post_add
-DEBUG:allianceauth.services.signals:sender: <class 'django.contrib.auth.models.User_user_permissions'>
-DEBUG:allianceauth.services.signals:Received m2m_changed from user basic permissions with action pre_add
-DEBUG:allianceauth.services.signals:sender: <class 'django.contrib.auth.models.User_user_permissions'>
-DEBUG:allianceauth.services.signals:Received m2m_changed from user basic permissions with action post_add
-DEBUG:allianceauth.services.signals:sender: <class 'django.contrib.auth.models.User_user_permissions'>
-DEBUG:allianceauth.authentication.signals:Character Admin Char has been saved. Assessing owner's state for changes.
-DEBUG:allianceauth.authentication.signals:Character Admin Char is not a main character. No state assessment required.
-INFO:allianceauth.authentication.signals:Character Admin Char has a new owner admin. Creating ownership record.
-DEBUG:allianceauth.services.signals:Received pre_save from admin for process_main_character_change
-INFO:allianceauth.services.signals:Updating Names due to change of main character for user admin
-DEBUG:allianceauth.authentication.signals:Profile for admin saved without state change. Re-evaluating state.
-INFO:allianceauth.authentication.models:Updating admin state to Guest
-DEBUG:allianceauth.services.signals:Received pre_save from admin for process_main_character_change
-DEBUG:allianceauth.notifications.managers:Invalided notification cache for user with pk 1
-INFO:allianceauth.notifications.managers:Created notification admin: State changed to: Guest
-DEBUG:allianceauth.services.signals:Received state_changed from admin to state Guest
-DEBUG:allianceauth.groupmanagement.signals:Checking group memberships for admin based on new state Guest
-DEBUG:allianceauth.authentication.signals:Character Recruiter Char has been saved. Assessing owner's state for changes.
-DEBUG:allianceauth.authentication.signals:Character Recruiter Char is not a main character. No state assessment required.
-INFO:allianceauth.authentication.signals:Character Recruiter Char has a new owner recruiter. Creating ownership record.
-DEBUG:allianceauth.services.signals:Received pre_save from recruiter for process_main_character_change
-INFO:allianceauth.services.signals:Updating Names due to change of main character for user recruiter
-DEBUG:allianceauth.authentication.signals:Profile for recruiter saved without state change. Re-evaluating state.
-INFO:allianceauth.authentication.models:Updating recruiter state to Guest
-DEBUG:allianceauth.services.signals:Received pre_save from recruiter for process_main_character_change
-DEBUG:allianceauth.notifications.managers:Invalided notification cache for user with pk 2
-INFO:allianceauth.notifications.managers:Created notification recruiter: State changed to: Guest
-DEBUG:allianceauth.services.signals:Received state_changed from recruiter to state Guest
-DEBUG:allianceauth.groupmanagement.signals:Checking group memberships for recruiter based on new state Guest
-DEBUG:allianceauth.authentication.signals:Character Basic Char has been saved. Assessing owner's state for changes.
-DEBUG:allianceauth.authentication.signals:Character Basic Char is not a main character. No state assessment required.
-INFO:allianceauth.authentication.signals:Character Basic Char has a new owner basic. Creating ownership record.
-DEBUG:allianceauth.services.signals:Received pre_save from basic for process_main_character_change
-INFO:allianceauth.services.signals:Updating Names due to change of main character for user basic
-DEBUG:allianceauth.authentication.signals:Profile for basic saved without state change. Re-evaluating state.
-INFO:allianceauth.authentication.models:Updating basic state to Guest
-DEBUG:allianceauth.services.signals:Received pre_save from basic for process_main_character_change
-DEBUG:allianceauth.notifications.managers:Invalided notification cache for user with pk 3
-INFO:allianceauth.notifications.managers:Created notification basic: State changed to: Guest
-DEBUG:allianceauth.services.signals:Received state_changed from basic to state Guest
-DEBUG:allianceauth.groupmanagement.signals:Checking group memberships for basic based on new state Guest
-DEBUG:allianceauth.authentication.signals:Character Member Char has been saved. Assessing owner's state for changes.
-DEBUG:allianceauth.authentication.signals:Character Member Char is not a main character. No state assessment required.
-DEBUG:allianceauth.services.signals:Received pre_save from member_user
-DEBUG:allianceauth.authentication.signals:User member_user created. Creating default UserProfile.
-INFO:allianceauth.authentication.signals:Character Member Char has a new owner member_user. Creating ownership record.
-DEBUG:allianceauth.services.signals:Received pre_save from member_user for process_main_character_change
-INFO:allianceauth.services.signals:Updating Names due to change of main character for user member_user
-DEBUG:allianceauth.authentication.signals:Profile for member_user saved without state change. Re-evaluating state.
-INFO:allianceauth.authentication.models:Updating member_user state to Guest
-DEBUG:allianceauth.services.signals:Received pre_save from member_user for process_main_character_change
-DEBUG:allianceauth.notifications.managers:Invalided notification cache for user with pk 5
-INFO:allianceauth.notifications.managers:Created notification member_user: State changed to: Guest
-DEBUG:allianceauth.services.signals:Received state_changed from member_user to state Guest
-DEBUG:allianceauth.groupmanagement.signals:Checking group memberships for member_user based on new state Guest
-DEBUG:allianceauth.authentication.signals:Character Guest Char has been saved. Assessing owner's state for changes.
-DEBUG:allianceauth.authentication.signals:Character Guest Char is not a main character. No state assessment required.
-DEBUG:allianceauth.services.signals:Received pre_save from guest_user
-DEBUG:allianceauth.authentication.signals:User guest_user created. Creating default UserProfile.
-INFO:allianceauth.authentication.signals:Character Guest Char has a new owner guest_user. Creating ownership record.
-DEBUG:allianceauth.services.signals:Received pre_save from guest_user for process_main_character_change
-INFO:allianceauth.services.signals:Updating Names due to change of main character for user guest_user
-DEBUG:allianceauth.authentication.signals:Profile for guest_user saved without state change. Re-evaluating state.
-INFO:allianceauth.authentication.models:Updating guest_user state to Guest
-DEBUG:allianceauth.services.signals:Received pre_save from guest_user for process_main_character_change
-DEBUG:allianceauth.notifications.managers:Invalided notification cache for user with pk 6
-INFO:allianceauth.notifications.managers:Created notification guest_user: State changed to: Guest
-DEBUG:allianceauth.services.signals:Received state_changed from guest_user to state Guest
-DEBUG:allianceauth.groupmanagement.signals:Checking group memberships for guest_user based on new state Guest
-DEBUG:allianceauth.authentication.signals:Character Super Char has been saved. Assessing owner's state for changes.
-DEBUG:allianceauth.authentication.signals:Character Super Char is not a main character. No state assessment required.
-INFO:allianceauth.authentication.signals:Character Super Char has a new owner superuser. Creating ownership record.
-DEBUG:allianceauth.services.signals:Received pre_save from superuser for process_main_character_change
-INFO:allianceauth.services.signals:Updating Names due to change of main character for user superuser
-DEBUG:allianceauth.authentication.signals:Profile for superuser saved without state change. Re-evaluating state.
-INFO:allianceauth.authentication.models:Updating superuser state to Guest
-DEBUG:allianceauth.services.signals:Received pre_save from superuser for process_main_character_change
-DEBUG:allianceauth.notifications.managers:Invalided notification cache for user with pk 4
-INFO:allianceauth.notifications.managers:Created notification superuser: State changed to: Guest
-DEBUG:allianceauth.services.signals:Received state_changed from superuser to state Guest
-DEBUG:allianceauth.groupmanagement.signals:Checking group memberships for superuser based on new state Guest
-.DEBUG:allianceauth.services.signals:Received pre_save from basic
-DEBUG:sri.utils:File not found in staticfiles_storage - checking source files
-DEBUG:sri.utils:File not found in staticfiles_storage - checking source files
-DEBUG:allianceauth.notifications.managers:Updating notification cache for user with pk 3
-DEBUG:allianceauth.menu.managers:Updated menu items from 10 menu item hooks
-DEBUG:sri.utils:File not found in staticfiles_storage - checking source files
-.DEBUG:allianceauth.services.signals:Received pre_save from admin
-DEBUG:sri.utils:File not found in staticfiles_storage - checking source files
-DEBUG:sri.utils:File not found in staticfiles_storage - checking source files
-DEBUG:allianceauth.notifications.managers:Updating notification cache for user with pk 1
-DEBUG:allianceauth.menu.managers:Updated menu items from 10 menu item hooks
-DEBUG:sri.utils:File not found in staticfiles_storage - checking source files
-.DEBUG:allianceauth.services.signals:Received pre_save from recruiter
-DEBUG:sri.utils:File not found in staticfiles_storage - checking source files
-DEBUG:sri.utils:File not found in staticfiles_storage - checking source files
-DEBUG:allianceauth.notifications.managers:Updating notification cache for user with pk 2
-DEBUG:allianceauth.menu.managers:Updated menu items from 10 menu item hooks
-DEBUG:sri.utils:File not found in staticfiles_storage - checking source files
-.DEBUG:allianceauth.services.signals:Received pre_save from admin
-INFO:aa_bb.views:skills
-.DEBUG:allianceauth.services.signals:Received pre_save from admin
-WARNING:django.request:Bad Request: /aa_bb/load_card/
-WARNING:django.request:Bad Request: /aa_bb/load_card/
-INFO:aa_bb.views:alliance_bl
-WARNING:django.request:Not Found: /aa_bb/load_card/
-.DEBUG:allianceauth.services.signals:Received pre_save from admin
-DEBUG:sri.utils:File not found in staticfiles_storage - checking source files
-DEBUG:sri.utils:File not found in staticfiles_storage - checking source files
-DEBUG:allianceauth.notifications.managers:Returning notification count from cache for user with pk 1
-DEBUG:allianceauth.menu.managers:Updated menu items from 10 menu item hooks
-DEBUG:sri.utils:File not found in staticfiles_storage - checking source files
-.DEBUG:allianceauth.services.signals:Received pre_save from superuser
-DEBUG:sri.utils:File not found in staticfiles_storage - checking source files
-DEBUG:sri.utils:File not found in staticfiles_storage - checking source files
-DEBUG:allianceauth.notifications.managers:Updating notification cache for user with pk 4
-DEBUG:allianceauth.menu.managers:Updated menu items from 10 menu item hooks
-DEBUG:sri.utils:File not found in staticfiles_storage - checking source files
-.
-----------------------------------------------------------------------
-Ran 19 tests in 6.382s
-OK
-Destroying test database for alias 'default'...
+
+    Directory: C:\Users\brood\PycharmProjects\aa_bb\aa_bb\migrations
+Mode                 LastWriteTime         Length Name
+----                 -------------         ------ ----
+d-----          1/8/2026     09:44                __pycache__
+-a----        11/20/2025     16:25            726 0001_initial.py
+-a----        11/20/2025     16:25           3557 0002_bigbrotherconfig_usersta
+                                                  tus.py
+-a----        11/20/2025     16:25            525 0003_alter_bigbrotherconfig_p
+                                                  ingroleid.py
+-a----        11/20/2025     16:25            760 0004_alter_bigbrotherconfig_i
+                                                  s_active_and_more.py
+-a----        11/20/2025     16:25            870 0005_alter_bigbrotherconfig_h
+                                                  ostile_alliances.py
+-a----        11/20/2025     16:25            523 0006_alter_bigbrotherconfig_p
+                                                  ingroleid.py
+-a----        11/20/2025     16:25            616 0007_alter_general_options.py
+-a----        11/20/2025     16:26           1758 0008_alliance_names_corporati
+                                                  on_names.py
+-a----        11/20/2025     16:26           1563 0009_userstatus_sus_contacts_
+                                                  userstatus_sus_contracts_and_
+                                                  more.py
+-a----        11/20/2025     16:26           1491 0010_alter_userstatus_awox_ki
+                                                  ll_links_and_more.py
+-a----        11/20/2025     16:26           1004 0011_character_names.py
+-a----        11/20/2025     16:26            933 0012_id_types.py
+-a----        11/20/2025     16:26            953 0013_bigbrotherconfig_mail_ke
+                                                  ywords.py
+-a----        11/20/2025     16:26           3683 0014_processedcontract_proces
+                                                  sedmail_and_more.py
+-a----        11/20/2025     16:26           2002 0015_processedtransaction_sus
+                                                  transactionnote.py
+-a----        11/20/2025     16:27            745 0016_warmprogress.py
+-a----        11/20/2025     16:27            960 0017_entityinfocache.py
+-a----        11/20/2025     16:27            721 0018_userstatus_cyno_userstat
+                                                  us_has_skills_and_more.py
+-a----        11/20/2025     16:27            792 0019_bigbrotherconfig_whiteli
+                                                  st_alliances_and_more.py
+-a----        11/20/2025     16:27           1208 0020_messages_bigbrotherconfi
+                                                  g_are_daily_messages_active_a
+                                                  nd_more.py
+-a----        11/19/2025     16:15            641 0021_alter_messages_id_alter_
+                                                  messages_text.py
+-a----        11/19/2025     16:15            414 0022_messages_sent_in_cycle.p
+                                                  y
+-a----        11/19/2025     16:15           4426 0023_optmessages1_optmessages
+                                                  2_optmessages3_optmessages4_a
+                                                  nd_more.py
+-a----        11/19/2025     16:15           2460 0024_bigbrotherconfig_dailysc
+                                                  hedule_and_more.py
+-a----        11/19/2025     16:15           1309 0025_alter_messages_options_a
+                                                  lter_optmessages1_options_and
+                                                  _more.py
+-a----        11/19/2025     16:15           4443 0026_alter_general_options_al
+                                                  ter_bigbrotherconfig_id_and_m
+                                                  ore.py
+-a----        11/19/2025     16:15           1306 0027_alter_general_options_bi
+                                                  gbrotherconfig_is_loa_active_
+                                                  and_more.py
+-a----        11/19/2025     16:15            575 0028_alter_bigbrotherconfig_i
+                                                  s_loa_active.py
+-a----        11/19/2025     16:15            497 0029_leaverequest_main_charac
+                                                  ter.py
+-a----        11/19/2025     16:15            806 0030_alter_general_options.py
+-a----        11/19/2025     16:15           3529 0031_bigbrotherconfig_loa_max
+                                                  _logoff_days_and_more.py
+-a----        11/19/2025     16:15            577 0032_alter_leaverequest_statu
+                                                  s.py
+-a----        11/19/2025     16:15           1988 0033_messagetype_bigbrotherco
+                                                  nfig_pingroleid2_and_more.py
+-a----        11/19/2025     16:15            404 0034_rename_last_updated_user
+                                                  status_updated.py
+-a----        11/19/2025     16:15            417 0035_alter_userstatus_options
+                                                  .py
+-a----        11/19/2025     16:15            945 0036_alter_general_options.py
+-a----        11/19/2025     16:15           1258 0037_corpstatus.py
+-a----        11/19/2025     16:15            501 0038_bigbrotherconfig_ignored
+                                                  _corporations.py
+-a----        11/19/2025     16:15            569 0039_alter_bigbrotherconfig_i
+                                                  gnored_corporations.py
+-a----        11/19/2025     16:15           1791 0040_sovereigntymapcache_corp
+                                                  orationinfocache_and_more.py
+-a----        11/19/2025     16:15            634 0041_bigbrotherconfig_is_warm
+                                                  er_active.py
+-a----        11/19/2025     16:15           1433 0042_alter_general_options_an
+                                                  d_more.py
+-a----        11/19/2025     16:15            896 0043_bigbrotherconfig_bb_memb
+                                                  er_states_and_more.py
+-a----        11/19/2025     16:15           2306 0044_bigbrotherconfig_charact
+                                                  er_scopes_and_more.py
+-a----        11/19/2025     16:15            435 0045_userstatus_sp_age_ratio_
+                                                  result.py
+-a----        11/19/2025     16:15            506 0046_bigbrotherconfig_member_
+                                                  corporations.py
+-a----        11/19/2025     16:15            506 0047_bigbrotherconfig_member_
+                                                  alliances.py
+-a----        11/19/2025     16:15            669 0048_characteraccountstate.py
+-a----        11/19/2025     16:15            407 0049_userstatus_clone_status.
+                                                  py
+-a----        11/19/2025     16:15           1381 0050_alter_general_options_an
+                                                  d_more.py
+-a----        11/20/2025     16:27           1342 0051_monthlypapstats.py
+-a----        11/20/2025     16:28           1306 0052_papsconfig_delete_monthl
+                                                  ypapstats.py
+-a----        11/20/2025     16:28           1345 0053_alter_papsconfig_corp_mo
+                                                  difier_and_more.py
+-a----        11/19/2025     16:15           1132 0054_alter_general_options.py
+-a----        11/19/2025     16:15            776 0055_papsconfig_group_paps_pa
+                                                  psconfig_group_paps_modifier.
+                                                  py
+-a----        11/19/2025     16:15            611 0056_alter_papsconfig_group_p
+                                                  aps.py
+-a----        11/19/2025     16:15           1249 0057_papsconfig_excluded_grou
+                                                  ps_papsconfig_excluded_users_
+                                                  and_more.py
+-a----        11/19/2025     16:15           1270 0058_papsconfig_excluded_grou
+                                                  ps_get_paps_and_more.py
+-a----        11/19/2025     16:15            552 0059_alter_papsconfig_exclude
+                                                  d_groups_get_paps.py
+-a----        11/19/2025     16:15           2032 0060_papsconfig_cap_group_pap
+                                                  sconfig_cap_group_paps_and_mo
+                                                  re.py
+-a----        11/19/2025     16:15           1631 0061_remove_papsconfig_cap_gr
+                                                  oup_and_more.py
+-a----        11/20/2025     16:28           1249 0062_complianceticket.py
+-a----        11/19/2025     16:15            584 0063_alter_complianceticket_u
+                                                  ser.py
+-a----        11/20/2025     16:28            566 0064_alter_complianceticket_r
+                                                  eason.py
+-a----        11/20/2025     16:28            962 0065_alter_complianceticket_r
+                                                  eason_and_more.py
+-a----        11/20/2025     16:28           5906 0066_tickettoolconfig_papcomp
+                                                  liance.py
+-a----        11/19/2025     16:15            468 0067_remove_tickettoolconfig_
+                                                  category_id_and_more.py
+-a----        11/19/2025     16:15            770 0068_tickettoolconfig_categor
+                                                  y_id_and_more.py
+-a----        11/19/2025     16:15            497 0069_tickettoolconfig_ticket_
+                                                  counter.py
+-a----        11/20/2025     16:29           2182 0070_remove_tickettoolconfig_
+                                                  role_id_and_more.py
+-a----        11/19/2025     16:15            517 0071_tickettoolconfig_role_id
+                                                  .py
+-a----        11/20/2025     16:30            630 0072_alter_complianceticket_r
+                                                  eason.py
+-a----        11/19/2025     16:15            514 0073_tickettoolconfig_startin
+                                                  g_pap_compliance.py
+-a----        11/19/2025     16:15            879 0074_alter_bigbrotherconfig_h
+                                                  ostile_alliances.py
+-a----        11/20/2025     16:29           1940 0075_bbupdatestate_tickettool
+                                                  config_afk_check_frequency_an
+                                                  d_more.py
+-a----        11/19/2025     16:15           3567 0076_id_types_last_accessed_f
+                                                  requentcorpchangescache_and_m
+                                                  ore.py
+-a----        11/20/2025     16:29           1110 0077_complianceticket_ticket_
+                                                  id_and_more.py
+-a----        11/19/2025     16:15            477 0078_tickettoolconfig_awox_mo
+                                                  nitor_enabled.py
+-a----        11/19/2025     16:15           4670 0079_helptext_guidance.py
+-a----        11/19/2025     16:15           2240 0080_bigbrotherconfig_dlc_fla
+                                                  gs.py
+-a----        11/20/2025     16:30           1930 0081_remove_papsconfig_imp_mo
+                                                  difier_and_more.py
+-a----        11/19/2025     16:15           3683 0082_remove_bigbrotherconfig_
+                                                  token_and_more.py
+-a----        11/20/2025     16:31           2966 0083_alter_bigbrotherredditme
+                                                  ssage_options_and_more.py
+-a----        11/24/2025     11:13           1870 0084_bigbrotherconfig_conside
+                                                  r_all_structures_hostile_and_
+                                                  more.py
+-a----        11/25/2025     11:40           1278 0085_bigbrotherconfig_awox_no
+                                                  tify_and_more.py
+-a----        11/25/2025     14:25           3606 0086_bigbrotherconfig_are_rec
+                                                  urring_stats_active_and_more.
+                                                  py
+-a----        11/25/2025     14:31            542 0087_bigbrotherconfig_dlc_are
+                                                  _recurring_stats_active.py
+-a----        12/12/2025     18:58            495 0088_bigbrotherconfig_cyno_no
+                                                  tify.py
+-a----        12/12/2025     18:55           2502 0089_bigbrotherconfig_asset_n
+                                                  otify_and_more.py
+-a----        12/15/2025     12:46          31226 0090_alter_papsconfig_options
+                                                  _and_more.py
+-a----        12/17/2025     10:38           2961 0091_remove_bigbrotherconfig_
+                                                  dlc_are_recurring_stats_activ
+                                                  e_and_more.py
+-a----        12/18/2025     17:23            823 0092_userstatus_baseline_init
+                                                  ialized.py
+-a----        12/24/2025     22:54           8692 0093_eveitemprice_delete_bigb
+                                                  rotherredditmessage_and_more.
+                                                  py
+-a----        12/24/2025     22:54           1123 0094_bigbrotherconfig_corp_co
+                                                  mpliance_webhook_and_more.py
+-a----        12/24/2025     22:54            723 0095_alter_bigbrotherconfig_l
+                                                  imit_to_main_corp.py
+-a----        12/24/2025     22:54            905 0096_bigbrotherconfig_clone_s
+                                                  tate_notify_and_more.py
+-a----        12/27/2025     11:06            646 0097_bigbrotherconfig_hostile
+                                                  _everyone_else.py
+-a----        12/28/2025     10:35           1120 0098_bigbrotherconfig_exclude
+                                                  _high_sec_and_more.py
+-a----          1/2/2026     18:08            605 0099_tickettoolconfig_hr_foru
+                                                  m_webhook.py
+-a----          1/2/2026     20:54            611 0100_tickettoolconfig_use_for
+                                                  um_threads.py
+-a----          1/5/2026     15:15           6338 0101_userstatus_compliance_fo
+                                                  rum_thread_id.py
+-a----          1/5/2026     14:47           3495 0102_remove_tickettoolconfig_
+                                                  use_forum_threads_and_more.py
+-a----          1/5/2026     16:51           2720 0103_tickettoolconfig_afk_che
+                                                  ck_include_user_and_more.py
+-a----          1/8/2026     10:05            814 0104_alter_bigbrotherconfig_i
+                                                  s_active.py
+-a----        11/19/2025     16:15              0 __init__.py

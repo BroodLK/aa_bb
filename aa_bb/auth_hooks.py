@@ -63,7 +63,7 @@ class BigBrotherMenuItem(MenuItemHook):
             _("Big Brother"),
             "fas fa-eye fa-fw",
             "aa_bb:index",
-            navactive=["aa_bb:"],
+            navactive=["aa_bb:index"],
         )
 
     def render(self, request):
@@ -169,7 +169,8 @@ class TicketManagerMenuItem(MenuItemHook):
         if request.user.has_perm("aa_bb.ticket_manager"):
             from .models import ComplianceTicket
             from .app_settings import afat_active, discordbot_active
-            qs = ComplianceTicket.objects.filter(is_resolved=False)
+            # Only count tickets that are open (not resolved and not exception)
+            qs = ComplianceTicket.objects.filter(is_resolved=False, is_exception=False)
             if not afat_active():
                 qs = qs.exclude(reason="paps_check")
             if not discordbot_active():

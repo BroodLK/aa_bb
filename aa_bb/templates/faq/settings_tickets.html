@@ -27,10 +27,6 @@
         <td>{% translate "Determines the delivery method for compliance tickets: Private Channels, Private Threads, Public Forum Threads (Webhook), or Auth Only." %}</td>
       </tr>
       <tr>
-        <td><code>Role_ID</code></td>
-        <td>{% translate "Optional role ID pinged in every new ticket alongside the pilot." %}</td>
-      </tr>
-      <tr>
         <td><code>hr_forum_webhook</code></td>
         <td>{% translate "Discord webhook URL used for creating forum threads when 'Public Forum Threads' is selected or as a fallback if the bot is unavailable." %}</td>
       </tr>
@@ -44,8 +40,8 @@
         <td>{% translate "Discord channel ID where bot-managed threads should be created (for 'Private Threads' mode)." %}</td>
       </tr>
       <tr>
-        <td><code>staff_roles</code></td>
-        <td>{% translate "Comma-separated list of Discord role IDs allowed to view ticket channels and resolve threads." %}</td>
+        <td><code>role_id</code></td>
+        <td>{% translate "Comma-separated list of Discord role IDs to add to ticket channels/threads." %}</td>
       </tr>
       {% endif %}
     </tbody>

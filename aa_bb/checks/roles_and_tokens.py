@@ -6,14 +6,14 @@ required scopes or that still have elevated roles without valid tokens.
 """
 
 from allianceauth.authentication.models import CharacterOwnership
+from allianceauth.services.hooks import get_extension_logger
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 from aa_bb.models import BigBrotherConfig
 
 from ..app_settings import corptools_active
-import logging
 
-logger = logging.getLogger(__name__)
+logger = get_extension_logger(__name__)
 
 try:
     if corptools_active():
