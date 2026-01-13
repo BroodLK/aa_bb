@@ -192,7 +192,7 @@ def render_assets(corp_id: int) -> Optional[str]:
             )
 
             if hostile:
-                row_tpl = '<tr><td>{}</td><td>{}</td><td style="color: red;">{}</td><td>{}</td></tr>'
+                row_tpl = '<tr><td>{}</td><td>{}</td><td style="color: red;" class="text-danger">{}</td><td>{}</td></tr>'
             else:
                 row_tpl = '<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>'
 

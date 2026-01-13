@@ -253,12 +253,12 @@ def render_mails(user_id: int) -> str:
                 parts = []
                 for idx, item in enumerate(val):
                     style = get_cell_style_for_mail_cell(col, row, index=idx)
-                    prefix = f"<span style='{style}'>" if style else "<span>"
+                    prefix = f"<span style='{style}' class='text-danger'>" if style else "<span>"
                     parts.append(f"{prefix}{html.escape(str(item))}</span>")
                 cell = '<td>' + ', '.join(parts) + '</td>'
             else:
                 style = get_cell_style_for_mail_cell(col, row)
-                style_attr = f" style='{style}'" if style else ""
+                style_attr = f" style='{style}' class='text-danger'" if style else ""
                 cell = f"<td{style_attr}>{html.escape(str(val))}</td>"
 
             html_parts.append(cell)

@@ -140,7 +140,13 @@ def load_cards(request: WSGIRequest) -> JsonResponse:
     warm_entity_cache_task.delay(corp_id)
     cards = []
     for card in CARD_DEFINITIONS:
-        content, status = get_card_data(request, corp_id, card["key"])
+        try:
+            content, status = get_card_data(request, corp_id, card["key"])
+        except Exception as e:
+            logger.error(f"Error loading bulk card {card['key']} for corp {corp_id}: {e}", exc_info=True)
+            content = f"<p>Error: {str(e)}</p>"
+            status = False
+
         if content is None:
             return JsonResponse({
                 "title": card["title"],
@@ -174,7 +180,7 @@ def get_card_data(request, corp_id: int, key: str):
     logger.warning("get_card_data")
     if key == "sus_asset":  # Only the asset card is currently implemented.
         content = render_assets(corp_id)
-        status  = not (content and "red" in content)
+        status  = not (content and "danger" in content)
 
     else:
         content = "WiP"
@@ -206,7 +212,12 @@ def load_card(request):
         # handled via paginated endpoints
         return JsonResponse({"key": key, "title": title})
 
-    content, status = get_card_data(request, corp_id, key)
+    try:
+        content, status = get_card_data(request, corp_id, key)
+    except Exception as e:
+        logger.error(f"Error loading card {key} for corp {corp_id}: {e}", exc_info=True)
+        return JsonResponse({"error": str(e)}, status=500)
+
     return JsonResponse({
         "title":   title,
         "content": content,
@@ -521,14 +532,9 @@ def stream_contracts_sse(request: WSGIRequest):
         except (ConnectionResetError, BrokenPipeError):
             logger.debug("Client disconnected from contract SSE (outer)")
             return
-        except Exception:
-            tb_str = traceback.format_exc()
-            logger.exception(f"Unexpected error in contract SSE generator\n{tb_str}")
-            # Best effort to notify the client
-            try:
-                yield f"event: error\ndata:{json.dumps('Unexpected server error')}\n\n"
-            except Exception:
-                pass
+        except Exception as e:
+            logger.error(f"Error in contract stream for {option}: {e}", exc_info=True)
+            yield f"event: error\ndata:{json.dumps(str(e))}\n\n"
             return
 
     resp = StreamingHttpResponse(generator(), content_type='text/event-stream')

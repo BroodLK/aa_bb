@@ -218,7 +218,12 @@ def load_card(request):
     if target_user_id is None:  # Unknown character selection.
         return JsonResponse({"error": "Unknown account"}, status=404)
 
-    content, status = get_card_data(request, target_user_id, key)
+    try:
+        content, status = get_card_data(request, target_user_id, key)
+    except Exception as e:
+        logger.error(f"Error loading card {key} for {option}: {e}", exc_info=True)
+        return JsonResponse({"error": str(e)}, status=500)
+
     return JsonResponse({
         "title":   title,
         "content": content,
@@ -236,7 +241,13 @@ def load_cards(request: WSGIRequest) -> JsonResponse:
     warm_entity_cache_task.delay(user_id)
     cards = []
     for card in get_available_cards():
-        content, status = get_card_data(request, user_id, card["key"])
+        try:
+            content, status = get_card_data(request, user_id, card["key"])
+        except Exception as e:
+            logger.error(f"Error loading bulk card {card['key']} for {selected_option}: {e}", exc_info=True)
+            content = f"<p>Error: {str(e)}</p>"
+            status = False
+
         cards.append({
             "title":   card["title"],
             "content": content,
@@ -556,50 +567,54 @@ def stream_contracts_sse(request: WSGIRequest):
         return HttpResponseBadRequest(f"Error loading contracts: {str(e)}")
 
     def generator():
-        # Initial SSE heartbeat
-        yield ": ok\n\n"
-        processed = hostile_count = 0
+        try:
+            # Initial SSE heartbeat
+            yield ": ok\n\n"
+            processed = hostile_count = 0
 
-        if total == 0:  # Nothing to scan, emit done immediately.
-            # Notify client that processing completed with zero hostile hits
-            yield "event: done\ndata:0\n\n"
-            return
+            if total == 0:  # Nothing to scan, emit done immediately.
+                # Notify client that processing completed with zero hostile hits
+                yield "event: done\ndata:0\n\n"
+                return
 
-        batch_size = 50
-        for i in range(0, total, batch_size):
-            batch = qs[i : i + batch_size]
-            contracts_map = get_user_contracts(batch)
+            batch_size = 50
+            for i in range(0, total, batch_size):
+                batch = qs[i : i + batch_size]
+                contracts_map = get_user_contracts(batch)
 
-            # Sort them if possible, by issued_date desc
-            sorted_keys = sorted(contracts_map.keys(), key=lambda k: contracts_map[k]['issued_date'], reverse=True)
+                # Sort them if possible, by issued_date desc
+                sorted_keys = sorted(contracts_map.keys(), key=lambda k: contracts_map[k]['issued_date'], reverse=True)
 
-            for cid in sorted_keys:
-                row = contracts_map[cid]
-                processed += 1
-                if processed % 5 == 0:
-                    yield ": ping\n\n"
+                for cid in sorted_keys:
+                    row = contracts_map[cid]
+                    processed += 1
+                    if processed % 5 == 0:
+                        yield ": ping\n\n"
 
-                style_map = {
-                    col: get_cell_style_for_contract_row(col, row)
-                    for col in row
-                }
-                row['cell_styles'] = style_map
+                    style_map = {
+                        col: get_cell_style_for_contract_row(col, row)
+                        for col in row
+                    }
+                    row['cell_styles'] = style_map
 
-                if is_contract_row_hostile(row):  # Emit rows that match hostile heuristics.
-                    hostile_count += 1
-                    tr_html = _render_contract_row_html(row)
-                    yield f"event: contract\ndata:{json.dumps(tr_html)}\n\n"
+                    if is_contract_row_hostile(row):  # Emit rows that match hostile heuristics.
+                        hostile_count += 1
+                        tr_html = _render_contract_row_html(row)
+                        yield f"event: contract\ndata:{json.dumps(tr_html)}\n\n"
 
-                # Progress update
-                if processed % 5 == 0 or processed == total:
-                    yield (
-                        "event: progress\n"
-                        f"data:{processed},{total},{hostile_count}\n\n"
-                    )
-            connection.close()
+                    # Progress update
+                    if processed % 5 == 0 or processed == total:
+                        yield (
+                            "event: progress\n"
+                            f"data:{processed},{total},{hostile_count}\n\n"
+                        )
+                connection.close()
 
-        # Done
-        yield "event: done\ndata:bye\n\n"
+            # Done
+            yield "event: done\ndata:bye\n\n"
+        except Exception as e:
+            logger.error(f"Error in contract stream for {option}: {e}", exc_info=True)
+            yield f"event: error\ndata:{json.dumps(str(e))}\n\n"
 
     resp = StreamingHttpResponse(generator(), content_type='text/event-stream')
     resp["Cache-Control"]     = "no-cache"
@@ -729,45 +744,49 @@ def stream_mails_sse(request):
         return HttpResponseBadRequest(f"Error loading mails: {str(e)}")
 
     def generator():
-        # initial SSE heartbeat
-        yield ": ok\n\n"
-        processed = hostile_count = 0
+        try:
+            # initial SSE heartbeat
+            yield ": ok\n\n"
+            processed = hostile_count = 0
 
-        if total == 0:  # Nothing to stream -> immediately finish.
-            # Notify client that streaming finished without hostile mails
-            yield "event: done\ndata:0\n\n"
-            return
+            if total == 0:  # Nothing to stream -> immediately finish.
+                # Notify client that streaming finished without hostile mails
+                yield "event: done\ndata:0\n\n"
+                return
 
-        batch_size = 50
-        for i in range(0, total, batch_size):
-            batch = qs[i : i + batch_size]
-            mails_map = get_user_mails(batch)
+            batch_size = 50
+            for i in range(0, total, batch_size):
+                batch = qs[i : i + batch_size]
+                mails_map = get_user_mails(batch)
 
-            # Sort them if possible, by sent_date desc
-            sorted_keys = sorted(mails_map.keys(), key=lambda k: mails_map[k]['sent_date'], reverse=True)
+                # Sort them if possible, by sent_date desc
+                sorted_keys = sorted(mails_map.keys(), key=lambda k: mails_map[k]['sent_date'], reverse=True)
 
-            for mid in sorted_keys:
-                row = mails_map[mid]
-                processed += 1
-                if processed % 5 == 0:
-                    yield ": ping\n\n"
+                for mid in sorted_keys:
+                    row = mails_map[mid]
+                    processed += 1
+                    if processed % 5 == 0:
+                        yield ": ping\n\n"
 
-                # check hostility and, if hostile, stream the <tr>
-                if is_mail_row_hostile(row):  # Emit only hostile mail rows.
-                    hostile_count += 1
-                    tr = _render_mail_row_html(row)
-                    yield f"event: mail\ndata:{json.dumps(tr)}\n\n"
+                    # check hostility and, if hostile, stream the <tr>
+                    if is_mail_row_hostile(row):  # Emit only hostile mail rows.
+                        hostile_count += 1
+                        tr = _render_mail_row_html(row)
+                        yield f"event: mail\ndata:{json.dumps(tr)}\n\n"
 
-                # final per-mail progress
-                if processed % 5 == 0 or processed == total:
-                    yield (
-                        "event: progress\n"
-                        f"data:{processed},{total},{hostile_count}\n\n"
-                    )
-            connection.close()
+                    # final per-mail progress
+                    if processed % 5 == 0 or processed == total:
+                        yield (
+                            "event: progress\n"
+                            f"data:{processed},{total},{hostile_count}\n\n"
+                        )
+                connection.close()
 
-        # done
-        yield "event: done\ndata:bye\n\n"
+            # done
+            yield "event: done\ndata:bye\n\n"
+        except Exception as e:
+            logger.error(f"Error in mail stream for {option}: {e}", exc_info=True)
+            yield f"event: error\ndata:{json.dumps(str(e))}\n\n"
 
     resp = StreamingHttpResponse(generator(),
                                  content_type="text/event-stream")
@@ -982,7 +1001,7 @@ def get_card_data(request, target_user_id: int, key: str):
 
     elif key == "sus_tra":  # Suspicious transaction summary card.
         content = render_transactions(target_user_id)
-        status  = not content
+        status  = not (content and "danger" in content)
 
     elif key == "cyno":  # Cyno readiness / history panel.
         content = render_user_cyno_info_html(target_user_id)

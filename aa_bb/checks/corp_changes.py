@@ -106,7 +106,7 @@ def get_frequent_corp_changes(user_id):
             membership_range = f"{start.date()} - {end.date()}"
 
             # Corp cell with external site favicons (fetched live)
-            corp_color = ' class="text-danger' if (hostile_corps and corp_id in hostile_corps) else ''  # Highlight hostile corps.
+            corp_color = ' class="text-danger"' if (hostile_corps and corp_id in hostile_corps) else ''  # Highlight hostile corps.
             corp_cell = (
                 f'<span{corp_color}>{corp_name}</span>'
                 f'<a href="https://zkillboard.com/corporation/{corp_id}/" target="_blank">'

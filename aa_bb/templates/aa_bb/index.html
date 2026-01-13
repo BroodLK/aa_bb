@@ -265,11 +265,18 @@ document.addEventListener('DOMContentLoaded', () => {
         resolve(clean);
       });
 
+      source.addEventListener('error', e => {
+        source.close();
+        const errorData = JSON.parse(e.data);
+        cardBody.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${errorData}</div>`;
+        updateCardStatus(idx, false);
+        reject(new Error(errorData));
+      });
+
       source.onerror = err => {
         source.close();
-        errorMessages.innerHTML =
-          '<div class="alert alert-warning">Contract stream failed, please wait for the cache to warm up and try again or get your IT to increase(or set to 0) your gunicorn timeout in supervisor.conf</div>';
-        updateCardStatus(idx, true);
+        cardBody.innerHTML = `<div class="alert alert-warning"><strong>Stream Error:</strong> Connection lost or timed out. Please wait for cache warming and try again.</div>`;
+        updateCardStatus(idx, false);
         reject(err);
       };
     });
@@ -334,11 +341,18 @@ document.addEventListener('DOMContentLoaded', () => {
         resolve(clean);
       });
 
+      source.addEventListener('error', e => {
+        source.close();
+        const errorData = JSON.parse(e.data);
+        cardBody.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${errorData}</div>`;
+        updateCardStatus(idx, false);
+        reject(new Error(errorData));
+      });
+
       source.onerror = err => {
         source.close();
-        errorMessages.innerHTML =
-          '<div class="alert alert-warning">Mail stream failed, please wait for the cache to warm up and try again or get your IT to increase(or set to 0) your gunicorn timeout in supervisor.conf</div>';
-        updateCardStatus(idx, true);
+        cardBody.innerHTML = `<div class="alert alert-warning"><strong>Stream Error:</strong> Connection lost or timed out. Please wait for cache warming and try again.</div>`;
+        updateCardStatus(idx, false);
         reject(err);
       };
     });
@@ -402,11 +416,18 @@ document.addEventListener('DOMContentLoaded', () => {
         resolve(clean);
       });
 
+      source.addEventListener('error', e => {
+        source.close();
+        const errorData = JSON.parse(e.data);
+        cardBody.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${errorData}</div>`;
+        updateCardStatus(idx, false);
+        reject(new Error(errorData));
+      });
+
       source.onerror = err => {
         source.close();
-        errorMessages.innerHTML =
-          '<div class="alert alert-warning">Transaction stream failed, please wait for the cache to warm up and try again or get your IT to increase(or set to 0) your gunicorn timeout in supervisor.conf</div>';
-        updateCardStatus(idx, true);
+        cardBody.innerHTML = `<div class="alert alert-warning"><strong>Stream Error:</strong> Connection lost or timed out. Please wait for cache warming and try again.</div>`;
+        updateCardStatus(idx, false);
         reject(err);
       };
     });

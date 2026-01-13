@@ -348,7 +348,7 @@ def render_transactions(user_id: int) -> str:
                     style = 'color: red;'
             def make_td(val, style=""):
                 """Render a TD with optional inline style for hostile cues."""
-                style_attr = f' style="{style}"' if style else ""
+                style_attr = f' style="{style}" class="text-danger"' if style else ""
                 return f"<td{style_attr}>{val}</td>"
             parts.append(make_td(val, style))
         parts.append('</tr>')

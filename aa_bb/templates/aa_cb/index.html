@@ -192,11 +192,18 @@ async function loadSuspiciousContracts(option, idx) {
       resolve(clean);
     });
 
+    source.addEventListener('error', e => {
+      source.close();
+      const errorData = JSON.parse(e.data);
+      cardBody.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${errorData}</div>`;
+      updateCardStatus(idx, false);
+      reject(new Error(errorData));
+    });
+
     source.onerror = err => {
       source.close();
-      const errorMessages = document.getElementById('errorMessages');
-      errorMessages.innerHTML = '<div class="alert alert-warning">Contract stream failed, please wait for the cache to warm up and try again or get your IT to increase(or set to 0) your gunicorn timeout in supervisor.conf.</div>';
-      updateCardStatus(idx, true);
+      cardBody.innerHTML = `<div class="alert alert-warning"><strong>Stream Error:</strong> Connection lost or timed out. Please wait for cache warming and try again.</div>`;
+      updateCardStatus(idx, false);
       reject(err);
     };
   });
@@ -262,11 +269,18 @@ async function loadSuspiciousTransactions(option, idx) {
       resolve(clean);
     });
 
+    source.addEventListener('error', e => {
+      source.close();
+      const errorData = JSON.parse(e.data);
+      cardBody.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${errorData}</div>`;
+      updateCardStatus(idx, false);
+      reject(new Error(errorData));
+    });
+
     source.onerror = err => {
       source.close();
-      document.getElementById('errorMessages').innerHTML =
-        '<div class="alert alert-warning">Transaction stream failed, please wait for the cache to warm up and try again or get your IT to increase(or set to 0) your gunicorn timeout in supervisor.conf</div>';
-      updateCardStatus(idx, true);
+      cardBody.innerHTML = `<div class="alert alert-warning"><strong>Stream Error:</strong> Connection lost or timed out. Please wait for cache warming and try again.</div>`;
+      updateCardStatus(idx, false);
       reject(err);
     };
   });
@@ -281,8 +295,8 @@ function updateCardStatus(idx, isClean) {
         .forEach(el => el.remove());
   header.insertAdjacentHTML('beforeend',
     isClean
-      ? '<span class="text-success">&#128994;</span>'
-      : '<span class="text-danger">&#128681;</span>'
+      ? '<span class="text-success">🟢</span>'
+      : '<span class="text-danger">🔴</span>'
   );
 }
 
