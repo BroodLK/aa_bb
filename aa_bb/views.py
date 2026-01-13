@@ -82,11 +82,13 @@ logger = get_extension_logger(__name__)
 
 try:
     if corptools_active():
-        from corptools.models import Contract
+        from corptools.models import Contract, CharacterAudit
     else:
         Contract = None
+        CharacterAudit = None
 except ImportError:
     Contract = None
+    CharacterAudit = None
 
 
 def get_allowed_alliance_id():
@@ -422,7 +424,14 @@ def index(request: WSGIRequest):
 
     if qs is not None:  # Build dropdown choices only when the viewer has visibility.
         if cfg.hide_unaudited_users:
-            qs = qs.filter(user__userstatus__baseline_initialized=True)
+            if CharacterAudit:
+                # Hide users who have no characters with an entry in corptools.audits
+                audited_user_ids = CharacterAudit.objects.values_list(
+                    'character__character_ownership__user_id', flat=True
+                ).distinct()
+                qs = qs.filter(user_id__in=audited_user_ids)
+            else:
+                qs = qs.filter(user__userstatus__baseline_initialized=True)
 
         member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
         member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
