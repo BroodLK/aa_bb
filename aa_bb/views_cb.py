@@ -465,12 +465,6 @@ def stream_contracts_sse(request: WSGIRequest):
         logger.error(f"Error initializing contract stream for {option}: {e}", exc_info=True)
         return HttpResponseBadRequest(f"Error loading contracts: {str(e)}")
 
-    if total == 0:  # Nothing to stream -> send a simple HTML response.
-        return StreamingHttpResponse(
-            "<p>No contracts found.</p>",
-            content_type="text/html"
-        )
-
     def generator():
         try:
             # Initial SSE heartbeat
