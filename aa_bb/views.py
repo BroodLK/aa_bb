@@ -3,6 +3,7 @@ import time
 import json
 
 from django.conf import settings
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required, permission_required
 from django.db import connection
 from django.core.handlers.wsgi import WSGIRequest
@@ -799,91 +800,161 @@ def stream_transactions_sse(request):
         'first_party_id','second_party_id',
         'first_party_corporation_id','second_party_corporation_id',
         'first_party_alliance_id','second_party_alliance_id',
-        'entry_id'
+        'entry_id',
+        'info_cache',
+        'raw_amount',
+        'system_id', 'location_id', 'type_id', 'quantity'
     }
 
     def generator():
-        yield ": ok\n\n"                # initial heartbeat
-        processed = hostile_count = 0
+        try:
+            yield ": ok\n\n"                # initial heartbeat
+            processed = hostile_count = 0
 
-        if total == 0:  # No transactions -> stop immediately.
-            # Notify client that processing ended without hostile entries
-            yield "event: done\ndata:0\n\n"
+            if total == 0:  # No transactions -> stop immediately.
+                # Notify client that processing ended without hostile entries
+                yield "event: done\ndata:0\n\n"
+                return
+        except Exception as e:
+            logger.error(f"Error in transaction stream initialization: {e}", exc_info=True)
+            yield f"event: error\ndata:{json.dumps(str(e))}\n\n"
             return
 
-        # Determine headers from a single hydrated row (after empty check)
-        sample_map = get_user_transactions(qs[:1])
-        sample_row = next(iter(sample_map.values()), None)
-        if sample_row:  # Derive headers from real data when available.
-            headers = [h for h in sample_row.keys() if h not in HIDDEN]
-        else:
-            # Fallback to a safe default when sampling finds nothing
-            headers = [
-                'date', 'amount', 'balance', 'description', 'reason',
-                'first_party_name', 'first_party_corporation', 'first_party_alliance',
-                'second_party_name', 'second_party_corporation', 'second_party_alliance',
-                'context', 'type',
-            ]
+        try:
+            # Determine headers from a single hydrated row (after empty check)
+            sample_map = get_user_transactions(qs[:1])
+            sample_row = next(iter(sample_map.values()), None)
+            if sample_row:  # Derive headers from real data when available.
+                headers = [h for h in sample_row.keys() if h not in HIDDEN]
+            else:
+                # Fallback to a safe default when sampling finds nothing
+                headers = [
+                    'date', 'amount', 'balance', 'description', 'reason',
+                    'first_party_name', 'first_party_corporation', 'first_party_alliance',
+                    'second_party_name', 'second_party_corporation', 'second_party_alliance',
+                    'context', 'type',
+                ]
 
-        # Emit table header row once
-        header_html = (
-            "<tr>" +
-            "".join(f"<th>{html.escape(h.replace('_',' ').title())}</th>" for h in headers) +
-            "</tr>"
-        )
-        yield f"event: header\ndata:{json.dumps(header_html)}\n\n"
+            # Emit table header row once
+            header_html = (
+                "<tr>" +
+                "".join(f"<th>{html.escape(h.replace('_',' ').title())}</th>" for h in headers) +
+                "</tr>"
+            )
+            yield f"event: header\ndata:{json.dumps(header_html)}\n\n"
+        except Exception as e:
+            logger.error(f"Error generating transaction headers: {e}", exc_info=True)
+            yield f"event: error\ndata:{json.dumps(f'Header generation error: {str(e)}')}\n\n"
+            return
 
         cfg = BigBrotherConfig.get_solo()
 
         user_chars = get_user_characters(user_id)
         user_ids = set(user_chars.keys())
 
-        from ..app_settings import get_safe_entities
+        from .app_settings import get_safe_entities
         safe_entities = get_safe_entities()
 
         batch_size = 100
         batch = []
         import gc
 
-        for entry in qs.iterator(chunk_size=100):
-            batch.append(entry)
+        try:
+            for entry in qs.iterator(chunk_size=100):
+                batch.append(entry)
 
-            if len(batch) >= batch_size:
+                if len(batch) >= batch_size:
+                    rows_map = get_user_transactions(batch)
+                    sorted_keys = sorted(rows_map.keys(), key=lambda k: rows_map[k]['date'], reverse=True)
+
+                    for eid in sorted_keys:
+                        row = rows_map[eid]
+                        processed += 1
+                        if processed % 10 == 0:
+                            yield ": ping\n\n"         # keep‐alive
+
+                        is_hostile = is_transaction_hostile(row, user_ids, safe_entities=safe_entities)
+                        if processed <= 5:  # Log first 5 for debugging
+                            logger.info(f"TX {eid}: type={row.get('type')}, fp={row.get('first_party_id')}, sp={row.get('second_party_id')}, hostile={is_hostile}")
+
+                        if is_hostile:  # Only push rows that meet hostility rules.
+                            hostile_count += 1
+
+                            # build the <tr> using same style logic as render_transactions()
+                            cells = []
+                            for col in headers:
+                                val = row.get(col, "")
+                                text = html.escape(str(val))
+                                style = ""
+                                # type‐based red
+                                if col == 'type':
+                                    if any(st in row['type'] for st in SUS_TYPES):
+                                        style = 'color:red;'
+                                    if cfg.show_market_transactions:
+                                        if "market_escrow" in row['type'] or "market_transaction" in row['type']:
+                                            style = 'color:red;'
+                                # first/second party name
+                                if col in ('first_party_name','second_party_name'):
+                                    pid = row[col.replace("_name", "_id")]
+                                    if get_hostile_state(pid, 'character', when=row['date']):
+                                        style = 'color:red;'
+                                # corps & alliances
+                                if col.endswith('corporation'):
+                                    cid = row[f"{col}_id"]
+                                    if cid and get_hostile_state(cid, 'corporation', when=row['date']):
+                                        style = 'color:red;'
+                                if col.endswith('alliance'):
+                                    aid = row[f"{col}_id"]
+                                    if aid and get_hostile_state(aid, 'alliance', when=row['date']):
+                                        style = 'color:red;'
+                                def make_td(text, style=""):
+                                    style_attr = f' style="{style}"' if style else ""
+                                    return f"<td{style_attr}>{text}</td>"
+                                cells.append(make_td(text, style))
+                            tr_html = "<tr>" + "".join(cells) + "</tr>"
+                            yield f"event: transaction\ndata:{json.dumps(tr_html)}\n\n"
+
+                        # progress update every few rows to avoid flood
+                        if processed % 10 == 0 or processed == total:
+                            yield (
+                                "event: progress\n"
+                                f"data:{processed},{total},{hostile_count}\n\n"
+                            )
+
+                    # Clean up batch memory
+                    del rows_map
+                    batch = []
+                    gc.collect()
+                    connection.close()
+
+            # Process remaining entries in final batch
+            if batch:
                 rows_map = get_user_transactions(batch)
                 sorted_keys = sorted(rows_map.keys(), key=lambda k: rows_map[k]['date'], reverse=True)
 
                 for eid in sorted_keys:
                     row = rows_map[eid]
                     processed += 1
-                    if processed % 10 == 0:
-                        yield ": ping\n\n"         # keep‐alive
-
                     is_hostile = is_transaction_hostile(row, user_ids, safe_entities=safe_entities)
-                    if processed <= 5:  # Log first 5 for debugging
-                        logger.info(f"TX {eid}: type={row.get('type')}, fp={row.get('first_party_id')}, sp={row.get('second_party_id')}, hostile={is_hostile}")
 
-                    if is_hostile:  # Only push rows that meet hostility rules.
+                    if is_hostile:
                         hostile_count += 1
-
-                        # build the <tr> using same style logic as render_transactions()
+                        # ... same HTML generation code ...
                         cells = []
                         for col in headers:
                             val = row.get(col, "")
                             text = html.escape(str(val))
                             style = ""
-                            # type‐based red
                             if col == 'type':
                                 if any(st in row['type'] for st in SUS_TYPES):
                                     style = 'color:red;'
                                 if cfg.show_market_transactions:
                                     if "market_escrow" in row['type'] or "market_transaction" in row['type']:
                                         style = 'color:red;'
-                            # first/second party name
                             if col in ('first_party_name','second_party_name'):
                                 pid = row[col.replace("_name", "_id")]
                                 if get_hostile_state(pid, 'character', when=row['date']):
                                     style = 'color:red;'
-                            # corps & alliances
                             if col.endswith('corporation'):
                                 cid = row[f"{col}_id"]
                                 if cid and get_hostile_state(cid, 'corporation', when=row['date']):
@@ -899,66 +970,15 @@ def stream_transactions_sse(request):
                         tr_html = "<tr>" + "".join(cells) + "</tr>"
                         yield f"event: transaction\ndata:{json.dumps(tr_html)}\n\n"
 
-                    # progress update every few rows to avoid flood
-                    if processed % 10 == 0 or processed == total:
-                        yield (
-                            "event: progress\n"
-                            f"data:{processed},{total},{hostile_count}\n\n"
-                        )
-
-                # Clean up batch memory
-                del rows_map
-                batch = []
+                yield f"event: progress\ndata:{processed},{total},{hostile_count}\n\n"
+                del rows_map, batch
                 gc.collect()
                 connection.close()
 
-        # Process remaining entries in final batch
-        if batch:
-            rows_map = get_user_transactions(batch)
-            sorted_keys = sorted(rows_map.keys(), key=lambda k: rows_map[k]['date'], reverse=True)
-
-            for eid in sorted_keys:
-                row = rows_map[eid]
-                processed += 1
-                is_hostile = is_transaction_hostile(row, user_ids, safe_entities=safe_entities)
-
-                if is_hostile:
-                    hostile_count += 1
-                    # ... same HTML generation code ...
-                    cells = []
-                    for col in headers:
-                        val = row.get(col, "")
-                        text = html.escape(str(val))
-                        style = ""
-                        if col == 'type':
-                            if any(st in row['type'] for st in SUS_TYPES):
-                                style = 'color:red;'
-                            if cfg.show_market_transactions:
-                                if "market_escrow" in row['type'] or "market_transaction" in row['type']:
-                                    style = 'color:red;'
-                        if col in ('first_party_name','second_party_name'):
-                            pid = row[col.replace("_name", "_id")]
-                            if get_hostile_state(pid, 'character', when=row['date']):
-                                style = 'color:red;'
-                        if col.endswith('corporation'):
-                            cid = row[f"{col}_id"]
-                            if cid and get_hostile_state(cid, 'corporation', when=row['date']):
-                                style = 'color:red;'
-                        if col.endswith('alliance'):
-                            aid = row[f"{col}_id"]
-                            if aid and get_hostile_state(aid, 'alliance', when=row['date']):
-                                style = 'color:red;'
-                        def make_td(text, style=""):
-                            style_attr = f' style="{style}"' if style else ""
-                            return f"<td{style_attr}>{text}</td>"
-                        cells.append(make_td(text, style))
-                    tr_html = "<tr>" + "".join(cells) + "</tr>"
-                    yield f"event: transaction\ndata:{json.dumps(tr_html)}\n\n"
-
-            yield f"event: progress\ndata:{processed},{total},{hostile_count}\n\n"
-            del rows_map, batch
-            gc.collect()
-            connection.close()
+        except Exception as e:
+            logger.error(f"Error in transaction stream main loop: {e}", exc_info=True)
+            yield f"event: error\ndata:{json.dumps(f'Stream error: {str(e)}')}\n\n"
+            return
 
         # Done
         yield "event: done\ndata:bye\n\n"
@@ -1050,10 +1070,8 @@ def add_blacklist_view(request):
         target_user_id=target_id,
         reason=reason
     )
-    return redirect(
-        request.META.get("HTTP_REFERER", "/"),
-        message=f"Blacklisted: {', '.join(added)}"
-    )
+    messages.success(request, f"Blacklisted: {', '.join(added)}")
+    return redirect(request.META.get("HTTP_REFERER", "/"))
 
 
 @login_required
