@@ -1,3 +1,4 @@
+import sys
 from datetime import timedelta, time
 
 from django.db import models
@@ -1812,14 +1813,14 @@ class TicketToolConfig(SingletonModel):
     )
 
     discord_check_reason = models.TextField(
-        default="<@&{role}>,{namee}, doesn't have their discord linked on corp auth, try to contact them and if unable, kick them out",
+        default="<@&{role}>,**{namee}**, doesn't have their discord linked on corp auth, try to contact them and if unable, kick them out",
         blank=True,
         null=True,
         help_text="Message to send with {role} and {namee} variables"
     )
 
     discord_check_reminder = models.TextField(
-        default="<@&{role}>,{namee}'s compliance issue is still unresolved, try to contact them and if unable within {days} day(s) kick them out.",
+        default="<@&{role}>,**{namee}**'s compliance issue is still unresolved, try to contact them and if unable within {days} day(s) kick them out.",
         blank=True,
         null=True,
         help_text="Message to send with {role}, {namee} and {days} variables"
@@ -1907,7 +1908,7 @@ class TicketToolConfig(SingletonModel):
 
 
 # Dynamically add compliance_filter field if charlink is installed
-if CHARLINK_INSTALLED:
+if CHARLINK_INSTALLED and 'makemigrations' not in sys.argv and 'migrate' not in sys.argv:
     TicketToolConfig.add_to_class(
         'compliance_filter',
         models.ForeignKey(
