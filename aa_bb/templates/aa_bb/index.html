@@ -130,13 +130,14 @@ document.addEventListener('DOMContentLoaded', () => {
   const MAIL_VISIBLE = [
     "sent_date", "subject",
     "sender_name", "sender_corporation", "sender_alliance",
-    "recipient_names", "recipient_corps", "recipient_alliances", "status"
+    "recipient_names", "recipient_corps", "recipient_alliances",
+    "content", "status"
   ];
   const CONTR_VISIBLE = [
     "issued_date", "end_date",
     "contract_type", "issuer_name", "issuer_corporation",
     "issuer_alliance", "assignee_name", "assignee_corporation",
-    "assignee_alliance", "status"
+    "assignee_alliance", "status", "start_location", "end_location"
   ];
   const TOTAL_CARDS      = CARD_DEFINITIONS.length;
   const SUS_CONTR_KEY    = 'sus_contr';

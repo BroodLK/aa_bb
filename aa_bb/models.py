@@ -525,6 +525,12 @@ class BigBrotherConfig(SingletonModel):
         verbose_name=_("Suspicious Transaction Notifications")
     )
 
+    hide_unaudited_users = models.BooleanField(
+        default=False,
+        help_text=_("If enabled, users who have no audited characters will be hidden from the main dashboard dropdown."),
+        verbose_name=_("Hide Unaudited Users")
+    )
+
     show_market_transactions = models.BooleanField(
         default=False,
         help_text=_("Show transactions with a reference type of market_escrow and market_transaction"),

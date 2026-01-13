@@ -152,6 +152,7 @@ class BB_ConfigAdmin(SingletonModelAdmin):
                 "fields": (
                     "bb_guest_states",
                     "bb_member_states",
+                    "hide_unaudited_users",
                 )
             },
         ),

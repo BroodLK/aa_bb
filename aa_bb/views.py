@@ -421,6 +421,9 @@ def index(request: WSGIRequest):
         qs = None
 
     if qs is not None:  # Build dropdown choices only when the viewer has visibility.
+        if cfg.hide_unaudited_users:
+            qs = qs.filter(user__userstatus__baseline_initialized=True)
+
         member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
         member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
         if member_corps or member_allis:
