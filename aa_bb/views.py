@@ -838,45 +838,108 @@ def stream_transactions_sse(request):
         user_chars = get_user_characters(user_id)
         user_ids = set(user_chars.keys())
 
+        from ..app_settings import get_safe_entities
+        safe_entities = get_safe_entities()
+
         batch_size = 100
-        for i in range(0, total, batch_size):
-            batch = qs[i:i + batch_size]
+        batch = []
+        import gc
+
+        for entry in qs.iterator(chunk_size=100):
+            batch.append(entry)
+
+            if len(batch) >= batch_size:
+                rows_map = get_user_transactions(batch)
+                sorted_keys = sorted(rows_map.keys(), key=lambda k: rows_map[k]['date'], reverse=True)
+
+                for eid in sorted_keys:
+                    row = rows_map[eid]
+                    processed += 1
+                    if processed % 10 == 0:
+                        yield ": ping\n\n"         # keep‐alive
+
+                    is_hostile = is_transaction_hostile(row, user_ids, safe_entities=safe_entities)
+                    if processed <= 5:  # Log first 5 for debugging
+                        logger.info(f"TX {eid}: type={row.get('type')}, fp={row.get('first_party_id')}, sp={row.get('second_party_id')}, hostile={is_hostile}")
+
+                    if is_hostile:  # Only push rows that meet hostility rules.
+                        hostile_count += 1
+
+                        # build the <tr> using same style logic as render_transactions()
+                        cells = []
+                        for col in headers:
+                            val = row.get(col, "")
+                            text = html.escape(str(val))
+                            style = ""
+                            # type‐based red
+                            if col == 'type':
+                                if any(st in row['type'] for st in SUS_TYPES):
+                                    style = 'color:red;'
+                                if cfg.show_market_transactions:
+                                    if "market_escrow" in row['type'] or "market_transaction" in row['type']:
+                                        style = 'color:red;'
+                            # first/second party name
+                            if col in ('first_party_name','second_party_name'):
+                                pid = row[col.replace("_name", "_id")]
+                                if get_hostile_state(pid, 'character', when=row['date']):
+                                    style = 'color:red;'
+                            # corps & alliances
+                            if col.endswith('corporation'):
+                                cid = row[f"{col}_id"]
+                                if cid and get_hostile_state(cid, 'corporation', when=row['date']):
+                                    style = 'color:red;'
+                            if col.endswith('alliance'):
+                                aid = row[f"{col}_id"]
+                                if aid and get_hostile_state(aid, 'alliance', when=row['date']):
+                                    style = 'color:red;'
+                            def make_td(text, style=""):
+                                style_attr = f' style="{style}"' if style else ""
+                                return f"<td{style_attr}>{text}</td>"
+                            cells.append(make_td(text, style))
+                        tr_html = "<tr>" + "".join(cells) + "</tr>"
+                        yield f"event: transaction\ndata:{json.dumps(tr_html)}\n\n"
+
+                    # progress update every few rows to avoid flood
+                    if processed % 10 == 0 or processed == total:
+                        yield (
+                            "event: progress\n"
+                            f"data:{processed},{total},{hostile_count}\n\n"
+                        )
+
+                # Clean up batch memory
+                del rows_map
+                batch = []
+                gc.collect()
+                connection.close()
+
+        # Process remaining entries in final batch
+        if batch:
             rows_map = get_user_transactions(batch)
-            # Sort keys to maintain some order if possible, though date desc is better
             sorted_keys = sorted(rows_map.keys(), key=lambda k: rows_map[k]['date'], reverse=True)
 
             for eid in sorted_keys:
                 row = rows_map[eid]
                 processed += 1
-                if processed % 10 == 0:
-                    yield ": ping\n\n"         # keep‐alive
+                is_hostile = is_transaction_hostile(row, user_ids, safe_entities=safe_entities)
 
-                is_hostile = is_transaction_hostile(row, user_ids)
-                if processed <= 5:  # Log first 5 for debugging
-                    logger.info(f"TX {eid}: type={row.get('type')}, fp={row.get('first_party_id')}, sp={row.get('second_party_id')}, hostile={is_hostile}")
-
-                if is_hostile:  # Only push rows that meet hostility rules.
+                if is_hostile:
                     hostile_count += 1
-
-                    # build the <tr> using same style logic as render_transactions()
+                    # ... same HTML generation code ...
                     cells = []
                     for col in headers:
                         val = row.get(col, "")
                         text = html.escape(str(val))
                         style = ""
-                        # type‐based red
                         if col == 'type':
                             if any(st in row['type'] for st in SUS_TYPES):
                                 style = 'color:red;'
                             if cfg.show_market_transactions:
                                 if "market_escrow" in row['type'] or "market_transaction" in row['type']:
                                     style = 'color:red;'
-                        # first/second party name
                         if col in ('first_party_name','second_party_name'):
                             pid = row[col.replace("_name", "_id")]
                             if get_hostile_state(pid, 'character', when=row['date']):
                                 style = 'color:red;'
-                        # corps & alliances
                         if col.endswith('corporation'):
                             cid = row[f"{col}_id"]
                             if cid and get_hostile_state(cid, 'corporation', when=row['date']):
@@ -892,12 +955,9 @@ def stream_transactions_sse(request):
                     tr_html = "<tr>" + "".join(cells) + "</tr>"
                     yield f"event: transaction\ndata:{json.dumps(tr_html)}\n\n"
 
-                # progress update every few rows to avoid flood
-                if processed % 10 == 0 or processed == total:
-                    yield (
-                        "event: progress\n"
-                        f"data:{processed},{total},{hostile_count}\n\n"
-                    )
+            yield f"event: progress\ndata:{processed},{total},{hostile_count}\n\n"
+            del rows_map, batch
+            gc.collect()
             connection.close()
 
         # Done
