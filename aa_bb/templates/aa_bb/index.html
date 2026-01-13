@@ -446,8 +446,8 @@ document.addEventListener('DOMContentLoaded', () => {
           .forEach(el => el.remove());
     header.insertAdjacentHTML('beforeend',
       isClean
-        ? '<span class="text-success">🟢</span>'
-        : '<span class="text-danger">🔴</span>'
+        ? '<span class="text-success"><i class="fa-solid fa-circle"></i></span>'
+        : '<span class="text-danger"><i class="fa-solid fa-circle"></i></span>'
     );
   }
 
