@@ -163,6 +163,17 @@ document.addEventListener('DOMContentLoaded', () => {
     contractMessage.style.display = 'none';
   }
 
+  function getEmptyMessage(text) {
+    return `
+      <table class="table stats">
+        <tbody>
+          <tr>
+            <td class="text-center">${text}</td>
+          </tr>
+        </tbody>
+      </table>`;
+  }
+
   function renderCard(idx, title, content, status) {
     const collapseId = `collapse${idx}`;
     const cardId     = `card${idx}`;
@@ -183,7 +194,7 @@ document.addEventListener('DOMContentLoaded', () => {
         ${icon}
       </div>
       <div id="${collapseId}" class="collapse">
-        <div class="card-body">${content !== null && content !== undefined ? content : (status ? 'No issues found' : 'Error loading data')}</div>
+        <div class="card-body">${content !== null && content !== undefined ? content : (status ? getEmptyMessage('No issues found') : getEmptyMessage('Error loading data'))}</div>
       </div>
     `;
     container.appendChild(cardDiv);
@@ -252,15 +263,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const clean = hostileCount === 0;
         if (clean) {
           updateCardStatus(idx, true);
-
-          // inject a “no hostile” row
-          const tbody = cardBody.querySelector('#contracts-body');
-          const colspan = thead.querySelectorAll('th').length;
-          tbody.insertAdjacentHTML('beforeend',
-            `<tr><td colspan="${colspan}" class="text-center text-muted">
-               No hostile contracts found
-             </td></tr>`
-          );
+          cardBody.innerHTML = getEmptyMessage('No hostile contracts found');
         }
         resolve(clean);
       });
@@ -328,15 +331,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const clean = hostileCount === 0;
         if (clean) {
           updateCardStatus(idx, true);
-
-          // inject a “no hostile” mail row
-          const tbody = cardBody.querySelector('tbody');
-          const colspan = MAIL_VISIBLE.length;
-          tbody.insertAdjacentHTML('beforeend',
-            `<tr><td colspan="${colspan}" class="text-center text-muted">
-               No hostile mails found
-             </td></tr>`
-          );
+          cardBody.innerHTML = getEmptyMessage('No hostile mails found');
         }
         resolve(clean);
       });
@@ -405,13 +400,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const clean = hostileCount === 0;
         if (clean) {
           updateCardStatus(idx, true);
-          // inject “no hostile” row
-          const colspan = thead.querySelectorAll('th').length || 1;
-          tbody.insertAdjacentHTML('beforeend',
-            `<tr><td colspan="${colspan}" class="text-center text-muted">
-               No hostile transactions found
-             </td></tr>`
-          );
+          cardBody.innerHTML = getEmptyMessage('No hostile transactions found');
         }
         resolve(clean);
       });

@@ -346,7 +346,7 @@ def render_assets(user_id: int) -> Optional[str]:
                     })
 
         if not rows:
-            return "<p>No hostile assets found.</p>"
+            return '<table class="table stats"><tbody><tr><td class="text-center">No hostile assets found.</td></tr></tbody></table>'
 
         # Sort rows: hostile first, then by system, location, character
         rows.sort(key=lambda x: (not x["hostile"], x["system"], x["location"], x["character"]))

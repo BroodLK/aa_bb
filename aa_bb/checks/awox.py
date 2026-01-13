@@ -320,12 +320,11 @@ def render_awox_kills_html(userID):
     """
     Render the cached awox data into a simple Bootstrap friendly table.
 
-    Returning `None` allows callers to skip rendering the section entirely
-    when the user has no awox history (better UX than a blank table).
+    Returning the standardized empty message allows for consistent UI.
     """
     kills = fetch_awox_kills(userID)
-    if not kills:  # Nothing to render, let callers hide the section entirely.
-        return None
+    if not kills:  # Nothing to render, return standardized empty table.
+        return '<table class="table stats"><tbody><tr><td class="text-center">No issues found.</td></tr></tbody></table>'
 
     html = '<table class="table table-striped table-hover stats">'
     html += '<thead><tr><th>Date</th><th>Character(s)</th><th>Attacker</th><th>Victim</th><th>Value</th><th>Link</th></tr></thead><tbody>'

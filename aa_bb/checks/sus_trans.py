@@ -299,7 +299,7 @@ def render_transactions(user_id: int) -> str:
     all_list = sorted(txs.values(), key=lambda x: x['date'], reverse=True)
     hostile = [t for t in all_list if is_transaction_hostile(t, user_ids, safe_entities=safe_entities)]
     if not hostile:  # No transactions require attention.
-        return '<p>No hostile transactions found.</p>'
+        return '<table class="table stats"><tbody><tr><td class="text-center">No hostile transactions found.</td></tr></tbody></table>'
 
     limit = 50
     display = hostile[:limit]

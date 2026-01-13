@@ -253,7 +253,7 @@ def render_contacts(user_id: int) -> str:
             suspicious_contacts[cid] = info
 
     if not suspicious_contacts:
-        return '<p class="text-success">No suspicious contacts found.</p>'
+        return '<table class="table stats"><tbody><tr><td class="text-center">No suspicious contacts found.</td></tr></tbody></table>'
 
     groups = group_contacts_by_standing(suspicious_contacts)
 

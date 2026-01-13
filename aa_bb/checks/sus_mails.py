@@ -216,7 +216,7 @@ def render_mails(user_id: int) -> str:
     """
     mails = get_user_mails(gather_user_mails(user_id))
     if not mails:  # User has no mail history yet.
-        return '<p>No mails found.</p>'
+        return '<table class="table stats"><tbody><tr><td class="text-center">No mails found.</td></tr></tbody></table>'
 
     from ..app_settings import get_safe_entities
     safe_entities = get_safe_entities()
@@ -225,7 +225,7 @@ def render_mails(user_id: int) -> str:
     hostile_rows = [r for r in rows if is_mail_row_hostile(r, safe_entities=safe_entities)]
     total = len(hostile_rows)
     if total == 0:  # Nothing matched the hostile criteria.
-        return '<p>No hostile mails found.</p>'
+        return '<table class="table stats"><tbody><tr><td class="text-center">No hostile mails found.</td></tr></tbody></table>'
 
     limit = 50
     display = hostile_rows[:limit]

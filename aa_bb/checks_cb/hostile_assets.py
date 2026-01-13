@@ -161,7 +161,7 @@ def render_assets(corp_id: int) -> Optional[str]:
     """
     systems = get_asset_locations(corp_id)
     if not systems:
-        return None
+        return '<table class="table stats"><tbody><tr><td class="text-center">No hostile assets found.</td></tr></tbody></table>'
 
     html_output = '<table class="table table-striped">'
     html_output += '<thead><tr><th>System</th><th>Location</th><th>Owner</th><th>Region</th></tr></thead><tbody>'

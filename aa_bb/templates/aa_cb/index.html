@@ -8,6 +8,46 @@
 {% load humanize %}
 
 {% block details %}
+<style>
+    /* Base table */
+    .table.compliance {
+        border-collapse: collapse;
+    }
+
+    /* Header row */
+    .table.compliance > thead > tr > th {
+        width: 50%;
+        border-top: 1px solid var(--bs-gray-dark);
+        border-bottom: 1px solid var(--bs-gray-dark);
+        border-left: 1px solid var(--bs-gray-dark);
+        border-right: 1px solid var(--bs-gray-dark);
+        background-color: var(--bs-gray-900);
+    }
+
+    /* Body rows */
+    .table.compliance > tbody > tr > td {
+        border-top: 1px solid var(--bs-gray-600);
+        border-bottom: 1px solid var(--bs-gray-dark);
+        border-left: 1px solid var(--bs-gray-dark);
+        border-right: 1px solid var(--bs-gray-dark);
+    }
+
+    .table.stats > thead > tr > th {
+        border-top: 1px solid var(--bs-gray-dark);
+        border-bottom: 1px solid var(--bs-gray-dark);
+        border-left: 1px solid var(--bs-gray-dark);
+        border-right: 1px solid var(--bs-gray-dark);
+        background-color: var(--bs-gray-900);
+    }
+
+    /* Body rows */
+    .table.stats > tbody > tr > td {
+        border-top: 1px solid var(--bs-gray-600);
+        border-bottom: 1px solid var(--bs-gray-dark);
+        border-left: 1px solid var(--bs-gray-dark);
+        border-right: 1px solid var(--bs-gray-dark);
+    }
+</style>
 
 <!-- Dropdown -->
 <div class="mb-4">
@@ -89,6 +129,17 @@ document.addEventListener('DOMContentLoaded', () => {
     contractMessage.style.display = 'none';
   }
 
+  function getEmptyMessage(text) {
+    return `
+      <table class="table stats">
+        <tbody>
+          <tr>
+            <td class="text-center">${text}</td>
+          </tr>
+        </tbody>
+      </table>`;
+  }
+
 function renderCard(idx, title, content, status) {
   const collapseId = `collapse${idx}`;
   const cardId     = `card${idx}`;
@@ -109,7 +160,7 @@ function renderCard(idx, title, content, status) {
       ${icon}
     </div>
     <div id="${collapseId}" class="collapse">
-      <div class="card-body">${content}</div>
+      <div class="card-body">${content !== null && content !== undefined ? content : (status ? getEmptyMessage('No issues found') : getEmptyMessage('Error loading data'))}</div>
     </div>
   `;
   container.appendChild(cardDiv);
@@ -179,15 +230,7 @@ async function loadSuspiciousContracts(option, idx) {
       const clean = hostileCount === 0;
       if (clean) {
         updateCardStatus(idx, true);
-
-        // **NEW**: inject a “no hostile” row
-        const tbody = cardBody.querySelector('#contracts-body');
-        const colspan = thead.querySelectorAll('th').length;
-        tbody.insertAdjacentHTML('beforeend',
-          `<tr><td colspan="${colspan}" class="text-center text-muted">
-             No hostile contracts found
-           </td></tr>`
-        );
+        cardBody.innerHTML = getEmptyMessage('No hostile contracts found');
       }
       resolve(clean);
     });
@@ -258,13 +301,7 @@ async function loadSuspiciousTransactions(option, idx) {
       const clean = hostileCount === 0;
       if (clean) {
         updateCardStatus(idx, true);
-        // inject “no hostile” row
-        const colspan = thead.querySelectorAll('th').length || 1;
-        tbody.insertAdjacentHTML('beforeend',
-          `<tr><td colspan="${colspan}" class="text-center text-muted">
-             No hostile transactions found
-           </td></tr>`
-        );
+        cardBody.innerHTML = getEmptyMessage('No hostile transactions found');
       }
       resolve(clean);
     });
