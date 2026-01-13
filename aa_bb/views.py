@@ -977,7 +977,7 @@ def get_card_data(request, target_user_id: int, key: str):
 
     elif key == "awox":  # Highlight kills where corp mates attacked each other.
         content = render_awox_kills_html(target_user_id)
-        status  = content is None
+        status  = not (content and "danger" in content)
 
     elif key == "clone_states":  # Clone state availability (alpha/omega).
         content = render_character_states_html(target_user_id)

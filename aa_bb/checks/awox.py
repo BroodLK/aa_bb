@@ -324,7 +324,7 @@ def render_awox_kills_html(userID):
     """
     kills = fetch_awox_kills(userID)
     if not kills:  # Nothing to render, return standardized empty table.
-        return '<table class="table stats"><tbody><tr><td class="text-center">No issues found.</td></tr></tbody></table>'
+        return '<table class="table stats"><tbody><tr><td class="text-center">No recent AWOX kills found.</td></tr></tbody></table>'
 
     html = '<table class="table table-striped table-hover stats">'
     html += '<thead><tr><th>Date</th><th>Character(s)</th><th>Attacker</th><th>Victim</th><th>Value</th><th>Link</th></tr></thead><tbody>'
@@ -332,7 +332,7 @@ def render_awox_kills_html(userID):
     for kill in kills:
         chars_list = sorted(kill.get("chars", []))
         if kill.get("is_attacker", False):
-            chars = mark_safe(f'<span style="color: red;">{html.escape(", ".join(chars_list))}</span>')
+            chars = mark_safe(f'<span class="text-danger">{html.escape(", ".join(chars_list))}</span>')
         else:
             chars = ", ".join(chars_list)
         value = "{:,}".format(kill.get("value", 0))
@@ -354,7 +354,7 @@ def render_awox_kills_html(userID):
         if kill.get("vic_alli"):
             vic_html += f"<br><small>({kill.get('vic_alli')})</small>"
 
-        row_html = '<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{} ISK</td><td><a href="{}" target="_blank">View</a></td></tr>'
+        row_html = '<tr class="text-danger"><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{} ISK</td><td><a href="{}" target="_blank">View</a></td></tr>'
         html += format_html(row_html, date_str, chars, mark_safe(att_html), mark_safe(vic_html), value, link)
 
     html += '</tbody></table>'
