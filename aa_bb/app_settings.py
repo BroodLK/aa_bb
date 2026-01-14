@@ -45,6 +45,7 @@ from allianceauth.eveonline.models import EveCorporationInfo, EveAllianceInfo
 from eveuniverse.models import EveSolarSystem
 from django.core.cache import cache
 from django.conf import settings
+from functools import lru_cache
 
 logger = get_extension_logger(__name__)
 
@@ -234,6 +235,7 @@ def is_npc_character(character_id: int) -> bool:
     """Check whether a character id falls inside the NPC character range."""
     return 3_000_000 <= character_id < 4_000_000
 
+@lru_cache(maxsize=1000)
 def get_character_id(name: str) -> int | None:
     """
     Resolve a character name to ID using ESI /universe/ids/ endpoint,
@@ -1316,6 +1318,14 @@ def is_above_market_threshold(type_id, unit_price, threshold_percent):
     return False
 
 
+@lru_cache(maxsize=512)
+def _parse_config_ids(config_str: str) -> set[int]:
+    """Helper to parse comma-separated IDs from config strings with caching."""
+    if not config_str:
+        return set()
+    return {int(x) for x in config_str.split(",") if x.strip().isdigit()}
+
+
 def is_hostile_unified(
     involved_ids: List[int] = None,
     location_id: int = None,
@@ -1436,13 +1446,13 @@ def is_hostile_unified(
 
     # 5. Excluded system
     if actual_system_id:
-        excluded_systems = {int(x) for x in (cfg.excluded_systems or "").split(",") if x.strip().isdigit()}
+        excluded_systems = _parse_config_ids(cfg.excluded_systems)
         if actual_system_id in excluded_systems:
             return False
 
     # 6. Excluded station
     if location_id:
-        excluded_stations = {int(x) for x in (cfg.excluded_stations or "").split(",") if x.strip().isdigit()}
+        excluded_stations = _parse_config_ids(cfg.excluded_stations)
         if int(location_id) in excluded_stations:
             return False
 
@@ -1483,7 +1493,7 @@ def is_hostile_unified(
 
         # 12. Excluded systems
         if cfg.market_transactions_excluded_systems:
-            m_excluded = {int(x) for x in cfg.market_transactions_excluded_systems.split(",") if x.strip().isdigit()}
+            m_excluded = _parse_config_ids(cfg.market_transactions_excluded_systems)
             if actual_system_id in m_excluded:
                 return False
 
@@ -1532,8 +1542,8 @@ def is_hostile_unified(
                 pass
 
     if check_ids:
-        hostile_corps = {int(x) for x in (cfg.hostile_corporations or "").split(",") if x.strip().isdigit()}
-        hostile_allis = {int(x) for x in (cfg.hostile_alliances or "").split(",") if x.strip().isdigit()}
+        hostile_corps = _parse_config_ids(cfg.hostile_corporations)
+        hostile_allis = _parse_config_ids(cfg.hostile_alliances)
         for eid in check_ids:
             if not eid:
                 continue
@@ -1657,18 +1667,18 @@ def is_location_hostile(location_id: int, system_id: int = None, safe_entities: 
 
 
 def get_users():
-    """List the character names of every member-state user with a main set."""
+    """List the (user_id, character_name) tuples of every member-state user with a main set."""
     cfg = BigBrotherConfig.get_solo()
     member_states = cfg.bb_member_states.all()
     qs = UserProfile.objects.filter(state__in=member_states).exclude(main_character=None)
 
-    member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
-    member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
+    member_corps = _parse_config_ids(cfg.member_corporations)
+    member_allis = _parse_config_ids(cfg.member_alliances)
     if member_corps or member_allis:
         qs = qs.filter(Q(main_character__corporation_id__in=member_corps) | Q(main_character__alliance_id__in=member_allis))
 
     users = list(
-        qs.values_list("main_character__character_name", flat=True)
+        qs.values_list("user_id", "main_character__character_name")
         .order_by("main_character__character_name")
     )
     return users
@@ -1679,8 +1689,8 @@ def get_user_profiles():
     member_states = cfg.bb_member_states.all()
     qs = UserProfile.objects.filter(state__in=member_states).exclude(main_character=None)
 
-    member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
-    member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
+    member_corps = _parse_config_ids(cfg.member_corporations)
+    member_allis = _parse_config_ids(cfg.member_alliances)
     if member_corps or member_allis:
         qs = qs.filter(Q(main_character__corporation_id__in=member_corps) | Q(main_character__alliance_id__in=member_allis))
 
@@ -1701,6 +1711,7 @@ def get_user_id(character_name):
     except CharacterOwnership.DoesNotExist:
         return None
 
+@lru_cache(maxsize=2000)
 def is_nullsec(system_id):
     try:
         system_id = int(system_id)
@@ -1709,6 +1720,7 @@ def is_nullsec(system_id):
     except (EveSolarSystem.DoesNotExist, ValueError, TypeError):
         return False
 
+@lru_cache(maxsize=2000)
 def is_highsec(system_id):
     try:
         system_id = int(system_id)
@@ -1717,6 +1729,7 @@ def is_highsec(system_id):
     except (EveSolarSystem.DoesNotExist, ValueError, TypeError):
         return False
 
+@lru_cache(maxsize=2000)
 def is_lowsec(system_id):
     try:
         system_id = int(system_id)

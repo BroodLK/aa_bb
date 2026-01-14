@@ -208,21 +208,27 @@ def discord_inactivity_check(user):
         return True
 
     from .models import UserStatus
-    status, _ = UserStatus.objects.get_or_create(user=user)
+    status_data = UserStatus.objects.filter(user=user).values("last_discord_message_at").first()
 
-    if not status.last_discord_message_at:
-        # If no message recorded, they might be inactive or we just started tracking.
-        # Initialize to now to avoid mass ticketing on feature activation.
+    if not status_data:
+        # If no status recorded, initialize one to avoid mass ticketing on feature activation.
         try:
             get_discord_user_id(user)
-            status.last_discord_message_at = timezone.now()
-            status.save(update_fields=['last_discord_message_at'])
-            return True
+            UserStatus.objects.create(user=user, last_discord_message_at=timezone.now())
         except Exception:
-            # Not on Discord, skip this check
-            return True
+            pass
+        return True
 
-    days_since = (timezone.now() - status.last_discord_message_at).days
+    last_discord_message_at = status_data.get("last_discord_message_at")
+    if not last_discord_message_at:
+        try:
+            get_discord_user_id(user)
+            UserStatus.objects.filter(user=user).update(last_discord_message_at=timezone.now())
+        except Exception:
+            pass
+        return True
+
+    days_since = (timezone.now() - last_discord_message_at).days
     if days_since >= tcfg.discord_inactivity_days:
         return False
     return True

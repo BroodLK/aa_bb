@@ -1066,8 +1066,7 @@ def BB_run_regular_updates():
         # walk each eligible user and rebuild their status snapshot
         if instance.is_active:  # skip user iteration entirely when plugin disabled/unlicensed
             # Use iterator to prevent loading all users into memory at once
-            users_iterator = get_users()
-            users = list(users_iterator)
+            users = get_users()
             total_users = len(users)
             logger.info(
                 f"✅  [AA-BB] - [BB_run_regular_updates] - Dispatching updates for {total_users} users (staggered)."
@@ -1143,8 +1142,7 @@ def BB_run_regular_updates():
 
             now = timezone.now()
 
-            for index, char_name in enumerate(users):
-                user_id = get_user_id(char_name)
+            for index, (user_id, char_name) in enumerate(users):
                 if not user_id:  # defensive: skip orphaned mains lacking a user id
                     continue
 
