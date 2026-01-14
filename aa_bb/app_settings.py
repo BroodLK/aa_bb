@@ -199,8 +199,12 @@ def get_eve_entity_type(
     # 1. Cache lookup
     try:
         record = id_types.objects.get(pk=eve_id)
-        record.last_accessed = timezone.now()
-        record.save(update_fields=['last_accessed'])
+        # Only update last_accessed if stale (older than 7 days) to reduce DB writes
+        if record.last_accessed:
+            age = timezone.now() - record.last_accessed
+            if age > timedelta(days=7):
+                record.last_accessed = timezone.now()
+                record.save(update_fields=['last_accessed'])
         return record.name
     except id_types.DoesNotExist:
         pass
@@ -242,8 +246,11 @@ def get_character_id(name: str) -> int | None:
     except Character_names.DoesNotExist:
         record = None
     else:
-        record.updated = timezone.now()
-        record.save(update_fields=['updated'])
+        # Only update if stale (older than 7 days) to reduce DB writes
+        age = timezone.now() - record.updated
+        if age > timedelta(days=7):
+            record.updated = timezone.now()
+            record.save(update_fields=['updated'])
         return record.id
 
     # Step 2: Resolve via ESI and reconcile duplicates
@@ -351,9 +358,13 @@ def get_entity_info(entity_id: int, as_of: timezone.datetime) -> Dict:
     # 1) Attempt to fetch fresh-enough cache entry
     try:
         cache_entry = EntityInfoCache.objects.get(entity_id=entity_id, as_of=as_of)
-        if now - cache_entry.updated < _EXPIRY:  # Serve cached data when still within TTL.
-            cache_entry.updated = timezone.now()
-            cache_entry.save(update_fields=['updated'])
+        age = now - cache_entry.updated
+        if age < _EXPIRY:  # Serve cached data when still within TTL.
+            # Only update timestamp if entry is getting stale (older than 1 day)
+            # This reduces DB writes while keeping frequently-used data fresh
+            if age > timedelta(days=1):
+                cache_entry.updated = timezone.now()
+                cache_entry.save(update_fields=['updated'])
             #logger.debug(f"cache hit: entity={entity_id} @ {as_of}")
             return cache_entry.data
         else:
@@ -834,8 +845,11 @@ def resolve_alliance_name(owner_id: int) -> str:
     # 1. Try permanent table first
     try:
         record = Alliance_names.objects.get(pk=owner_id)
-        record.updated = timezone.now()
-        record.save(update_fields=['updated'])
+        # Only update timestamp if stale (older than 7 days) to reduce DB writes
+        age = timezone.now() - record.updated
+        if age > timedelta(days=7):
+            record.updated = timezone.now()
+            record.save(update_fields=['updated'])
         return record.name
     except Alliance_names.DoesNotExist:
         pass  # need to fetch and store
@@ -875,8 +889,11 @@ def resolve_corporation_name(corp_id: int) -> str:
     # 1. Try permanent table first
     try:
         record = Corporation_names.objects.get(pk=corp_id)
-        record.updated = timezone.now()
-        record.save(update_fields=['updated'])
+        # Only update timestamp if stale (older than 7 days) to reduce DB writes
+        age = timezone.now() - record.updated
+        if age > timedelta(days=7):
+            record.updated = timezone.now()
+            record.save(update_fields=['updated'])
         return record.name
     except Corporation_names.DoesNotExist:
         pass  # need to fetch and store
@@ -916,8 +933,11 @@ def resolve_character_name(char_id: int) -> str:
     # 1. Try permanent table first
     try:
         record = Character_names.objects.get(pk=char_id)
-        record.updated = timezone.now()
-        record.save(update_fields=['updated'])
+        # Only update timestamp if stale (older than 7 days) to reduce DB writes
+        age = timezone.now() - record.updated
+        if age > timedelta(days=7):
+            record.updated = timezone.now()
+            record.save(update_fields=['updated'])
         return record.name
     except Character_names.DoesNotExist:
         pass  # need to fetch and store
