@@ -53,12 +53,12 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
     Return a dict mapping system IDs to a dict containing their name and a list of locations
     (stations/structures) where any of the given user's characters has one or more assets.
 
-    OPTIMIZED: Processes characters in batches to prevent Redis overload with large character counts.
+    OPTIMIZED: Limits asset processing and cleans up memory.
     """
     if not corptools_active() or CharacterAudit is None:
         return {}
 
-    # Fetch character audits
+    # Optimized fetching of all assets for all user characters in one go
     audits = CharacterAudit.objects.filter(character__character_ownership__user_id=user_id).select_related("character")
     audit_ids = [a.pk for a in audits]
     char_map = {a.pk: a.character for a in audits}
@@ -66,114 +66,96 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
     if not audit_ids:
         return {}
 
-    logger.debug(f"[hostile_assets] Processing assets for {len(audit_ids)} characters for user {user_id}")
+    assets = (
+        CharacterAsset.objects.filter(character_id__in=audit_ids)
+        .select_related("location_name__system", "type_name")
+        .exclude(location_flag__iexact="solar_system")[:5000]  # Limit to prevent memory explosion
+    )
 
     system_map: Dict[int, dict] = {}
     _loc_sys_cache = {}
     _loc_name_cache = {}
     processed_combos = set()
 
-    # Process characters in batches to avoid overwhelming Redis
-    BATCH_SIZE = 5  # Process 5 characters at a time
-    ASSETS_PER_BATCH = 1000  # Limit assets per batch
-    max_combos = 10000  # Safety limit across all batches
+    max_combos = 10000  # Safety limit
 
-    for batch_start in range(0, len(audit_ids), BATCH_SIZE):
-        batch_ids = audit_ids[batch_start:batch_start + BATCH_SIZE]
-        batch_num = (batch_start // BATCH_SIZE) + 1
-        total_batches = (len(audit_ids) + BATCH_SIZE - 1) // BATCH_SIZE
+    for asset in assets:
+        if (asset.location_flag or "").lower() == "assetsafety":
+            continue
 
-        logger.debug(f"[hostile_assets] Processing batch {batch_num}/{total_batches} ({len(batch_ids)} characters)")
+        if not asset.type_name:
+            continue
 
-        # Fetch assets for this batch of characters
-        assets = (
-            CharacterAsset.objects.filter(character_id__in=batch_ids)
-            .select_related("location_name__system", "type_name")
-            .exclude(location_flag__iexact="solar_system")[:ASSETS_PER_BATCH]
-        )
+        char = char_map.get(asset.character_id)
+        if not char:
+            continue
 
-        for asset in assets:
-            if (asset.location_flag or "").lower() == "assetsafety":
-                continue
+        # Unique combo check: (character, location, type)
+        # Prevents redundant processing of multiple stacks of the same item
+        combo = (char.character_id, asset.location_id, asset.type_name.type_id)
+        if combo in processed_combos:
+            continue
 
-            if not asset.type_name:
-                continue
-
-            char = char_map.get(asset.character_id)
-            if not char:
-                continue
-
-            # Unique combo check: (character, location, type)
-            # Prevents redundant processing of multiple stacks of the same item
-            combo = (char.character_id, asset.location_id, asset.type_name.type_id)
-            if combo in processed_combos:
-                continue
-
-            if len(processed_combos) >= max_combos:
-                logger.warning(f"[hostile_assets] User {user_id} hit {max_combos} asset combo limit, stopping processing")
-                break
-
-            processed_combos.add(combo)
-
-            loc = asset.location_name
-            system_obj = getattr(loc, "system", None) if loc else None
-            location_id = asset.location_id
-
-            key = None
-            sys_name = None
-
-            if system_obj:
-                key = system_obj.pk
-                sys_name = system_obj.name
-            elif location_id:
-                if location_id in _loc_sys_cache:
-                    key = _loc_sys_cache[location_id]
-                else:
-                    key = resolve_location_system_id(location_id)
-                    _loc_sys_cache[location_id] = key
-
-                if key:
-                    if key in _loc_name_cache:
-                        sys_name = _loc_name_cache[key]
-                    else:
-                        sys_name = resolve_location_name(key)
-                        _loc_name_cache[key] = sys_name
-
-            if not key:
-                continue
-
-            if key not in system_map:
-                system_map[key] = {"name": sys_name, "locations": {}}
-
-            loc_key = location_id or 0
-            if loc_key not in system_map[key]["locations"]:
-                # Determine location name
-                loc_name = None
-                if loc:
-                    loc_name = loc.location_name
-                if not loc_name:
-                    if loc_key in _loc_name_cache:
-                        loc_name = _loc_name_cache[loc_key]
-                    else:
-                        loc_name = resolve_location_name(loc_key) or f"Unknown Location {loc_key}"
-                        _loc_name_cache[loc_key] = loc_name
-
-                system_map[key]["locations"][loc_key] = {
-                    "name": loc_name,
-                    "assets": [],
-                }
-
-            system_map[key]["locations"][loc_key]["assets"].append({
-                "char_id": char.character_id,
-                "char_name": char.character_name,
-                "type_id": asset.type_name.type_id,
-                "type_name": asset.type_name.name,
-            })
-
-        # Check if we've hit the global limit
         if len(processed_combos) >= max_combos:
-            logger.warning(f"[hostile_assets] User {user_id} hit global {max_combos} combo limit at batch {batch_num}, stopping all processing")
+            logger.warning(f"[hostile_assets] User {user_id} hit {max_combos} asset combo limit, stopping processing")
             break
+
+        processed_combos.add(combo)
+
+        loc = asset.location_name
+        system_obj = getattr(loc, "system", None) if loc else None
+        location_id = asset.location_id
+
+        key = None
+        sys_name = None
+
+        if system_obj:
+            key = system_obj.pk
+            sys_name = system_obj.name
+        elif location_id:
+            if location_id in _loc_sys_cache:
+                key = _loc_sys_cache[location_id]
+            else:
+                key = resolve_location_system_id(location_id)
+                _loc_sys_cache[location_id] = key
+
+            if key:
+                if key in _loc_name_cache:
+                    sys_name = _loc_name_cache[key]
+                else:
+                    sys_name = resolve_location_name(key)
+                    _loc_name_cache[key] = sys_name
+
+        if not key:
+            continue
+
+        if key not in system_map:
+            system_map[key] = {"name": sys_name, "locations": {}}
+
+        loc_key = location_id or 0
+        if loc_key not in system_map[key]["locations"]:
+            # Determine location name
+            loc_name = None
+            if loc:
+                loc_name = loc.location_name
+            if not loc_name:
+                if loc_key in _loc_name_cache:
+                    loc_name = _loc_name_cache[loc_key]
+                else:
+                    loc_name = resolve_location_name(loc_key) or f"Unknown Location {loc_key}"
+                    _loc_name_cache[loc_key] = loc_name
+
+            system_map[key]["locations"][loc_key] = {
+                "name": loc_name,
+                "assets": [],
+            }
+
+        system_map[key]["locations"][loc_key]["assets"].append({
+            "char_id": char.character_id,
+            "char_name": char.character_name,
+            "type_id": asset.type_name.type_id,
+            "type_name": asset.type_name.name,
+        })
 
     del processed_combos, _loc_sys_cache, _loc_name_cache, char_map, audit_ids
     import gc
