@@ -55,6 +55,8 @@ def get_clones(user_id: int) -> Dict[int, dict]:
     """
     Return a dict mapping system IDs to a dict containing their name and a list of locations
     where this user has clones.
+
+    OPTIMIZED: Processes characters in batches to prevent Redis overload with large character counts.
     """
     if not corptools_active() or CharacterAudit is None:
         return {}
@@ -65,6 +67,8 @@ def get_clones(user_id: int) -> Dict[int, dict]:
 
     if not audit_ids:
         return {}
+
+    logger.debug(f"[hostile_clones] Processing clones for {len(audit_ids)} characters for user {user_id}")
 
     system_map: Dict[int, dict] = {}
     _loc_sys_cache = {}
@@ -115,40 +119,50 @@ def get_clones(user_id: int) -> Dict[int, dict]:
             "jump_clone_name": jump_clone_name or "Jump Clone"
         })
 
-    # Bulk fetch current locations
-    active_locs = {}
-    if CharacterLocation:
-        active_locs = {
-            cl.character_id: cl.current_location_id
-            for cl in CharacterLocation.objects.filter(character_id__in=audit_ids)
-        }
+    # Process characters in batches to avoid overwhelming Redis
+    BATCH_SIZE = 10  # Process 10 characters at a time for clones (fewer objects than assets)
 
-    # Bulk fetch home clones
-    home_clones = Clone.objects.select_related("location_name__system").filter(character_id__in=audit_ids)
-    for hc in home_clones:
-        char = char_map.get(hc.character_id)
-        if not char:
-            continue
-        status = "Home Station"
-        if hc.location_id == active_locs.get(hc.character_id):
-            status += " (Current Location)"
-        add_location(getattr(hc.location_name, "system", None), hc.location_id, char.character_id, char.character_name, jump_clone_name=status)
+    for batch_start in range(0, len(audit_ids), BATCH_SIZE):
+        batch_ids = audit_ids[batch_start:batch_start + BATCH_SIZE]
+        batch_num = (batch_start // BATCH_SIZE) + 1
+        total_batches = (len(audit_ids) + BATCH_SIZE - 1) // BATCH_SIZE
 
-    # Bulk fetch jump clones
-    jump_clones = (
-        JumpClone.objects.select_related("location_name__system")
-        .prefetch_related("implant_set__type_name")
-        .filter(character_id__in=audit_ids)
-    )
-    for jc in jump_clones:
-        char = char_map.get(jc.character_id)
-        if not char:
-            continue
-        implants = [i.type_name.name for i in jc.implant_set.all() if i.type_name]
-        status = jc.name or "Jump Clone"
-        if jc.location_id == active_locs.get(jc.character_id):
-            status += " (Current Location)"
-        add_location(getattr(jc.location_name, "system", None), jc.location_id, char.character_id, char.character_name, implants=implants, jump_clone_name=status)
+        logger.debug(f"[hostile_clones] Processing batch {batch_num}/{total_batches} ({len(batch_ids)} characters)")
+
+        # Bulk fetch current locations for this batch
+        active_locs = {}
+        if CharacterLocation:
+            active_locs = {
+                cl.character_id: cl.current_location_id
+                for cl in CharacterLocation.objects.filter(character_id__in=batch_ids)
+            }
+
+        # Bulk fetch home clones for this batch
+        home_clones = Clone.objects.select_related("location_name__system").filter(character_id__in=batch_ids)
+        for hc in home_clones:
+            char = char_map.get(hc.character_id)
+            if not char:
+                continue
+            status = "Home Station"
+            if hc.location_id == active_locs.get(hc.character_id):
+                status += " (Current Location)"
+            add_location(getattr(hc.location_name, "system", None), hc.location_id, char.character_id, char.character_name, jump_clone_name=status)
+
+        # Bulk fetch jump clones for this batch
+        jump_clones = (
+            JumpClone.objects.select_related("location_name__system")
+            .prefetch_related("implant_set__type_name")
+            .filter(character_id__in=batch_ids)
+        )
+        for jc in jump_clones:
+            char = char_map.get(jc.character_id)
+            if not char:
+                continue
+            implants = [i.type_name.name for i in jc.implant_set.all() if i.type_name]
+            status = jc.name or "Jump Clone"
+            if jc.location_id == active_locs.get(jc.character_id):
+                status += " (Current Location)"
+            add_location(getattr(jc.location_name, "system", None), jc.location_id, char.character_id, char.character_name, implants=implants, jump_clone_name=status)
 
     del _loc_sys_cache, _loc_name_cache, char_map, audit_ids, active_locs
     import gc
