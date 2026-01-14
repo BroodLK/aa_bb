@@ -271,7 +271,6 @@ def render_user_skills_html(user_id: int) -> str:
     # Join everything into one HTML-safe string
     return format_html("".join(html_parts))
 
-@lru_cache(maxsize=5000)
 def get_char_age(char_id: int) -> int | None:
     """
     Returns the age in days of the character with the given EVE character ID,

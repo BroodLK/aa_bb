@@ -189,7 +189,6 @@ def get_eve_entity_type_int(eve_id: int, datasource: str | None = None) -> str |
         return None
     return results[0].get("category")
 
-@lru_cache(maxsize=5000)
 def get_eve_entity_type(
     eve_id: int,
     datasource: str | None = None
@@ -200,7 +199,8 @@ def get_eve_entity_type(
     # 1. Cache lookup
     try:
         record = id_types.objects.get(pk=eve_id)
-        # Skip updating last_accessed to save on DB writes in tight loops
+        record.last_accessed = timezone.now()
+        record.save(update_fields=['last_accessed'])
         return record.name
     except id_types.DoesNotExist:
         pass
@@ -225,7 +225,6 @@ def is_npc_character(character_id: int) -> bool:
     """Check whether a character id falls inside the NPC character range."""
     return 3_000_000 <= character_id < 4_000_000
 
-@lru_cache(maxsize=5000)
 def get_character_id(name: str) -> int | None:
     """
     Resolve a character name to ID using ESI /universe/ids/ endpoint,
@@ -243,8 +242,8 @@ def get_character_id(name: str) -> int | None:
     except Character_names.DoesNotExist:
         record = None
     else:
-        # record.updated = timezone.now()
-        # record.save()
+        record.updated = timezone.now()
+        record.save(update_fields=['updated'])
         return record.id
 
     # Step 2: Resolve via ESI and reconcile duplicates
@@ -341,10 +340,6 @@ def get_entity_info(entity_id: int, as_of: timezone.datetime) -> Dict:
         if hasattr(as_of, 'replace'):
             as_of = as_of.replace(minute=0, second=0, microsecond=0)
 
-    return _get_entity_info_cached(entity_id, as_of)
-
-@lru_cache(maxsize=10000)
-def _get_entity_info_cached(entity_id: int, as_of: timezone.datetime) -> Dict:
     if entity_id is None:
         # Default placeholder ID if input is missing.
         entity_id = 342545170
@@ -357,6 +352,8 @@ def _get_entity_info_cached(entity_id: int, as_of: timezone.datetime) -> Dict:
     try:
         cache_entry = EntityInfoCache.objects.get(entity_id=entity_id, as_of=as_of)
         if now - cache_entry.updated < _EXPIRY:  # Serve cached data when still within TTL.
+            cache_entry.updated = timezone.now()
+            cache_entry.save(update_fields=['updated'])
             #logger.debug(f"cache hit: entity={entity_id} @ {as_of}")
             return cache_entry.data
         else:
@@ -829,7 +826,6 @@ def _get_sov_dict() -> Dict[int, Dict]:
     data = _get_sov_map()
     return {s.get("system_id"): s for s in data if s.get("system_id")}
 
-@lru_cache(maxsize=5000)
 def resolve_alliance_name(owner_id: int) -> str:
     """
     Resolve alliance/faction ID to name via ESI, storing permanently in aa_bb_alliances.
@@ -838,8 +834,8 @@ def resolve_alliance_name(owner_id: int) -> str:
     # 1. Try permanent table first
     try:
         record = Alliance_names.objects.get(pk=owner_id)
-        # record.updated = timezone.now()
-        # record.save()
+        record.updated = timezone.now()
+        record.save(update_fields=['updated'])
         return record.name
     except Alliance_names.DoesNotExist:
         pass  # need to fetch and store
@@ -871,7 +867,6 @@ def resolve_alliance_name(owner_id: int) -> str:
         e_detail = getattr(e, 'code', None) or getattr(e, 'status', None) or str(e)
         return f"Unresolvable eve map{e_short}{e_detail}"
 
-@lru_cache(maxsize=5000)
 def resolve_corporation_name(corp_id: int) -> str:
     """
     Resolve corporation ID to name via ESI, storing permanently in aa_bb_corporations.
@@ -880,8 +875,8 @@ def resolve_corporation_name(corp_id: int) -> str:
     # 1. Try permanent table first
     try:
         record = Corporation_names.objects.get(pk=corp_id)
-        # record.updated = timezone.now()
-        # record.save()
+        record.updated = timezone.now()
+        record.save(update_fields=['updated'])
         return record.name
     except Corporation_names.DoesNotExist:
         pass  # need to fetch and store
@@ -913,7 +908,6 @@ def resolve_corporation_name(corp_id: int) -> str:
         e_detail = getattr(e, 'code', None) or getattr(e, 'status', None) or str(e)
         return f"Unresolvable eve map{e_short}{e_detail}"
 
-@lru_cache(maxsize=5000)
 def resolve_character_name(char_id: int) -> str:
     """
     Resolve character ID to name via ESI, storing permanently in Character_names.
@@ -922,8 +916,8 @@ def resolve_character_name(char_id: int) -> str:
     # 1. Try permanent table first
     try:
         record = Character_names.objects.get(pk=char_id)
-        # record.updated = timezone.now()
-        # record.save()
+        record.updated = timezone.now()
+        record.save(update_fields=['updated'])
         return record.name
     except Character_names.DoesNotExist:
         pass  # need to fetch and store
@@ -961,14 +955,12 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
     Get sovereignty owner of an EVE system by name.
     Always returns a dict with keys: owner_id, owner_name, owner_type, region_id, region_name.
     """
-    return _get_system_owner_cached(system.get("id"), system.get("name"))
-
-@lru_cache(maxsize=2000)
-def _get_system_owner_cached(system_id: int, system_name: str = None) -> Dict[str, str]:
     try:
-        system_id = int(system_id) if system_id is not None else None
+        system_id = int(system.get("id")) if system.get("id") is not None else None
     except (ValueError, TypeError):
         system_id = None
+
+    system_name = system.get("name")
 
     if system_id:
         cache_key = f"aa_bb_system_owner_{system_id}"
@@ -1720,7 +1712,6 @@ def get_user_id(character_name):
     except CharacterOwnership.DoesNotExist:
         return None
 
-@lru_cache(maxsize=2000)
 def is_nullsec(system_id):
     try:
         system_id = int(system_id)
@@ -1729,7 +1720,6 @@ def is_nullsec(system_id):
     except (EveSolarSystem.DoesNotExist, ValueError, TypeError):
         return False
 
-@lru_cache(maxsize=2000)
 def is_highsec(system_id):
     try:
         system_id = int(system_id)
@@ -1738,7 +1728,6 @@ def is_highsec(system_id):
     except (EveSolarSystem.DoesNotExist, ValueError, TypeError):
         return False
 
-@lru_cache(maxsize=2000)
 def is_lowsec(system_id):
     try:
         system_id = int(system_id)
@@ -1747,7 +1736,6 @@ def is_lowsec(system_id):
     except (EveSolarSystem.DoesNotExist, ValueError, TypeError):
         return False
 
-@lru_cache(maxsize=2000)
 def is_player_structure(location_id):
     """
     Returns True if location_id likely corresponds to a player-owned structure
@@ -1759,7 +1747,6 @@ def is_player_structure(location_id):
     except (ValueError, TypeError):
         return False
 
-@lru_cache(maxsize=2000)
 def resolve_location_name(location_id: int) -> Optional[str]:
     """
     Attempts to resolve a location_id to a human-readable name.
@@ -1852,7 +1839,6 @@ def resolve_location_name(location_id: int) -> Optional[str]:
         cache.set(cache_key, name, 86400)
     return name
 
-@lru_cache(maxsize=2000)
 def resolve_location_system_id(location_id: int) -> Optional[int]:
     """
     Attempts to resolve a location_id to its parent solar system ID.
@@ -1958,7 +1944,6 @@ def get_location_owner(location_id: int) -> Optional[Dict[str, str]]:
     return None
 
 
-@lru_cache(maxsize=5000)
 def is_ship(type_id):
     """Checks if a type_id belongs to a ship."""
     if not type_id:
