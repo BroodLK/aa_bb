@@ -1505,8 +1505,8 @@ class WarmProgress(models.Model):
 
 class EntityInfoCache(models.Model):
     """Cache of resolved entity info (name + corp/alliance pointers) per timestamp."""
-    entity_id  = models.IntegerField()
-    as_of      = models.DateTimeField()
+    entity_id  = models.IntegerField(db_index=True)
+    as_of      = models.DateTimeField(db_index=True)
     data       = JSONField()
     updated    = models.DateTimeField(auto_now=True)
 

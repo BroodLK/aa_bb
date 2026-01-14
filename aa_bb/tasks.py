@@ -96,18 +96,26 @@ def BB_update_single_user(user_id, char_name):
 
 
     # Retry logic previously inside the main loop
+    from .app_settings import get_safe_entities, get_user_characters, get_entity_info
+    safe_entities = get_safe_entities()
+    user_chars = get_user_characters(user_id)
+    entity_info_cache = {}
+    now_ts = timezone.now()
+    for cid in user_chars.keys():
+        entity_info_cache[cid] = get_entity_info(cid, now_ts)
+
     for attempt in range(3):
         try:
             # pingroleID = instance.pingroleID # Unused variable?
 
             logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Fetching Cyno Info...")
-            cyno_result = get_user_cyno_info(user_id)
+            cyno_result = get_user_cyno_info(user_id, cfg=instance)
 
             logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Fetching Skill Info...")
             skills_result = get_multiple_user_skill_info(user_id, skill_ids)
 
             logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Determining Character State...")
-            state_result = determine_character_state(user_id, True)
+            state_result = determine_character_state(user_id, True, cfg=instance)
 
             logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Fetching AWOX Links...")
             awox_data = get_awox_kill_links(user_id)
@@ -115,17 +123,17 @@ def BB_update_single_user(user_id, char_name):
             awox_map = {x["link"]: x for x in awox_data}
 
             logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Fetching Hostile Clones...")
-            hostile_clones_result = get_hostile_clone_locations(user_id)
+            hostile_clones_result = get_hostile_clone_locations(user_id, cfg=instance, safe_entities=safe_entities, entity_info_cache=entity_info_cache)
 
             logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Fetching Hostile Assets...")
 
-            hostile_assets_result = get_hostile_asset_locations(user_id)
+            hostile_assets_result = get_hostile_asset_locations(user_id, cfg=instance, safe_entities=safe_entities, entity_info_cache=entity_info_cache)
 
             logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Fetching Sus Contacts/Contracts/Mails/Trans...")
-            sus_contacts_result = {str(cid): v for cid, v in get_user_hostile_notifications(user_id).items()}
-            sus_contracts_result = {str(issuer_id): v for issuer_id, v in get_user_hostile_contracts(user_id).items()}
-            sus_mails_result = {str(issuer_id): v for issuer_id, v in get_user_hostile_mails(user_id).items()}
-            sus_trans_result = {str(issuer_id): v for issuer_id, v in get_user_hostile_transactions(user_id).items()}
+            sus_contacts_result = {str(cid): v for cid, v in get_user_hostile_notifications(user_id, cfg=instance, safe_entities=safe_entities, entity_info_cache=entity_info_cache).items()}
+            sus_contracts_result = {str(issuer_id): v for issuer_id, v in get_user_hostile_contracts(user_id, cfg=instance, safe_entities=safe_entities, entity_info_cache=entity_info_cache).items()}
+            sus_mails_result = {str(issuer_id): v for issuer_id, v in get_user_hostile_mails(user_id, cfg=instance, safe_entities=safe_entities, entity_info_cache=entity_info_cache).items()}
+            sus_trans_result = {str(issuer_id): v for issuer_id, v in get_user_hostile_transactions(user_id, cfg=instance, safe_entities=safe_entities, entity_info_cache=entity_info_cache).items()}
 
             sp_age_ratio_result: dict[str, dict] = {}
 

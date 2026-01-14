@@ -902,7 +902,7 @@ def BB_daily_DB_cleanup():
         CorporationInfoCache, AllianceHistoryCache, SovereigntyMapCache
     )
 
-    two_months_ago = timezone.now() - timedelta(days=60)
+    prune_threshold = timezone.now() - timedelta(days=30)
     flags = []
     #Delete old model entries
     models_to_cleanup = [
@@ -917,7 +917,7 @@ def BB_daily_DB_cleanup():
     ]
 
     for model, name in models_to_cleanup:
-        old_entries = model.objects.filter(updated__lt=two_months_ago)
+        old_entries = model.objects.filter(updated__lt=prune_threshold)
         count, _ = old_entries.delete()
         if count > 0:
             flags.append(f"- Deleted {count} old {name} records.")
@@ -931,16 +931,16 @@ def BB_daily_DB_cleanup():
     ]
     for model, name in last_access_models:
         try:
-            old_entries = model.objects.filter(last_accessed__lt=two_months_ago)
+            old_entries = model.objects.filter(last_accessed__lt=prune_threshold)
             count, _ = old_entries.delete()
             if count > 0:
                 flags.append(f"- Deleted {count} old {name} records (by last access).")
         except Exception:
             continue
 
-    # id_types: delete if not looked up in last 60 days
+    # id_types: delete if not looked up in last 30 days
     try:
-        stale_ids = id_types.objects.filter(last_accessed__lt=two_months_ago)
+        stale_ids = id_types.objects.filter(last_accessed__lt=prune_threshold)
         count, _ = stale_ids.delete()
         if count > 0:
             flags.append(f"- Deleted {count} old ID type cache records (by last access).")

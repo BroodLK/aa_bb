@@ -149,8 +149,11 @@ def get_user_transactions(qs) -> Dict[int, Dict]:
             lookups.add((entry.context_id, dt_hour))
 
     # Bulk fetch EntityInfoCache entries
+    # To avoid a massive Q-object chain for very large batches, we fetch by entity_id
+    # and filter by hour as well to limit the result set.
     eids = {l[0] for l in lookups}
-    cache_entries = EntityInfoCache.objects.filter(entity_id__in=eids)
+    hours = {l[1] for l in lookups}
+    cache_entries = EntityInfoCache.objects.filter(entity_id__in=eids, as_of__in=hours)
 
     # Map them by (entity_id, as_of)
     info_map = {

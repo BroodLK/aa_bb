@@ -189,28 +189,18 @@ def get_eve_entity_type_int(eve_id: int, datasource: str | None = None) -> str |
         return None
     return results[0].get("category")
 
+@lru_cache(maxsize=5000)
 def get_eve_entity_type(
     eve_id: int,
     datasource: str | None = None
 ) -> Optional[str]:
     """
     Resolve an EVE Online ID to its entity type, caching results in the `id_types` table.
-
-    Workflow:
-      1. Try to get a cached record via id_types.objects.get(pk=eve_id).
-      2. If found, return record.name.
-      3. On DoesNotExist, call get_eve_entity_type() to fetch from ESI.
-      4. If ESI returns a non-null type, save a new id_types record.
-      5. Return the resolved type (or None if unresolved).
     """
     # 1. Cache lookup
     try:
         record = id_types.objects.get(pk=eve_id)
-        try:
-            record.last_accessed = timezone.now()
-            record.save(update_fields=["last_accessed"])
-        except Exception:
-            record.save()
+        # Skip updating last_accessed to save on DB writes in tight loops
         return record.name
     except id_types.DoesNotExist:
         pass
@@ -227,7 +217,7 @@ def get_eve_entity_type(
             obj.save()
     except IntegrityError:
         # another thread/process inserted it first; safe to ignore
-        logger.debug(f"ID {eve_id} was cached by another process.")
+        pass
 
     return entity_type
 
@@ -235,7 +225,7 @@ def is_npc_character(character_id: int) -> bool:
     """Check whether a character id falls inside the NPC character range."""
     return 3_000_000 <= character_id < 4_000_000
 
-@lru_cache(maxsize=1000)
+@lru_cache(maxsize=5000)
 def get_character_id(name: str) -> int | None:
     """
     Resolve a character name to ID using ESI /universe/ids/ endpoint,
@@ -253,8 +243,8 @@ def get_character_id(name: str) -> int | None:
     except Character_names.DoesNotExist:
         record = None
     else:
-        record.updated = timezone.now()
-        record.save()
+        # record.updated = timezone.now()
+        # record.save()
         return record.id
 
     # Step 2: Resolve via ESI and reconcile duplicates
@@ -331,7 +321,7 @@ def get_character_id(name: str) -> int | None:
 
     return char_id
 
-_EXPIRY = timedelta(days=30)
+_EXPIRY = timedelta(days=7)
 
 def get_entity_info(entity_id: int, as_of: timezone.datetime) -> Dict:
     """
@@ -344,12 +334,17 @@ def get_entity_info(entity_id: int, as_of: timezone.datetime) -> Dict:
         'alli_id': Optional[int],
         'alli_name': str,
       }
-    Caches the result in the DB for 2 hours.
+    Caches the result in the DB for 7 days.
     """
     # Normalize timestamp to the hour to maximize cache hits and minimize DB bloat.
     if as_of:
-        as_of = as_of.replace(minute=0, second=0, microsecond=0)
+        if hasattr(as_of, 'replace'):
+            as_of = as_of.replace(minute=0, second=0, microsecond=0)
 
+    return _get_entity_info_cached(entity_id, as_of)
+
+@lru_cache(maxsize=10000)
+def _get_entity_info_cached(entity_id: int, as_of: timezone.datetime) -> Dict:
     if entity_id is None:
         # Default placeholder ID if input is missing.
         entity_id = 342545170
@@ -360,13 +355,13 @@ def get_entity_info(entity_id: int, as_of: timezone.datetime) -> Dict:
 
     # 1) Attempt to fetch fresh-enough cache entry
     try:
-        cache = EntityInfoCache.objects.get(entity_id=entity_id, as_of=as_of)
-        if now - cache.updated < _EXPIRY:  # Serve cached data when still within TTL.
+        cache_entry = EntityInfoCache.objects.get(entity_id=entity_id, as_of=as_of)
+        if now - cache_entry.updated < _EXPIRY:  # Serve cached data when still within TTL.
             #logger.debug(f"cache hit: entity={entity_id} @ {as_of}")
-            return cache.data
+            return cache_entry.data
         else:
             #logger.debug(f"cache stale: entity={entity_id} @ {as_of}, expired {cache.updated}")
-            cache.delete()
+            cache_entry.delete()
     except EntityInfoCache.DoesNotExist:
         pass
     #logger.debug(f"cache empty: entity={entity_id} @ {as_of}")
@@ -794,6 +789,7 @@ def get_alliance_history_for_corp(corp_id):
 
     return history
 
+@lru_cache(maxsize=1)
 def _get_sov_map() -> list:
     """Fetch (and cache) the sovereignty map used by get_system_owner."""
     entry = None
@@ -826,6 +822,14 @@ def _get_sov_map() -> list:
 
     return data
 
+
+@lru_cache(maxsize=1)
+def _get_sov_dict() -> Dict[int, Dict]:
+    """Helper to convert the sov map into a dictionary for O(1) lookups."""
+    data = _get_sov_map()
+    return {s.get("system_id"): s for s in data if s.get("system_id")}
+
+@lru_cache(maxsize=5000)
 def resolve_alliance_name(owner_id: int) -> str:
     """
     Resolve alliance/faction ID to name via ESI, storing permanently in aa_bb_alliances.
@@ -834,8 +838,8 @@ def resolve_alliance_name(owner_id: int) -> str:
     # 1. Try permanent table first
     try:
         record = Alliance_names.objects.get(pk=owner_id)
-        record.updated = timezone.now()
-        record.save()
+        # record.updated = timezone.now()
+        # record.save()
         return record.name
     except Alliance_names.DoesNotExist:
         pass  # need to fetch and store
@@ -867,6 +871,7 @@ def resolve_alliance_name(owner_id: int) -> str:
         e_detail = getattr(e, 'code', None) or getattr(e, 'status', None) or str(e)
         return f"Unresolvable eve map{e_short}{e_detail}"
 
+@lru_cache(maxsize=5000)
 def resolve_corporation_name(corp_id: int) -> str:
     """
     Resolve corporation ID to name via ESI, storing permanently in aa_bb_corporations.
@@ -875,8 +880,8 @@ def resolve_corporation_name(corp_id: int) -> str:
     # 1. Try permanent table first
     try:
         record = Corporation_names.objects.get(pk=corp_id)
-        record.updated = timezone.now()
-        record.save()
+        # record.updated = timezone.now()
+        # record.save()
         return record.name
     except Corporation_names.DoesNotExist:
         pass  # need to fetch and store
@@ -908,6 +913,7 @@ def resolve_corporation_name(corp_id: int) -> str:
         e_detail = getattr(e, 'code', None) or getattr(e, 'status', None) or str(e)
         return f"Unresolvable eve map{e_short}{e_detail}"
 
+@lru_cache(maxsize=5000)
 def resolve_character_name(char_id: int) -> str:
     """
     Resolve character ID to name via ESI, storing permanently in Character_names.
@@ -916,8 +922,8 @@ def resolve_character_name(char_id: int) -> str:
     # 1. Try permanent table first
     try:
         record = Character_names.objects.get(pk=char_id)
-        record.updated = timezone.now()
-        record.save()
+        # record.updated = timezone.now()
+        # record.save()
         return record.name
     except Character_names.DoesNotExist:
         pass  # need to fetch and store
@@ -955,9 +961,12 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
     Get sovereignty owner of an EVE system by name.
     Always returns a dict with keys: owner_id, owner_name, owner_type, region_id, region_name.
     """
-    system_id_raw = system.get("id")
+    return _get_system_owner_cached(system.get("id"), system.get("name"))
+
+@lru_cache(maxsize=2000)
+def _get_system_owner_cached(system_id: int, system_name: str = None) -> Dict[str, str]:
     try:
-        system_id = int(system_id_raw) if system_id_raw is not None else None
+        system_id = int(system_id) if system_id is not None else None
     except (ValueError, TypeError):
         system_id = None
 
@@ -973,10 +982,8 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
     region_id = "0"
     region_name = "Unknown Region"
 
-    system_nam = system.get("name")
-    system_name = str()
-    if system_nam:  # Convert the provided name into a proper string when available.
-        system_name = str(system_nam)
+    if system_name:  # Convert the provided name into a proper string when available.
+        system_name = str(system_name)
 
     try:
         # Resolve parent system if this is a location
@@ -1062,10 +1069,10 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
                 cache.set(f"aa_bb_system_owner_{system_id}", res, 3600)
             return res
 
-        sov_map = _get_sov_map()
+        sov_dict = _get_sov_dict()
         # If it's a structure or station, we want the system it's in for SOV
         target_sov_id = parent_system_id or system_id
-        entry = next((s for s in sov_map if s.get("system_id") == target_sov_id), None)
+        entry = sov_dict.get(target_sov_id)
         if not entry:
             # Fallback for systems not in the sovereignty map (e.g. Highsec/Lowsec)
             # or for NPC stations.
@@ -1338,13 +1345,15 @@ def is_hostile_unified(
     entity_type: str = None,
     when: datetime = None,
     safe_entities: set[int] = None,
-    entity_info_cache: Dict[int, Dict] = None
+    entity_info_cache: Dict[int, Dict] = None,
+    cfg: BigBrotherConfig = None
 ) -> bool:
     """
     Unified hostility processor following the 23-step priority logic.
     Returns True if hostile, False if safe.
     """
-    cfg = BigBrotherConfig.get_solo()
+    if cfg is None:
+        cfg = BigBrotherConfig.get_solo()
     if safe_entities is None:
         safe_entities = get_safe_entities()
 
@@ -1624,7 +1633,7 @@ def get_id_hostile_state(entity_id: int, when: datetime = None, safe_entities: s
     return is_hostile_unified(involved_ids=[entity_id], entity_type=entity_type, when=when, safe_entities=safe_entities, entity_info_cache=entity_info_cache)
 
 
-def get_hostile_state(entity_id: int, entity_type: str = None, system_id: int = None, when: datetime = None, safe_entities: set = None, entity_info_cache: Dict[int, Dict] = None) -> bool:
+def get_hostile_state(entity_id: int, entity_type: str = None, system_id: int = None, when: datetime = None, safe_entities: set = None, entity_info_cache: Dict[int, Dict] = None, cfg: BigBrotherConfig = None) -> bool:
     """
     Determine the hostile state of an entity or location.
     Returns True if hostile, False if safe.
@@ -1642,25 +1651,25 @@ def get_hostile_state(entity_id: int, entity_type: str = None, system_id: int = 
        (30000000 <= entity_id < 40000000) or \
        (60000000 <= entity_id < 64000000) or \
        is_player_structure(entity_id):
-        return is_hostile_unified(location_id=entity_id, system_id=system_id, when=when, safe_entities=safe_entities, entity_info_cache=entity_info_cache)
+        return is_hostile_unified(location_id=entity_id, system_id=system_id, when=when, safe_entities=safe_entities, entity_info_cache=entity_info_cache, cfg=cfg)
 
     # Entity Hostility (Character, Corporation, Alliance, Faction)
-    return is_hostile_unified(involved_ids=[entity_id], entity_type=entity_type, when=when, safe_entities=safe_entities, entity_info_cache=entity_info_cache)
+    return is_hostile_unified(involved_ids=[entity_id], entity_type=entity_type, when=when, safe_entities=safe_entities, entity_info_cache=entity_info_cache, cfg=cfg)
 
 
-def is_entity_hostile(entity_id: int, entity_type: str = None, when: datetime = None, safe_entities: set = None) -> bool:
+def is_entity_hostile(entity_id: int, entity_type: str = None, when: datetime = None, safe_entities: set = None, entity_info_cache: Dict[int, Dict] = None, cfg: BigBrotherConfig = None) -> bool:
     """
     Logic for entity (char, corp, alliance, faction) hostility.
     """
-    return is_hostile_unified(involved_ids=[entity_id], entity_type=entity_type, when=when, safe_entities=safe_entities)
+    return is_hostile_unified(involved_ids=[entity_id], entity_type=entity_type, when=when, safe_entities=safe_entities, entity_info_cache=entity_info_cache, cfg=cfg)
 
 
-def is_location_hostile(location_id: int, system_id: int = None, safe_entities: set = None) -> bool:
+def is_location_hostile(location_id: int, system_id: int = None, safe_entities: set = None, entity_info_cache: Dict[int, Dict] = None, cfg: BigBrotherConfig = None) -> bool:
     """
     Determines if a given location (structure, station, or system) is considered hostile.
     Returns True if hostile, False if safe.
     """
-    return is_hostile_unified(location_id=location_id, system_id=system_id, safe_entities=safe_entities)
+    return is_hostile_unified(location_id=location_id, system_id=system_id, safe_entities=safe_entities, entity_info_cache=entity_info_cache, cfg=cfg)
 
 
 
@@ -1738,6 +1747,7 @@ def is_lowsec(system_id):
     except (EveSolarSystem.DoesNotExist, ValueError, TypeError):
         return False
 
+@lru_cache(maxsize=2000)
 def is_player_structure(location_id):
     """
     Returns True if location_id likely corresponds to a player-owned structure
@@ -1749,6 +1759,7 @@ def is_player_structure(location_id):
     except (ValueError, TypeError):
         return False
 
+@lru_cache(maxsize=2000)
 def resolve_location_name(location_id: int) -> Optional[str]:
     """
     Attempts to resolve a location_id to a human-readable name.
@@ -1841,6 +1852,7 @@ def resolve_location_name(location_id: int) -> Optional[str]:
         cache.set(cache_key, name, 86400)
     return name
 
+@lru_cache(maxsize=2000)
 def resolve_location_system_id(location_id: int) -> Optional[int]:
     """
     Attempts to resolve a location_id to its parent solar system ID.
@@ -1946,6 +1958,7 @@ def get_location_owner(location_id: int) -> Optional[Dict[str, str]]:
     return None
 
 
+@lru_cache(maxsize=5000)
 def is_ship(type_id):
     """Checks if a type_id belongs to a ship."""
     if not type_id:
@@ -1994,19 +2007,19 @@ def get_safe_entities():
 
     # Whitelists
     if cfg.whitelist_alliances:
-        ids.update(int(x) for x in cfg.whitelist_alliances.split(',') if x.strip().isdigit())
+        ids.update(_parse_config_ids(cfg.whitelist_alliances))
     if cfg.whitelist_corporations:
-        ids.update(int(x) for x in cfg.whitelist_corporations.split(',') if x.strip().isdigit())
+        ids.update(_parse_config_ids(cfg.whitelist_corporations))
 
     # Ignored
     if cfg.ignored_corporations:
-        ids.update(int(x) for x in cfg.ignored_corporations.split(',') if x.strip().isdigit())
+        ids.update(_parse_config_ids(cfg.ignored_corporations))
 
     # Members
     if cfg.member_corporations:
-        ids.update(int(x) for x in cfg.member_corporations.split(',') if x.strip().isdigit())
+        ids.update(_parse_config_ids(cfg.member_corporations))
     if cfg.member_alliances:
-        ids.update(int(x) for x in cfg.member_alliances.split(',') if x.strip().isdigit())
+        ids.update(_parse_config_ids(cfg.member_alliances))
 
     # Main corp/alliance
     if cfg.main_corporation_id:

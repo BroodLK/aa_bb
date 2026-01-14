@@ -281,22 +281,41 @@ def warm_entity_cache_task(self, user_id):
     candidates = []
     for c in contracts:
         issuer_id = get_character_id(c.issuer_name)
-        candidates.append((issuer_id, getattr(c, "date_issued")))
+        if issuer_id:
+            candidates.append((issuer_id, getattr(c, "date_issued")))
         assignee = c.assignee_id or c.acceptor_id
-        candidates.append((assignee, getattr(c, "date_issued")))
+        if assignee:
+            candidates.append((assignee, getattr(c, "date_issued")))
     for t in trans:
-        candidates.append((t.first_party_id, getattr(t, "date")))
-        candidates.append((t.second_party_id, getattr(t, "date")))
+        if t.first_party_id:
+            candidates.append((t.first_party_id, getattr(t, "date")))
+        if t.second_party_id:
+            candidates.append((t.second_party_id, getattr(t, "date")))
+
+    # Normalize candidate timestamps to the hour for cache matching
+    candidates = [
+        (eid, ts.replace(minute=0, second=0, microsecond=0) if hasattr(ts, 'replace') else ts)
+        for eid, ts in candidates
+    ]
+    # Deduplicate candidates
+    candidates = sorted(list(set(candidates)))
+
     from django.db.models import Q
     from .models import EntityInfoCache
-    query_filter = Q()
-    for entity_id, as_of in candidates:
-        query_filter |= Q(entity_id=entity_id, as_of=as_of)
 
-    existing = set(
-        EntityInfoCache.objects.filter(query_filter)
-        .values_list('entity_id', 'as_of')
-    )
+    existing = set()
+    # Process in chunks to avoid hitting database query complexity limits
+    CHUNK_SIZE = 500
+    for i in range(0, len(candidates), CHUNK_SIZE):
+        chunk = candidates[i:i + CHUNK_SIZE]
+        query_filter = Q()
+        for entity_id, as_of in chunk:
+            query_filter |= Q(entity_id=entity_id, as_of=as_of)
+
+        existing.update(
+            EntityInfoCache.objects.filter(query_filter)
+            .values_list('entity_id', 'as_of')
+        )
 
     for candidate in candidates:
         if candidate not in existing:  # Only fetch entity info when cache lacks the tuple.

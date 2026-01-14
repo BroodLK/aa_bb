@@ -93,8 +93,11 @@ def get_user_mails(qs) -> Dict[int, Dict]:
                 lookups.add((mr.recipient_id, dt_hour))
 
     # Bulk fetch EntityInfoCache entries
+    # To avoid a massive Q-object chain for very large batches, we fetch by entity_id
+    # and filter by hour as well to limit the result set.
     eids = {l[0] for l in lookups}
-    cache_entries = EntityInfoCache.objects.filter(entity_id__in=eids)
+    hours = {l[1] for l in lookups}
+    cache_entries = EntityInfoCache.objects.filter(entity_id__in=eids, as_of__in=hours)
 
     # Map them by (entity_id, as_of)
     info_map = {
@@ -187,7 +190,7 @@ def get_cell_style_for_mail_cell(column: str, row: dict, index: Optional[int] = 
     return ''
 
 
-def is_mail_row_hostile(row: dict, safe_entities: set = None) -> bool:
+def is_mail_row_hostile(row: dict, safe_entities: set = None, cfg: BigBrotherConfig = None) -> bool:
     """
     Checks if a mail is considered hostile using the unified processor.
     """
@@ -205,7 +208,8 @@ def is_mail_row_hostile(row: dict, safe_entities: set = None) -> bool:
         involved_ids=involved,
         when=row.get("sent_date"),
         safe_entities=safe_entities,
-        entity_info_cache=row.get("info_cache")
+        entity_info_cache=row.get("info_cache"),
+        cfg=cfg
     )
 
 
@@ -272,8 +276,9 @@ def render_mails(user_id: int) -> str:
 
 
 
-def get_user_hostile_mails(user_id: int) -> Dict[int, str]:
-    cfg = BigBrotherConfig.get_solo()
+def get_user_hostile_mails(user_id: int, cfg: BigBrotherConfig = None, safe_entities: set = None, entity_info_cache: dict = None) -> Dict[int, str]:
+    if cfg is None:
+        cfg = BigBrotherConfig.get_solo()
 
     all_qs = gather_user_mails(user_id)
     all_ids = list(all_qs.values_list("id_key", flat=True))
@@ -295,10 +300,11 @@ def get_user_hostile_mails(user_id: int) -> Dict[int, str]:
             ignore_conflicts=True,
         )
 
-        from ..app_settings import get_safe_entities
-        safe_entities = get_safe_entities()
+        if safe_entities is None:
+            from ..app_settings import get_safe_entities
+            safe_entities = get_safe_entities()
 
-        hostile_rows: dict[int, dict] = {mid: m for mid, m in new_rows.items() if is_mail_row_hostile(m, safe_entities=safe_entities)}
+        hostile_rows: dict[int, dict] = {mid: m for mid, m in new_rows.items() if is_mail_row_hostile(m, safe_entities=safe_entities, cfg=cfg)}
 
         pms: dict[int, ProcessedMail] = {}
         if hostile_rows:
@@ -314,12 +320,12 @@ def get_user_hostile_mails(user_id: int) -> Dict[int, str]:
 
             flags: List[str] = []
             # Check sender
-            if get_hostile_state(m.get("sender_id"), 'character'):
+            if get_hostile_state(m.get("sender_id"), 'character', safe_entities=safe_entities, entity_info_cache=entity_info_cache, cfg=cfg):
                 flags.append(f"Sender **{m['sender_name']}** is hostile/blacklisted")
 
             # Check recipients
             for idx, rid in enumerate(m.get("recipient_ids", [])):
-                if get_hostile_state(rid, 'character'):
+                if get_hostile_state(rid, 'character', safe_entities=safe_entities, entity_info_cache=entity_info_cache, cfg=cfg):
                     name = m["recipient_names"][idx]
                     flags.append(f"Recipient **{name}** is hostile/blacklisted")
 

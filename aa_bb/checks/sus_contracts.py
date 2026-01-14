@@ -101,8 +101,11 @@ def get_user_contracts(qs) -> Dict[int, Dict]:
             lookups.add((assignee_id, dt_hour))
 
     # Bulk fetch EntityInfoCache entries
+    # To avoid a massive Q-object chain for very large batches, we fetch by entity_id
+    # and filter by hour as well to limit the result set.
     eids = {l[0] for l in lookups}
-    cache_entries = EntityInfoCache.objects.filter(entity_id__in=eids)
+    hours = {l[1] for l in lookups}
+    cache_entries = EntityInfoCache.objects.filter(entity_id__in=eids, as_of__in=hours)
 
     # Map them by (entity_id, as_of)
     info_map = {
@@ -206,7 +209,7 @@ def get_cell_style_for_contract_row(column: str, row: dict) -> str:
     return ""
 
 
-def is_contract_row_hostile(row: dict, safe_entities: set = None) -> bool:
+def is_contract_row_hostile(row: dict, safe_entities: set = None, cfg: BigBrotherConfig = None) -> bool:
     """
     Checks if a contract is considered hostile using the unified processor.
     Checks both start and end locations.
@@ -220,20 +223,22 @@ def is_contract_row_hostile(row: dict, safe_entities: set = None) -> bool:
 
     # Unified check handles Rule 1 (Safe entities), location rules, and entity rules.
     # Check start location
-    if is_hostile_unified(involved_ids=[issuer_id, assignee_id], location_id=start_loc, when=when, safe_entities=safe_entities, entity_info_cache=info_cache):
+    if is_hostile_unified(involved_ids=[issuer_id, assignee_id], location_id=start_loc, when=when, safe_entities=safe_entities, entity_info_cache=info_cache, cfg=cfg):
         return True
 
     # Check end location
-    if is_hostile_unified(involved_ids=[issuer_id, assignee_id], location_id=end_loc, when=when, safe_entities=safe_entities, entity_info_cache=info_cache):
+    if is_hostile_unified(involved_ids=[issuer_id, assignee_id], location_id=end_loc, when=when, safe_entities=safe_entities, entity_info_cache=info_cache, cfg=cfg):
         return True
 
     return False
 
 
-def get_user_hostile_contracts(user_id: int) -> Dict[int, str]:
-    cfg = BigBrotherConfig.get_solo()
-    from ..app_settings import get_safe_entities
-    safe_entities = get_safe_entities()
+def get_user_hostile_contracts(user_id: int, cfg: BigBrotherConfig = None, safe_entities: set = None, entity_info_cache: dict = None) -> Dict[int, str]:
+    if cfg is None:
+        cfg = BigBrotherConfig.get_solo()
+    if safe_entities is None:
+        from ..app_settings import get_safe_entities
+        safe_entities = get_safe_entities()
 
     all_qs = gather_user_contracts(user_id)
     all_ids = list(all_qs.values_list("contract_id", flat=True))
@@ -277,7 +282,7 @@ def get_user_hostile_contracts(user_id: int) -> Dict[int, str]:
                 continue
 
             # Check if contract is hostile
-            if is_contract_row_hostile(c, safe_entities=safe_entities):
+            if is_contract_row_hostile(c, safe_entities=safe_entities, cfg=cfg):
                 hostile_rows[cid] = c
         if hostile_rows:
             pcs = {
@@ -292,14 +297,14 @@ def get_user_hostile_contracts(user_id: int) -> Dict[int, str]:
 
                 flags: List[str] = []
                 # issuer
-                if get_hostile_state(c["issuer_id"], "character"):
+                if get_hostile_state(c["issuer_id"], "character", safe_entities=safe_entities, entity_info_cache=entity_info_cache, cfg=cfg):
                     flags.append(f"Issuer **{c['issuer_name']}** is hostile/blacklisted")
 
                 # assignee
-                if get_hostile_state(c["assignee_id"], "character"):
+                if get_hostile_state(c["assignee_id"], "character", safe_entities=safe_entities, entity_info_cache=entity_info_cache, cfg=cfg):
                     flags.append(f"Assignee **{c['assignee_name']}** is hostile/blacklisted")
 
-                if is_location_hostile(c.get("start_location_id")):
+                if is_location_hostile(c.get("start_location_id"), safe_entities=safe_entities, cfg=cfg):
                     loc_id = c.get("start_location_id")
                     owner_info = get_system_owner({"id": loc_id})
                     oname = owner_info.get("owner_name")
@@ -314,7 +319,7 @@ def get_user_hostile_contracts(user_id: int) -> Dict[int, str]:
                         flag += f" ({' | '.join(info_parts)})"
                     flags.append(flag)
 
-                if is_location_hostile(c.get("end_location_id")):
+                if is_location_hostile(c.get("end_location_id"), safe_entities=safe_entities, cfg=cfg):
                     loc_id = c.get("end_location_id")
                     owner_info = get_system_owner({"id": loc_id})
                     oname = owner_info.get("owner_name")

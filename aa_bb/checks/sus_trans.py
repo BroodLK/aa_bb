@@ -150,9 +150,10 @@ def get_user_transactions(qs) -> Dict[int, Dict]:
 
     # Bulk fetch EntityInfoCache entries
     # To avoid a massive Q-object chain for very large batches, we fetch by entity_id
-    # and then filter in memory.
+    # and filter by hour as well to limit the result set.
     eids = {l[0] for l in lookups}
-    cache_entries = EntityInfoCache.objects.filter(entity_id__in=eids)
+    hours = {l[1] for l in lookups}
+    cache_entries = EntityInfoCache.objects.filter(entity_id__in=eids, as_of__in=hours)
 
     # Map them by (entity_id, as_of)
     info_map = {
@@ -253,7 +254,7 @@ def get_user_transactions(qs) -> Dict[int, Dict]:
     return result
 
 
-def is_transaction_hostile(tx: dict, user_ids: set = None, safe_entities: set = None) -> bool:
+def is_transaction_hostile(tx: dict, user_ids: set = None, safe_entities: set = None, entity_info_cache: dict = None, cfg: BigBrotherConfig = None) -> bool:
     """
     Checks if a wallet transaction is considered hostile using the unified processor.
     """
@@ -278,7 +279,8 @@ def is_transaction_hostile(tx: dict, user_ids: set = None, safe_entities: set = 
         market_unit_price=abs(tx.get("raw_amount")) / (tx.get("quantity") or 1) if tx.get("raw_amount") is not None else None,
         when=tx.get("date"),
         safe_entities=safe_entities,
-        entity_info_cache=tx.get("info_cache")
+        entity_info_cache=entity_info_cache or tx.get("info_cache"),
+        cfg=cfg
     )
 
 
@@ -359,7 +361,7 @@ def render_transactions(user_id: int) -> str:
     return '\n'.join(parts)
 
 
-def get_user_hostile_transactions(user_id: int) -> Dict[int, str]:
+def get_user_hostile_transactions(user_id: int, cfg: BigBrotherConfig = None, safe_entities: set = None, entity_info_cache: dict = None) -> Dict[int, str]:
     qs_all = gather_user_transactions(user_id)
     all_ids = list(qs_all.values_list("entry_id", flat=True))
 
@@ -383,10 +385,11 @@ def get_user_hostile_transactions(user_id: int) -> Dict[int, str]:
         user_chars = get_user_characters(user_id)
         user_ids = set(user_chars.keys())
 
-        from ..app_settings import get_safe_entities
-        safe_entities = get_safe_entities()
+        if safe_entities is None:
+            from ..app_settings import get_safe_entities
+            safe_entities = get_safe_entities()
 
-        hostile_rows: dict[int, dict] = {eid: tx for eid, tx in rows.items() if is_transaction_hostile(tx, user_ids, safe_entities=safe_entities)}
+        hostile_rows: dict[int, dict] = {eid: tx for eid, tx in rows.items() if is_transaction_hostile(tx, user_ids, safe_entities=safe_entities, entity_info_cache=entity_info_cache, cfg=cfg)}
         pts: dict[int, ProcessedTransaction] = {}
         if hostile_rows:
             pts = {
@@ -394,7 +397,8 @@ def get_user_hostile_transactions(user_id: int) -> Dict[int, str]:
                 for pt in ProcessedTransaction.objects.filter(entry_id__in=hostile_rows.keys())
             }
 
-            cfg = BigBrotherConfig.get_solo()
+            if cfg is None:
+                cfg = BigBrotherConfig.get_solo()
             show_market = cfg.show_market_transactions
 
             for eid, tx in hostile_rows.items():
@@ -413,15 +417,15 @@ def get_user_hostile_transactions(user_id: int) -> Dict[int, str]:
                         flags.append(f"Transaction type is **{ttype}**")
 
                 fpid = tx.get("first_party_id")
-                if get_hostile_state(fpid, 'character'):
+                if get_hostile_state(fpid, 'character', safe_entities=safe_entities, entity_info_cache=entity_info_cache, cfg=cfg):
                     flags.append(f"first_party **{tx['first_party_name']}** is hostile/blacklisted")
 
                 spid = tx.get("second_party_id")
-                if get_hostile_state(spid, 'character'):
+                if get_hostile_state(spid, 'character', safe_entities=safe_entities, entity_info_cache=entity_info_cache, cfg=cfg):
                     flags.append(f"second_party **{tx['second_party_name']}** is hostile/blacklisted")
 
                 loc_id = tx.get("location_id") or tx.get("system_id")
-                if loc_id and is_location_hostile(tx.get("location_id"), tx.get("system_id")):
+                if loc_id and is_location_hostile(tx.get("location_id"), tx.get("system_id"), safe_entities=safe_entities, entity_info_cache=entity_info_cache, cfg=cfg):
                     loc_name = resolve_location_name(loc_id) or f"ID {loc_id}"
                     owner_info = get_system_owner({"id": loc_id})
                     oname = owner_info.get("owner_name")

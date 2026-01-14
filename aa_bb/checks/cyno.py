@@ -9,7 +9,7 @@ heavy lifting happens here so templates only need to call render helpers.
 from allianceauth.services.hooks import get_extension_logger
 
 
-from .skills import get_user_skill_info, get_char_age
+from .skills import get_user_skill_info, get_char_age, get_multiple_user_skill_info
 from ..app_settings import get_user_characters, get_character_id, corptools_active
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
@@ -62,7 +62,7 @@ skill_ids = {
     "rorq":     28374,
 }
 
-def get_user_cyno_info(user_id: int) -> dict:
+def get_user_cyno_info(user_id: int, cfg: bbc = None) -> dict:
     """
     Given an AllianceAuth user ID, returns for each of that user's characters:
       - s_<skill>: 1 if trained_skill_level >= required_levels[skill] else 0
@@ -110,39 +110,69 @@ def get_user_cyno_info(user_id: int) -> dict:
 
     # 1) grab all of this user's owned characters
     ownership_map = get_user_characters(user_id)
+    if not ownership_map:
+        return {}
+
     # 2) pre-fetch audits for only those characters
     audits = (
         CharacterAudit.objects
         .filter(character__character_id__in=ownership_map.keys())
     )
 
-    # 3) fetch each skill once
-    skill_data = {
-        key: get_user_skill_info(user_id, skill_id)
-        for key, skill_id in skill_ids.items()
-    }
+    # 3) fetch all skills once
+    all_skill_ids = list(skill_ids.values())
+    raw_skills = get_multiple_user_skill_info(user_id, all_skill_ids)
+    # Re-map raw_skills into the key-based structure the rest of the function expects
+    skill_data = {}
+    for key, sid in skill_ids.items():
+        skill_data[key] = {}
+        for name, char_data in raw_skills.items():
+            s_info = char_data.get(sid, {"trained": 0, "active": 0})
+            skill_data[key][name] = {
+                "trained_skill_level": s_info["trained"],
+                "active_skill_level": s_info["active"]
+            }
+
+    # 4) pre-fetch owned asset groups for all characters
+    asset_groups = {}
+    if corptools_active() and CharacterAsset is not None:
+        qs = (
+            CharacterAsset.objects
+            .filter(character__character__character_id__in=ownership_map.keys())
+            .values('character__character__character_id', 'type_name__group_id')
+            .distinct()
+        )
+        for row in qs:
+            cid_val = row['character__character__character_id']
+            gid_val = row['type_name__group_id']
+            if cid_val not in asset_groups:
+                asset_groups[cid_val] = set()
+            asset_groups[cid_val].add(gid_val)
 
     result = {}
 
     for audit in audits:
         name = ownership_map[audit.character.character_id]
-        cid = get_character_id(name)
+        cid = audit.character.character_id
         age = get_char_age(cid)
-        i_recon = owns_items_in_group(cid, 833)
-        i_hic = owns_items_in_group(cid, 894)
-        i_blops = owns_items_in_group(cid, 898)
-        i_covops = owns_items_in_group(cid, 830)
-        i_brun = owns_items_in_group(cid, 1202)
-        i_sbomb = owns_items_in_group(cid, 834)
-        i_scru = owns_items_in_group(cid, 963)
-        i_expfrig = owns_items_in_group(cid, 1283)
-        i_carrier = owns_items_in_group(cid, 547)
-        i_dread = owns_items_in_group(cid, 485)
-        i_fax = owns_items_in_group(cid, 1538)
-        i_super = owns_items_in_group(cid, 659)
-        i_titan = owns_items_in_group(cid, 30)
-        i_jf = owns_items_in_group(cid, 902)
-        i_rorq = owns_items_in_group(cid, 883)
+
+        char_asset_groups = asset_groups.get(cid, set())
+
+        i_recon = 833 in char_asset_groups
+        i_hic = 894 in char_asset_groups
+        i_blops = 898 in char_asset_groups
+        i_covops = 830 in char_asset_groups
+        i_brun = 1202 in char_asset_groups
+        i_sbomb = 834 in char_asset_groups
+        i_scru = 963 in char_asset_groups
+        i_expfrig = 1283 in char_asset_groups
+        i_carrier = 547 in char_asset_groups
+        i_dread = 485 in char_asset_groups
+        i_fax = 1538 in char_asset_groups
+        i_super = 659 in char_asset_groups
+        i_titan = 30 in char_asset_groups
+        i_jf = 902 in char_asset_groups
+        i_rorq = 883 in char_asset_groups
 
         # initialize all flags to 0
         char_dic = {

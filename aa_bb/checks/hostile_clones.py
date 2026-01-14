@@ -157,7 +157,7 @@ def get_clones(user_id: int) -> Dict[int, dict]:
     return system_map
 
 
-def get_hostile_clone_locations(user_id: int) -> Dict[str, dict]:
+def get_hostile_clone_locations(user_id: int, cfg: BigBrotherConfig = None, safe_entities: set = None, entity_info_cache: dict = None) -> Dict[str, dict]:
     """
     Returns a dict of system display name -> structured hostile data
     for systems where this user has home or jump clones in space and the
@@ -168,8 +168,11 @@ def get_hostile_clone_locations(user_id: int) -> Dict[str, dict]:
         return {}
 
     hostile_map: Dict[str, dict] = {}
-    from ..app_settings import get_safe_entities
-    safe_entities = get_safe_entities()
+    if safe_entities is None:
+        from ..app_settings import get_safe_entities
+        safe_entities = get_safe_entities()
+    if cfg is None:
+        cfg = BigBrotherConfig.get_solo()
     _hostile_memo = {}
 
     for system_id, data in systems.items():
@@ -202,7 +205,9 @@ def get_hostile_clone_locations(user_id: int) -> Dict[str, dict]:
                         system_id=system_id,
                         is_asset=True,
                         when=timezone.now(),
-                        safe_entities=safe_entities
+                        safe_entities=safe_entities,
+                        entity_info_cache=entity_info_cache,
+                        cfg=cfg
                     )
                     _hostile_memo[memo_key] = is_hostile
 
