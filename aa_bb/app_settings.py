@@ -1698,7 +1698,7 @@ def get_users():
     if member_corps or member_allis:
         qs = qs.filter(Q(main_character__corporation_id__in=member_corps) | Q(main_character__alliance_id__in=member_allis))
 
-    users = list(
+    users = (
         qs.values_list("user_id", "main_character__character_name")
         .order_by("main_character__character_name")
     )

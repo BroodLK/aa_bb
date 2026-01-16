@@ -1,7 +1,7 @@
 """Initialize the app"""
 from django.utils.translation import gettext_lazy as _
 
-__version__ = "3.2.8"
+__version__ = "3.2.9b2"
 __title__ = "BigBrother"
 __title_translated__ = _("BigBrother")
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import gc
+from functools import wraps
 
 from allianceauth.authentication.models import UserProfile
 from allianceauth.services.hooks import get_extension_logger
@@ -16,7 +17,17 @@ from allianceauth.services.hooks import get_extension_logger
 from django.db import transaction, close_old_connections
 from django.core.cache import cache
 from django.utils import timezone
-from asgiref.sync import sync_to_async
+from asgiref.sync import sync_to_async as asgi_sync_to_async
+
+def sync_to_async(func, thread_sensitive=True):
+    """
+    Wrapper for sync_to_async that ensures a fresh database connection.
+    """
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        close_old_connections()
+        return func(*args, **kwargs)
+    return asgi_sync_to_async(wrapper, thread_sensitive=thread_sensitive)
 
 logger = get_extension_logger(__name__)
 logger.info("✅ [AA-BB] - [Tasks Bot] - Module loading from %s", __file__)
@@ -113,6 +124,7 @@ except ImportError:
 
 def get_ticket_roles():
     """Parse the comma-separated list of Discord role IDs from TicketToolConfig."""
+    close_old_connections()
     cfg = TicketToolConfig.get_solo()
     roles = []
     if cfg.role_id:
@@ -126,7 +138,7 @@ def get_ticket_roles():
                 roles.append(r)
     return roles
 
-async def create_compliance_ticket(bot, user_id, discord_user_id: int, reason: str, message: str, include_user: bool = True, **kwargs):
+async def create_compliance_ticket(bot, user_id, discord_user_id: int, reason: str, message: str, include_user: bool = True, details: str = None, **kwargs):
     # Close old connections and clean up
     close_old_connections()
 
@@ -226,13 +238,14 @@ async def create_compliance_ticket(bot, user_id, discord_user_id: int, reason: s
         discord_channel_id=channel.id,
         reason=reason,
         ticket_id=ticket_number,
+        details=details,
     )
 
     # Clean up
     close_old_connections()
 
 
-async def create_compliance_thread(bot, user_id, discord_user_id: int, reason: str, message: str, thread_name: str, thread_id: int = None, include_user: bool = True, **kwargs):
+async def create_compliance_thread(bot, user_id, discord_user_id: int, reason: str, message: str, thread_name: str, thread_id: int = None, include_user: bool = True, details: str = None, **kwargs):
     close_old_connections()
     tcfg = await sync_to_async(TicketToolConfig.get_solo)()
     parent_channel_id = tcfg.Forum_Channel_ID
@@ -404,6 +417,7 @@ async def create_compliance_thread(bot, user_id, discord_user_id: int, reason: s
         discord_channel_id=thread.id,
         reason=reason,
         ticket_id=await sync_to_async(get_next_ticket_number)(),
+        details=details,
     )
 
     # Clean up
@@ -411,6 +425,7 @@ async def create_compliance_thread(bot, user_id, discord_user_id: int, reason: s
 
 
 async def send_ticket_reminder(bot, channel_id: int, user_id: int, message: str, **kwargs):
+    close_old_connections()
     channel = bot.get_channel(channel_id)
     if not channel and hasattr(bot, 'fetch_channel'):
         try:
@@ -469,6 +484,7 @@ async def close_ticket_channel(bot, channel_id: int, message: str = None, **kwar
             logger.exception("Failed to close/delete channel %s", channel_id)
 
 async def join_thread(bot, thread_id: int, **kwargs):
+    close_old_connections()
     channel = bot.get_channel(thread_id)
     if not channel and hasattr(bot, 'fetch_channel'):
         try:
@@ -480,6 +496,7 @@ async def join_thread(bot, thread_id: int, **kwargs):
         await channel.join()
 
 async def unarchive_thread(bot, thread_id: int, **kwargs):
+    close_old_connections()
     channel = bot.get_channel(thread_id)
     if not channel and hasattr(bot, 'fetch_channel'):
         try:
@@ -497,6 +514,7 @@ def get_next_ticket_number():
     Returns the next ticket number as a zero-padded string (0000–9999),
     increments and wraps the counter in TicketToolConfig.
     """
+    close_old_connections()
     with transaction.atomic():
         cfg = TicketToolConfig.get_solo()
         num = cfg.ticket_counter or 0

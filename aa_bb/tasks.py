@@ -979,7 +979,7 @@ def BB_update_single_user(user_id, char_name):
             del cyno_result, skills_result, state_result, awox_data, awox_links, awox_map
             del hostile_clones_result, hostile_assets_result
             del sus_contacts_result, sus_contracts_result, sus_mails_result, sus_trans_result
-            del sp_age_ratio_result, changes
+            del sp_age_ratio_result, changes, entity_info_cache, user_chars
             if 'all_chunks' in locals():
                 del all_chunks
 
@@ -1075,7 +1075,7 @@ def BB_run_regular_updates():
         if instance.is_active:  # skip user iteration entirely when plugin disabled/unlicensed
             # Use iterator to prevent loading all users into memory at once
             users = get_users()
-            total_users = len(users)
+            total_users = users.count()
             logger.info(
                 f"✅  [AA-BB] - [BB_run_regular_updates] - Dispatching updates for {total_users} users (staggered)."
             )
@@ -1150,7 +1150,8 @@ def BB_run_regular_updates():
 
             now = timezone.now()
 
-            for index, (user_id, char_name) in enumerate(users):
+            # Use .iterator() to avoid loading all users into the queryset cache
+            for index, (user_id, char_name) in enumerate(users.iterator()):
                 if not user_id:  # defensive: skip orphaned mains lacking a user id
                     continue
 

@@ -1,3 +1,17 @@
+## [3.2.9] - 2026-01-16
+
+### Added
+- **Compliance Ticket System**:
+    - Automatic resolution for "Character Removed" tickets when characters are re-added to the user's account.
+
+### Changed
+- **Performance Improvements**:
+    - Changed bulk loading of characters to 1x1 loading of characters in tasks to prevent users with large numbers of characters from causing performance issues..
+- **Bot Connectivity**:
+    - Improved database connection stability for the Discord bot to prevent "2006, server has gone away" errors.
+- **Tasks**:
+    - The "BB kickstart stale CT modules" task (CT Kicker) no longer automatically enables itself when Big Brother is active. It will still automatically disable if Big Brother is deactivated.
+
 ## [3.2.8] - 2026-01-12
 
 ### Added

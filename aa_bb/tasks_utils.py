@@ -206,6 +206,7 @@ def sync_periodic_tasks():
             "schedule": hourly_25_schedule,
             "active_attr": "is_active",
             "update_schedule": True,
+            "no_auto_enable": True,
         },
         {
             "name": "BB run regular DB cleanup",
@@ -322,11 +323,16 @@ def sync_periodic_tasks():
         if task_info["active_attr"] == "is_active":
             enabled = master_active
 
+        # Log deactivation reason if it's currently enabled but about to be disabled
+        existing_task = PeriodicTask.objects.filter(name=format_task_name(name)).first()
+
+        # Handle 'no_auto_enable' flag: Disable if config says so, but don't auto-enable if it's currently off.
+        if task_info.get("no_auto_enable") and enabled:
+            if not existing_task or not existing_task.enabled:
+                enabled = False
+
         logger.debug(f"ℹ️  [AA-BB] - [Tasks] - Task '{name}': feature_enabled={feature_enabled}, master_active={master_active} -> enabled={enabled}")
 
-        # Log deactivation reason if it's currently enabled but about to be disabled
-        from django_celery_beat.models import PeriodicTask
-        existing_task = PeriodicTask.objects.filter(name=format_task_name(name)).first()
         if existing_task and existing_task.enabled and not enabled:
             if not master_active:
                 logger.warning(f"ℹ️  [AA-BB] - [Tasks] - '{name}' will be DISABLED because Big Brother is globally inactive.")

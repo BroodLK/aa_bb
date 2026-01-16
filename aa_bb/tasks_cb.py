@@ -917,7 +917,11 @@ def BB_daily_DB_cleanup():
     ]
 
     for model, name in models_to_cleanup:
-        old_entries = model.objects.filter(updated__lt=prune_threshold)
+        threshold = prune_threshold
+        if name == "Entity Info Cache":
+            threshold = timezone.now() - timedelta(days=2)  # Much shorter retention for entity cache
+
+        old_entries = model.objects.filter(updated__lt=threshold)
         count, _ = old_entries.delete()
         if count > 0:
             flags.append(f"- Deleted {count} old {name} records.")
