@@ -117,6 +117,7 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
     via ESI, and the resulting summary is cached for future calls.
     """
     now = timezone.now()
+    logger.info(f"[AWOX] Fetching kills for user_id={user_id} (force_refresh={force_refresh})")
 
     # DB cache with TTL: return cached kills if present & fresh
     cache_obj = None
@@ -125,16 +126,17 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
         cache_obj = AwoxKillsCache.objects.get(pk=user_id)
         existing_data = cache_obj.data or []
         if not force_refresh and cache_obj.updated and (now - cache_obj.updated).total_seconds() < AWOX_CACHE_TTL_SECONDS:
+            logger.info(f"[AWOX] Cache HIT for user_id={user_id} ({len(existing_data)} kills)")
             try:
                 cache_obj.last_accessed = now
                 cache_obj.save(update_fields=["last_accessed"])
             except Exception:
                 pass
-            return existing_data or None
+            return existing_data
     except AwoxKillsCache.DoesNotExist:
-        pass
+        logger.info(f"[AWOX] Cache MISS for user_id={user_id}")
     except Exception as e:
-        logger.warning(f"Error accessing AwoxKillsCache for user {user_id}: {e}")
+        logger.warning(f"[AWOX] Error accessing AwoxKillsCache for user {user_id}: {e}")
 
     characters = CharacterOwnership.objects.filter(user__id=user_id).select_related("character")
     char_id_to_name = {
@@ -143,7 +145,8 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
     }
     char_ids = set(char_id_to_name.keys())
     if not char_ids:
-        return existing_data or None
+        logger.warning(f"[AWOX] No characters found for user_id={user_id}")
+        return existing_data
 
     # Use a dict keyed by killmail_id to deduplicate across characters and merge with existing
     kills_by_id = {}
@@ -159,6 +162,7 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
 
     session = _get_requests_session()
     new_kills_found = 0
+    fetch_error_occurred = False
 
     try:
         for char_id in char_id_to_name.keys():
@@ -194,6 +198,7 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
                         text_preview,
                     )
                     _notify_zkill_down_once(text_preview, response.status_code, content_type)
+                    fetch_error_occurred = True
                     continue
 
                 try:
@@ -206,6 +211,7 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
                         text_preview,
                     )
                     _notify_zkill_down_once(text_preview, response.status_code, content_type)
+                    fetch_error_occurred = True
                     continue
 
                 if isinstance(killmails, list):
@@ -219,7 +225,7 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
                     except (ValueError, TypeError):
                         continue
 
-                        # Defensive check against duplicates during the fetch loop or if already in cache
+                    # Defensive check against duplicates during the fetch loop or if already in cache
                     if kill_id in kills_by_id:
                         continue
 
@@ -299,6 +305,7 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
                 time.sleep(delay)
             except Exception as e:
                 logger.warning(f"Failed to fetch AWOX kills for character {char_id} of user {user_id}: {e}")
+                fetch_error_occurred = True
                 continue
 
         # Final deduplication by link just in case, and sort
@@ -314,7 +321,7 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
                     data_list.append(kill_data)
                     seen_links.add(kill_data['link'])
 
-        # Always update the cache if we finished the loop successfully,
+        # Always update the cache if we didn't have a catastrophic error
         # even if no new kills found (to update the 'updated' timestamp)
         try:
             AwoxKillsCache.objects.update_or_create(
@@ -325,7 +332,11 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
         except Exception as e:
             logger.error(f"Failed to save AwoxKillsCache for user {user_id}: {e}")
 
-        return data_list if data_list else None
+        return data_list
+
+    except Exception as e:
+        logger.exception(f"catastrophic error in fetch_awox_kills for user {user_id}: {e}")
+        return data_list if 'data_list' in locals() and data_list else existing_data
 
     finally:
         # CRITICAL: Close session to prevent memory leak
