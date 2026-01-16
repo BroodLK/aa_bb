@@ -3,14 +3,27 @@
 ### Added
 - **Compliance Ticket System**:
     - Automatic resolution for "Character Removed" tickets when characters are re-added to the user's account.
+- **Discord Message Activity Tracking**:
+    - Added a global toggle for "Discord Message Activity Tracking" in the Big Brother configuration.
 
 ### Changed
 - **Performance Improvements**:
-    - Changed bulk loading of characters to 1x1 loading of characters in tasks to prevent users with large numbers of characters from causing performance issues..
+    - Optimized `hourly_compliance_check` and `BB_run_regular_updates` to use `.iterator()` and `.count()` to reduce memory usage.
+    - Added explicit garbage collection (`gc.collect()`) to long-running update tasks.
+    - Reduced `EntityInfoCache` retention to 2 days to prevent database bloat.
+    - Optimized `BB_update_single_user` to skip heavy checks for unaudited users.
+- **Dashboard Streaming**:
+    - Extended SSE streaming to include Assets, Jump Clones, and Contacts.
+    - Added real-time progress bars for all streaming cards and a global cache warmer progress bar.
+    - Moved individual stream progress bars to the top-level loading bubbles for a cleaner UI.
+    - Implemented `waitForPrewarm` to ensure cards only load after the cache is ready.
 - **Bot Connectivity**:
     - Improved database connection stability for the Discord bot to prevent "2006, server has gone away" errors.
 - **Tasks**:
     - The "BB kickstart stale CT modules" task (CT Kicker) no longer automatically enables itself when Big Brother is active. It will still automatically disable if Big Brother is deactivated.
+- **Bug Fixes**:
+    - Fixed "Uncaught SyntaxError: 'undefined' is not valid JSON" in dashboard streaming error handling.
+    - Corrected `EntityInfoCache.entity_id` field type to `BigIntegerField` for 64-bit ID support.
 
 ## [3.2.8] - 2026-01-12
 

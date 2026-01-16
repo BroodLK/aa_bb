@@ -121,9 +121,27 @@ document.addEventListener('DOMContentLoaded', () => {
   const errorMessages    = document.getElementById('errorMessages');
   const warmerBox        = document.getElementById('warmerBox');
 
+  let forceLoadRequested = false;
   async function waitForPrewarm(option) {
+    forceLoadRequested = false;
+
+    // Add Force Load button to the general message
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-xs btn-warning ml-2';
+    btn.innerText = 'Force Load';
+    btn.onclick = () => {
+        forceLoadRequested = true;
+        btn.disabled = true;
+        btn.innerText = 'Loading...';
+    };
+    generalMessage.appendChild(btn);
+
     return new Promise((resolve) => {
       const check = async () => {
+        if (forceLoadRequested) {
+            resolve();
+            return;
+        }
         try {
           const res = await fetch("{% url 'aa_bb:warm_progress' %}");
           if (!res.ok) { resolve(); return; }
