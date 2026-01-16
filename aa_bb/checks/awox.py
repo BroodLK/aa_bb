@@ -258,10 +258,26 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
                     if not involved_user_char_names: continue
 
                     is_attacker = len(attacker_ids_user) > 0
-                    vic_name = EveCharacter.objects.get(character_id=victim_id).character_name if victim_id else "Unknown"
+
+                    # Resolve victim name
+                    if victim_id:
+                        try:
+                            vic_name = EveCharacter.objects.get(character_id=victim_id).character_name
+                        except EveCharacter.DoesNotExist:
+                            vic_name = resolve_character_name(victim_id) or "Unknown"
+                    else:
+                        vic_name = "Unknown"
+
+                    # Find final blow attacker and resolve name
                     fb_attacker = next((a for a in attackers if a.get("final_blow")), attackers[0] if attackers else {})
                     att_id = fb_attacker.get("character_id")
-                    att_name = EveCharacter.objects.get(character_id=att_id).character_name if att_id else "Unknown"
+                    if att_id:
+                        try:
+                            att_name = EveCharacter.objects.get(character_id=att_id).character_name
+                        except EveCharacter.DoesNotExist:
+                            att_name = resolve_character_name(att_id) or "Unknown"
+                    else:
+                        att_name = "Unknown"
                     att_corp = _get_corp_name(fb_attacker.get("corporation_id"))
                     att_alli = _get_alliance_name(fb_attacker.get("alliance_id"))
                     vic_corp = _get_corp_name(victim.get("corporation_id"))
@@ -343,8 +359,7 @@ def render_awox_kills_html(userID):
         if kill.get("vic_alli"):
             vic_html += f"<br><small>({kill.get('vic_alli')})</small>"
 
-        row_class = ' class="text-danger"' if kill.get("is_attacker", False) else ''
-        row_html = f'<tr{row_class}><td>{{}}</td><td>{{}}</td><td>{{}}</td><td>{{}}</td><td>{{}} ISK</td><td><a href="{{}}" target="_blank">View</a></td></tr>'
+        row_html = '<tr class="text-danger"><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{} ISK</td><td><a href="{}" target="_blank">View</a></td></tr>'
         html += format_html(row_html, date_str, chars, mark_safe(att_html), mark_safe(vic_html), value, link)
 
     html += '</tbody></table>'
