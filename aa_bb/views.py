@@ -256,7 +256,7 @@ def load_cards(request: WSGIRequest) -> JsonResponse:
     return JsonResponse({"cards": cards})
 
 @shared_task(bind=True, time_limit=7200)
-def warm_entity_cache_task(self, user_id):
+def warm_entity_cache_task(self, user_id, user_main=None):
     """
     Gather mails, contracts, transactions; warm entity cache.
     Track progress in the DB via WarmProgress.
@@ -266,7 +266,8 @@ def warm_entity_cache_task(self, user_id):
     if not cfg.is_active or not cfg.is_warmer_active:
         return
 
-    user_main = get_main_character_name(user_id) or str(user_id)
+    if user_main is None:
+        user_main = get_main_character_name(user_id) or str(user_id)
 
     # Check for existing progress entry
     try:
@@ -311,6 +312,13 @@ def warm_entity_cache_task(self, user_id):
         contracts = gather_user_contracts(user_id)
         trans = gather_user_transactions(user_id)
         mails = gather_user_mails(user_id)
+
+        # New: also fetch assets and clones systems/stations
+        from .checks.hostile_assets import get_asset_locations
+        from .checks.hostile_clones import get_clones
+        assets = get_asset_locations(user_id)
+        clones = get_clones(user_id)
+
         candidates = []
         for c in contracts:
             issuer_id = get_character_id(c.issuer_name)
@@ -330,6 +338,20 @@ def warm_entity_cache_task(self, user_id):
                 candidates.append((t.first_party_id, getattr(t, "date")))
             if t.second_party_id:
                 candidates.append((t.second_party_id, getattr(t, "date")))
+
+        # Add systems and stations to candidates
+        now_ts = timezone.now()
+        for sys_id in assets.keys():
+            candidates.append((sys_id, now_ts))
+            for loc_id in assets[sys_id].get("locations", {}).keys():
+                if loc_id:
+                    candidates.append((loc_id, now_ts))
+
+        for sys_id in clones.keys():
+            candidates.append((sys_id, now_ts))
+            for loc_id in clones[sys_id].get("locations", {}).keys():
+                if loc_id:
+                    candidates.append((loc_id, now_ts))
 
         # Normalize candidate timestamps to the hour for cache matching
         candidates = [
@@ -402,14 +424,14 @@ def warm_cache(request):
         return JsonResponse({"error": "Unknown account"}, status=400)
 
     # Pre-create progress record so queued jobs show up
-    user_main = get_main_character_name(user_id) or str(user_id)
+    user_main = option or get_main_character_name(user_id) or str(user_id)
     WarmProgress.objects.get_or_create(
         user_main=user_main,
         defaults={"current": 0, "total": 0}
     )
 
     # Enqueue the celery task
-    warm_entity_cache_task.delay(user_id)
+    warm_entity_cache_task.delay(user_id, user_main=user_main)
     return JsonResponse({"started": True})
 
 
@@ -934,10 +956,11 @@ def stream_transactions_sse(request):
                     if processed % 10 == 0:
                         yield ": ping\n\n"
 
-                    is_hostile = is_transaction_hostile(row, user_ids, safe_entities=safe_entities)
+                    is_hostile = is_transaction_hostile(row, user_ids, safe_entities=safe_entities, entity_info_cache=row.get('info_cache'))
                     if is_hostile:
                         hostile_count += 1
                         cells = []
+                        row_info_cache = row.get('info_cache')
                         for col in headers:
                             val = row.get(col, "")
                             text = html.escape(str(val))
@@ -950,15 +973,15 @@ def stream_transactions_sse(request):
                                     style = 'color:red;'
                             elif col in ('first_party_name', 'second_party_name'):
                                 pid = row.get(col.replace("_name", "_id"))
-                                if pid and get_hostile_state(pid, 'character', when=row.get('date')):
+                                if pid and get_hostile_state(pid, 'character', when=row.get('date'), entity_info_cache=row_info_cache):
                                     style = 'color:red;'
                             elif col.endswith('corporation'):
                                 cid = row.get(f"{col}_id")
-                                if cid and get_hostile_state(cid, 'corporation', when=row.get('date')):
+                                if cid and get_hostile_state(cid, 'corporation', when=row.get('date'), entity_info_cache=row_info_cache):
                                     style = 'color:red;'
                             elif col.endswith('alliance'):
                                 aid = row.get(f"{col}_id")
-                                if aid and get_hostile_state(aid, 'alliance', when=row.get('date')):
+                                if aid and get_hostile_state(aid, 'alliance', when=row.get('date'), entity_info_cache=row_info_cache):
                                     style = 'color:red;'
 
                             style_attr = f' style="{style}"' if style else ""
@@ -1023,6 +1046,8 @@ def stream_assets_sse(request):
             for system_id, data in systems.items():
                 processed += 1
                 system_name = data.get("name") or f"ID {system_id}"
+
+                # Try to use cached owner info
                 owner_info = get_entity_info(system_id, now_ts)
                 system_owner_name = owner_info.get("name", "Unresolvable")
                 region_name = owner_info.get("alli_name", "Unknown Region")
@@ -1030,12 +1055,27 @@ def stream_assets_sse(request):
                 rows_for_system = []
                 for loc_id, loc_data in data.get("locations", {}).items():
                     loc_name = loc_data["name"]
+
+                    # Use cached location owner info
                     loc_owner_info = get_entity_info(loc_id, now_ts)
                     oname = loc_owner_info.get("name", system_owner_name)
 
                     for asset in loc_data.get("assets", []):
                         char_id = asset["char_id"]
-                        is_hostile = get_hostile_state(char_id, 'character', system_id=system_id, when=now_ts, safe_entities=safe_entities)
+
+                        # Use cached character info for hostile check
+                        is_hostile = get_hostile_state(
+                            char_id,
+                            'character',
+                            system_id=system_id,
+                            when=now_ts,
+                            safe_entities=safe_entities,
+                            entity_info_cache={
+                                char_id: get_entity_info(char_id, now_ts),
+                                system_id: owner_info,
+                                loc_id: loc_owner_info
+                            }
+                        )
 
                         if is_hostile:
                             hostile_count += 1
@@ -1092,18 +1132,35 @@ def stream_clones_sse(request):
             for system_id, data in systems.items():
                 processed += 1
                 system_name = data.get("name") or f"ID {system_id}"
+
+                # Use cached owner info
                 owner_info = get_entity_info(system_id, now_ts)
                 system_owner_name = owner_info.get("name", "Unresolvable")
                 region_name = owner_info.get("alli_name", "Unknown Region")
 
                 for loc_id, loc_data in data.get("locations", {}).items():
                     loc_name = loc_data["name"]
+
+                    # Use cached location owner info
                     loc_owner_info = get_entity_info(loc_id, now_ts)
                     oname = loc_owner_info.get("name", system_owner_name)
 
                     for clone in loc_data.get("clones", []):
                         char_id = clone["char_id"]
-                        is_hostile = get_hostile_state(char_id, 'character', system_id=system_id, when=now_ts, safe_entities=safe_entities)
+
+                        # Use cached character info for hostile check
+                        is_hostile = get_hostile_state(
+                            char_id,
+                            'character',
+                            system_id=system_id,
+                            when=now_ts,
+                            safe_entities=safe_entities,
+                            entity_info_cache={
+                                char_id: get_entity_info(char_id, now_ts),
+                                system_id: owner_info,
+                                loc_id: loc_owner_info
+                            }
+                        )
 
                         if is_hostile:
                             hostile_count += 1
