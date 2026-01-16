@@ -516,6 +516,19 @@ def stream_contracts_sse(request: WSGIRequest):
                 yield "event: done\ndata:0\n\n"
                 return
 
+            headers = [
+                "issued_date", "end_date",
+                "contract_type", "issuer_name", "issuer_corporation",
+                "issuer_alliance", "assignee_name", "assignee_corporation",
+                "assignee_alliance", "status", "start_location", "end_location",
+            ]
+            header_html = (
+                "<tr>" +
+                "".join(f"<th>{html.escape(h.replace('_',' ').title())}</th>" for h in headers) +
+                "</tr>"
+            )
+            yield f"event: header\ndata:{json.dumps(header_html)}\n\n"
+
             batch_size = 50
             for i in range(0, total, batch_size):
                 batch = qs[i : i + batch_size]

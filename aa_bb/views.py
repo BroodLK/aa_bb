@@ -610,6 +610,9 @@ def stream_contracts_sse(request: WSGIRequest):
                 yield "event: done\ndata:0\n\n"
                 return
 
+            header_html = "<tr>" + "".join(f"<th>{html.escape(h.replace('_',' ').title())}</th>" for h in VISIBLE_CONTR) + "</tr>"
+            yield f"event: header\ndata:{json.dumps(header_html)}\n\n"
+
             batch_size = 50
             for i in range(0, total, batch_size):
                 batch = qs[i : i + batch_size]
@@ -786,6 +789,9 @@ def stream_mails_sse(request):
                 # Notify client that streaming finished without hostile mails
                 yield "event: done\ndata:0\n\n"
                 return
+
+            header_html = "<tr>" + "".join(f"<th>{html.escape(h.replace('_',' ').title())}</th>" for h in VISIBLE) + "</tr>"
+            yield f"event: header\ndata:{json.dumps(header_html)}\n\n"
 
             batch_size = 50
             for i in range(0, total, batch_size):
@@ -1154,12 +1160,14 @@ def stream_contacts_sse(request):
                 if not is_hostile:
                     # Check if contact is hostile
                     contact_id = info.get('contact_id')
-                    if contact_id:
-                        is_hostile = get_hostile_state(contact_id, info.get('contact_type'), when=now_ts)
+                    if not contact_id:
+                        contact_id = cid
+                    is_hostile = get_hostile_state(contact_id, info.get('contact_type'), when=now_ts)
 
                 if is_hostile:
                     hostile_count += 1
-                    tr = f"<tr><td>{html.escape(info['char_name'])}</td><td>{html.escape(info['contact_name'])}</td><td>{info['standing']}</td><td>{html.escape(info['corp_name'])}</td><td>{html.escape(info['alliance_name'])}</td></tr>"
+                    my_chars = ", ".join(info.get('characters', []))
+                    tr = f"<tr><td>{html.escape(my_chars)}</td><td>{html.escape(info['contact_name'])}</td><td>{info['standing']}</td><td>{html.escape(info['corporation'])}</td><td>{html.escape(info['alliance'])}</td></tr>"
                     yield f"event: contact\ndata:{json.dumps(tr)}\n\n"
 
                 if processed % 10 == 0 or processed == total:

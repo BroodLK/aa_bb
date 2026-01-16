@@ -319,19 +319,19 @@ document.addEventListener('DOMContentLoaded', () => {
     cardBody.innerHTML = `
       <table class="table table-striped">
         <thead>
-          <tr id="contracts-header">
+          <tr id="contracts-header-${idx}">
             ${CONTR_VISIBLE.map(h => `<th>${h.replace(/_/g,' ')}</th>`).join('')}
           </tr>
         </thead>
-        <tbody id="contracts-body"></tbody>
+        <tbody id="contracts-body-${idx}"></tbody>
       </table>`;
 
     return new Promise((resolve, reject) => {
       const source = new EventSource(
         `{% url 'BigBrother:stream_contracts_sse' %}?option=${encodeURIComponent(option)}`
       );
-      const thead = cardBody.querySelector('#contracts-header');
-      const tbody = cardBody.querySelector('#contracts-body');
+      const thead = cardBody.querySelector(`#contracts-header-${idx}`);
+      const tbody = cardBody.querySelector(`#contracts-body-${idx}`);
       let hostileCount = 0;
 
       source.addEventListener('header', e => {
@@ -395,17 +395,24 @@ document.addEventListener('DOMContentLoaded', () => {
     cardBody.innerHTML = `
       <table class="table table-striped">
         <thead>
-          <tr>${MAIL_VISIBLE.map(h=>`<th>${h.replace(/_/g,' ')}</th>`).join('')}</tr>
+          <tr id="mails-header-${idx}">
+            ${MAIL_VISIBLE.map(h=>`<th>${h.replace(/_/g,' ')}</th>`).join('')}
+          </tr>
         </thead>
-        <tbody></tbody>
+        <tbody id="mails-body-${idx}"></tbody>
       </table>`;
 
     return new Promise((resolve, reject) => {
       const source = new EventSource(
         `{% url 'BigBrother:stream_mails_sse' %}?option=${encodeURIComponent(option)}`
       );
-      const tbody = cardBody.querySelector('tbody');
+      const thead = cardBody.querySelector(`#mails-header-${idx}`);
+      const tbody = cardBody.querySelector(`#mails-body-${idx}`);
       let hostileCount = 0;
+
+      source.addEventListener('header', e => {
+        thead.innerHTML = JSON.parse(e.data);
+      });
 
       source.addEventListener('mail', e => {
         // Insert the hostile row
