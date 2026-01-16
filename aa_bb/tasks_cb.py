@@ -90,7 +90,7 @@ VERBOSE_WEBHOOK_LOGGING = True
 
 
 
-@shared_task()
+@shared_task(time_limit=7200)
 def CB_send_discord_notifications(subject: str, chunks: list[list[str]]) -> None:
     """
     Dedicated task to send Discord embeds for CorpBrother.
@@ -127,7 +127,7 @@ def CB_send_discord_notifications(subject: str, chunks: list[list[str]]) -> None
     close_old_connections()
 
 
-@shared_task
+@shared_task(time_limit=7200)
 def CB_update_single_corp(corp_id):
     """
     Process updates for a single corporation.
@@ -305,7 +305,7 @@ def CB_update_single_corp(corp_id):
             raise
 
 
-@shared_task
+@shared_task(time_limit=7200)
 def CB_run_regular_updates():
     """
     Update CorpBrother caches: hostile assets, contracts, transactions, LoA, and PAPs.
@@ -419,7 +419,7 @@ def CB_run_regular_updates():
         )
 
 
-@shared_task
+@shared_task(time_limit=7200)
 def check_member_compliance():
     """
     Nightly compliance sweep:
@@ -587,7 +587,7 @@ def get_ali_character_names(ali_id: int) -> str:
     return [char["name"] for char in data.get("characters", [])]
 
 
-@shared_task
+@shared_task(time_limit=7200)
 def BB_send_daily_messages():
     """Send one random daily message to the configured webhook each run."""
     config = BigBrotherConfig.get_solo()
@@ -620,7 +620,7 @@ def BB_send_daily_messages():
     message.sent_in_cycle = True
     message.save()
 
-@shared_task
+@shared_task(time_limit=7200)
 def BB_send_opt_message1():
     """Send one optional message #1 if enabled"""
     config = BigBrotherConfig.get_solo()
@@ -653,7 +653,7 @@ def BB_send_opt_message1():
     message.sent_in_cycle = True
     message.save()
 
-@shared_task
+@shared_task(time_limit=7200)
 def BB_send_opt_message2():
     """Optional message stream #2."""
     config = BigBrotherConfig.get_solo()
@@ -686,7 +686,7 @@ def BB_send_opt_message2():
     message.sent_in_cycle = True
     message.save()
 
-@shared_task
+@shared_task(time_limit=7200)
 def BB_send_opt_message3():
     """Optional message stream #3."""
     config = BigBrotherConfig.get_solo()
@@ -719,7 +719,7 @@ def BB_send_opt_message3():
     message.sent_in_cycle = True
     message.save()
 
-@shared_task
+@shared_task(time_limit=7200)
 def BB_send_opt_message4():
     """Optional message stream #4."""
     config = BigBrotherConfig.get_solo()
@@ -752,7 +752,7 @@ def BB_send_opt_message4():
     message.sent_in_cycle = True
     message.save()
 
-@shared_task
+@shared_task(time_limit=7200)
 def BB_send_opt_message5():
     """Optional message stream #5."""
     config = BigBrotherConfig.get_solo()
@@ -786,7 +786,7 @@ def BB_send_opt_message5():
     message.save()
 
 
-@shared_task
+@shared_task(time_limit=7200)
 def BB_register_message_tasks():
     """
     Ensure all periodic tasks exist and match the configuration.
@@ -796,7 +796,7 @@ def BB_register_message_tasks():
     sync_periodic_tasks()
 
 
-@shared_task
+@shared_task(time_limit=7200)
 def BB_run_regular_loa_updates():
     """
     Scan every member main and update LoA statuses / inactivity flags.
@@ -885,7 +885,7 @@ def BB_run_regular_loa_updates():
             )
 
 
-@shared_task
+@shared_task(time_limit=7200)
 def BB_daily_DB_cleanup():
     """
     Periodic cleanup of cached tables and orphaned processed records.

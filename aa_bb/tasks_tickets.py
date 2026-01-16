@@ -247,7 +247,7 @@ def get_webhook_for_reason(reason: str) -> Optional[str]:
     return bb_cfg.webhook
 
 
-@shared_task
+@shared_task(time_limit=7200)
 def hourly_compliance_check():
     """Run the top-of-hour audit that enforces compliance rules and reminders."""
     close_old_connections()

@@ -37,7 +37,7 @@ from .app_settings import (
 )
 from .models import BigBrotherConfig, WarmProgress, LeaveRequest, ComplianceTicket, ComplianceTicketComment
 
-from aa_bb.checks.awox import render_awox_kills_html
+from aa_bb.checks.awox import render_awox_kills_html, fetch_awox_kills
 from aa_bb.checks.corp_changes import get_frequent_corp_changes
 from aa_bb.checks.cyno import render_user_cyno_info_html
 from aa_bb.checks.hostile_assets import render_assets, get_asset_locations
@@ -255,7 +255,7 @@ def load_cards(request: WSGIRequest) -> JsonResponse:
         })
     return JsonResponse({"cards": cards})
 
-@shared_task(bind=True)
+@shared_task(bind=True, time_limit=7200)
 def warm_entity_cache_task(self, user_id):
     """
     Gather mails, contracts, transactions; warm entity cache.
@@ -307,6 +307,7 @@ def warm_entity_cache_task(self, user_id):
 
         # Build list of (entity_id, timestamp)
         entries = []
+        fetch_awox_kills(user_id, force_refresh=True)
         contracts = gather_user_contracts(user_id)
         trans = gather_user_transactions(user_id)
         mails = gather_user_mails(user_id)

@@ -225,7 +225,7 @@ def load_card(request):
     })
 
 
-@shared_task(bind=True)
+@shared_task(bind=True, time_limit=7200)
 def warm_entity_cache_task(self, user_id):
     """
     Gather mails, contracts, transactions; warm entity cache.

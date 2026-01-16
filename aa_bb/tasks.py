@@ -61,7 +61,7 @@ VERBOSE_WEBHOOK_LOGGING = True
 
 
 
-@shared_task
+@shared_task(time_limit=7200)
 def BB_update_single_user(user_id, char_name):
     """
     Process updates for a single user.
@@ -118,7 +118,7 @@ def BB_update_single_user(user_id, char_name):
             state_result = determine_character_state(user_id, True, cfg=instance)
 
             logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Fetching AWOX Links...")
-            awox_data = get_awox_kill_links(user_id)
+            awox_data = get_awox_kill_links(user_id, force_refresh=True)
             awox_links = [x["link"] for x in awox_data]
             awox_map = {x["link"]: x for x in awox_data}
 
@@ -1013,7 +1013,7 @@ def BB_update_single_user(user_id, char_name):
             raise
 
 
-@shared_task
+@shared_task(time_limit=7200)
 def BB_run_regular_updates():
     """
     Main scheduled job that refreshes BigBrother cache entries.
@@ -1200,7 +1200,7 @@ def BB_run_regular_updates():
             color=0x00FF00,
         )
 
-@shared_task()
+@shared_task(time_limit=7200)
 def BB_send_discord_notifications(subject: str, chunks: list[list[str]]) -> None:
     """
     Dedicated task to send Discord embeds for BigBrother.
@@ -1344,7 +1344,7 @@ def _remove_ids(cfg, field_name: str, ids: set[int]) -> bool:
     return False
 
 
-@shared_task(bind=True, name="aa_bb.tasks.BB_sync_contacts_from_aa_contacts")
+@shared_task(bind=True, name="aa_bb.tasks.BB_sync_contacts_from_aa_contacts", time_limit=7200)
 def BB_sync_contacts_from_aa_contacts(self):
     """
     Sync standings from aa-contacts into BigBrother hostiles/members/whitelists.
