@@ -212,6 +212,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!bar) return;
 
     const percent = total > 0 ? Math.round((current / total) * 100) : 0;
+    if (percent === 0) {
+        bar.style.transition = 'none';
+    } else {
+        bar.style.transition = 'width 0.6s ease';
+    }
     bar.style.width = `${percent}%`;
     bar.setAttribute('aria-valuenow', percent);
     bar.innerText = `${percent}%`;
@@ -492,7 +497,7 @@ async function loadAll(option) {
 
     // Add Force Load button to the general message
     const btn = document.createElement('button');
-    btn.className = 'btn btn-xs btn-warning ml-2';
+    btn.className = 'btn btn-xs btn-warning float-right';
     btn.innerText = 'Force Load';
     btn.onclick = () => {
         forceLoadRequested = true;
@@ -564,6 +569,11 @@ async function fetchProgress() {
 
       warmerText.innerHTML = msg;
       const percent = currentTotal > 0 ? Math.round((currentProgress / currentTotal) * 100) : 0;
+      if (percent === 0) {
+          warmerBar.style.transition = 'none';
+      } else {
+          warmerBar.style.transition = 'width 0.6s ease';
+      }
       warmerBar.style.width = `${percent}%`;
       warmerBar.setAttribute('aria-valuenow', percent);
       warmerBar.innerText = `${percent}%`;
