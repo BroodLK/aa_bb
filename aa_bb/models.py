@@ -525,6 +525,12 @@ class BigBrotherConfig(SingletonModel):
         verbose_name=_("Suspicious Transaction Notifications")
     )
 
+    discord_message_tracking = models.BooleanField(
+        default=True,
+        help_text=_("Whether to track discord message activity (last_discord_message_at) for users"),
+        verbose_name=_("Discord Message Activity Tracking")
+    )
+
     hide_unaudited_users = models.BooleanField(
         default=False,
         help_text=_("If enabled, users who have no audited characters will be hidden from the main dashboard dropdown."),

@@ -205,7 +205,8 @@ def discord_inactivity_check(user):
     Check if the user has spoken on Discord within the configured timeframe.
     """
     tcfg = TicketToolConfig.get_solo()
-    if not discordbot_active() or not tcfg.discord_inactivity_enabled:
+    bbcfg = BigBrotherConfig.get_solo()
+    if not discordbot_active() or not tcfg.discord_inactivity_enabled or not bbcfg.discord_message_tracking:
         return True
 
     from .models import UserStatus

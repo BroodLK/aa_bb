@@ -195,6 +195,7 @@ class BB_ConfigAdmin(SingletonModelAdmin):
                 "description": "Enable or disable specific features",
                 "fields": (
                     "is_warmer_active",
+                    "discord_message_tracking",
                     "is_loa_active",
                     "is_paps_active",
                     "are_recurring_stats_active",

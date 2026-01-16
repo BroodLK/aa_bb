@@ -95,7 +95,12 @@
   </div>
 </div>
 <div id="messageBox" class="alert" style="display: none;"></div>
-<div id="contractMessage" class="alert" style="display:none;"></div>
+<div id="contractMessage" class="alert alert-info" style="display:none; margin-top: 1rem;">
+  <div id="contract-text"></div>
+  <div class="progress mt-2" style="height: 1rem;">
+    <div id="contract-progress-bar" class="progress-bar" role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">0%</div>
+  </div>
+</div>
 <div id="errorMessages"></div>
 
 <!-- Cards Container -->
@@ -148,7 +153,8 @@ document.addEventListener('DOMContentLoaded', () => {
     generalMessage.style.display = 'none';
   }
   function showContract(msg, type='info') {
-    contractMessage.innerHTML    = msg;
+    const textEl = document.getElementById('contract-text');
+    if (textEl) textEl.innerHTML = msg;
     contractMessage.className    = 'alert alert-' + type;
     contractMessage.style.display = 'block';
   }
@@ -188,12 +194,6 @@ document.addEventListener('DOMContentLoaded', () => {
       </div>
       <div id="${collapseId}" class="collapse">
         <div class="card-body">
-          <div id="progress-container-${idx}" class="progress-container" style="display: none;">
-            <div class="progress">
-              <div id="progress-bar-${idx}" class="progress-bar" role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">0%</div>
-            </div>
-            <small id="progress-text-${idx}" class="text-muted">Initializing...</small>
-          </div>
           <div id="card-content-${idx}">
             ${content !== null && content !== undefined ? content : (status ? getEmptyMessage('No issues found') : getEmptyMessage('Error loading data'))}
           </div>
@@ -207,22 +207,23 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function updateProgressBar(idx, current, total, text) {
-    const container = document.getElementById(`progress-container-${idx}`);
-    const bar = document.getElementById(`progress-bar-${idx}`);
-    const textEl = document.getElementById(`progress-text-${idx}`);
-    if (!container || !bar || !textEl) return;
+    const bar = document.getElementById('contract-progress-bar');
+    const textEl = document.getElementById('contract-text');
+    if (!bar) return;
 
-    container.style.display = 'block';
     const percent = total > 0 ? Math.round((current / total) * 100) : 0;
     bar.style.width = `${percent}%`;
     bar.setAttribute('aria-valuenow', percent);
     bar.innerText = `${percent}%`;
-    if (text) textEl.innerText = text;
+    if (text && textEl) textEl.innerText = text;
+    contractMessage.style.display = 'block';
   }
 
   function hideProgressBar(idx) {
-    const container = document.getElementById(`progress-container-${idx}`);
-    if (container) container.style.display = 'none';
+    // We don't necessarily want to hide the whole contractMessage here
+    // because some other stream might still be starting,
+    // but usually they are sequential in loadAll.
+    // However, hideContract() is called at the end of streams.
   }
 
   async function fetchCard(option, idx) {
@@ -484,10 +485,36 @@ async function loadAll(option) {
 }
 
 
-dropdown.addEventListener('change', () => {
-  fetch("{% url 'aa_cb:warm_cache' %}?option=" + encodeURIComponent(dropdown.value));
-  loadAll(dropdown.value);
-});
+  async function waitForPrewarm(option) {
+    const selectedText = dropdown.options[dropdown.selectedIndex].text;
+    return new Promise((resolve) => {
+      const check = async () => {
+        try {
+          const res = await fetch("{% url 'aa_cb:warm_progress' %}");
+          if (!res.ok) { resolve(); return; }
+          const data = await res.json();
+          const isStillWarming = data.users.some(u => u.user === selectedText || u.user === option);
+          if (!isStillWarming) {
+            resolve();
+          } else {
+            setTimeout(check, 1000);
+          }
+        } catch (e) {
+          resolve();
+        }
+      };
+      check();
+    });
+  }
+
+  dropdown.addEventListener('change', async () => {
+    const option = dropdown.value;
+    if (!option) return;
+    showGeneral('Starting cache warmer…', 'info');
+    await fetch("{% url 'aa_cb:warm_cache' %}?option=" + encodeURIComponent(option));
+    await waitForPrewarm(option);
+    loadAll(option);
+  });
 
 // Poll every 5 seconds for warming-progress updates
 const warmerBox = document.getElementById('warmerBox');
@@ -523,7 +550,11 @@ async function fetchProgress() {
       warmerBar.setAttribute('aria-valuenow', percent);
       warmerBar.innerText = `${percent}%`;
 
-      warmerBox.style.display = 'block';
+      if (currentTotal > 0) {
+        warmerBox.style.display = 'block';
+      } else {
+        warmerBox.style.display = 'none';
+      }
     } else {
       warmerBox.style.display = 'none';
     }

@@ -84,7 +84,7 @@ except ImportError:
         class HTTPException(Exception): pass
     logger.info("discord service not installed; using dummy classes for type hinting.")
 
-from aa_bb.models import TicketToolConfig, ComplianceTicket, ComplianceTicketComment
+from aa_bb.models import TicketToolConfig, ComplianceTicket, ComplianceTicketComment, BigBrotherConfig
 from aa_bb.app_settings import get_user_model
 
 try:
@@ -537,7 +537,9 @@ class TicketCommands(commands.Cog):
         close_old_connections()
 
         # Track Discord activity quietly
-        await self._track_activity(message)
+        config = await sync_to_async(BigBrotherConfig.get_solo)()
+        if config.discord_message_tracking:
+            await self._track_activity(message)
 
         # Check if this is a ticket channel/thread
         tickets_qs = ComplianceTicket.objects.filter(
