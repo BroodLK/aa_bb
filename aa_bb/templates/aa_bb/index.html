@@ -178,6 +178,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // Only fire once a definite account has been selected
     accountSelect.on('item_add', async function(value, item) {
       if (!value) return;
+      container.innerHTML     = '';
+      errorMessages.innerHTML = '';
+      hideContract();
       showGeneral('Starting cache warmer…', 'info');
       await fetch("{% url 'BigBrother:warm_cache' %}?option=" + encodeURIComponent(value));
       await waitForPrewarm(value);
@@ -188,6 +191,9 @@ document.addEventListener('DOMContentLoaded', () => {
     dropdown.addEventListener('change', async () => {
       const value = dropdown.value;
       if (!value) return;
+      container.innerHTML     = '';
+      errorMessages.innerHTML = '';
+      hideContract();
       showGeneral('Starting cache warmer…', 'info');
       await fetch("{% url 'BigBrother:warm_cache' %}?option=" + encodeURIComponent(value));
       await waitForPrewarm(value);

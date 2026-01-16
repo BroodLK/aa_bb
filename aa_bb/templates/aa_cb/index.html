@@ -543,6 +543,9 @@ async function loadAll(option) {
   dropdown.addEventListener('change', async () => {
     const option = dropdown.value;
     if (!option) return;
+    container.innerHTML     = '';
+    errorMessages.innerHTML = '';
+    hideContract();
     showGeneral('Starting cache warmer…', 'info');
     await fetch("{% url 'aa_cb:warm_cache' %}?option=" + encodeURIComponent(option));
     await waitForPrewarm(option);
