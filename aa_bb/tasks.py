@@ -311,13 +311,13 @@ def BB_update_single_user(user_id, char_name):
                 logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} new links {link_list3}")
                 link_list2 = "\n".join(f"- {link}" for link in old_links)
                 logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} old links {link_list2}")
-                if status.has_awox_kills != has_awox and has_awox:  # first time awox kills were spotted for this user
+                if status.has_awox_kills != has_awox:
                     if not has_awox:
                         if instance.awox_notify:
                             changes.append(f"### AWOX Kill Status: 🟢")
                     status.has_awox_kills = has_awox
                     status_changed = True
-                    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} changed")
+                    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} changed awox status to {has_awox}")
                 if new_links:  # send notifications only for links not yet alerted on
                     # Identify which of the new links the user was an attacker in
                     attacker_links = [
