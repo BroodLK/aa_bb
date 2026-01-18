@@ -356,17 +356,28 @@ document.addEventListener('DOMContentLoaded', () => {
       let hostileCount = 0;
 
       source.addEventListener('header', e => {
-        // Set up column headers
-        thead.innerHTML = JSON.parse(e.data);
+        try {
+          if (e.data && e.data !== "undefined") {
+            thead.innerHTML = JSON.parse(e.data);
+          }
+        } catch (err) {
+          console.error("Failed to parse header data:", err, e.data);
+        }
       });
 
       source.addEventListener('contract', e => {
         // Add each hostile contract row
-        tbody.insertAdjacentHTML('beforeend', JSON.parse(e.data));
-        hostileCount++;
-        // Flip icon red on first hostile
-        if (hostileCount === 1) {
-          updateCardStatus(idx, false);
+        try {
+          if (e.data && e.data !== "undefined") {
+            tbody.insertAdjacentHTML('beforeend', JSON.parse(e.data));
+            hostileCount++;
+            // Flip icon red on first hostile
+            if (hostileCount === 1) {
+              updateCardStatus(idx, false);
+            }
+          }
+        } catch (err) {
+          console.error("Failed to parse contract data:", err, e.data);
         }
       });
 
@@ -390,7 +401,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       source.onerror = e => {
         source.close();
-        if (e.data) {
+        if (e.data && e.data !== "undefined") {
           try {
             const errorData = JSON.parse(e.data);
             cardBody.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${errorData}</div>`;
@@ -432,17 +443,28 @@ document.addEventListener('DOMContentLoaded', () => {
       let hostileCount = 0;
 
       source.addEventListener('header', e => {
-        thead.innerHTML = JSON.parse(e.data);
+        try {
+          if (e.data && e.data !== "undefined") {
+            thead.innerHTML = JSON.parse(e.data);
+          }
+        } catch (err) {
+          console.error("Failed to parse header data:", err, e.data);
+        }
       });
 
       source.addEventListener('mail', e => {
         // Insert the hostile row
-        tbody.insertAdjacentHTML('beforeend', JSON.parse(e.data));
-
-        hostileCount++;
-        // On first hostile mail, immediately flip the icon red
-        if (hostileCount === 1) {
-          updateCardStatus(idx, false);
+        try {
+          if (e.data && e.data !== "undefined") {
+            tbody.insertAdjacentHTML('beforeend', JSON.parse(e.data));
+            hostileCount++;
+            // On first hostile mail, immediately flip the icon red
+            if (hostileCount === 1) {
+              updateCardStatus(idx, false);
+            }
+          }
+        } catch (err) {
+          console.error("Failed to parse mail data:", err, e.data);
         }
       });
 
@@ -466,7 +488,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       source.onerror = e => {
         source.close();
-        if (e.data) {
+        if (e.data && e.data !== "undefined") {
           try {
             const errorData = JSON.parse(e.data);
             cardBody.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${errorData}</div>`;
@@ -506,15 +528,27 @@ document.addEventListener('DOMContentLoaded', () => {
 
       source.addEventListener('header', e => {
         // render the <th>… row
-        thead.innerHTML = JSON.parse(e.data);
+        try {
+          if (e.data && e.data !== "undefined") {
+            thead.innerHTML = JSON.parse(e.data);
+          }
+        } catch (err) {
+          console.error("Failed to parse transaction header data:", err, e.data);
+        }
       });
 
       source.addEventListener('transaction', e => {
         // append each hostile <tr>
-        tbody.insertAdjacentHTML('beforeend', JSON.parse(e.data));
-        hostileCount++;
-        if (hostileCount === 1) {
-          updateCardStatus(idx, false);
+        try {
+          if (e.data && e.data !== "undefined") {
+            tbody.insertAdjacentHTML('beforeend', JSON.parse(e.data));
+            hostileCount++;
+            if (hostileCount === 1) {
+              updateCardStatus(idx, false);
+            }
+          }
+        } catch (err) {
+          console.error("Failed to parse transaction data:", err, e.data);
         }
       });
 
@@ -537,7 +571,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       source.onerror = e => {
         source.close();
-        if (e.data) {
+        if (e.data && e.data !== "undefined") {
           try {
             const errorData = JSON.parse(e.data);
             cardBody.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${errorData}</div>`;
@@ -569,11 +603,25 @@ document.addEventListener('DOMContentLoaded', () => {
       const tbody = document.getElementById(`assets-body-${idx}`);
       let hostileCount = 0;
 
-      source.addEventListener('header', e => { thead.innerHTML = JSON.parse(e.data); });
+      source.addEventListener('header', e => {
+        try {
+          if (e.data && e.data !== "undefined") {
+            thead.innerHTML = JSON.parse(e.data);
+          }
+        } catch (err) {
+          console.error("Failed to parse asset header data:", err, e.data);
+        }
+      });
       source.addEventListener('asset', e => {
-        tbody.insertAdjacentHTML('beforeend', JSON.parse(e.data));
-        hostileCount++;
-        if (hostileCount === 1) updateCardStatus(idx, false);
+        try {
+          if (e.data && e.data !== "undefined") {
+            tbody.insertAdjacentHTML('beforeend', JSON.parse(e.data));
+            hostileCount++;
+            if (hostileCount === 1) updateCardStatus(idx, false);
+          }
+        } catch (err) {
+          console.error("Failed to parse asset data:", err, e.data);
+        }
       });
       source.addEventListener('progress', e => {
         const [processed, total] = e.data.split(',').map(Number);
@@ -610,11 +658,25 @@ document.addEventListener('DOMContentLoaded', () => {
       const tbody = document.getElementById(`clones-body-${idx}`);
       let hostileCount = 0;
 
-      source.addEventListener('header', e => { thead.innerHTML = JSON.parse(e.data); });
+      source.addEventListener('header', e => {
+        try {
+          if (e.data && e.data !== "undefined") {
+            thead.innerHTML = JSON.parse(e.data);
+          }
+        } catch (err) {
+          console.error("Failed to parse clone header data:", err, e.data);
+        }
+      });
       source.addEventListener('clone', e => {
-        tbody.insertAdjacentHTML('beforeend', JSON.parse(e.data));
-        hostileCount++;
-        if (hostileCount === 1) updateCardStatus(idx, false);
+        try {
+          if (e.data && e.data !== "undefined") {
+            tbody.insertAdjacentHTML('beforeend', JSON.parse(e.data));
+            hostileCount++;
+            if (hostileCount === 1) updateCardStatus(idx, false);
+          }
+        } catch (err) {
+          console.error("Failed to parse clone data:", err, e.data);
+        }
       });
       source.addEventListener('progress', e => {
         const [processed, total] = e.data.split(',').map(Number);
@@ -651,11 +713,25 @@ document.addEventListener('DOMContentLoaded', () => {
       const tbody = document.getElementById(`contacts-body-${idx}`);
       let hostileCount = 0;
 
-      source.addEventListener('header', e => { thead.innerHTML = JSON.parse(e.data); });
+      source.addEventListener('header', e => {
+        try {
+          if (e.data && e.data !== "undefined") {
+            thead.innerHTML = JSON.parse(e.data);
+          }
+        } catch (err) {
+          console.error("Failed to parse contact header data:", err, e.data);
+        }
+      });
       source.addEventListener('contact', e => {
-        tbody.insertAdjacentHTML('beforeend', JSON.parse(e.data));
-        hostileCount++;
-        if (hostileCount === 1) updateCardStatus(idx, false);
+        try {
+          if (e.data && e.data !== "undefined") {
+            tbody.insertAdjacentHTML('beforeend', JSON.parse(e.data));
+            hostileCount++;
+            if (hostileCount === 1) updateCardStatus(idx, false);
+          }
+        } catch (err) {
+          console.error("Failed to parse contact data:", err, e.data);
+        }
       });
       source.addEventListener('progress', e => {
         const [processed, total] = e.data.split(',').map(Number);

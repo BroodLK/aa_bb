@@ -177,14 +177,6 @@ def get_user_id(character_name):
         ownership = CharacterOwnership.objects.select_related('user__profile__main_character') \
             .get(character__character_name=character_name)
 
-        cfg = BigBrotherConfig.get_solo()
-        member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
-        member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
-        if member_corps or member_allis:
-            main_char = getattr(ownership.user.profile, 'main_character', None)
-            if not main_char or (main_char.corporation_id not in member_corps and main_char.alliance_id not in member_allis):
-                return None
-
         return ownership.user.id
     except CharacterOwnership.DoesNotExist:
         return None
@@ -481,10 +473,11 @@ def index(request: WSGIRequest):
         )
         return render(request, "aa_bb/disabled.html", {"message": msg})
 
-    if request.user.has_perm("aa_bb.full_access"):  # Full-access sees every main character.
-        qs = UserProfile.objects.exclude(main_character=None)
+    member_states = cfg.bb_member_states.all()
+    guest_states = cfg.bb_guest_states.all()
+    if request.user.has_perm("aa_bb.full_access"):  # Full-access sees member and guest states.
+        qs = UserProfile.objects.filter(state__in=member_states | guest_states).exclude(main_character=None)
     elif request.user.has_perm("aa_bb.recruiter_access"):  # Recruiters see only guest states.
-        guest_states = cfg.bb_guest_states.all()
         qs = UserProfile.objects.filter(state__in=guest_states).exclude(main_character=None)
     else:
         qs = None
@@ -499,11 +492,6 @@ def index(request: WSGIRequest):
                 qs = qs.filter(user_id__in=audited_user_ids)
             else:
                 qs = qs.filter(user__userstatus__baseline_initialized=True)
-
-        member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
-        member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
-        if member_corps or member_allis:
-            qs = qs.filter(Q(main_character__corporation_id__in=member_corps) | Q(main_character__alliance_id__in=member_allis))
 
         dropdown_options = (
             qs.values_list("main_character__character_name", flat=True)
@@ -1344,11 +1332,6 @@ def loa_admin(request):
     # Filtering
     qs = LeaveRequest.objects.select_related('user').order_by('-created_at')
 
-    member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
-    member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
-    if member_corps or member_allis:
-        qs = qs.filter(Q(user__profile__main_character__corporation_id__in=member_corps) | Q(user__profile__main_character__alliance_id__in=member_allis))
-
     user_filter   = request.GET.get('user')
     status_filter = request.GET.get('status')
 
@@ -1359,10 +1342,6 @@ def loa_admin(request):
 
     # Build dropdown options from existing requests
     users_in_requests_qs = LeaveRequest.objects.all()
-    member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
-    member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
-    if member_corps or member_allis:
-        users_in_requests_qs = users_in_requests_qs.filter(Q(user__profile__main_character__corporation_id__in=member_corps) | Q(user__profile__main_character__alliance_id__in=member_allis))
 
     users_in_requests = (
         users_in_requests_qs.values_list('user__id', 'user__username')
@@ -1450,13 +1429,6 @@ def delete_request_admin(request, pk):
     if request.method == 'POST':  # Guard mutation behind POST.
         cfg = BigBrotherConfig.get_solo()
         lr = get_object_or_404(LeaveRequest, pk=pk)
-        member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
-        member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
-        if member_corps or member_allis:
-            main_char = getattr(lr.user.profile, 'main_character', None)
-            if not main_char or (main_char.corporation_id not in member_corps and main_char.alliance_id not in member_allis):
-                return HttpResponseForbidden("Target user is not in a member corporation/alliance.")
-
         lr.delete()
         hook = cfg.loawebhook
         userrr = get_main_character_name(request.user.id)
@@ -1480,13 +1452,6 @@ def approve_request(request, pk):
     if request.method == 'POST':  # Only process POST actions.
         cfg = BigBrotherConfig.get_solo()
         lr = get_object_or_404(LeaveRequest, pk=pk)
-        member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
-        member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
-        if member_corps or member_allis:
-            main_char = getattr(lr.user.profile, 'main_character', None)
-            if not main_char or (main_char.corporation_id not in member_corps and main_char.alliance_id not in member_allis):
-                return HttpResponseForbidden("Target user is not in a member corporation/alliance.")
-
         lr.status = 'approved'
         lr.save()
         hook = cfg.loawebhook
@@ -1511,13 +1476,6 @@ def deny_request(request, pk):
     if request.method == 'POST':  # Only mutate via POST requests.
         cfg = BigBrotherConfig.get_solo()
         lr = get_object_or_404(LeaveRequest, pk=pk)
-        member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
-        member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
-        if member_corps or member_allis:
-            main_char = getattr(lr.user.profile, 'main_character', None)
-            if not main_char or (main_char.corporation_id not in member_corps and main_char.alliance_id not in member_allis):
-                return HttpResponseForbidden("Target user is not in a member corporation/alliance.")
-
         lr.status = 'denied'
         lr.save()
         hook = cfg.loawebhook

@@ -274,16 +274,28 @@ async function loadSuspiciousContracts(option, idx) {
 
     source.addEventListener('header', e => {
       // Set up column headers
-      thead.innerHTML = JSON.parse(e.data);
+      try {
+        if (e.data && e.data !== "undefined") {
+          thead.innerHTML = JSON.parse(e.data);
+        }
+      } catch (err) {
+        console.error("Failed to parse header data:", err, e.data);
+      }
     });
 
     source.addEventListener('contract', e => {
       // Add each hostile contract row
-      tbody.insertAdjacentHTML('beforeend', JSON.parse(e.data));
-      hostileCount++;
-      // Flip icon red on first hostile
-      if (hostileCount === 1) {
-        updateCardStatus(idx, false);
+      try {
+        if (e.data && e.data !== "undefined") {
+          tbody.insertAdjacentHTML('beforeend', JSON.parse(e.data));
+          hostileCount++;
+          // Flip icon red on first hostile
+          if (hostileCount === 1) {
+            updateCardStatus(idx, false);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to parse contract data:", err, e.data);
       }
     });
 
@@ -348,15 +360,27 @@ async function loadSuspiciousTransactions(option, idx) {
 
     source.addEventListener('header', e => {
       // render the <th>… row
-      thead.innerHTML = JSON.parse(e.data);
+      try {
+        if (e.data && e.data !== "undefined") {
+          thead.innerHTML = JSON.parse(e.data);
+        }
+      } catch (err) {
+        console.error("Failed to parse transaction header data:", err, e.data);
+      }
     });
 
     source.addEventListener('transaction', e => {
       // append each hostile <tr>
-      tbody.insertAdjacentHTML('beforeend', JSON.parse(e.data));
-      hostileCount++;
-      if (hostileCount === 1) {
-        updateCardStatus(idx, false);
+      try {
+        if (e.data && e.data !== "undefined") {
+          tbody.insertAdjacentHTML('beforeend', JSON.parse(e.data));
+          hostileCount++;
+          if (hostileCount === 1) {
+            updateCardStatus(idx, false);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to parse transaction data:", err, e.data);
       }
     });
 
@@ -413,11 +437,25 @@ async function loadHostileAssets(option, idx) {
     const tbody = document.getElementById(`assets-body-${idx}`);
     let hostileCount = 0;
 
-    source.addEventListener('header', e => { thead.innerHTML = JSON.parse(e.data); });
+    source.addEventListener('header', e => {
+      try {
+        if (e.data && e.data !== "undefined") {
+          thead.innerHTML = JSON.parse(e.data);
+        }
+      } catch (err) {
+        console.error("Failed to parse asset header data:", err, e.data);
+      }
+    });
     source.addEventListener('asset', e => {
-      tbody.insertAdjacentHTML('beforeend', JSON.parse(e.data));
-      hostileCount++;
-      if (hostileCount === 1) updateCardStatus(idx, false);
+      try {
+        if (e.data && e.data !== "undefined") {
+          tbody.insertAdjacentHTML('beforeend', JSON.parse(e.data));
+          hostileCount++;
+          if (hostileCount === 1) updateCardStatus(idx, false);
+        }
+      } catch (err) {
+        console.error("Failed to parse asset data:", err, e.data);
+      }
     });
     source.addEventListener('progress', e => {
       const [processed, total] = e.data.split(',').map(Number);

@@ -1693,11 +1693,6 @@ def get_users():
     member_states = cfg.bb_member_states.all()
     qs = UserProfile.objects.filter(state__in=member_states).exclude(main_character=None)
 
-    member_corps = _parse_config_ids(cfg.member_corporations)
-    member_allis = _parse_config_ids(cfg.member_alliances)
-    if member_corps or member_allis:
-        qs = qs.filter(Q(main_character__corporation_id__in=member_corps) | Q(main_character__alliance_id__in=member_allis))
-
     users = (
         qs.values_list("user_id", "main_character__character_name")
         .order_by("main_character__character_name")
@@ -1709,11 +1704,6 @@ def get_user_profiles():
     cfg = BigBrotherConfig.get_solo()
     member_states = cfg.bb_member_states.all()
     qs = UserProfile.objects.filter(state__in=member_states).exclude(main_character=None)
-
-    member_corps = _parse_config_ids(cfg.member_corporations)
-    member_allis = _parse_config_ids(cfg.member_alliances)
-    if member_corps or member_allis:
-        qs = qs.filter(Q(main_character__corporation_id__in=member_corps) | Q(main_character__alliance_id__in=member_allis))
 
     users = (
         qs.select_related("main_character", "user")  # optimization

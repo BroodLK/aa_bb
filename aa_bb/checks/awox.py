@@ -144,8 +144,8 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
 
     try:
         for char_id in char_ids:
-            # We pull the past 24 hours (86400 seconds)
-            zkill_url = f"https://zkillboard.com/api/characterID/{char_id}/pastSeconds/86400/"
+            # Use the awox endpoint which only returns friendly-fire kills
+            zkill_url = f"https://zkillboard.com/api/characterID/{char_id}/awox/1/"
             try:
                 response = session.get(zkill_url, timeout=(5, 15))
                 response.raise_for_status()
@@ -162,10 +162,6 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
                 for k in data[:MAX_KILLS_LIMIT]:
                     kill_id = k.get("killmail_id")
                     if not kill_id or kill_id in processed_kills:
-                        continue
-
-                    # CHECK IF MARKED AWOX
-                    if not k.get("zkb", {}).get("awox"):
                         continue
 
                     try:
@@ -258,8 +254,8 @@ def render_awox_kills_html(userID):
     if not kills:  # Nothing to render, return standardized empty table.
         return '<table class="table stats"><tbody><tr><td class="text-center">No recent AWOX kills found.</td></tr></tbody></table>'
 
-    html = '<table class="table table-striped table-hover stats">'
-    html += '<thead><tr><th>Date</th><th>Character(s)</th><th>Attacker</th><th>Victim</th><th>Value</th><th>Link</th></tr></thead><tbody>'
+    html_output = '<table class="table table-striped table-hover stats">'
+    html_output += '<thead><tr><th>Date</th><th>Character(s)</th><th>Attacker</th><th>Victim</th><th>Value</th><th>Link</th></tr></thead><tbody>'
 
     for kill in kills:
         chars_list = sorted(kill.get("chars", []))
@@ -287,10 +283,10 @@ def render_awox_kills_html(userID):
             vic_html += f"<br><small>({kill.get('vic_alli')})</small>"
 
         row_html = '<tr class="text-danger"><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{} ISK</td><td><a href="{}" target="_blank">View</a></td></tr>'
-        html += format_html(row_html, date_str, chars, mark_safe(att_html), mark_safe(vic_html), value, link)
+        html_output += format_html(row_html, date_str, chars, mark_safe(att_html), mark_safe(vic_html), value, link)
 
-    html += '</tbody></table>'
-    return html
+    html_output += '</tbody></table>'
+    return html_output
 
 def get_awox_kill_links(user_id, force_refresh=False):
     """
