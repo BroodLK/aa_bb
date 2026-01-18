@@ -116,15 +116,32 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
     from allianceauth.authentication.models import CharacterOwnership
     from allianceauth.eveonline.models import EveCharacter
     from django.utils import timezone
+    from datetime import timedelta
     import time
 
     now = timezone.now()
+    cutoff = now - timedelta(days=365)
     existing_data = []
 
     try:
         cache_obj = AwoxKillsCache.objects.get(user_id=user_id)
         if not force_refresh and (now - cache_obj.updated).total_seconds() < AWOX_CACHE_TTL_SECONDS:
-            return cache_obj.data
+            # Filter cached data by date before returning
+            filtered_cached = []
+            for kill in cache_obj.data:
+                dt = kill.get("date")
+                if not dt:
+                    continue
+                if not hasattr(dt, "strftime"):
+                    # likely a string from JSON cache
+                    try:
+                        from django.utils.dateparse import parse_datetime
+                        dt = parse_datetime(dt)
+                    except Exception:
+                        continue
+                if dt and dt >= cutoff:
+                    filtered_cached.append(kill)
+            return filtered_cached
         existing_data = cache_obj.data
     except AwoxKillsCache.DoesNotExist:
         pass
@@ -229,7 +246,12 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
                 logger.warning(f"[AWOX] Failed fetch for char {char_id}: {e}")
 
         # Final result list
-        new_data = sorted(processed_kills.values(), key=lambda x: x["date"], reverse=True)
+        cutoff = now - timedelta(days=365)
+        new_data = [
+            kill for kill in processed_kills.values()
+            if kill["date"] >= cutoff
+        ]
+        new_data.sort(key=lambda x: x["date"], reverse=True)
 
         # Update cache
         AwoxKillsCache.objects.update_or_create(

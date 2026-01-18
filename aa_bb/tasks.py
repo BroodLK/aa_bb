@@ -186,7 +186,7 @@ def BB_update_single_user(user_id, char_name):
                 for sid in skill_ids
             )
 
-            has_awox = any(awox_map.get(link, {}).get("is_attacker", False) for link in awox_links)
+            has_awox = bool(awox_links)
             has_hostile_clones = bool(hostile_clones_result)
             has_hostile_assets = bool(hostile_assets_result)
             has_sus_contacts = bool(sus_contacts_result)

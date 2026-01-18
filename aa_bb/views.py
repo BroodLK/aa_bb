@@ -1185,6 +1185,8 @@ def stream_contacts_sse(request):
     def generator():
         try:
             yield ": ok\n\n"
+            cfg = BigBrotherConfig.get_solo()
+            exclude_neutral = cfg.exclude_neutral_contacts
             contacts = get_user_contacts(user_id)
             total = len(contacts)
             processed = hostile_count = 0
@@ -1201,14 +1203,19 @@ def stream_contacts_sse(request):
 
             for cid, info in contacts.items():
                 processed += 1
-                # Simplified check for SSE: if standing is negative or it's a known hostile
-                is_hostile = info.get('standing', 0) < 0
-                if not is_hostile:
-                    # Check if contact is hostile
-                    contact_id = info.get('contact_id')
-                    if not contact_id:
-                        contact_id = cid
-                    is_hostile = get_hostile_state(contact_id, info.get('contact_type'), when=now_ts)
+                standing = info.get('standing', 0)
+                contact_id = info.get('contact_id') or cid
+                contact_is_hostile = get_hostile_state(contact_id, info.get('contact_type'), when=now_ts)
+
+                if standing < 0:
+                    # Negative standing is only suspicious if the entity is NOT already known as hostile
+                    is_hostile = not contact_is_hostile
+                else:
+                    # skip neutral contacts if enabled
+                    if exclude_neutral and standing == 0:
+                        continue
+                    # Positive or neutral standing is suspicious if the entity IS known as hostile
+                    is_hostile = contact_is_hostile
 
                 if is_hostile:
                     hostile_count += 1
