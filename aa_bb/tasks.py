@@ -120,6 +120,7 @@ def BB_update_single_user(user_id, char_name):
             logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Fetching AWOX Links...")
             awox_data = get_awox_kill_links(user_id, force_refresh=True)
             awox_links = [x["link"] for x in awox_data]
+            attacker_links_all = [x["link"] for x in awox_data if x.get("is_attacker")]
             awox_map = {x["link"]: x for x in awox_data}
 
             logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Fetching Hostile Clones...")
@@ -186,7 +187,7 @@ def BB_update_single_user(user_id, char_name):
                 for sid in skill_ids
             )
 
-            has_awox = bool(awox_links)
+            has_awox = bool(attacker_links_all)
             has_hostile_clones = bool(hostile_clones_result)
             has_hostile_assets = bool(hostile_assets_result)
             has_sus_contacts = bool(sus_contacts_result)

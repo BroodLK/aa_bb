@@ -1684,6 +1684,26 @@ def is_location_hostile(location_id: int, system_id: int = None, safe_entities: 
     return is_hostile_unified(location_id=location_id, system_id=system_id, safe_entities=safe_entities, entity_info_cache=entity_info_cache, cfg=cfg)
 
 
+def is_safe_entity(entity_id: int, when: datetime = None, safe_entities: set = None, entity_info_cache: Dict[int, Dict] = None) -> bool:
+    """
+    Checks if an entity (Character, Corp, or Alliance) is considered safe.
+    Returns True if safe, False otherwise.
+    """
+    if not entity_id:
+        return False
+    if safe_entities is None:
+        safe_entities = get_safe_entities()
+    if int(entity_id) in safe_entities:
+        return True
+    # Check parent corp/alliance context
+    now_ts = when or timezone.now()
+    info = (entity_info_cache or {}).get(entity_id) or get_entity_info(entity_id, now_ts)
+    if info:
+        if (info.get('corp_id') in safe_entities or info.get('alli_id') in safe_entities):
+            return True
+    return False
+
+
 
 
 

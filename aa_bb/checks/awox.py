@@ -304,7 +304,10 @@ def render_awox_kills_html(userID):
         if kill.get("vic_alli"):
             vic_html += f"<br><small>({kill.get('vic_alli')})</small>"
 
-        row_html = '<tr class="text-danger"><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{} ISK</td><td><a href="{}" target="_blank">View</a></td></tr>'
+        if kill.get("is_attacker", False):
+            row_html = '<tr class="text-danger"><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{} ISK</td><td><a href="{}" target="_blank">View</a></td></tr>'
+        else:
+            row_html = ''
         html_output += format_html(row_html, date_str, chars, mark_safe(att_html), mark_safe(vic_html), value, link)
 
     html_output += '</tbody></table>'

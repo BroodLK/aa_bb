@@ -33,7 +33,7 @@ from .app_settings import (
     get_user_characters, get_entity_info, get_main_character_name,
     get_character_id, get_pings, aablacklist_active, send_status_embed,
     resolve_location_name, afat_active, discordbot_active, corptools_active,
-    get_hostile_state, get_safe_entities
+    get_hostile_state, get_safe_entities, is_safe_entity
 )
 from .models import BigBrotherConfig, WarmProgress, LeaveRequest, ComplianceTicket, ComplianceTicketComment
 
@@ -1199,17 +1199,17 @@ def stream_contacts_sse(request):
             header_html = "<tr>" + "".join(f"<th>{html.escape(h)}</th>" for h in headers) + "</tr>"
             yield f"event: header\ndata:{json.dumps(header_html)}\n\n"
 
+            safe_entities = get_safe_entities()
             now_ts = timezone.now()
 
             for cid, info in contacts.items():
                 processed += 1
                 standing = info.get('standing', 0)
                 contact_id = info.get('contact_id') or cid
-                contact_is_hostile = get_hostile_state(contact_id, info.get('contact_type'), when=now_ts)
+                contact_is_hostile = get_hostile_state(contact_id, info.get('contact_type'), when=now_ts, safe_entities=safe_entities)
 
                 if standing < 0:
-                    # Negative standing is only suspicious if the entity is NOT already known as hostile
-                    is_hostile = not contact_is_hostile
+                    is_hostile = False
                 else:
                     # skip neutral contacts if enabled
                     if exclude_neutral and standing == 0:

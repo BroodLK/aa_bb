@@ -25,6 +25,7 @@ from ..app_settings import (
     get_hostile_state,
     corptools_active,
     is_hostile_unified,
+    is_safe_entity,
 )
 from django.utils import timezone
 
@@ -200,6 +201,11 @@ def _get_contact_alerts(cid: int, info: dict, cfg: BigBrotherConfig = None, safe
     aid = info.get('aid')
     alli_name = info.get('alliance')
 
+    # ONLY flag if positive (or neutral if enabled) standings for a listed hostile entity
+    standing = info.get('standing', 0)
+    if standing < 0:
+        return []
+
     if ctype == 'character':
         if aablacklist_active() and check_char_add_to_bl(cid):
             alerts.append("Character on Blacklist")
@@ -242,9 +248,6 @@ def render_contacts(user_id: int) -> str:
     suspicious_contacts = {}
     for cid, info in contacts.items():
         s = info.get('standing', 0)
-        # skip if user already has negative standing (not "suspicious", just expected hostile)
-        if s < 0:
-            continue
         # skip neutral contacts if enabled
         if exclude_neutral and s == 0:
             continue
@@ -313,10 +316,6 @@ def get_user_hostile_notifications(user_id: int, cfg: BigBrotherConfig = None, s
 
     for cid, info in contacts.items():
         s = info.get('standing', 0)
-
-        # skip if user already has negative standing (redundant)
-        if s < 0:
-            continue
 
         # skip neutral contacts if the exclude_neutral_contacts setting is enabled
         if exclude_neutral and s == 0:
