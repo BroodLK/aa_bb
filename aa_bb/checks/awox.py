@@ -21,6 +21,7 @@ from urllib3.util.retry import Retry
 
 from ..app_settings import (
     DATASOURCE,
+    _serialize_datetime,
     esi_tenant_kwargs,
     get_contact_email,
     get_owner_name,
@@ -264,7 +265,10 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
         # Update cache
         AwoxKillsCache.objects.update_or_create(
             user_id=user_id,
-            defaults={"data": new_data, "last_accessed": now}
+            defaults={
+                "data": _serialize_datetime(new_data),
+                "last_accessed": now
+            }
         )
         return new_data
 
