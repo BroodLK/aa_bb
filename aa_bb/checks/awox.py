@@ -146,7 +146,7 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
     except AwoxKillsCache.DoesNotExist:
         pass
 
-    characters = CharacterOwnership.objects.filter(user_id=user_id).select_related("character")
+    characters = CharacterOwnership.objects.filter(user__id=user_id).select_related("character")
     char_id_to_name = {
         c.character.character_id: c.character.character_name
         for c in characters if getattr(c, "character", None)
