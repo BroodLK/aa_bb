@@ -214,17 +214,23 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
                         is_attacker = any(a.get("character_id") in char_ids for a in attackers)
 
                         # Resolve names
-                        try:
-                            vic_name = EveCharacter.objects.get(character_id=victim_id).character_name
-                        except (EveCharacter.DoesNotExist, AttributeError):
-                            vic_name = resolve_character_name(victim_id) or "Unknown"
+                        if victim_id:
+                            try:
+                                vic_name = EveCharacter.objects.get(character_id=victim_id).character_name
+                            except (EveCharacter.DoesNotExist, AttributeError):
+                                vic_name = resolve_character_name(victim_id) or "Unknown"
+                        else:
+                            vic_name = "Unknown"
 
                         fb_attacker = next((a for a in attackers if a.get("final_blow")), attackers[0] if attackers else {})
                         att_id = fb_attacker.get("character_id")
-                        try:
-                            att_name = EveCharacter.objects.get(character_id=att_id).character_name
-                        except (EveCharacter.DoesNotExist, AttributeError):
-                            att_name = resolve_character_name(att_id) or "Unknown"
+                        if att_id:
+                            try:
+                                att_name = EveCharacter.objects.get(character_id=att_id).character_name
+                            except (EveCharacter.DoesNotExist, AttributeError):
+                                att_name = resolve_character_name(att_id) or "Unknown"
+                        else:
+                            att_name = "Unknown"
 
                         processed_kills[kill_id] = {
                             "value": int(k.get("zkb", {}).get("totalValue", 0)),

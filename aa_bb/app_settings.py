@@ -67,6 +67,7 @@ def _resolve_names_via_esi(ids: list[int]) -> dict[int, str]:
     Resolve a list of EVE IDs into their names using /universe/names via the
     OpenAPI client. Returns a dict mapping id -> name.
     """
+    ids = [i for i in ids if i]
     if not ids:  # Nothing to resolve when the caller supplied no IDs.
         return {}
     operation = esi.client.Universe.PostUniverseNames(
@@ -196,6 +197,9 @@ def get_eve_entity_type(
     """
     Resolve an EVE Online ID to its entity type, caching results in the `id_types` table.
     """
+    if not eve_id:
+        return None
+
     # 1. Cache lookup
     try:
         record = id_types.objects.get(pk=eve_id)
@@ -227,6 +231,8 @@ def get_eve_entity_type(
 
 def is_npc_character(character_id: int) -> bool:
     """Check whether a character id falls inside the NPC character range."""
+    if not character_id:
+        return False
     return 3_000_000 <= character_id < 4_000_000
 
 def get_character_id(name: str) -> int | None:
@@ -628,6 +634,8 @@ def format_int(value: int) -> str:
 
 def is_npc_corporation(corp_id):
     """Return True when the corporation id falls inside the NPC range."""
+    if not corp_id:
+        return False
     return 1_000_000 <= corp_id < 2_000_000
 
 CORP_TTL = timedelta(hours=4)
@@ -842,6 +850,9 @@ def resolve_alliance_name(owner_id: int) -> str:
     Resolve alliance/faction ID to name via ESI, storing permanently in aa_bb_alliances.
     On lookup failure, falls back to stale DB record or returns 'Unresolvable <Error>'.
     """
+    if not owner_id:
+        return "Unknown"
+
     # 1. Try permanent table first
     try:
         record = Alliance_names.objects.get(pk=owner_id)
@@ -886,6 +897,9 @@ def resolve_corporation_name(corp_id: int) -> str:
     Resolve corporation ID to name via ESI, storing permanently in aa_bb_corporations.
     On lookup failure, falls back to stale DB record or returns 'Unresolvable <Error>'.
     """
+    if not corp_id:
+        return "Unknown"
+
     # 1. Try permanent table first
     try:
         record = Corporation_names.objects.get(pk=corp_id)
@@ -930,6 +944,9 @@ def resolve_character_name(char_id: int) -> str:
     Resolve character ID to name via ESI, storing permanently in Character_names.
     On lookup failure, falls back to stale DB record or returns 'Unresolvable <Error>'.
     """
+    if not char_id:
+        return "Unknown"
+
     # 1. Try permanent table first
     try:
         record = Character_names.objects.get(pk=char_id)
