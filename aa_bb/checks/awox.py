@@ -27,6 +27,7 @@ from ..app_settings import (
     get_site_url,
     resolve_alliance_name,
     resolve_character_name,
+    resolve_corporation_name,
     send_status_embed,
 )
 
@@ -58,9 +59,7 @@ def _get_corp_name(corp_id):
     if not corp_id:
         return "None"
     try:
-        operation = esi.client.Corporation.GetCorporationsCorporationId(corporation_id=corp_id)
-        result, _ = call_result(operation)
-        return result.get("name", f"Unknown ({corp_id})")
+        return resolve_corporation_name(corp_id)
     except Exception:
         return f"Unknown ({corp_id})"
 
@@ -190,7 +189,10 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
                         operation = esi.client.Killmails.GetKillmailsKillmailIdKillmailHash(
                             killmail_id=kill_id, killmail_hash=hash_, **esi_tenant_kwargs(DATASOURCE)
                         )
-                        full_kill, _ = call_result(operation)
+                        try:
+                            full_kill, _ = call_result(operation)
+                        except HTTPNotModified:
+                            full_kill, _ = call_result(operation, use_etag=False)
 
                         victim = full_kill.get("victim", {})
                         victim_id = victim.get("character_id")
