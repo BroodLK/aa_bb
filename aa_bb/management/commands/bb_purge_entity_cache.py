@@ -24,41 +24,96 @@ class Command(BaseCommand):
             action='store_true',
             help='Optimize the table after purging to reclaim space'
         )
+        parser.add_argument(
+            '--truncate',
+            action='store_true',
+            help='Truncate the table entirely (ignores --days)'
+        )
+
+    def get_table_size(self, cursor, table_name):
+        vendor = connection.vendor
+        try:
+            if vendor in ['mysql', 'mariadb']:
+                cursor.execute("""
+                    SELECT (data_length + index_length)
+                    FROM information_schema.TABLES
+                    WHERE table_schema = DATABASE()
+                    AND table_name = %s
+                """, [table_name])
+                row = cursor.fetchone()
+                return row[0] if row else 0
+            elif vendor == 'postgresql':
+                cursor.execute("SELECT pg_total_relation_size(%s)", [table_name])
+                row = cursor.fetchone()
+                return row[0] if row else 0
+            elif vendor == 'sqlite':
+                import os
+                db_path = connection.settings_dict['NAME']
+                if os.path.exists(db_path):
+                    return os.path.getsize(db_path)
+        except Exception as e:
+            logger.warning(f"Could not determine table size: {e}")
+        return 0
 
     def handle(self, *args, **options):
         days = options['days']
         optimize = options['optimize']
+        truncate = options['truncate']
         threshold = timezone.now() - timedelta(days=days)
         table_name = EntityInfoCache._meta.db_table
 
-        confirm_msg = "This will disable AA BB during the purge and may take a long time if the DB is large."
-        if optimize:
-            confirm_msg += " Optimization is also enabled and will increase execution time."
-        confirm_msg += " Do you wish to continue y/n: "
-
-        confirm = input(confirm_msg)
+        # Step 1: Initial warning and confirmation
+        confirm = input("Purging the EntityCache may take awhile if it's a large DB, BB will be disabled during the process, continue? (y/n): ")
         if confirm.lower() != 'y':
             self.stdout.write("Aborting.")
             return
 
+        # Step 2: Check DB size
+        with connection.cursor() as cursor:
+            size_bytes = self.get_table_size(cursor, table_name)
+        size_gb = size_bytes / (1024**3)
+
+        # Step 3: Check for large table and suggest truncate
+        if size_gb > 2 and not truncate:
+            self.stdout.write(self.style.WARNING(f"Your database is exceedingly large: ({size_gb:.2f} GB)"))
+            confirm_truncate = input("Did you want to truncate instead? While this may still take awhile it will be faster than a purge (y/n): ")
+            if confirm_truncate.lower() == 'y':
+                truncate = True
+
+        # Step 4: Ask about optimization if not truncating and not already requested via flag
+        if not truncate and not optimize:
+            confirm_optimize = input("After the purge did you want to optimize the db? This may add more time to the overall process, but will reallocate space back to the OS. (y/n): ")
+            if confirm_optimize.lower() == 'y':
+                optimize = True
+
         config = BigBrotherConfig.get_solo()
         original_status = config.is_active
 
-        self.stdout.write("Disabling BigBrother during purge...")
+        self.stdout.write("Disabling BigBrother...")
         config.is_active = False
         config.save()
 
         try:
-            self.stdout.write(f"Purging {table_name} entries older than {days} days ({threshold})...")
-
             with connection.cursor() as cursor:
-                # Using raw SQL to bypass ORM overhead and potential memory issues
-                # with large querysets.
-                cursor.execute(f"DELETE FROM {table_name} WHERE updated < %s", [threshold])
-                row_count = cursor.rowcount
+                if truncate:
+                    self.stdout.write(f"Truncating {table_name}...")
+                    vendor = connection.vendor
+                    if vendor == 'sqlite':
+                        cursor.execute(f"DELETE FROM {table_name}")
+                    else:
+                        cursor.execute(f"TRUNCATE TABLE {table_name}")
 
-                self.stdout.write(self.style.SUCCESS(f"Successfully purged {row_count} entries from {table_name}."))
-                logger.info(f"bb_purge_entity_cache: Purged {row_count} entries from {table_name}.")
+                    self.stdout.write(self.style.SUCCESS(f"Successfully truncated {table_name}."))
+                    logger.info(f"bb_purge_entity_cache: Truncated {table_name}.")
+                else:
+                    self.stdout.write(f"Purging {table_name} entries older than {days} days ({threshold})...")
+                    # Using raw SQL to bypass ORM overhead and potential memory issues
+                    # with large querysets.
+                    cursor.execute(f"DELETE FROM {table_name} WHERE updated < %s", [threshold])
+                    row_count = cursor.rowcount
+
+                    self.stdout.write(self.style.SUCCESS(f"Successfully purged {row_count} entries from {table_name}."))
+                    logger.info(f"bb_purge_entity_cache: Purged {row_count} entries from {table_name}.")
 
                 if optimize:
                     self.stdout.write(f"Optimizing {table_name}...")
