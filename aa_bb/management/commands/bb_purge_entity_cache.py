@@ -5,7 +5,7 @@ from django.core.management.base import BaseCommand
 from django.db import connection
 from django.utils import timezone
 
-from aa_bb.models import EntityInfoCache
+from aa_bb.models import BigBrotherConfig, EntityInfoCache
 
 logger = logging.getLogger(__name__)
 
@@ -25,9 +25,21 @@ class Command(BaseCommand):
         threshold = timezone.now() - timedelta(days=days)
         table_name = EntityInfoCache._meta.db_table
 
-        self.stdout.write(f"Purging {table_name} entries older than {days} days ({threshold})...")
+        confirm = input("This will disable AA BB during the purge and may take a long time if the DB is large. Do you wish to continue y/n: ")
+        if confirm.lower() != 'y':
+            self.stdout.write("Aborting.")
+            return
+
+        config = BigBrotherConfig.get_solo()
+        original_status = config.is_active
+
+        self.stdout.write("Disabling BigBrother during purge...")
+        config.is_active = False
+        config.save()
 
         try:
+            self.stdout.write(f"Purging {table_name} entries older than {days} days ({threshold})...")
+
             with connection.cursor() as cursor:
                 # Using raw SQL to bypass ORM overhead and potential memory issues
                 # with large querysets.
@@ -39,3 +51,7 @@ class Command(BaseCommand):
         except Exception as e:
             self.stderr.write(self.style.ERROR(f"Error purging {table_name}: {e}"))
             logger.error(f"bb_purge_entity_cache: Error purging {table_name}: {e}", exc_info=True)
+        finally:
+            self.stdout.write(f"Restoring BigBrother status to {original_status}...")
+            config.is_active = original_status
+            config.save()

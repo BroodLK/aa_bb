@@ -11,7 +11,7 @@
 - Dashboard cards now wait for data to be ready before loading.
 - Improved Discord bot stability to prevent database disconnects.
 - The CT Kicker task no longer enables itself automatically.
-- Added management command `bb_purge_entity_cache` for manual cache cleanup.
+- Added management command `bb_purge_entity_cache` for manual cache cleanup with safety confirmation and automatic module deactivation.
 
 ### Fixed
 - Resolved a dashboard loading error caused by invalid data handling.
