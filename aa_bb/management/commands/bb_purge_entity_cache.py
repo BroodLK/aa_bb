@@ -1,8 +1,9 @@
 import logging
+import time
 from datetime import timedelta
 
 from django.core.management.base import BaseCommand
-from django.db import connection
+from django.db import connection, close_old_connections
 from django.utils import timezone
 
 from aa_bb.models import BigBrotherConfig, EntityInfoCache
@@ -90,9 +91,9 @@ class Command(BaseCommand):
         original_status = config.is_active
 
         self.stdout.write("Disabling BigBrother...")
-        config.is_active = False
-        config.save()
+        BigBrotherConfig.objects.filter(pk=config.pk).update(is_active=False)
 
+        close_old_connections()
         try:
             with connection.cursor() as cursor:
                 if truncate:
@@ -108,9 +109,27 @@ class Command(BaseCommand):
                 else:
                     self.stdout.write(f"Purging {table_name} entries older than {days} days ({threshold})...")
                     # Using raw SQL to bypass ORM overhead and potential memory issues
-                    # with large querysets.
-                    cursor.execute(f"DELETE FROM {table_name} WHERE updated < %s", [threshold])
-                    row_count = cursor.rowcount
+                    # with large querysets. We chunk this to prevent long-held locks.
+                    row_count = 0
+                    batch_size = 10000
+                    vendor = connection.vendor
+                    while True:
+                        if vendor in ['mysql', 'mariadb']:
+                            cursor.execute(f"DELETE FROM {table_name} WHERE updated < %s LIMIT %s", [threshold, batch_size])
+                            batch_count = cursor.rowcount
+                        elif vendor == 'postgresql':
+                            cursor.execute(f"DELETE FROM {table_name} WHERE id IN (SELECT id FROM {table_name} WHERE updated < %s LIMIT %s)", [threshold, batch_size])
+                            batch_count = cursor.rowcount
+                        else:
+                            cursor.execute(f"DELETE FROM {table_name} WHERE updated < %s", [threshold])
+                            batch_count = cursor.rowcount
+
+                        row_count += batch_count
+                        if batch_count < batch_size or vendor not in ['mysql', 'mariadb', 'postgresql']:
+                            break
+
+                        self.stdout.write(f"Purged {row_count} entries...")
+                        time.sleep(0.1)  # Yield to other connections
 
                     self.stdout.write(self.style.SUCCESS(f"Successfully purged {row_count} entries from {table_name}."))
                     logger.info(f"bb_purge_entity_cache: Purged {row_count} entries from {table_name}.")
@@ -118,16 +137,16 @@ class Command(BaseCommand):
                 if optimize:
                     self.stdout.write(f"Optimizing {table_name}...")
                     vendor = connection.vendor
-                    if vendor in ['mysql', 'mariadb']:
-                        cursor.execute(f"OPTIMIZE TABLE {table_name}")
-                    elif vendor == 'postgresql':
-                        # Note: VACUUM cannot run inside a transaction.
-                        # Django management commands don't wrap handle() in a transaction by default.
-                        cursor.execute(f"VACUUM ANALYZE {table_name}")
-                    elif vendor == 'sqlite':
-                        cursor.execute("VACUUM")
-                    else:
-                        self.stdout.write(self.style.WARNING(f"Optimization not implemented for database vendor: {vendor}"))
+                    close_old_connections() # Ensure fresh state before long optimization
+                    with connection.cursor() as opt_cursor:
+                        if vendor in ['mysql', 'mariadb']:
+                            opt_cursor.execute(f"OPTIMIZE TABLE {table_name}")
+                        elif vendor == 'postgresql':
+                            opt_cursor.execute(f"VACUUM ANALYZE {table_name}")
+                        elif vendor == 'sqlite':
+                            opt_cursor.execute("VACUUM")
+                        else:
+                            self.stdout.write(self.style.WARNING(f"Optimization not implemented for database vendor: {vendor}"))
 
                     self.stdout.write(self.style.SUCCESS(f"Optimization complete for {table_name}."))
                     logger.info(f"bb_purge_entity_cache: Optimized {table_name} ({vendor}).")
@@ -136,6 +155,6 @@ class Command(BaseCommand):
             self.stderr.write(self.style.ERROR(f"Error during purge/optimization of {table_name}: {e}"))
             logger.error(f"bb_purge_entity_cache: Error during purge/optimization of {table_name}: {e}", exc_info=True)
         finally:
+            close_old_connections()
             self.stdout.write(f"Restoring BigBrother status to {original_status}...")
-            config.is_active = original_status
-            config.save()
+            BigBrotherConfig.objects.filter(pk=config.pk).update(is_active=original_status)

@@ -81,7 +81,7 @@ except ImportError:
     CharacterWalletJournalEntry = None
     CorporationWalletJournalEntry = None
 
-from django.db import transaction, OperationalError, close_old_connections
+from django.db import transaction, OperationalError, close_old_connections, connection
 from allianceauth.services.hooks import get_extension_logger
 
 logger = get_extension_logger(__name__)
@@ -893,6 +893,7 @@ def BB_daily_DB_cleanup():
     Deletes stale name caches, employment caches, processed mail/contract/transaction
     entries that no longer have backing data, and non-member PAP compliance rows.
     """
+    close_old_connections()
     if not BigBrotherConfig.get_solo().is_active:
         logger.warning("ℹ️  [AA-BB] - [BB_daily_DB_cleanup] - Plugin is disabled (is_active=False), skipping DB cleanup.")
         return
@@ -904,13 +905,42 @@ def BB_daily_DB_cleanup():
 
     prune_threshold = timezone.now() - timedelta(days=30)
     flags = []
-    #Delete old model entries
+    # Delete high-churn EntityInfoCache separately using raw SQL for performance
+    try:
+        threshold_entity = timezone.now() - timedelta(days=2)
+        with connection.cursor() as cursor:
+            table_name = EntityInfoCache._meta.db_table
+            total_deleted = 0
+            batch_size = 10000
+            vendor = connection.vendor
+            while True:
+                if vendor in ['mysql', 'mariadb']:
+                    cursor.execute(f"DELETE FROM {table_name} WHERE updated < %s LIMIT %s", [threshold_entity, batch_size])
+                    count = cursor.rowcount
+                elif vendor == 'postgresql':
+                    cursor.execute(f"DELETE FROM {table_name} WHERE id IN (SELECT id FROM {table_name} WHERE updated < %s LIMIT %s)", [threshold_entity, batch_size])
+                    count = cursor.rowcount
+                else:
+                    cursor.execute(f"DELETE FROM {table_name} WHERE updated < %s", [threshold_entity])
+                    count = cursor.rowcount
+
+                total_deleted += count
+                if count < batch_size or vendor not in ['mysql', 'mariadb', 'postgresql']:
+                    break
+                time.sleep(0.1)
+
+            if total_deleted > 0:
+                flags.append(f"- Deleted {total_deleted} old Entity Info Cache records.")
+        close_old_connections()
+    except Exception as e:
+        logger.error(f"Failed to cleanup EntityInfoCache: {e}")
+
+    # Delete other old model entries using ORM
     models_to_cleanup = [
         (Alliance_names, "alliance"),
         (Character_names, "character"),
         (Corporation_names, "corporation"),
         (UserStatus, "User Status"),
-        (EntityInfoCache, "Entity Info Cache"),
         (CorporationInfoCache, "Corporation Info Cache"),
         (AllianceHistoryCache, "Alliance History Cache"),
         (SovereigntyMapCache, "Sovereignty Map Cache"),
@@ -918,9 +948,6 @@ def BB_daily_DB_cleanup():
 
     for model, name in models_to_cleanup:
         threshold = prune_threshold
-        if name == "Entity Info Cache":
-            threshold = timezone.now() - timedelta(days=2)  # Much shorter retention for entity cache
-
         old_entries = model.objects.filter(updated__lt=threshold)
         count, _ = old_entries.delete()
         if count > 0:
