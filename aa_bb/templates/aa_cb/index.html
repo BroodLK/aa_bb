@@ -545,7 +545,7 @@ async function loadAll(option) {
 
     // Add Force Load button to the general message
     const btn = document.createElement('button');
-    btn.className = 'btn btn-xs btn-warning pull-right float-right';
+    btn.className = 'btn btn-xs btn-warning float-end p-1';
     btn.innerText = 'Force Load';
     btn.onclick = () => {
         forceLoadRequested = true;

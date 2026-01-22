@@ -1,5 +1,13 @@
 ## [3.2.9] - 2026-01-20
 
+> [!CAUTION]
+>
+> If you are upgrading from a previous version, you will need to run the `bb_purge_entity_cache` management command to clear the entity cache.
+```bash
+python manage.py bb_purge_entity_cache
+```
+
+
 ### Added
 - Compliance tickets now close automatically when a removed character is added back.
 - Added a global on/off setting for Discord message activity tracking.
