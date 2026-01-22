@@ -61,7 +61,7 @@ VERBOSE_WEBHOOK_LOGGING = True
 
 
 
-@shared_task
+@shared_task(time_limit=7200)
 def BB_update_single_user(user_id, char_name):
     """
     Process updates for a single user.
@@ -96,36 +96,45 @@ def BB_update_single_user(user_id, char_name):
 
 
     # Retry logic previously inside the main loop
+    from .app_settings import get_safe_entities, get_user_characters, get_entity_info
+    safe_entities = get_safe_entities()
+    user_chars = get_user_characters(user_id)
+    entity_info_cache = {}
+    now_ts = timezone.now()
+    for cid in user_chars.keys():
+        entity_info_cache[cid] = get_entity_info(cid, now_ts)
+
     for attempt in range(3):
         try:
             # pingroleID = instance.pingroleID # Unused variable?
 
             logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Fetching Cyno Info...")
-            cyno_result = get_user_cyno_info(user_id)
+            cyno_result = get_user_cyno_info(user_id, cfg=instance)
 
             logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Fetching Skill Info...")
             skills_result = get_multiple_user_skill_info(user_id, skill_ids)
 
             logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Determining Character State...")
-            state_result = determine_character_state(user_id, True)
+            state_result = determine_character_state(user_id, True, cfg=instance)
 
             logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Fetching AWOX Links...")
-            awox_data = get_awox_kill_links(user_id)
+            awox_data = get_awox_kill_links(user_id, force_refresh=True)
             awox_links = [x["link"] for x in awox_data]
+            attacker_links_all = [x["link"] for x in awox_data if x.get("is_attacker")]
             awox_map = {x["link"]: x for x in awox_data}
 
             logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Fetching Hostile Clones...")
-            hostile_clones_result = get_hostile_clone_locations(user_id)
+            hostile_clones_result = get_hostile_clone_locations(user_id, cfg=instance, safe_entities=safe_entities, entity_info_cache=entity_info_cache)
 
             logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Fetching Hostile Assets...")
 
-            hostile_assets_result = get_hostile_asset_locations(user_id)
+            hostile_assets_result = get_hostile_asset_locations(user_id, cfg=instance, safe_entities=safe_entities, entity_info_cache=entity_info_cache)
 
             logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Fetching Sus Contacts/Contracts/Mails/Trans...")
-            sus_contacts_result = {str(cid): v for cid, v in get_user_hostile_notifications(user_id).items()}
-            sus_contracts_result = {str(issuer_id): v for issuer_id, v in get_user_hostile_contracts(user_id).items()}
-            sus_mails_result = {str(issuer_id): v for issuer_id, v in get_user_hostile_mails(user_id).items()}
-            sus_trans_result = {str(issuer_id): v for issuer_id, v in get_user_hostile_transactions(user_id).items()}
+            sus_contacts_result = {str(cid): v for cid, v in get_user_hostile_notifications(user_id, cfg=instance, safe_entities=safe_entities, entity_info_cache=entity_info_cache).items()}
+            sus_contracts_result = {str(issuer_id): v for issuer_id, v in get_user_hostile_contracts(user_id, cfg=instance, safe_entities=safe_entities, entity_info_cache=entity_info_cache).items()}
+            sus_mails_result = {str(issuer_id): v for issuer_id, v in get_user_hostile_mails(user_id, cfg=instance, safe_entities=safe_entities, entity_info_cache=entity_info_cache).items()}
+            sus_trans_result = {str(issuer_id): v for issuer_id, v in get_user_hostile_transactions(user_id, cfg=instance, safe_entities=safe_entities, entity_info_cache=entity_info_cache).items()}
 
             sp_age_ratio_result: dict[str, dict] = {}
 
@@ -178,7 +187,7 @@ def BB_update_single_user(user_id, char_name):
                 for sid in skill_ids
             )
 
-            has_awox = any(awox_map.get(link, {}).get("is_attacker", False) for link in awox_links)
+            has_awox = bool(attacker_links_all)
             has_hostile_clones = bool(hostile_clones_result)
             has_hostile_assets = bool(hostile_assets_result)
             has_sus_contacts = bool(sus_contacts_result)
@@ -303,13 +312,13 @@ def BB_update_single_user(user_id, char_name):
                 logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} new links {link_list3}")
                 link_list2 = "\n".join(f"- {link}" for link in old_links)
                 logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} old links {link_list2}")
-                if status.has_awox_kills != has_awox and has_awox:  # first time awox kills were spotted for this user
+                if status.has_awox_kills != has_awox:
                     if not has_awox:
                         if instance.awox_notify:
                             changes.append(f"### AWOX Kill Status: 🟢")
                     status.has_awox_kills = has_awox
                     status_changed = True
-                    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} changed")
+                    logger.info(f"✅  [AA-BB] - [BB_update_single_user] - {char_name} changed awox status to {has_awox}")
                 if new_links:  # send notifications only for links not yet alerted on
                     # Identify which of the new links the user was an attacker in
                     attacker_links = [
@@ -971,7 +980,7 @@ def BB_update_single_user(user_id, char_name):
             del cyno_result, skills_result, state_result, awox_data, awox_links, awox_map
             del hostile_clones_result, hostile_assets_result
             del sus_contacts_result, sus_contracts_result, sus_mails_result, sus_trans_result
-            del sp_age_ratio_result, changes
+            del sp_age_ratio_result, changes, entity_info_cache, user_chars
             if 'all_chunks' in locals():
                 del all_chunks
 
@@ -1005,7 +1014,7 @@ def BB_update_single_user(user_id, char_name):
             raise
 
 
-@shared_task
+@shared_task(time_limit=7200)
 def BB_run_regular_updates():
     """
     Main scheduled job that refreshes BigBrother cache entries.
@@ -1066,9 +1075,8 @@ def BB_run_regular_updates():
         # walk each eligible user and rebuild their status snapshot
         if instance.is_active:  # skip user iteration entirely when plugin disabled/unlicensed
             # Use iterator to prevent loading all users into memory at once
-            users_iterator = get_users()
-            users = list(users_iterator)
-            total_users = len(users)
+            users = get_users()
+            total_users = users.count()
             logger.info(
                 f"✅  [AA-BB] - [BB_run_regular_updates] - Dispatching updates for {total_users} users (staggered)."
             )
@@ -1143,8 +1151,8 @@ def BB_run_regular_updates():
 
             now = timezone.now()
 
-            for index, char_name in enumerate(users):
-                user_id = get_user_id(char_name)
+            # Use .iterator() to avoid loading all users into the queryset cache
+            for index, (user_id, char_name) in enumerate(users.iterator()):
                 if not user_id:  # defensive: skip orphaned mains lacking a user id
                     continue
 
@@ -1193,7 +1201,7 @@ def BB_run_regular_updates():
             color=0x00FF00,
         )
 
-@shared_task()
+@shared_task(time_limit=7200)
 def BB_send_discord_notifications(subject: str, chunks: list[list[str]]) -> None:
     """
     Dedicated task to send Discord embeds for BigBrother.
@@ -1337,7 +1345,7 @@ def _remove_ids(cfg, field_name: str, ids: set[int]) -> bool:
     return False
 
 
-@shared_task(bind=True, name="aa_bb.tasks.BB_sync_contacts_from_aa_contacts")
+@shared_task(bind=True, name="aa_bb.tasks.BB_sync_contacts_from_aa_contacts", time_limit=7200)
 def BB_sync_contacts_from_aa_contacts(self):
     """
     Sync standings from aa-contacts into BigBrother hostiles/members/whitelists.

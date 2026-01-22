@@ -46,6 +46,9 @@ urlpatterns = [
     path("stream_contracts_sse/", views.stream_contracts_sse, name="stream_contracts_sse"),  # SSE feed for contracts.
     path("stream_mails_sse/", views.stream_mails_sse, name="stream_mails_sse"),  # SSE feed for suspicious mails.
     path("stream_transactions_sse/", views.stream_transactions_sse, name="stream_transactions_sse"),  # SSE feed for wallet transactions.
+    path("stream_assets_sse/", views.stream_assets_sse, name="stream_assets_sse"),
+    path("stream_clones_sse/", views.stream_clones_sse, name="stream_clones_sse"),
+    path("stream_contacts_sse/", views.stream_contacts_sse, name="stream_contacts_sse"),
 
     # Paginated Suspicious Contracts endpoints
     path("list_contract_ids/", views.list_contract_ids, name="list_contract_ids"),  # Provide IDs for contract pagination.

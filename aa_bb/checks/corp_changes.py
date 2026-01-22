@@ -33,7 +33,7 @@ FORUMS_ICON     = "https://eve-offline.net/favicon.ico"
 EVESEARCH_ICON  = "https://eve-search.com/favicon.ico"
 
 
-def get_frequent_corp_changes(user_id):
+def get_frequent_corp_changes(user_id, cfg: BigBrotherConfig = None):
     """
     Build (and cache) an HTML report showing each corp membership stint.
 
@@ -42,20 +42,22 @@ def get_frequent_corp_changes(user_id):
     """
     # Try 4h cache first
     try:
-        cache = FrequentCorpChangesCache.objects.get(pk=user_id)
-        if timezone.now() - cache.updated < TTL_SHORT:  # Serve cached card for ~4h to limit upstream calls.
+        cache_entry = FrequentCorpChangesCache.objects.get(pk=user_id)
+        if timezone.now() - cache_entry.updated < TTL_SHORT:  # Serve cached card for ~4h to limit upstream calls.
             try:
-                cache.last_accessed = timezone.now()
-                cache.save(update_fields=["last_accessed"])
+                cache_entry.last_accessed = timezone.now()
+                cache_entry.save(update_fields=["last_accessed"])
             except Exception:
-                cache.save()
-            return format_html(cache.html)
+                cache_entry.save()
+            return format_html(cache_entry.html)
     except FrequentCorpChangesCache.DoesNotExist:
         pass
     # Load hostile lists
-    cfg = BigBrotherConfig.get_solo()
-    hostile_corps = {int(cid) for cid in cfg.hostile_corporations.split(',') if cid}  # Precompute hostile corp IDs.
-    hostile_alliances = {int(aid) for aid in cfg.hostile_alliances.split(',') if aid}  # Likewise for alliances.
+    if cfg is None:
+        cfg = BigBrotherConfig.get_solo()
+    from ..app_settings import _parse_config_ids
+    hostile_corps = _parse_config_ids(cfg.hostile_corporations)
+    hostile_alliances = _parse_config_ids(cfg.hostile_alliances)
 
     characters = CharacterOwnership.objects.filter(user__id=user_id)
     html = ""
@@ -189,16 +191,18 @@ def get_frequent_corp_changes(user_id):
         pass
     return format_html(html)
 
-def time_in_corp(user_id):
+def time_in_corp(user_id, cfg: BigBrotherConfig = None):
     """
     Return the maximum number of days any of the user's characters have been
     continuously in the configured main corporation.
     """
+    if cfg is None:
+        cfg = BigBrotherConfig.get_solo()
     days = 0
     characters = CharacterOwnership.objects.filter(user__id=user_id)
     for char in characters:
         char_id   = char.character.character_id
-        c_days = get_current_stint_days_in_corp(char_id, BigBrotherConfig.get_solo().main_corporation_id)
+        c_days = get_current_stint_days_in_corp(char_id, cfg.main_corporation_id)
         if c_days > days:  # Track the maximum stint across all characters.
             days = c_days
     return days

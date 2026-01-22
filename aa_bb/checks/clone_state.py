@@ -28,12 +28,16 @@ logger = get_extension_logger(__name__)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
+_fallback_skill_ids_cache = None
+
 def _load_fallback_skill_ids():
     """
     Load skills.json and return a sorted list of all skill IDs contained.
-    skills.json is a mapping of category name -> list[dict], where the 2nd dict
-    contains skill_id(str) -> skill_name.
     """
+    global _fallback_skill_ids_cache
+    if _fallback_skill_ids_cache is not None:
+        return _fallback_skill_ids_cache
+
     skills_json_file = os.path.join(BASE_DIR, "skills.json")
     try:
         with open(skills_json_file, "r") as f:
@@ -53,7 +57,8 @@ def _load_fallback_skill_ids():
                 except Exception:
                     continue
 
-    return sorted(ids)
+    _fallback_skill_ids_cache = sorted(ids)
+    return _fallback_skill_ids_cache
 
 def in_utc_update_window(now, start_time, end_time):
     utc_time = now.time()
@@ -63,37 +68,62 @@ def in_utc_update_window(now, start_time, end_time):
         return utc_time >= start_time or utc_time < end_time
 
 
-def determine_character_state(user_id, save: bool = False):
+_alpha_skills_cache = None
+_skills_cache = None
+
+def _get_alpha_skills():
+    global _alpha_skills_cache
+    if _alpha_skills_cache is None:
+        alpha_skills_file = os.path.join(BASE_DIR, "alpha_skills.json")
+        try:
+            with open(alpha_skills_file, "r") as f:
+                _alpha_skills_cache = json.load(f)
+        except Exception:
+            logger.exception("Failed to load alpha_skills.json")
+            return []
+    return _alpha_skills_cache
+
+def _get_skills():
+    global _skills_cache
+    if _skills_cache is None:
+        skills_json_file = os.path.join(BASE_DIR, "skills.json")
+        try:
+            with open(skills_json_file, "r") as f:
+                _skills_cache = json.load(f)
+        except Exception:
+            logger.exception("Failed to load skills.json")
+            return {}
+    return _skills_cache
+
+
+def determine_character_state(user_id, save: bool = False, cfg: BigBrotherConfig = None):
     """
     Inspect every owned character's skill levels and infer Alpha/Omega status.
     """
-    cfg = BigBrotherConfig.get_solo()
+    if cfg is None:
+        cfg = BigBrotherConfig.get_solo()
     max_cache_age = timedelta(hours=cfg.update_cache_ttl_hours)
     window_start = cfg.update_maintenance_window_start
     window_end = cfg.update_maintenance_window_end
 
-    alpha_skills_file = os.path.join(BASE_DIR, "alpha_skills.json")
-
-    # Load skill
-    with open(alpha_skills_file, "r") as f:
-        alpha_skills = json.load(f)
+    alpha_skills = _get_alpha_skills()
     alpha_caps = {skill["id"]: skill["cap"] for skill in alpha_skills}
     alpha_skill_ids = [skill["id"] for skill in alpha_skills]
 
-    skills_json_file = os.path.join(BASE_DIR, "skills.json")
-    with open(skills_json_file, "r") as f:
-        skills = json.load(f)
+    # skills = _get_skills() # Loaded but seemingly unused in this function currently
+
+    all_char_ids_map = get_user_characters(user_id)  # iterates keys if dict
+    char_ids = list(all_char_ids_map.keys())
 
     char_db_records = {
-        rec.char_id: rec for rec in CharacterAccountState.objects.all()
+        rec.char_id: rec for rec in CharacterAccountState.objects.filter(char_id__in=char_ids)
     }
 
-    all_char_ids = get_user_characters(user_id)  # iterates keys if dict
     result = {}
 
     # If corptools is not available, default to unknown status.
     if CharacterAudit is None or Skill is None:
-        for char_id in all_char_ids:
+        for char_id in char_ids:
             db_record = char_db_records.get(char_id)
             result[char_id] = {
                 "state": (db_record.state if db_record else "unknown") or "unknown",
@@ -101,8 +131,6 @@ def determine_character_state(user_id, save: bool = False):
                 "last_state": (db_record.state if db_record else None),
             }
         return result
-
-    char_ids = list(all_char_ids)
 
     audits = (
         CharacterAudit.objects
@@ -154,7 +182,8 @@ def determine_character_state(user_id, save: bool = False):
         if db_record and db_record.skill_used:
             extra_skill_ids.add(int(db_record.skill_used))
 
-    skill_ids_to_fetch = sorted(set(alpha_skill_ids) | extra_skill_ids)
+    fallback_skill_ids = _load_fallback_skill_ids()
+    skill_ids_to_fetch = sorted(set(alpha_skill_ids) | extra_skill_ids | set(fallback_skill_ids))
 
     skill_rows = (
         Skill.objects
@@ -176,7 +205,6 @@ def determine_character_state(user_id, save: bool = False):
             "active": int(row["active_skill_level"]),
         }
 
-    fallback_skill_ids = _load_fallback_skill_ids()
     for char_id in chars_to_check:
         db_record = char_db_records.get(char_id)
         total_sp = total_sp_by_char.get(char_id)
@@ -218,19 +246,11 @@ def determine_character_state(user_id, save: bool = False):
 
         # 3) Fallback: if still unknown, check skills.json list
         if state is None and fallback_skill_ids:
-            fb_rows = (
-                Skill.objects
-                .filter(
-                    character__character__character_id=char_id,
-                    skill_id__in=fallback_skill_ids
-                )
-                .values("skill_id", "trained_skill_level", "active_skill_level")
-            )
-
-            for row in fb_rows:
-                sid = int(row["skill_id"])
-                trained = int(row["trained_skill_level"])
-                active = int(row["active_skill_level"])
+            # Already fetched in bulk above
+            for sid in fallback_skill_ids:
+                levels = per_char.get(char_id, {}).get(sid, {"trained": 0, "active": 0})
+                trained = levels["trained"]
+                active = levels["active"]
                 cap = alpha_caps.get(sid, 0)
 
                 if active > cap:

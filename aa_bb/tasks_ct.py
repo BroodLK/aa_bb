@@ -256,7 +256,7 @@ RULES: List[ModuleRule] = [
 ]
 
 
-@shared_task
+@shared_task(time_limit=7200)
 def kickstart_stale_ct_modules(days_stale: int = 2, limit: Optional[int] = None, dry_run: bool = False) -> str:
     """
     Iterate audits and queue CT module tasks for any characters with stale data.

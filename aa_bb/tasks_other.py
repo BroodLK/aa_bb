@@ -12,7 +12,7 @@ from allianceauth.services.hooks import get_extension_logger
 
 logger = get_extension_logger(__name__)
 
-@shared_task
+@shared_task(time_limit=7200)
 def BB_send_recurring_stats():
     """
     Build and post recurring stats to the configured webhook.

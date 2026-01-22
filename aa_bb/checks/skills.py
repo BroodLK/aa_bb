@@ -15,6 +15,7 @@ import os
 from typing import Dict
 from django.utils.safestring import mark_safe
 from django.utils import timezone
+from functools import lru_cache
 
 logger = get_extension_logger(__name__)
 

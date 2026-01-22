@@ -6,6 +6,7 @@ from typing import Optional
 from django.utils import timezone
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.db import close_old_connections
 
 from celery import shared_task
 
@@ -204,25 +205,32 @@ def discord_inactivity_check(user):
     Check if the user has spoken on Discord within the configured timeframe.
     """
     tcfg = TicketToolConfig.get_solo()
-    if not discordbot_active() or not tcfg.discord_inactivity_enabled:
+    bbcfg = BigBrotherConfig.get_solo()
+    if not discordbot_active() or not tcfg.discord_inactivity_enabled or not bbcfg.discord_message_tracking:
         return True
 
     from .models import UserStatus
-    status, _ = UserStatus.objects.get_or_create(user=user)
+    status_data = UserStatus.objects.filter(user=user).values("last_discord_message_at").first()
 
-    if not status.last_discord_message_at:
-        # If no message recorded, they might be inactive or we just started tracking.
-        # Initialize to now to avoid mass ticketing on feature activation.
+    if not status_data:
+        # If no status recorded, initialize one to avoid mass ticketing on feature activation.
         try:
             get_discord_user_id(user)
-            status.last_discord_message_at = timezone.now()
-            status.save(update_fields=['last_discord_message_at'])
-            return True
+            UserStatus.objects.create(user=user, last_discord_message_at=timezone.now())
         except Exception:
-            # Not on Discord, skip this check
-            return True
+            pass
+        return True
 
-    days_since = (timezone.now() - status.last_discord_message_at).days
+    last_discord_message_at = status_data.get("last_discord_message_at")
+    if not last_discord_message_at:
+        try:
+            get_discord_user_id(user)
+            UserStatus.objects.filter(user=user).update(last_discord_message_at=timezone.now())
+        except Exception:
+            pass
+        return True
+
+    days_since = (timezone.now() - last_discord_message_at).days
     if days_since >= tcfg.discord_inactivity_days:
         return False
     return True
@@ -239,9 +247,10 @@ def get_webhook_for_reason(reason: str) -> Optional[str]:
     return bb_cfg.webhook
 
 
-@shared_task
+@shared_task(time_limit=7200)
 def hourly_compliance_check():
     """Run the top-of-hour audit that enforces compliance rules and reminders."""
+    close_old_connections()
     bb_cfg = BigBrotherConfig.get_solo()
     if not bb_cfg.is_active:
         logger.warning("ℹ️  [AA-BB] - [hourly_compliance_check] - Plugin is disabled (is_active=False), skipping compliance check.")
@@ -288,16 +297,15 @@ def hourly_compliance_check():
     if bb_cfg.limit_to_main_corp:
         profiles_qs = profiles_qs.filter(main_character__corporation_id=bb_cfg.main_corporation_id)
 
-    # Bulk load profiles with select_related to reduce queries
-    profiles = list(profiles_qs.select_related('user', 'main_character'))
-    allowed_users = {p.user for p in profiles}
+    # Bulk load profile IDs to define allowed membership scope efficiently
+    allowed_user_ids = set(profiles_qs.values_list('user_id', flat=True))
 
     # Pre-fetch excluded users to avoid repeated queries
     excluded_user_ids = set(t_cfg.excluded_users.all().values_list('id', flat=True))
 
     # 1. Check compliance reasons
-    for UserProfil in profiles:
-        user = UserProfil.user
+    for profile in profiles_qs.select_related('user', 'main_character').iterator():
+        user = profile.user
         if user.id in excluded_user_ids:  # Skip users explicitly excluded from checks.
             continue
         for reason, (checker, msg_template) in reason_checkers.items():
@@ -336,9 +344,40 @@ def hourly_compliance_check():
         if ticket.is_exception:
             continue
 
-        if reason == "char_removed" or reason == "awox_kill":
+        if reason == "awox_kill":
             # These rely on manual resolution flow and currently have no automated reminders
             continue
+
+        if reason == "char_removed":
+            if not ticket.user:
+                close_ticket(ticket)
+                if ticket_resolved_automatic_notify:
+                    add_notification(hook, f"⚠️ Ticket for {user_display} (**{reason}**) closed due to missing auth user")
+                continue
+
+            if not ticket.details:
+                # No character name stored, can't auto-resolve
+                continue
+
+            # Check if characters are re-added
+            char_names = [c.strip() for c in ticket.details.split(",") if c.strip()]
+            if not char_names:
+                continue
+
+            all_readded = True
+            for char_name in char_names:
+                if not EveCharacter.objects.filter(character_name=char_name, character_ownership__user=ticket.user).exists():
+                    all_readded = False
+                    break
+
+            if all_readded:
+                close_ticket(ticket)
+                if ticket_resolved_automatic_notify:
+                    add_notification(hook, f"✅ Ticket for {user_display} (**{reason}**) resolved (all characters re-added: {ticket.details})")
+                continue
+            else:
+                # Still missing some characters, continue to wait
+                continue
 
         checker, _ = reason_checkers[reason]
 
@@ -349,7 +388,7 @@ def hourly_compliance_check():
                 add_notification(hook, f"✅ Ticket for {user_display} (**{reason}**) resolved")
             continue
 
-        if ticket.user not in allowed_users:  # User left the org, close ticket and alert.
+        if ticket.user_id not in allowed_user_ids:  # User left the org, close ticket and alert.
             close_ticket(ticket)
             if ticket_resolved_automatic_notify:
                 add_notification(hook, f"❌ User {user_display} is no longer a member, closing ticket (**{reason}**)")
@@ -549,9 +588,19 @@ def ensure_ticket(user, reason, details=None):
 
     if existing:
         if not existing.is_resolved:
+            if reason == "char_removed" and details and details not in (existing.details or ""):
+                if existing.details:
+                    existing.details += f", {details}"
+                else:
+                    existing.details = details
+                existing.save(update_fields=["details"])
+                add_ticket_comment(existing, None, f"⚠️ Additional character removed: {details}")
             return  # Already has an open ticket
 
         # Reopen existing resolved ticket instead of creating a new one
+        if reason == "char_removed" and details:
+            existing.details = details
+            existing.save(update_fields=["details"])
         reopen_ticket(existing, message=f"⚠️ Issue re-detected:\n{ticket_message}")
 
         send_status_embed(
@@ -598,7 +647,8 @@ def ensure_ticket(user, reason, details=None):
                 discord_user_id=0,
                 discord_channel_id=None,
                 reason=reason,
-                ticket_id=tcfg.ticket_counter
+                ticket_id=tcfg.ticket_counter,
+                details=details
             )
             tcfg.ticket_counter += 1
             tcfg.save(update_fields=["ticket_counter"])
@@ -649,7 +699,8 @@ def ensure_ticket(user, reason, details=None):
                 discord_user_id=discord_id,
                 discord_channel_id=thread_id,
                 reason=reason,
-                ticket_id=tcfg.ticket_counter
+                ticket_id=tcfg.ticket_counter,
+                details=details
             )
             tcfg.ticket_counter += 1
             tcfg.save(update_fields=["ticket_counter"])
@@ -670,7 +721,7 @@ def ensure_ticket(user, reason, details=None):
                 args=["aa_bb.tasks_bot.create_compliance_thread"],
                 kwargs={
                     "task_args": [user.id, discord_id, reason, ticket_message, thread_name],
-                    "task_kwargs": {"thread_id": thread_id, "include_user": include_user}
+                    "task_kwargs": {"thread_id": thread_id, "include_user": include_user, "details": details}
                 },
                 queue='aadiscordbot'
             )
@@ -681,7 +732,7 @@ def ensure_ticket(user, reason, details=None):
                 args=["aa_bb.tasks_bot.create_compliance_ticket"],
                 kwargs={
                     "task_args": [user.id, discord_id, reason, ticket_message],
-                    "task_kwargs": {"include_user": include_user}
+                    "task_kwargs": {"include_user": include_user, "details": details}
                 },
                 queue='aadiscordbot'
             )

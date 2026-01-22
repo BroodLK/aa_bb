@@ -525,6 +525,12 @@ class BigBrotherConfig(SingletonModel):
         verbose_name=_("Suspicious Transaction Notifications")
     )
 
+    discord_message_tracking = models.BooleanField(
+        default=True,
+        help_text=_("Whether to track discord message activity (last_discord_message_at) for users"),
+        verbose_name=_("Discord Message Activity Tracking")
+    )
+
     hide_unaudited_users = models.BooleanField(
         default=False,
         help_text=_("If enabled, users who have no audited characters will be hidden from the main dashboard dropdown."),
@@ -1505,8 +1511,8 @@ class WarmProgress(models.Model):
 
 class EntityInfoCache(models.Model):
     """Cache of resolved entity info (name + corp/alliance pointers) per timestamp."""
-    entity_id  = models.IntegerField()
-    as_of      = models.DateTimeField()
+    entity_id  = models.BigIntegerField(db_index=True)
+    as_of      = models.DateTimeField(db_index=True)
     data       = JSONField()
     updated    = models.DateTimeField(auto_now=True)
 
@@ -2189,6 +2195,7 @@ class ComplianceTicket(models.Model):
     last_reminder_sent = models.IntegerField(default=0)
 
     is_resolved = models.BooleanField(default=False)
+    details = models.TextField(blank=True, null=True)
     is_exception = models.BooleanField(default=False, help_text="Ticket is marked as an exception and won't receive reminders or be recreated")
     exception_reason = models.TextField(blank=True, null=True, help_text="Reason why this ticket was marked as an exception")
 

@@ -164,7 +164,7 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
     return system_map
 
 
-def get_hostile_asset_locations(user_id: int) -> Dict[str, dict]:
+def get_hostile_asset_locations(user_id: int, cfg: BigBrotherConfig = None, safe_entities: set = None, entity_info_cache: dict = None) -> Dict[str, dict]:
     """
     Returns a mapping of system display name -> structured hostile data
     for systems where the user's characters have assets in space and the
@@ -175,9 +175,11 @@ def get_hostile_asset_locations(user_id: int) -> Dict[str, dict]:
         return {}
 
     hostile_map: Dict[str, dict] = {}
-    from ..app_settings import get_safe_entities
-    safe_entities = get_safe_entities()
-    cfg = BigBrotherConfig.get_solo()
+    if safe_entities is None:
+        from ..app_settings import get_safe_entities
+        safe_entities = get_safe_entities()
+    if cfg is None:
+        cfg = BigBrotherConfig.get_solo()
     ships_only = cfg.hostile_assets_ships_only
     _hostile_memo = {}
 
@@ -220,7 +222,9 @@ def get_hostile_asset_locations(user_id: int) -> Dict[str, dict]:
                         is_asset=True,
                         asset_type_id=None,
                         when=timezone.now(),
-                        safe_entities=safe_entities
+                        safe_entities=safe_entities,
+                        entity_info_cache=entity_info_cache,
+                        cfg=cfg
                     )
                     _hostile_memo[memo_key] = is_hostile_at_loc
 

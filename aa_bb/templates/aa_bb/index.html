@@ -46,6 +46,26 @@
         border-left: 1px solid var(--bs-gray-dark);
         border-right: 1px solid var(--bs-gray-dark);
     }
+
+    /* Progress bar styling */
+    .progress-container {
+        margin-bottom: 1rem;
+    }
+    .progress {
+        height: 1.5rem;
+        background-color: var(--bs-gray-800);
+        border-radius: 0.25rem;
+        overflow: hidden;
+        border: 1px solid var(--bs-gray-700);
+    }
+    .progress-bar {
+        height: 100%;
+        color: #fff;
+        text-align: center;
+        line-height: 1.5rem;
+        background-color: #0d6efd;
+        transition: width 0.6s ease;
+    }
 </style>
 
 <!-- Dropdown -->
@@ -67,9 +87,19 @@
 </div>
 
 <!-- Error / Info Message -->
-<div id="warmerBox" class="alert alert-info" style="display:none; margin-top: 1rem;"></div>
+<div id="warmerBox" class="alert alert-info" style="display:none; margin-top: 1rem;">
+  <div id="warmer-text"></div>
+  <div class="progress mt-2" style="height: 1rem;">
+    <div id="warmer-progress-bar" class="progress-bar" role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">0%</div>
+  </div>
+</div>
 <div id="messageBox" class="alert" style="display: none;"></div>
-<div id="contractMessage" class="alert" style="display:none;"></div>
+<div id="contractMessage" class="alert alert-info" style="display:none; margin-top: 1rem;">
+  <div id="contract-text"></div>
+  <div class="progress mt-2" style="height: 1rem;">
+    <div id="contract-progress-bar" class="progress-bar" role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">0%</div>
+  </div>
+</div>
 <div id="errorMessages"></div>
 
 <!-- Cards Container -->
@@ -91,6 +121,45 @@ document.addEventListener('DOMContentLoaded', () => {
   const errorMessages    = document.getElementById('errorMessages');
   const warmerBox        = document.getElementById('warmerBox');
 
+  let forceLoadRequested = false;
+  async function waitForPrewarm(option) {
+    forceLoadRequested = false;
+
+    // Add Force Load button to the general message
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-xs btn-warning float-end p-1';
+    btn.innerText = 'Force Load';
+    btn.onclick = () => {
+        forceLoadRequested = true;
+        btn.disabled = true;
+        btn.innerText = 'Loading...';
+    };
+    generalMessage.appendChild(btn);
+
+    return new Promise((resolve) => {
+      const check = async () => {
+        if (forceLoadRequested) {
+            resolve();
+            return;
+        }
+        try {
+          const res = await fetch("{% url 'aa_bb:warm_progress' %}");
+          if (!res.ok) { resolve(); return; }
+          const data = await res.json();
+          const isStillWarming = data.users.some(u => u.user === option);
+          if (!isStillWarming) {
+            resolve();
+          } else {
+            setTimeout(check, 1000);
+          }
+        } catch (e) {
+          resolve();
+        }
+      };
+      check();
+    });
+  }
+
   // ---- Searchable, SINGLE-select account picker ----
   let accountSelect = null;
   if (window.TomSelect) {
@@ -107,17 +176,28 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // Only fire once a definite account has been selected
-    accountSelect.on('item_add', function(value, item) {
+    accountSelect.on('item_add', async function(value, item) {
       if (!value) return;
-      fetch("{% url 'BigBrother:warm_cache' %}?option=" + encodeURIComponent(value));
+      container.innerHTML     = '';
+      errorMessages.innerHTML = '';
+      hideContract();
+      showGeneral('Starting cache warmer…', 'info');
+      await fetch("{% url 'BigBrother:warm_cache' %}?option=" + encodeURIComponent(value));
+      await waitForPrewarm(value);
       loadAll(value);
     });
   } else {
     // Fallback if TomSelect fails for some reason
-    dropdown.addEventListener('change', () => {
-      if (!dropdown.value) return;
-      fetch("{% url 'BigBrother:warm_cache' %}?option=" + encodeURIComponent(dropdown.value));
-      loadAll(dropdown.value);
+    dropdown.addEventListener('change', async () => {
+      const value = dropdown.value;
+      if (!value) return;
+      container.innerHTML     = '';
+      errorMessages.innerHTML = '';
+      hideContract();
+      showGeneral('Starting cache warmer…', 'info');
+      await fetch("{% url 'BigBrother:warm_cache' %}?option=" + encodeURIComponent(value));
+      await waitForPrewarm(value);
+      loadAll(value);
     });
   }
 
@@ -141,6 +221,11 @@ document.addEventListener('DOMContentLoaded', () => {
   ];
   const TOTAL_CARDS      = CARD_DEFINITIONS.length;
   const SUS_CONTR_KEY    = 'sus_contr';
+  const SUS_MAIL_KEY     = 'sus_mail';
+  const SUS_TRA_KEY      = 'sus_tra';
+  const SUS_ASSET_KEY    = 'sus_asset';
+  const SUS_CLONE_KEY    = 'sus_clones';
+  const SUS_CONTA_KEY    = 'sus_conta';
   let loadedNonSus       = 0;
 
   function showSpinner(on) {
@@ -155,9 +240,18 @@ document.addEventListener('DOMContentLoaded', () => {
     generalMessage.style.display = 'none';
   }
   function showContract(msg, type='info') {
-    contractMessage.innerHTML    = msg;
+    const textEl = document.getElementById('contract-text');
+    if (textEl) textEl.innerHTML = msg;
     contractMessage.className    = 'alert alert-' + type;
     contractMessage.style.display = 'block';
+
+    const bar = document.getElementById('contract-progress-bar');
+    if (bar) {
+        bar.style.transition = 'none';
+        bar.style.width = '0%';
+        bar.setAttribute('aria-valuenow', '0');
+        bar.innerText = '0%';
+    }
   }
   function hideContract() {
     contractMessage.style.display = 'none';
@@ -194,13 +288,41 @@ document.addEventListener('DOMContentLoaded', () => {
         ${icon}
       </div>
       <div id="${collapseId}" class="collapse">
-        <div class="card-body">${content !== null && content !== undefined ? content : (status ? getEmptyMessage('No issues found') : getEmptyMessage('Error loading data'))}</div>
+        <div class="card-body">
+          <div id="card-content-${idx}">
+            ${content !== null && content !== undefined ? content : (status ? getEmptyMessage('No issues found') : getEmptyMessage('Error loading data'))}
+          </div>
+        </div>
       </div>
     `;
     container.appendChild(cardDiv);
     cardDiv.querySelector('.toggle-card').addEventListener('click', e => {
       document.querySelector(e.currentTarget.dataset.target).classList.toggle('collapse');
     });
+  }
+
+  function updateProgressBar(idx, current, total, text) {
+    const bar = document.getElementById('contract-progress-bar');
+    const textEl = document.getElementById('contract-text');
+    if (!bar) return;
+
+    const percent = total > 0 ? Math.round((current / total) * 100) : 0;
+    const oldPercent = parseInt(bar.getAttribute('aria-valuenow') || '0');
+
+    if (percent < oldPercent || percent === 0) {
+        bar.style.transition = 'none';
+    } else {
+        bar.style.transition = 'width 0.6s ease';
+    }
+    bar.style.width = `${percent}%`;
+    bar.setAttribute('aria-valuenow', percent);
+    bar.innerText = `${percent}%`;
+    if (text && textEl) textEl.innerText = text;
+    contractMessage.style.display = 'block';
+  }
+
+  function hideProgressBar(idx) {
+    // Top-level bar is hidden via hideContract() when appropriate
   }
 
   async function fetchCard(option, idx) {
@@ -218,47 +340,56 @@ document.addEventListener('DOMContentLoaded', () => {
     cardBody.innerHTML = `
       <table class="table table-striped">
         <thead>
-          <tr id="contracts-header">
+          <tr id="contracts-header-${idx}">
             ${CONTR_VISIBLE.map(h => `<th>${h.replace(/_/g,' ')}</th>`).join('')}
           </tr>
         </thead>
-        <tbody id="contracts-body"></tbody>
+        <tbody id="contracts-body-${idx}"></tbody>
       </table>`;
 
     return new Promise((resolve, reject) => {
       const source = new EventSource(
         `{% url 'BigBrother:stream_contracts_sse' %}?option=${encodeURIComponent(option)}`
       );
-      const thead = cardBody.querySelector('#contracts-header');
-      const tbody = cardBody.querySelector('#contracts-body');
+      const thead = cardBody.querySelector(`#contracts-header-${idx}`);
+      const tbody = cardBody.querySelector(`#contracts-body-${idx}`);
       let hostileCount = 0;
 
       source.addEventListener('header', e => {
-        // Set up column headers
-        thead.innerHTML = JSON.parse(e.data);
+        try {
+          if (e.data && e.data !== "undefined") {
+            thead.innerHTML = JSON.parse(e.data);
+          }
+        } catch (err) {
+          console.error("Failed to parse header data:", err, e.data);
+        }
       });
 
       source.addEventListener('contract', e => {
         // Add each hostile contract row
-        tbody.insertAdjacentHTML('beforeend', JSON.parse(e.data));
-        hostileCount++;
-        // Flip icon red on first hostile
-        if (hostileCount === 1) {
-          updateCardStatus(idx, false);
+        try {
+          if (e.data && e.data !== "undefined") {
+            tbody.insertAdjacentHTML('beforeend', JSON.parse(e.data));
+            hostileCount++;
+            // Flip icon red on first hostile
+            if (hostileCount === 1) {
+              updateCardStatus(idx, false);
+            }
+          }
+        } catch (err) {
+          console.error("Failed to parse contract data:", err, e.data);
         }
       });
 
       source.addEventListener('progress', e => {
         const [processed, total] = e.data.split(',').map(Number);
-        showContract(
-          `Checked ${processed}/${total} contracts, hostile so far: ${hostileCount}`,
-          'info'
-        );
+        updateProgressBar(idx, processed, total, `Checked ${processed}/${total} contracts, hostile: ${hostileCount}`);
       });
 
       source.addEventListener('done', () => {
         source.close();
         hideContract();
+        hideProgressBar(idx);
         // If none hostile, ensure green
         const clean = hostileCount === 0;
         if (clean) {
@@ -268,19 +399,22 @@ document.addEventListener('DOMContentLoaded', () => {
         resolve(clean);
       });
 
-      source.addEventListener('error', e => {
+      source.onerror = e => {
         source.close();
-        const errorData = JSON.parse(e.data);
-        cardBody.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${errorData}</div>`;
+        if (e.data && e.data !== "undefined") {
+          try {
+            const errorData = JSON.parse(e.data);
+            cardBody.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${errorData}</div>`;
+            reject(new Error(errorData));
+          } catch (ex) {
+            cardBody.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${e.data}</div>`;
+            reject(new Error(e.data));
+          }
+        } else {
+          cardBody.innerHTML = `<div class="alert alert-warning"><strong>Stream Error:</strong> Connection lost or timed out. Please wait for cache warming and try again.</div>`;
+          reject(new Error("Connection error"));
+        }
         updateCardStatus(idx, false);
-        reject(new Error(errorData));
-      });
-
-      source.onerror = err => {
-        source.close();
-        cardBody.innerHTML = `<div class="alert alert-warning"><strong>Stream Error:</strong> Connection lost or timed out. Please wait for cache warming and try again.</div>`;
-        updateCardStatus(idx, false);
-        reject(err);
       };
     });
   }
@@ -293,40 +427,56 @@ document.addEventListener('DOMContentLoaded', () => {
     cardBody.innerHTML = `
       <table class="table table-striped">
         <thead>
-          <tr>${MAIL_VISIBLE.map(h=>`<th>${h.replace(/_/g,' ')}</th>`).join('')}</tr>
+          <tr id="mails-header-${idx}">
+            ${MAIL_VISIBLE.map(h=>`<th>${h.replace(/_/g,' ')}</th>`).join('')}
+          </tr>
         </thead>
-        <tbody></tbody>
+        <tbody id="mails-body-${idx}"></tbody>
       </table>`;
 
     return new Promise((resolve, reject) => {
       const source = new EventSource(
         `{% url 'BigBrother:stream_mails_sse' %}?option=${encodeURIComponent(option)}`
       );
-      const tbody = cardBody.querySelector('tbody');
+      const thead = cardBody.querySelector(`#mails-header-${idx}`);
+      const tbody = cardBody.querySelector(`#mails-body-${idx}`);
       let hostileCount = 0;
+
+      source.addEventListener('header', e => {
+        try {
+          if (e.data && e.data !== "undefined") {
+            thead.innerHTML = JSON.parse(e.data);
+          }
+        } catch (err) {
+          console.error("Failed to parse header data:", err, e.data);
+        }
+      });
 
       source.addEventListener('mail', e => {
         // Insert the hostile row
-        tbody.insertAdjacentHTML('beforeend', JSON.parse(e.data));
-
-        hostileCount++;
-        // On first hostile mail, immediately flip the icon red
-        if (hostileCount === 1) {
-          updateCardStatus(idx, false);
+        try {
+          if (e.data && e.data !== "undefined") {
+            tbody.insertAdjacentHTML('beforeend', JSON.parse(e.data));
+            hostileCount++;
+            // On first hostile mail, immediately flip the icon red
+            if (hostileCount === 1) {
+              updateCardStatus(idx, false);
+            }
+          }
+        } catch (err) {
+          console.error("Failed to parse mail data:", err, e.data);
         }
       });
 
       source.addEventListener('progress', e => {
         const [processed, total] = e.data.split(',').map(Number);
-        showContract(
-          `Checked ${processed}/${total} mails, hostile so far: ${hostileCount}`,
-          'info'
-        );
+        updateProgressBar(idx, processed, total, `Checked ${processed}/${total} mails, hostile: ${hostileCount}`);
       });
 
       source.addEventListener('done', () => {
         source.close();
         hideContract();
+        hideProgressBar(idx);
         // If no hostile entries were seen, ensure the icon is green
         const clean = hostileCount === 0;
         if (clean) {
@@ -336,19 +486,22 @@ document.addEventListener('DOMContentLoaded', () => {
         resolve(clean);
       });
 
-      source.addEventListener('error', e => {
+      source.onerror = e => {
         source.close();
-        const errorData = JSON.parse(e.data);
-        cardBody.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${errorData}</div>`;
+        if (e.data && e.data !== "undefined") {
+          try {
+            const errorData = JSON.parse(e.data);
+            cardBody.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${errorData}</div>`;
+            reject(new Error(errorData));
+          } catch (ex) {
+            cardBody.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${e.data}</div>`;
+            reject(new Error(e.data));
+          }
+        } else {
+          cardBody.innerHTML = `<div class="alert alert-warning"><strong>Stream Error:</strong> Connection lost or timed out. Please wait for cache warming and try again.</div>`;
+          reject(new Error("Connection error"));
+        }
         updateCardStatus(idx, false);
-        reject(new Error(errorData));
-      });
-
-      source.onerror = err => {
-        source.close();
-        cardBody.innerHTML = `<div class="alert alert-warning"><strong>Stream Error:</strong> Connection lost or timed out. Please wait for cache warming and try again.</div>`;
-        updateCardStatus(idx, false);
-        reject(err);
       };
     });
   }
@@ -357,11 +510,11 @@ document.addEventListener('DOMContentLoaded', () => {
     showContract('Loading transactions…', 'info');
 
     // Prepare empty table in the card-body
-    const cardBody = document.querySelector(`#collapse${idx} .card-body`);
+    const cardBody = document.getElementById(`card-content-${idx}`);
     cardBody.innerHTML = `
       <table class="table table-striped">
-        <thead><tr id="tx-header"></tr></thead>
-        <tbody id="tx-body"></tbody>
+        <thead><tr id="tx-header-${idx}"></tr></thead>
+        <tbody id="tx-body-${idx}"></tbody>
       </table>
     `;
 
@@ -369,34 +522,45 @@ document.addEventListener('DOMContentLoaded', () => {
       const source = new EventSource(
         `{% url 'BigBrother:stream_transactions_sse' %}?option=${encodeURIComponent(option)}`
       );
-      const thead = cardBody.querySelector('#tx-header');
-      const tbody = cardBody.querySelector('#tx-body');
+      const thead = document.getElementById(`tx-header-${idx}`);
+      const tbody = document.getElementById(`tx-body-${idx}`);
       let hostileCount = 0;
 
       source.addEventListener('header', e => {
         // render the <th>… row
-        thead.innerHTML = JSON.parse(e.data);
+        try {
+          if (e.data && e.data !== "undefined") {
+            thead.innerHTML = JSON.parse(e.data);
+          }
+        } catch (err) {
+          console.error("Failed to parse transaction header data:", err, e.data);
+        }
       });
 
       source.addEventListener('transaction', e => {
         // append each hostile <tr>
-        tbody.insertAdjacentHTML('beforeend', JSON.parse(e.data));
-        hostileCount++;
-        if (hostileCount === 1) {
-          updateCardStatus(idx, false);
+        try {
+          if (e.data && e.data !== "undefined") {
+            tbody.insertAdjacentHTML('beforeend', JSON.parse(e.data));
+            hostileCount++;
+            if (hostileCount === 1) {
+              updateCardStatus(idx, false);
+            }
+          }
+        } catch (err) {
+          console.error("Failed to parse transaction data:", err, e.data);
         }
       });
 
       source.addEventListener('progress', e => {
         const [done, total] = e.data.split(',').map(Number);
-        showContract(
-          `Checked ${done}/${total} transactions, hostile so far: ${hostileCount}`, 'info'
-        );
+        updateProgressBar(idx, done, total, `Checked ${done}/${total} transactions, hostile: ${hostileCount}`);
       });
 
       source.addEventListener('done', () => {
         source.close();
         hideContract();
+        hideProgressBar(idx);
         const clean = hostileCount === 0;
         if (clean) {
           updateCardStatus(idx, true);
@@ -405,19 +569,187 @@ document.addEventListener('DOMContentLoaded', () => {
         resolve(clean);
       });
 
-      source.addEventListener('error', e => {
+      source.onerror = e => {
         source.close();
-        const errorData = JSON.parse(e.data);
-        cardBody.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${errorData}</div>`;
+        if (e.data && e.data !== "undefined") {
+          try {
+            const errorData = JSON.parse(e.data);
+            cardBody.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${errorData}</div>`;
+            reject(new Error(errorData));
+          } catch (ex) {
+            cardBody.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${e.data}</div>`;
+            reject(new Error(e.data));
+          }
+        } else {
+          cardBody.innerHTML = `<div class="alert alert-warning"><strong>Stream Error:</strong> Connection lost or timed out. Please wait for cache warming and try again.</div>`;
+          reject(new Error("Connection error"));
+        }
         updateCardStatus(idx, false);
-        reject(new Error(errorData));
-      });
+      };
+    });
+  }
 
-      source.onerror = err => {
+  async function loadHostileAssets(option, idx) {
+    const cardBody = document.getElementById(`card-content-${idx}`);
+    cardBody.innerHTML = `
+      <table class="table table-striped stats">
+        <thead><tr id="assets-header-${idx}"></tr></thead>
+        <tbody id="assets-body-${idx}"></tbody>
+      </table>`;
+
+    return new Promise((resolve, reject) => {
+      const source = new EventSource(`{% url 'BigBrother:stream_assets_sse' %}?option=${encodeURIComponent(option)}`);
+      const thead = document.getElementById(`assets-header-${idx}`);
+      const tbody = document.getElementById(`assets-body-${idx}`);
+      let hostileCount = 0;
+
+      source.addEventListener('header', e => {
+        try {
+          if (e.data && e.data !== "undefined") {
+            thead.innerHTML = JSON.parse(e.data);
+          }
+        } catch (err) {
+          console.error("Failed to parse asset header data:", err, e.data);
+        }
+      });
+      source.addEventListener('asset', e => {
+        try {
+          if (e.data && e.data !== "undefined") {
+            tbody.insertAdjacentHTML('beforeend', JSON.parse(e.data));
+            hostileCount++;
+            if (hostileCount === 1) updateCardStatus(idx, false);
+          }
+        } catch (err) {
+          console.error("Failed to parse asset data:", err, e.data);
+        }
+      });
+      source.addEventListener('progress', e => {
+        const [processed, total] = e.data.split(',').map(Number);
+        updateProgressBar(idx, processed, total, `Checked ${processed}/${total} systems, hostile: ${hostileCount}`);
+      });
+      source.addEventListener('done', () => {
         source.close();
-        cardBody.innerHTML = `<div class="alert alert-warning"><strong>Stream Error:</strong> Connection lost or timed out. Please wait for cache warming and try again.</div>`;
+        hideProgressBar(idx);
+        if (hostileCount === 0) {
+          updateCardStatus(idx, true);
+          cardBody.innerHTML = getEmptyMessage('No assets in hostile space found');
+        }
+        resolve(hostileCount === 0);
+      });
+      source.onerror = e => {
+        source.close();
         updateCardStatus(idx, false);
-        reject(err);
+        reject(new Error("Stream failed"));
+      };
+    });
+  }
+
+  async function loadHostileClones(option, idx) {
+    const cardBody = document.getElementById(`card-content-${idx}`);
+    cardBody.innerHTML = `
+      <table class="table table-striped stats">
+        <thead><tr id="clones-header-${idx}"></tr></thead>
+        <tbody id="clones-body-${idx}"></tbody>
+      </table>`;
+
+    return new Promise((resolve, reject) => {
+      const source = new EventSource(`{% url 'BigBrother:stream_clones_sse' %}?option=${encodeURIComponent(option)}`);
+      const thead = document.getElementById(`clones-header-${idx}`);
+      const tbody = document.getElementById(`clones-body-${idx}`);
+      let hostileCount = 0;
+
+      source.addEventListener('header', e => {
+        try {
+          if (e.data && e.data !== "undefined") {
+            thead.innerHTML = JSON.parse(e.data);
+          }
+        } catch (err) {
+          console.error("Failed to parse clone header data:", err, e.data);
+        }
+      });
+      source.addEventListener('clone', e => {
+        try {
+          if (e.data && e.data !== "undefined") {
+            tbody.insertAdjacentHTML('beforeend', JSON.parse(e.data));
+            hostileCount++;
+            if (hostileCount === 1) updateCardStatus(idx, false);
+          }
+        } catch (err) {
+          console.error("Failed to parse clone data:", err, e.data);
+        }
+      });
+      source.addEventListener('progress', e => {
+        const [processed, total] = e.data.split(',').map(Number);
+        updateProgressBar(idx, processed, total, `Checked ${processed}/${total} systems, hostile: ${hostileCount}`);
+      });
+      source.addEventListener('done', () => {
+        source.close();
+        hideProgressBar(idx);
+        if (hostileCount === 0) {
+          updateCardStatus(idx, true);
+          cardBody.innerHTML = getEmptyMessage('No clones in hostile space found');
+        }
+        resolve(hostileCount === 0);
+      });
+      source.onerror = e => {
+        source.close();
+        updateCardStatus(idx, false);
+        reject(new Error("Stream failed"));
+      };
+    });
+  }
+
+  async function loadSuspiciousContacts(option, idx) {
+    const cardBody = document.getElementById(`card-content-${idx}`);
+    cardBody.innerHTML = `
+      <table class="table table-striped stats">
+        <thead><tr id="contacts-header-${idx}"></tr></thead>
+        <tbody id="contacts-body-${idx}"></tbody>
+      </table>`;
+
+    return new Promise((resolve, reject) => {
+      const source = new EventSource(`{% url 'BigBrother:stream_contacts_sse' %}?option=${encodeURIComponent(option)}`);
+      const thead = document.getElementById(`contacts-header-${idx}`);
+      const tbody = document.getElementById(`contacts-body-${idx}`);
+      let hostileCount = 0;
+
+      source.addEventListener('header', e => {
+        try {
+          if (e.data && e.data !== "undefined") {
+            thead.innerHTML = JSON.parse(e.data);
+          }
+        } catch (err) {
+          console.error("Failed to parse contact header data:", err, e.data);
+        }
+      });
+      source.addEventListener('contact', e => {
+        try {
+          if (e.data && e.data !== "undefined") {
+            tbody.insertAdjacentHTML('beforeend', JSON.parse(e.data));
+            hostileCount++;
+            if (hostileCount === 1) updateCardStatus(idx, false);
+          }
+        } catch (err) {
+          console.error("Failed to parse contact data:", err, e.data);
+        }
+      });
+      source.addEventListener('progress', e => {
+        const [processed, total] = e.data.split(',').map(Number);
+        updateProgressBar(idx, processed, total, `Checked ${processed}/${total} contacts, hostile: ${hostileCount}`);
+      });
+      source.addEventListener('done', () => {
+        source.close();
+        hideProgressBar(idx);
+        if (hostileCount === 0) {
+          updateCardStatus(idx, true);
+          cardBody.innerHTML = getEmptyMessage('No suspicious contacts found');
+        }
+        resolve(hostileCount === 0);
+      });
+      source.onerror = e => {
+        source.close();
+        updateCardStatus(idx, false);
+        reject(new Error("Stream failed"));
       };
     });
   }
@@ -453,72 +785,41 @@ document.addEventListener('DOMContentLoaded', () => {
 
       try {
         if (key === SUS_CONTR_KEY) {
-          // 1) Render the card with an empty contracts table:
-          renderCard(i, title,
-            `<table class="table table-striped">
-               <thead><tr id="contracts-header"></tr></thead>
-               <tbody id="contracts-body"></tbody>
-             </table>`,
-            true // assume clean until a hostile contract is detected
-          );
-
-          // 2) Stream the contracts; returns allClean flag
+          renderCard(i, title, null, true);
           const allClean = await loadSuspiciousContracts(option, i);
-
-          // 3) Update dot color based on whether any hostile were found
           updateCardStatus(i, allClean);
-          loadedNonSus++;
-          showGeneral(
-            `${loadedNonSus}/${TOTAL_CARDS} loaded… This may take a while, do not refresh`,
-            'info'
-          );
         }
-        else if (key === 'sus_mail') {
-          // Suspicious Mails
-          renderCard(i, title,
-            `<table class="table table-striped">
-               <thead><tr>${MAIL_VISIBLE.map(h=>`<th>${h.replace(/_/g,' ')}</th>`).join('')}</tr></thead>
-               <tbody></tbody>
-             </table>`,
-            true
-          );
-
-          // stream; allClean = true if no hostile found
+        else if (key === SUS_MAIL_KEY) {
+          renderCard(i, title, null, true);
           const allClean = await loadSuspiciousMails(option, i);
-
-          // update the dot color
           updateCardStatus(i, allClean);
-          loadedNonSus++;
-          showGeneral(
-            `${loadedNonSus}/${TOTAL_CARDS} loaded… This may take a while, do not refresh`,
-            'info'
-          );
         }
-        else if (key === 'sus_tra') {
-          renderCard(i, title,
-            `<table class="table table-striped">
-              <thead><tr id="tx-header"></tr></thead>
-              <tbody id="tx-body"></tbody>
-            </table>`,
-            true
-          );
+        else if (key === SUS_TRA_KEY) {
+          renderCard(i, title, null, true);
           const allClean = await loadSuspiciousTransactions(option, i);
           updateCardStatus(i, allClean);
-          loadedNonSus++;
-          showGeneral(
-            `${loadedNonSus}/${TOTAL_CARDS} loaded…`, 'info'
-          );
+        }
+        else if (key === SUS_ASSET_KEY) {
+          renderCard(i, title, null, true);
+          const allClean = await loadHostileAssets(option, i);
+          updateCardStatus(i, allClean);
+        }
+        else if (key === SUS_CLONE_KEY) {
+          renderCard(i, title, null, true);
+          const allClean = await loadHostileClones(option, i);
+          updateCardStatus(i, allClean);
+        }
+        else if (key === SUS_CONTA_KEY) {
+          renderCard(i, title, null, true);
+          const allClean = await loadSuspiciousContacts(option, i);
+          updateCardStatus(i, allClean);
         }
         else {
-          // everything else
           const { content, status } = await fetchCard(option, i);
-          loadedNonSus++;
-          showGeneral(
-            `${loadedNonSus}/${TOTAL_CARDS} loaded… This may take a while, do not refresh`,
-            'info'
-          );
           renderCard(i, title, content, status);
         }
+        loadedNonSus++;
+        showGeneral(`${loadedNonSus}/${TOTAL_CARDS} loaded…`, 'info');
       } catch (err) {
         renderCard(i, title, `<p>Error: ${err.message}</p>`, false);
         console.error(err);
@@ -538,15 +839,42 @@ document.addEventListener('DOMContentLoaded', () => {
       const res = await fetch("{% url 'aa_bb:warm_progress' %}", { keepalive: true });
       if (!res.ok) throw new Error('Progress fetch failed');
       const data = await res.json();
-       if (data.in_progress) {
+      const warmerText = document.getElementById('warmer-text');
+      const warmerBar = document.getElementById('warmer-progress-bar');
+
+      if (data.in_progress) {
+        let currentTotal = 0;
+        let currentProgress = 0;
+        data.users.forEach(u => {
+          currentTotal += u.total;
+          currentProgress += u.current;
+        });
+
         const parts = data.users.map(u => `${u.user} (${u.current}/${u.total})`);
         let msg = `<strong>Warming up cache for:</strong> ${parts.join(', ')}`;
         if (data.queued.count > 0) {
           msg += `<br><strong>${data.queued.count} still queued:</strong> ${data.queued.names.join(', ')}`;
         }
-        msg += `<br>Your gunicorn is likely to kill the streams for contracts, mails and transactions if the cache isn't warm for the selected user(it starts warming up the 1st time you select it so try and if it falls, go touch grass or something until this is done or get your IT to increase(or set to 0) your gunicorn timeout in supervisor.conf)`;
-        warmerBox.innerHTML = msg;
-        warmerBox.style.display = 'block';
+        msg += `<br><small>Your gunicorn is likely to kill the streams for contracts, mails and transactions if the cache isn't warm for the selected user.</small>`;
+
+        warmerText.innerHTML = msg;
+        const percent = currentTotal > 0 ? Math.round((currentProgress / currentTotal) * 100) : 0;
+        const oldPercent = parseInt(warmerBar.getAttribute('aria-valuenow') || '0');
+
+        if (percent < oldPercent || percent === 0) {
+            warmerBar.style.transition = 'none';
+        } else {
+            warmerBar.style.transition = 'width 0.6s ease';
+        }
+        warmerBar.style.width = `${percent}%`;
+        warmerBar.setAttribute('aria-valuenow', percent);
+        warmerBar.innerText = `${percent}%`;
+
+        if (currentTotal > 0) {
+          warmerBox.style.display = 'block';
+        } else {
+          warmerBox.style.display = 'none';
+        }
       } else {
         warmerBox.style.display = 'none';
       }

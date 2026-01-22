@@ -25,6 +25,7 @@ from ..app_settings import (
     get_hostile_state,
     corptools_active,
     is_hostile_unified,
+    is_safe_entity,
 )
 from django.utils import timezone
 
@@ -188,7 +189,7 @@ def group_contacts_by_standing(contacts: dict[int, dict]) -> dict[int, list[tupl
 
 
 
-def _get_contact_alerts(cid: int, info: dict) -> list[str]:
+def _get_contact_alerts(cid: int, info: dict, cfg: BigBrotherConfig = None, safe_entities: set = None, entity_info_cache: dict = None) -> list[str]:
     """
     Internal helper to determine why a contact is flagged as suspicious.
     Returns a list of alert strings.
@@ -200,29 +201,34 @@ def _get_contact_alerts(cid: int, info: dict) -> list[str]:
     aid = info.get('aid')
     alli_name = info.get('alliance')
 
+    # ONLY flag if positive (or neutral if enabled) standings for a listed hostile entity
+    standing = info.get('standing', 0)
+    if standing < 0:
+        return []
+
     if ctype == 'character':
         if aablacklist_active() and check_char_add_to_bl(cid):
             alerts.append("Character on Blacklist")
 
         # Check if the character itself or its parents are hostile
-        if get_hostile_state(cid, 'character'):
-            if coid and get_hostile_state(coid, 'corporation'):
+        if get_hostile_state(cid, 'character', safe_entities=safe_entities, entity_info_cache=entity_info_cache, cfg=cfg):
+            if coid and get_hostile_state(coid, 'corporation', safe_entities=safe_entities, entity_info_cache=entity_info_cache, cfg=cfg):
                 alerts.append(f"Corporation ({corp_name}) is hostile")
-            if aid and get_hostile_state(aid, 'alliance'):
+            if aid and get_hostile_state(aid, 'alliance', safe_entities=safe_entities, entity_info_cache=entity_info_cache, cfg=cfg):
                 alerts.append(f"Alliance ({alli_name}) is hostile")
 
             if not alerts:
                 alerts.append("Character is hostile")
 
     elif ctype == 'corporation':
-        if get_hostile_state(cid, 'corporation'):
-            if aid and get_hostile_state(aid, 'alliance'):
+        if get_hostile_state(cid, 'corporation', safe_entities=safe_entities, entity_info_cache=entity_info_cache, cfg=cfg):
+            if aid and get_hostile_state(aid, 'alliance', safe_entities=safe_entities, entity_info_cache=entity_info_cache, cfg=cfg):
                 alerts.append(f"Alliance ({alli_name}) is hostile")
             if not alerts:
                 alerts.append("Corporation is hostile")
 
     elif ctype == 'alliance':
-        if get_hostile_state(cid, 'alliance'):
+        if get_hostile_state(cid, 'alliance', safe_entities=safe_entities, entity_info_cache=entity_info_cache, cfg=cfg):
             alerts.append("Alliance is hostile")
 
     return alerts
@@ -236,18 +242,17 @@ def render_contacts(user_id: int) -> str:
     contacts = get_user_contacts(user_id)
     cfg = BigBrotherConfig.get_solo()
     exclude_neutral = cfg.exclude_neutral_contacts
+    from ..app_settings import get_safe_entities
+    safe_entities = get_safe_entities()
 
     suspicious_contacts = {}
     for cid, info in contacts.items():
         s = info.get('standing', 0)
-        # skip if user already has negative standing (not "suspicious", just expected hostile)
-        if s < 0:
-            continue
         # skip neutral contacts if enabled
         if exclude_neutral and s == 0:
             continue
 
-        alerts = _get_contact_alerts(cid, info)
+        alerts = _get_contact_alerts(cid, info, cfg=cfg, safe_entities=safe_entities)
         if alerts:
             info['alerts'] = alerts
             suspicious_contacts[cid] = info
@@ -296,7 +301,7 @@ def render_contacts(user_id: int) -> str:
     return '\n'.join(html_parts)
 
 
-def get_user_hostile_notifications(user_id: int) -> dict[int, str]:
+def get_user_hostile_notifications(user_id: int, cfg: BigBrotherConfig = None, safe_entities: set = None, entity_info_cache: dict = None) -> dict[int, str]:
     """
     Fetches all contacts for the given user, checks each one against
     the character blacklist, hostile corporations, and hostile alliances,
@@ -305,21 +310,18 @@ def get_user_hostile_notifications(user_id: int) -> dict[int, str]:
     contacts = get_user_contacts(user_id)
     notifications: dict[int, str] = {}
 
-    cfg = BigBrotherConfig.get_solo()
+    if cfg is None:
+        cfg = BigBrotherConfig.get_solo()
     exclude_neutral = cfg.exclude_neutral_contacts
 
     for cid, info in contacts.items():
         s = info.get('standing', 0)
 
-        # skip if user already has negative standing (redundant)
-        if s < 0:
-            continue
-
         # skip neutral contacts if the exclude_neutral_contacts setting is enabled
         if exclude_neutral and s == 0:
             continue
 
-        alerts = _get_contact_alerts(cid, info)
+        alerts = _get_contact_alerts(cid, info, cfg=cfg, safe_entities=safe_entities, entity_info_cache=entity_info_cache)
         if alerts:
             ctype = info['contact_type']      # 'character' | 'corporation' | 'alliance'
             cname = info.get('character') or info.get('corporation') or info.get('alliance') or info.get('contact_name') or ''

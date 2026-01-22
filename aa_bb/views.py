@@ -33,18 +33,18 @@ from .app_settings import (
     get_user_characters, get_entity_info, get_main_character_name,
     get_character_id, get_pings, aablacklist_active, send_status_embed,
     resolve_location_name, afat_active, discordbot_active, corptools_active,
-    get_hostile_state, get_safe_entities
+    get_hostile_state, get_safe_entities, is_safe_entity
 )
 from .models import BigBrotherConfig, WarmProgress, LeaveRequest, ComplianceTicket, ComplianceTicketComment
 
-from aa_bb.checks.awox import render_awox_kills_html
+from aa_bb.checks.awox import render_awox_kills_html, fetch_awox_kills
 from aa_bb.checks.corp_changes import get_frequent_corp_changes
 from aa_bb.checks.cyno import render_user_cyno_info_html
-from aa_bb.checks.hostile_assets import render_assets
-from aa_bb.checks.hostile_clones import render_clones
+from aa_bb.checks.hostile_assets import render_assets, get_asset_locations
+from aa_bb.checks.hostile_clones import render_clones, get_clones
 from aa_bb.checks.coalition_blacklist import get_external_blacklist_link
 from aa_bb.checks.alliance_blacklist import get_alliance_blacklist_link
-from aa_bb.checks.sus_contacts import render_contacts
+from aa_bb.checks.sus_contacts import render_contacts, get_user_contacts
 from aa_bb.checks.sus_mails import (
     is_mail_row_hostile,
     get_cell_style_for_mail_cell,
@@ -177,14 +177,6 @@ def get_user_id(character_name):
         ownership = CharacterOwnership.objects.select_related('user__profile__main_character') \
             .get(character__character_name=character_name)
 
-        cfg = BigBrotherConfig.get_solo()
-        member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
-        member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
-        if member_corps or member_allis:
-            main_char = getattr(ownership.user.profile, 'main_character', None)
-            if not main_char or (main_char.corporation_id not in member_corps and main_char.alliance_id not in member_allis):
-                return None
-
         return ownership.user.id
     except CharacterOwnership.DoesNotExist:
         return None
@@ -210,7 +202,7 @@ def load_card(request):
     key   = card_def["key"]
     title = card_def["title"]
     logger.info(key)
-    if key in ("sus_contr", "sus_mail","sus_tra"):  # Paginated cards handled separately via SSE/ajax.
+    if key in ("sus_contr", "sus_mail","sus_tra", "sus_asset", "sus_clones", "sus_conta"):  # Paginated cards handled separately via SSE/ajax.
         # handled via paginated endpoints
         return JsonResponse({"key": key, "title": title})
 
@@ -255,22 +247,20 @@ def load_cards(request: WSGIRequest) -> JsonResponse:
         })
     return JsonResponse({"cards": cards})
 
-@shared_task(bind=True)
-def warm_entity_cache_task(self, user_id):
+@shared_task(bind=True, time_limit=7200)
+def warm_entity_cache_task(self, user_id, user_main=None):
     """
     Gather mails, contracts, transactions; warm entity cache.
     Track progress in the DB via WarmProgress.
     """
-    from .models import BigBrotherConfig
+    from .models import BigBrotherConfig, WarmProgress
     cfg = BigBrotherConfig.get_solo()
     if not cfg.is_active or not cfg.is_warmer_active:
         return
-    user_main = get_main_character_name(user_id) or str(user_id)
-    qs = WarmProgress.objects.all()
-    users = [
-        {"user": wp.user_main, "current": wp.current, "total": wp.total}
-        for wp in qs
-    ]
+
+    if user_main is None:
+        user_main = get_main_character_name(user_id) or str(user_id)
+
     # Check for existing progress entry
     try:
         progress = WarmProgress.objects.get(user_main=user_main)
@@ -301,57 +291,115 @@ def warm_entity_cache_task(self, user_id):
                 f"[{user_main}] no progress in 20 s (still {first_current}); continuing with new task."
             )
 
-    # Build list of (entity_id, timestamp)
-    entries = []
-    contracts = gather_user_contracts(user_id)
-    trans = gather_user_transactions(user_id)
-    mails = gather_user_mails(user_id)
-    candidates = []
-    for c in contracts:
-        issuer_id = get_character_id(c.issuer_name)
-        candidates.append((issuer_id, getattr(c, "date_issued")))
-        assignee = c.assignee_id or c.acceptor_id
-        candidates.append((assignee, getattr(c, "date_issued")))
-    for m in mails:
-        candidates.append((m.from_id, getattr(m, "timestamp")))
-        for mr in m.recipients.all():
-            candidates.append((mr.recipient_id, getattr(m, "timestamp")))
-    for t in trans:
-        candidates.append((t.first_party_id, getattr(t, "date")))
-        candidates.append((t.second_party_id, getattr(t, "date")))
-    from django.db.models import Q
-    from .models import EntityInfoCache
-    query_filter = Q()
-    for entity_id, as_of in candidates:
-        query_filter |= Q(entity_id=entity_id, as_of=as_of)
+    try:
+        # Initialize progress record as "Scanning"
+        WarmProgress.objects.update_or_create(
+            user_main=user_main,
+            defaults={"current": 0, "total": 1} # total=1 to avoid 0/0
+        )
 
-    existing = set(
-        EntityInfoCache.objects.filter(query_filter)
-        .values_list('entity_id', 'as_of')
-    )
+        # Build list of (entity_id, timestamp)
+        entries = []
+        fetch_awox_kills(user_id, force_refresh=True)
+        contracts = gather_user_contracts(user_id)
+        trans = gather_user_transactions(user_id)
+        mails = gather_user_mails(user_id)
 
-    for candidate in candidates:
-        if candidate not in existing:  # Only fetch entity info when cache lacks the tuple.
-            entries.append(candidate)
+        # New: also fetch assets and clones systems/stations
+        from .checks.hostile_assets import get_asset_locations
+        from .checks.hostile_clones import get_clones
+        assets = get_asset_locations(user_id)
+        clones = get_clones(user_id)
 
-    total = len(entries)
-    logger.info(f"Starting warm cache for {user_main} ({total} entries)")
+        candidates = []
+        for c in contracts:
+            issuer_id = get_character_id(c.issuer_name)
+            if issuer_id:
+                candidates.append((issuer_id, getattr(c, "date_issued")))
+            assignee = c.assignee_id or c.acceptor_id
+            if assignee:
+                candidates.append((assignee, getattr(c, "date_issued")))
+        for m in mails:
+            if m.from_id:
+                candidates.append((m.from_id, getattr(m, "timestamp")))
+            for mr in m.recipients.all():
+                if mr.recipient_id:
+                    candidates.append((mr.recipient_id, getattr(m, "timestamp")))
+        for t in trans:
+            if t.first_party_id:
+                candidates.append((t.first_party_id, getattr(t, "date")))
+            if t.second_party_id:
+                candidates.append((t.second_party_id, getattr(t, "date")))
 
-    # Initialize or update the progress record
-    WarmProgress.objects.update_or_create(
-        user_main=user_main,
-        defaults={"current": 0, "total": total}
-    )
+        # Add systems and stations to candidates
+        now_ts = timezone.now()
+        for sys_id in assets.keys():
+            candidates.append((sys_id, now_ts))
+            for loc_id in assets[sys_id].get("locations", {}).keys():
+                if loc_id:
+                    candidates.append((loc_id, now_ts))
 
-    # Process each entry, updating the DB record
-    for idx, (eid, ts) in enumerate(entries, start=1):
-        WarmProgress.objects.filter(user_main=user_main).update(current=idx)
-        get_entity_info(eid, ts)
+        for sys_id in clones.keys():
+            candidates.append((sys_id, now_ts))
+            for loc_id in clones[sys_id].get("locations", {}).keys():
+                if loc_id:
+                    candidates.append((loc_id, now_ts))
 
-    # Clean up when done
-    WarmProgress.objects.filter(user_main=user_main).delete()
-    logger.info(f"Completed warm cache for {user_main}")
-    return total
+        # Normalize candidate timestamps to the hour for cache matching
+        candidates = [
+            (eid, ts.replace(minute=0, second=0, microsecond=0) if hasattr(ts, 'replace') else ts)
+            for eid, ts in candidates
+        ]
+        # Deduplicate candidates
+        candidates = sorted(list(set(candidates)))
+
+        from django.db.models import Q
+        from .models import EntityInfoCache
+
+        existing = set()
+        # Process in chunks to avoid hitting database query complexity limits
+        CHUNK_SIZE = 500
+        for i in range(0, len(candidates), CHUNK_SIZE):
+            chunk = candidates[i:i + CHUNK_SIZE]
+            query_filter = Q()
+            for entity_id, as_of in chunk:
+                query_filter |= Q(entity_id=entity_id, as_of=as_of)
+
+            existing.update(
+                EntityInfoCache.objects.filter(query_filter)
+                .values_list('entity_id', 'as_of')
+            )
+
+        for candidate in candidates:
+            if candidate not in existing:  # Only fetch entity info when cache lacks the tuple.
+                entries.append(candidate)
+
+        total = len(entries)
+        logger.info(f"Starting warm cache for {user_main} ({total} entries)")
+
+        if total == 0:
+            logger.info(f"Warm cache for {user_main} is already up to date.")
+            return 0
+
+        # Update the progress record with real total
+        WarmProgress.objects.update_or_create(
+            user_main=user_main,
+            defaults={"current": 0, "total": total}
+        )
+
+        # Process each entry, updating the DB record
+        for idx, (eid, ts) in enumerate(entries, start=1):
+            WarmProgress.objects.filter(user_main=user_main).update(current=idx)
+            get_entity_info(eid, ts)
+
+        logger.info(f"Completed warm cache for {user_main}")
+        return total
+    except Exception as e:
+        logger.exception(f"Error in warm cache task for {user_main}: {e}")
+        raise
+    finally:
+        # Clean up when done
+        WarmProgress.objects.filter(user_main=user_main).delete()
 
 @login_required
 @permission_required("aa_bb.basic_access")
@@ -368,14 +416,14 @@ def warm_cache(request):
         return JsonResponse({"error": "Unknown account"}, status=400)
 
     # Pre-create progress record so queued jobs show up
-    user_main = get_main_character_name(user_id) or str(user_id)
+    user_main = option or get_main_character_name(user_id) or str(user_id)
     WarmProgress.objects.get_or_create(
         user_main=user_main,
         defaults={"current": 0, "total": 0}
     )
 
     # Enqueue the celery task
-    warm_entity_cache_task.delay(user_id)
+    warm_entity_cache_task.delay(user_id, user_main=user_main)
     return JsonResponse({"started": True})
 
 
@@ -425,10 +473,11 @@ def index(request: WSGIRequest):
         )
         return render(request, "aa_bb/disabled.html", {"message": msg})
 
-    if request.user.has_perm("aa_bb.full_access"):  # Full-access sees every main character.
-        qs = UserProfile.objects.exclude(main_character=None)
+    member_states = cfg.bb_member_states.all()
+    guest_states = cfg.bb_guest_states.all()
+    if request.user.has_perm("aa_bb.full_access"):  # Full-access sees member and guest states.
+        qs = UserProfile.objects.filter(state__in=member_states | guest_states).exclude(main_character=None)
     elif request.user.has_perm("aa_bb.recruiter_access"):  # Recruiters see only guest states.
-        guest_states = cfg.bb_guest_states.all()
         qs = UserProfile.objects.filter(state__in=guest_states).exclude(main_character=None)
     else:
         qs = None
@@ -443,11 +492,6 @@ def index(request: WSGIRequest):
                 qs = qs.filter(user_id__in=audited_user_ids)
             else:
                 qs = qs.filter(user__userstatus__baseline_initialized=True)
-
-        member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
-        member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
-        if member_corps or member_allis:
-            qs = qs.filter(Q(main_character__corporation_id__in=member_corps) | Q(main_character__alliance_id__in=member_allis))
 
         dropdown_options = (
             qs.values_list("main_character__character_name", flat=True)
@@ -576,6 +620,9 @@ def stream_contracts_sse(request: WSGIRequest):
                 # Notify client that processing completed with zero hostile hits
                 yield "event: done\ndata:0\n\n"
                 return
+
+            header_html = "<tr>" + "".join(f"<th>{html.escape(h.replace('_',' ').title())}</th>" for h in VISIBLE_CONTR) + "</tr>"
+            yield f"event: header\ndata:{json.dumps(header_html)}\n\n"
 
             batch_size = 50
             for i in range(0, total, batch_size):
@@ -754,6 +801,9 @@ def stream_mails_sse(request):
                 yield "event: done\ndata:0\n\n"
                 return
 
+            header_html = "<tr>" + "".join(f"<th>{html.escape(h.replace('_',' ').title())}</th>" for h in VISIBLE) + "</tr>"
+            yield f"event: header\ndata:{json.dumps(header_html)}\n\n"
+
             batch_size = 50
             for i in range(0, total, batch_size):
                 batch = qs[i : i + batch_size]
@@ -894,10 +944,11 @@ def stream_transactions_sse(request):
                     if processed % 10 == 0:
                         yield ": ping\n\n"
 
-                    is_hostile = is_transaction_hostile(row, user_ids, safe_entities=safe_entities)
+                    is_hostile = is_transaction_hostile(row, user_ids, safe_entities=safe_entities, entity_info_cache=row.get('info_cache'))
                     if is_hostile:
                         hostile_count += 1
                         cells = []
+                        row_info_cache = row.get('info_cache')
                         for col in headers:
                             val = row.get(col, "")
                             text = html.escape(str(val))
@@ -910,15 +961,15 @@ def stream_transactions_sse(request):
                                     style = 'color:red;'
                             elif col in ('first_party_name', 'second_party_name'):
                                 pid = row.get(col.replace("_name", "_id"))
-                                if pid and get_hostile_state(pid, 'character', when=row.get('date')):
+                                if pid and get_hostile_state(pid, 'character', when=row.get('date'), entity_info_cache=row_info_cache):
                                     style = 'color:red;'
                             elif col.endswith('corporation'):
                                 cid = row.get(f"{col}_id")
-                                if cid and get_hostile_state(cid, 'corporation', when=row.get('date')):
+                                if cid and get_hostile_state(cid, 'corporation', when=row.get('date'), entity_info_cache=row_info_cache):
                                     style = 'color:red;'
                             elif col.endswith('alliance'):
                                 aid = row.get(f"{col}_id")
-                                if aid and get_hostile_state(aid, 'alliance', when=row.get('date')):
+                                if aid and get_hostile_state(aid, 'alliance', when=row.get('date'), entity_info_cache=row_info_cache):
                                     style = 'color:red;'
 
                             style_attr = f' style="{style}"' if style else ""
@@ -949,7 +1000,241 @@ def stream_transactions_sse(request):
     return resp
 
 
-# Card data helper
+@login_required
+@permission_required("aa_bb.basic_access")
+def stream_assets_sse(request):
+    """Stream hostile assets one system at a time via SSE."""
+    option = request.GET.get("option", "")
+    user_id = get_user_id(option)
+    if not user_id:
+        return HttpResponseBadRequest("Unknown account")
+
+    if not corptools_active():
+        return HttpResponseForbidden("Corptools required")
+
+    def generator():
+        try:
+            yield ": ok\n\n"
+            systems = get_asset_locations(user_id)
+            total = len(systems)
+            processed = hostile_count = 0
+
+            if total == 0:
+                yield "event: done\ndata:0\n\n"
+                return
+
+            safe_entities = get_safe_entities()
+            now_ts = timezone.now()
+
+            # Determine headers
+            headers = ["System", "Location", "Character", "Owner", "Region"]
+            header_html = "<tr>" + "".join(f"<th>{html.escape(h)}</th>" for h in headers) + "</tr>"
+            yield f"event: header\ndata:{json.dumps(header_html)}\n\n"
+
+            for system_id, data in systems.items():
+                processed += 1
+                system_name = data.get("name") or f"ID {system_id}"
+
+                # Try to use cached owner info
+                owner_info = get_entity_info(system_id, now_ts)
+                system_owner_name = owner_info.get("name", "Unresolvable")
+                region_name = owner_info.get("alli_name", "Unknown Region")
+
+                rows_for_system = []
+                for loc_id, loc_data in data.get("locations", {}).items():
+                    loc_name = loc_data["name"]
+
+                    # Use cached location owner info
+                    loc_owner_info = get_entity_info(loc_id, now_ts)
+                    oname = loc_owner_info.get("name", system_owner_name)
+
+                    for asset in loc_data.get("assets", []):
+                        char_id = asset["char_id"]
+
+                        # Use cached character info for hostile check
+                        is_hostile = get_hostile_state(
+                            char_id,
+                            'character',
+                            system_id=system_id,
+                            when=now_ts,
+                            safe_entities=safe_entities,
+                            entity_info_cache={
+                                char_id: get_entity_info(char_id, now_ts),
+                                system_id: owner_info,
+                                loc_id: loc_owner_info
+                            }
+                        )
+
+                        if is_hostile:
+                            hostile_count += 1
+                            owner_cell = f'<span class="text-danger">{html.escape(oname)}</span>'
+                            tr = f"<tr><td>{html.escape(system_name)}</td><td>{html.escape(loc_name)}</td><td>{html.escape(asset['char_name'])}</td><td>{owner_cell}</td><td>{html.escape(region_name)}</td></tr>"
+                            rows_for_system.append(tr)
+
+                for tr in rows_for_system:
+                    yield f"event: asset\ndata:{json.dumps(tr)}\n\n"
+
+                yield f"event: progress\ndata:{processed},{total},{hostile_count}\n\n"
+
+            yield "event: done\ndata:bye\n\n"
+        except Exception as e:
+            logger.error(f"Error in asset stream for {option}: {e}", exc_info=True)
+            yield f"event: error\ndata:{json.dumps(str(e))}\n\n"
+
+    resp = StreamingHttpResponse(generator(), content_type='text/event-stream')
+    resp["Cache-Control"] = "no-cache"
+    resp["X-Accel-Buffering"] = "no"
+    return resp
+
+
+@login_required
+@permission_required("aa_bb.basic_access")
+def stream_clones_sse(request):
+    """Stream hostile clones via SSE."""
+    option = request.GET.get("option", "")
+    user_id = get_user_id(option)
+    if not user_id:
+        return HttpResponseBadRequest("Unknown account")
+
+    if not corptools_active():
+        return HttpResponseForbidden("Corptools required")
+
+    def generator():
+        try:
+            yield ": ok\n\n"
+            systems = get_clones(user_id)
+            total = len(systems)
+            processed = hostile_count = 0
+
+            if total == 0:
+                yield "event: done\ndata:0\n\n"
+                return
+
+            safe_entities = get_safe_entities()
+            now_ts = timezone.now()
+
+            headers = ["System", "Station", "Character", "Clone Status", "Implants", "Owner", "Region"]
+            header_html = "<tr>" + "".join(f"<th>{html.escape(h)}</th>" for h in headers) + "</tr>"
+            yield f"event: header\ndata:{json.dumps(header_html)}\n\n"
+
+            for system_id, data in systems.items():
+                processed += 1
+                system_name = data.get("name") or f"ID {system_id}"
+
+                # Use cached owner info
+                owner_info = get_entity_info(system_id, now_ts)
+                system_owner_name = owner_info.get("name", "Unresolvable")
+                region_name = owner_info.get("alli_name", "Unknown Region")
+
+                for loc_id, loc_data in data.get("locations", {}).items():
+                    loc_name = loc_data["name"]
+
+                    # Use cached location owner info
+                    loc_owner_info = get_entity_info(loc_id, now_ts)
+                    oname = loc_owner_info.get("name", system_owner_name)
+
+                    for clone in loc_data.get("clones", []):
+                        char_id = clone["char_id"]
+
+                        # Use cached character info for hostile check
+                        is_hostile = get_hostile_state(
+                            char_id,
+                            'character',
+                            system_id=system_id,
+                            when=now_ts,
+                            safe_entities=safe_entities,
+                            entity_info_cache={
+                                char_id: get_entity_info(char_id, now_ts),
+                                system_id: owner_info,
+                                loc_id: loc_owner_info
+                            }
+                        )
+
+                        if is_hostile:
+                            hostile_count += 1
+                            owner_cell = f'<span class="text-danger">{html.escape(oname)}</span>'
+                            implants_html = "<br>".join([html.escape(i) for i in clone["implants"]])
+                            tr = f"<tr><td>{html.escape(system_name)}</td><td>{html.escape(loc_name)}</td><td>{html.escape(clone['char_name'])}</td><td>{html.escape(clone['jump_clone_name'])}</td><td>{implants_html}</td><td>{owner_cell}</td><td>{html.escape(region_name)}</td></tr>"
+                            yield f"event: clone\ndata:{json.dumps(tr)}\n\n"
+
+                yield f"event: progress\ndata:{processed},{total},{hostile_count}\n\n"
+
+            yield "event: done\ndata:bye\n\n"
+        except Exception as e:
+            logger.error(f"Error in clone stream for {option}: {e}", exc_info=True)
+            yield f"event: error\ndata:{json.dumps(str(e))}\n\n"
+
+    resp = StreamingHttpResponse(generator(), content_type='text/event-stream')
+    resp["Cache-Control"] = "no-cache"
+    resp["X-Accel-Buffering"] = "no"
+    return resp
+
+
+@login_required
+@permission_required("aa_bb.basic_access")
+def stream_contacts_sse(request):
+    """Stream suspicious contacts via SSE."""
+    option = request.GET.get("option", "")
+    user_id = get_user_id(option)
+    if not user_id:
+        return HttpResponseBadRequest("Unknown account")
+
+    if not corptools_active():
+        return HttpResponseForbidden("Corptools required")
+
+    def generator():
+        try:
+            yield ": ok\n\n"
+            cfg = BigBrotherConfig.get_solo()
+            exclude_neutral = cfg.exclude_neutral_contacts
+            contacts = get_user_contacts(user_id)
+            total = len(contacts)
+            processed = hostile_count = 0
+
+            if total == 0:
+                yield "event: done\ndata:0\n\n"
+                return
+
+            headers = ["Character", "Contact Name", "Standing", "Contact Corp", "Contact Alliance"]
+            header_html = "<tr>" + "".join(f"<th>{html.escape(h)}</th>" for h in headers) + "</tr>"
+            yield f"event: header\ndata:{json.dumps(header_html)}\n\n"
+
+            safe_entities = get_safe_entities()
+            now_ts = timezone.now()
+
+            for cid, info in contacts.items():
+                processed += 1
+                standing = info.get('standing', 0)
+                contact_id = info.get('contact_id') or cid
+                contact_is_hostile = get_hostile_state(contact_id, info.get('contact_type'), when=now_ts, safe_entities=safe_entities)
+
+                if standing < 0:
+                    is_hostile = False
+                else:
+                    # skip neutral contacts if enabled
+                    if exclude_neutral and standing == 0:
+                        continue
+                    # Positive or neutral standing is suspicious if the entity IS known as hostile
+                    is_hostile = contact_is_hostile
+
+                if is_hostile:
+                    hostile_count += 1
+                    my_chars = ", ".join(info.get('characters', []))
+                    tr = f"<tr><td>{html.escape(my_chars)}</td><td>{html.escape(info['contact_name'])}</td><td>{info['standing']}</td><td>{html.escape(info['corporation'])}</td><td>{html.escape(info['alliance'])}</td></tr>"
+                    yield f"event: contact\ndata:{json.dumps(tr)}\n\n"
+
+                if processed % 10 == 0 or processed == total:
+                    yield f"event: progress\ndata:{processed},{total},{hostile_count}\n\n"
+
+            yield "event: done\ndata:bye\n\n"
+        except Exception as e:
+            logger.error(f"Error in contact stream for {option}: {e}", exc_info=True)
+            yield f"event: error\ndata:{json.dumps(str(e))}\n\n"
+
+    resp = StreamingHttpResponse(generator(), content_type='text/event-stream')
+    resp["Cache-Control"] = "no-cache"
+    resp["X-Accel-Buffering"] = "no"
+    return resp
 
 def get_card_data(request, target_user_id: int, key: str):
     """Return card HTML and status tuple for the specified key."""
@@ -1054,11 +1339,6 @@ def loa_admin(request):
     # Filtering
     qs = LeaveRequest.objects.select_related('user').order_by('-created_at')
 
-    member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
-    member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
-    if member_corps or member_allis:
-        qs = qs.filter(Q(user__profile__main_character__corporation_id__in=member_corps) | Q(user__profile__main_character__alliance_id__in=member_allis))
-
     user_filter   = request.GET.get('user')
     status_filter = request.GET.get('status')
 
@@ -1069,10 +1349,6 @@ def loa_admin(request):
 
     # Build dropdown options from existing requests
     users_in_requests_qs = LeaveRequest.objects.all()
-    member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
-    member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
-    if member_corps or member_allis:
-        users_in_requests_qs = users_in_requests_qs.filter(Q(user__profile__main_character__corporation_id__in=member_corps) | Q(user__profile__main_character__alliance_id__in=member_allis))
 
     users_in_requests = (
         users_in_requests_qs.values_list('user__id', 'user__username')
@@ -1160,13 +1436,6 @@ def delete_request_admin(request, pk):
     if request.method == 'POST':  # Guard mutation behind POST.
         cfg = BigBrotherConfig.get_solo()
         lr = get_object_or_404(LeaveRequest, pk=pk)
-        member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
-        member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
-        if member_corps or member_allis:
-            main_char = getattr(lr.user.profile, 'main_character', None)
-            if not main_char or (main_char.corporation_id not in member_corps and main_char.alliance_id not in member_allis):
-                return HttpResponseForbidden("Target user is not in a member corporation/alliance.")
-
         lr.delete()
         hook = cfg.loawebhook
         userrr = get_main_character_name(request.user.id)
@@ -1190,13 +1459,6 @@ def approve_request(request, pk):
     if request.method == 'POST':  # Only process POST actions.
         cfg = BigBrotherConfig.get_solo()
         lr = get_object_or_404(LeaveRequest, pk=pk)
-        member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
-        member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
-        if member_corps or member_allis:
-            main_char = getattr(lr.user.profile, 'main_character', None)
-            if not main_char or (main_char.corporation_id not in member_corps and main_char.alliance_id not in member_allis):
-                return HttpResponseForbidden("Target user is not in a member corporation/alliance.")
-
         lr.status = 'approved'
         lr.save()
         hook = cfg.loawebhook
@@ -1221,13 +1483,6 @@ def deny_request(request, pk):
     if request.method == 'POST':  # Only mutate via POST requests.
         cfg = BigBrotherConfig.get_solo()
         lr = get_object_or_404(LeaveRequest, pk=pk)
-        member_corps = {int(x) for x in (cfg.member_corporations or "").split(",") if x.strip().isdigit()}
-        member_allis = {int(x) for x in (cfg.member_alliances or "").split(",") if x.strip().isdigit()}
-        if member_corps or member_allis:
-            main_char = getattr(lr.user.profile, 'main_character', None)
-            if not main_char or (main_char.corporation_id not in member_corps and main_char.alliance_id not in member_allis):
-                return HttpResponseForbidden("Target user is not in a member corporation/alliance.")
-
         lr.status = 'denied'
         lr.save()
         hook = cfg.loawebhook

@@ -21,12 +21,14 @@ from urllib3.util.retry import Retry
 
 from ..app_settings import (
     DATASOURCE,
+    _serialize_datetime,
     esi_tenant_kwargs,
     get_contact_email,
     get_owner_name,
     get_site_url,
     resolve_alliance_name,
     resolve_character_name,
+    resolve_corporation_name,
     send_status_embed,
 )
 
@@ -47,7 +49,7 @@ HEADERS = {
 AWOX_CACHE_TTL_SECONDS = 60 * 60  # 60 minutes
 
 # How many recent zKill entries we will hydrate per character (prevents runaway ESI calls)
-MAX_KILLS_PER_CHARACTER = 25
+MAX_KILLS_LIMIT = 100
 
 # Limit zKill "down" notifications to once every 2 hours
 _last_zkill_down_notice_monotonic = 0.0
@@ -58,9 +60,7 @@ def _get_corp_name(corp_id):
     if not corp_id:
         return "None"
     try:
-        operation = esi.client.Corporation.GetCorporationsCorporationId(corporation_id=corp_id)
-        result, _ = call_result(operation)
-        return result.get("name", f"Unknown ({corp_id})")
+        return resolve_corporation_name(corp_id)
     except Exception:
         return f"Unknown ({corp_id})"
 
@@ -108,30 +108,43 @@ def _get_requests_session() -> requests.Session:
     return session
 
 
-def fetch_awox_kills(user_id, delay=0.2):
+def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
     """
-    Return a deduplicated list of awox kill summaries for the given user.
+    Fetch AWOX kills from zKillboard for all characters owned by the user
+    within the past 24 hours.
+    """
+    from allianceauth.authentication.models import CharacterOwnership
+    from allianceauth.eveonline.models import EveCharacter
+    from django.utils import timezone
+    from datetime import timedelta
+    import time
 
-    A DB cache keeps checklist reloads cheap; otherwise each character's
-    recent awox activity is pulled from zKill, the full mail is hydrated
-    via ESI, and the resulting summary is cached for future calls.
-    """
     now = timezone.now()
+    cutoff = now - timedelta(days=365)
+    existing_data = []
 
-    # DB cache with TTL: return cached kills if present & fresh
     try:
-        cache = AwoxKillsCache.objects.get(pk=user_id)
-        if cache.updated and (now - cache.updated).total_seconds() < AWOX_CACHE_TTL_SECONDS:
-            try:
-                cache.last_accessed = now
-                cache.save(update_fields=["last_accessed"])
-            except Exception:
-                pass
-            return cache.data or None
+        cache_obj = AwoxKillsCache.objects.get(user_id=user_id)
+        if not force_refresh and (now - cache_obj.updated).total_seconds() < AWOX_CACHE_TTL_SECONDS:
+            # Filter cached data by date before returning
+            filtered_cached = []
+            for kill in cache_obj.data:
+                dt = kill.get("date")
+                if not dt:
+                    continue
+                if not hasattr(dt, "strftime"):
+                    # likely a string from JSON cache
+                    try:
+                        from django.utils.dateparse import parse_datetime
+                        dt = parse_datetime(dt)
+                    except Exception:
+                        continue
+                if dt and dt >= cutoff:
+                    filtered_cached.append(kill)
+            return filtered_cached
+        existing_data = cache_obj.data
     except AwoxKillsCache.DoesNotExist:
-        cache = None
-    except Exception:
-        cache = None
+        pass
 
     characters = CharacterOwnership.objects.filter(user__id=user_id).select_related("character")
     char_id_to_name = {
@@ -139,182 +152,131 @@ def fetch_awox_kills(user_id, delay=0.2):
         for c in characters if getattr(c, "character", None)
     }
     char_ids = set(char_id_to_name.keys())
-    if not char_ids:
-        return None
 
-    kills_by_id = {}
+    if not char_ids:
+        return []
+
     session = _get_requests_session()
+    processed_kills = {} # kill_id -> data
 
     try:
-        for char_id in char_id_to_name.keys():
+        for char_id in char_ids:
+            # Use the awox endpoint which only returns friendly-fire kills
             zkill_url = f"https://zkillboard.com/api/characterID/{char_id}/awox/1/"
-            start_ts = time.monotonic()
             try:
-                response = session.get(zkill_url, timeout=(3, 10))
+                response = session.get(zkill_url, timeout=(5, 15))
                 response.raise_for_status()
-            finally:
-                elapsed = time.monotonic() - start_ts
-                logger.info(
-                    "[AWOX][zKill] char_id=%s elapsed=%.3fs status=%s",
-                    char_id,
-                    elapsed,
-                    getattr(response, "status_code", "ERR"),
-                )
 
-            content_type = response.headers.get("Content-Type", "")
-            text_lower = (response.text or "").lower()
-            text_preview = (response.text or "").strip()[:200]
-
-            if (
-                not content_type.startswith("application/json")
-                or "so a big oops happened" in text_lower
-                or "cdn-cgi/challenge-platform" in text_lower
-            ):
-                logger.warning(
-                    "Non-JSON response from zKillboard for %s: status=%s content_type=%s body='%s'",
-                    char_id,
-                    response.status_code,
-                    content_type,
-                    text_preview,
-                )
-                _notify_zkill_down_once(text_preview, response.status_code, content_type)
-                continue
-
-            try:
-                killmails = response.json()
-            except ValueError as e:
-                logger.warning(
-                    "Failed to decode zKillboard JSON for %s: %s. Body preview='%s'",
-                    char_id,
-                    e,
-                    text_preview,
-                )
-                _notify_zkill_down_once(text_preview, response.status_code, content_type)
-                continue
-
-            if isinstance(killmails, list):
-                killmails = killmails[:MAX_KILLS_PER_CHARACTER]
-            else:
-                continue
-
-            for kill in killmails:
-                try:
-                    kill_id = int(kill.get("killmail_id", 0))
-                except (ValueError, TypeError):
+                content_type = response.headers.get("Content-Type", "")
+                if not content_type.startswith("application/json"):
+                    _notify_zkill_down_once(response.text[:200], response.status_code, content_type)
                     continue
 
-                hash_ = kill.get("zkb", {}).get("hash")
-                value = kill.get("zkb", {}).get("totalValue", 0)
-
-                if not kill_id or not hash_:
+                data = response.json()
+                if not isinstance(data, list):
                     continue
 
-                # Defensive check against duplicates during the fetch loop
-                if kill_id in kills_by_id:
-                    continue
+                for k in data[:MAX_KILLS_LIMIT]:
+                    kill_id = k.get("killmail_id")
+                    if not kill_id or kill_id in processed_kills:
+                        continue
 
-                operation = esi.client.Killmails.GetKillmailsKillmailIdKillmailHash(
-                    killmail_id=kill_id,
-                    killmail_hash=hash_,
-                    **esi_tenant_kwargs(DATASOURCE),
-                )
+                    try:
+                        # Hydrate from ESI
+                        hash_ = k.get("zkb", {}).get("hash")
+                        if not hash_:
+                            continue
 
-                try:
-                    full_kill, _ = call_result(operation)
-                except HTTPNotModified:
-                    continue
-                except Exception as e:
-                    logger.warning(f"Error fetching killmail from ESI for kill_id={kill_id}: {e}")
-                    continue
+                        operation = esi.client.Killmails.GetKillmailsKillmailIdKillmailHash(
+                            killmail_id=kill_id, killmail_hash=hash_, **esi_tenant_kwargs(DATASOURCE)
+                        )
+                        try:
+                            full_kill, _ = call_result(operation)
+                        except HTTPNotModified:
+                            full_kill, _ = call_result(operation, use_etag=False)
 
-                victim = full_kill.get("victim", {})
-                victim_id = victim.get("character_id")
-                victim_is_user = victim_id in char_ids
+                        victim = full_kill.get("victim", {})
+                        victim_id = victim.get("character_id")
+                        attackers = full_kill.get("attackers", []) or []
 
-                attackers = full_kill.get("attackers", []) or []
-                attacker_ids_user = [
-                    a.get("character_id") for a in attackers
-                    if a.get("character_id") and a.get("character_id") in char_ids
-                ]
+                        # Who from our user is involved?
+                        involved_user_char_ids = []
+                        if victim_id in char_ids:
+                            involved_user_char_ids.append(victim_id)
 
-                involved_user_char_names = []
-                if victim_is_user:
-                    involved_user_char_names.append(char_id_to_name[victim_id])
+                        for a in attackers:
+                            aid = a.get("character_id")
+                            if aid in char_ids and aid not in involved_user_char_ids:
+                                involved_user_char_ids.append(aid)
 
-                for a_id in attacker_ids_user:
-                    name = char_id_to_name[a_id]
-                    if name not in involved_user_char_names:
-                        involved_user_char_names.append(name)
+                        if not involved_user_char_ids:
+                            continue # Should not happen if zKill filter worked correctly for this char
 
-                if not involved_user_char_names:
-                    continue
+                        is_attacker = any(a.get("character_id") in char_ids for a in attackers)
 
-                is_attacker = len(attacker_ids_user) > 0
+                        # Resolve names
+                        if victim_id:
+                            try:
+                                vic_name = EveCharacter.objects.get(character_id=victim_id).character_name
+                            except (EveCharacter.DoesNotExist, AttributeError):
+                                vic_name = resolve_character_name(victim_id) or "Unknown"
+                        else:
+                            vic_name = "Unknown"
 
-                # Resolve names for display
-                vic_name = resolve_character_name(victim_id) if victim_id else "Unknown"
+                        fb_attacker = next((a for a in attackers if a.get("final_blow")), attackers[0] if attackers else {})
+                        att_id = fb_attacker.get("character_id")
+                        if att_id:
+                            try:
+                                att_name = EveCharacter.objects.get(character_id=att_id).character_name
+                            except (EveCharacter.DoesNotExist, AttributeError):
+                                att_name = resolve_character_name(att_id) or "Unknown"
+                        else:
+                            att_name = "Unknown"
 
-                # Find final blow attacker for display
-                final_blow_attacker = next((a for a in attackers if a.get("final_blow")), attackers[0] if attackers else {})
-                att_id = final_blow_attacker.get("character_id")
-                att_name = resolve_character_name(att_id) if att_id else "Unknown"
+                        processed_kills[kill_id] = {
+                            "value": int(k.get("zkb", {}).get("totalValue", 0)),
+                            "link": f"https://zkillboard.com/kill/{kill_id}/",
+                            "chars": [char_id_to_name[cid] for cid in involved_user_char_ids],
+                            "is_attacker": is_attacker,
+                            "att_name": att_name,
+                            "att_corp": _get_corp_name(fb_attacker.get("corporation_id")),
+                            "att_alli": _get_alliance_name(fb_attacker.get("alliance_id")),
+                            "vic_name": vic_name,
+                            "vic_corp": _get_corp_name(victim.get("corporation_id")),
+                            "vic_alli": _get_alliance_name(victim.get("alliance_id")),
+                            "date": full_kill.get("killmail_time"),
+                        }
+                        time.sleep(delay)
+                    except Exception as ke:
+                        logger.warning(f"[AWOX] Error processing kill {kill_id}: {ke}")
+                        continue
 
-                att_corp = _get_corp_name(final_blow_attacker.get("corporation_id"))
-                att_alli = _get_alliance_name(final_blow_attacker.get("alliance_id"))
+            except Exception as e:
+                logger.warning(f"[AWOX] Failed fetch for char {char_id}: {e}")
 
-                vic_corp = _get_corp_name(victim.get("corporation_id"))
-                vic_alli = _get_alliance_name(victim.get("alliance_id"))
+        # Final result list
+        cutoff = now - timedelta(days=365)
+        new_data = [
+            kill for kill in processed_kills.values()
+            if kill["date"] >= cutoff
+        ]
+        new_data.sort(key=lambda x: x["date"], reverse=True)
 
-                kills_by_id[kill_id] = {
-                    "value": int(value) if value is not None else 0,
-                    "link": f"https://zkillboard.com/kill/{kill_id}/",
-                    "chars": involved_user_char_names,
-                    "is_attacker": is_attacker,
-                    "att_name": att_name,
-                    "att_corp": att_corp,
-                    "att_alli": att_alli,
-                    "vic_name": vic_name,
-                    "vic_corp": vic_corp,
-                    "vic_alli": vic_alli,
-                    "date": full_kill.get("killmail_time"),
-                }
+        # Update cache
+        AwoxKillsCache.objects.update_or_create(
+            user_id=user_id,
+            defaults={
+                "data": _serialize_datetime(new_data),
+                "last_accessed": now
+            }
+        )
+        return new_data
 
-            time.sleep(delay)
-
-        # Final deduplication by link just in case
-        data_list = []
-        seen_links = set()
-        if kills_by_id:
-            # Sort by killmail_id descending to generally show most recent first
-            sorted_keys = sorted(kills_by_id.keys(), reverse=True)
-            for k_id in sorted_keys:
-                kill_data = kills_by_id[k_id]
-                if kill_data['link'] not in seen_links:
-                    data_list.append(kill_data)
-                    seen_links.add(kill_data['link'])
-
-        try:
-            AwoxKillsCache.objects.update_or_create(
-                user_id=user_id,
-                defaults={"data": data_list, "last_accessed": now},
-            )
-        except Exception:
-            try:
-                if cache:
-                    cache.data = data_list
-                    cache.last_accessed = now
-                    cache.save()
-            except Exception:
-                pass
-
-        return data_list if data_list else None
-
+    except Exception as e:
+        logger.exception(f"Error in fetch_awox_kills for user {user_id}: {e}")
+        return existing_data
     finally:
-        # CRITICAL: Close session to prevent memory leak
         session.close()
-        del session, kills_by_id, char_id_to_name, char_ids
-        import gc
-        gc.collect()
 
 def render_awox_kills_html(userID):
     """
@@ -326,8 +288,8 @@ def render_awox_kills_html(userID):
     if not kills:  # Nothing to render, return standardized empty table.
         return '<table class="table stats"><tbody><tr><td class="text-center">No recent AWOX kills found.</td></tr></tbody></table>'
 
-    html = '<table class="table table-striped table-hover stats">'
-    html += '<thead><tr><th>Date</th><th>Character(s)</th><th>Attacker</th><th>Victim</th><th>Value</th><th>Link</th></tr></thead><tbody>'
+    html_output = '<table class="table table-striped table-hover stats">'
+    html_output += '<thead><tr><th>Date</th><th>Character(s)</th><th>Attacker</th><th>Victim</th><th>Value</th><th>Link</th></tr></thead><tbody>'
 
     for kill in kills:
         chars_list = sorted(kill.get("chars", []))
@@ -354,18 +316,19 @@ def render_awox_kills_html(userID):
         if kill.get("vic_alli"):
             vic_html += f"<br><small>({kill.get('vic_alli')})</small>"
 
-        row_html = '<tr class="text-danger"><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{} ISK</td><td><a href="{}" target="_blank">View</a></td></tr>'
-        html += format_html(row_html, date_str, chars, mark_safe(att_html), mark_safe(vic_html), value, link)
+        if kill.get("is_attacker", False):
+            row_html = '<tr class="text-danger"><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{} ISK</td><td><a href="{}" target="_blank">View</a></td></tr>'
+            html_output += format_html(row_html, date_str, chars, mark_safe(att_html), mark_safe(vic_html), value, link)
 
-    html += '</tbody></table>'
-    return html
+    html_output += '</tbody></table>'
+    return html_output
 
-def get_awox_kill_links(user_id):
+def get_awox_kill_links(user_id, force_refresh=False):
     """
     Convenience helper used by notification code to embed kill links
     without having to duplicate the fetch/cache logic.
     """
-    kills = fetch_awox_kills(user_id)
+    kills = fetch_awox_kills(user_id, force_refresh=force_refresh)
     if not kills:  # No cached kills yet
         return []
 

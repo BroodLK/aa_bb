@@ -1,3 +1,29 @@
+## [3.2.9] - 2026-01-22
+
+> [!CAUTION]
+>
+> If you are upgrading from a previous version, you will need to run the `bb_purge_entity_cache` management command to clear the entity cache.
+```bash
+python manage.py bb_purge_entity_cache
+```
+
+
+### Added
+- Compliance tickets now close automatically when a removed character is added back.
+- Added a global on/off setting for Discord message activity tracking.
+
+### Changed
+- Background update tasks now use less memory and run more efficiently.
+- Cached entity data expires sooner to prevent long-term buildup.
+- More dashboard sections now load in real time with visible progress bars.
+- Dashboard cards now wait for data to be ready before loading.
+- Improved Discord bot stability to prevent database disconnects.
+- The CT Kicker task no longer enables itself automatically.
+- Added management command `bb_purge_entity_cache` for manual cache cleanup with an interactive flow: initial safety confirmation, automatic module deactivation, size-based truncation prompts, and optional table optimization.
+
+### Fixed
+- Resolved a dashboard loading error caused by invalid data handling.
+
 ## [3.2.8] - 2026-01-12
 
 ### Added

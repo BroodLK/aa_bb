@@ -27,7 +27,7 @@ from allianceauth.services.hooks import get_extension_logger
 
 logger = get_extension_logger(__name__)
 
-from aa_bb.checks_cb.hostile_assets import render_assets
+from aa_bb.checks_cb.hostile_assets import render_assets, get_corp_hostile_asset_locations
 from aa_bb.checks_cb.sus_trans import (
     get_user_transactions,
     is_transaction_hostile,
@@ -208,7 +208,7 @@ def load_card(request):
     key   = card_def["key"]
     title = card_def["title"]
     logger.info(key)
-    if key in ("sus_contr","sus_tra"):  # Paginated cards handled elsewhere.
+    if key in ("sus_contr","sus_tra", "sus_asset"):  # Paginated cards handled elsewhere.
         # handled via paginated endpoints
         return JsonResponse({"key": key, "title": title})
 
@@ -225,13 +225,13 @@ def load_card(request):
     })
 
 
-@shared_task(bind=True)
+@shared_task(bind=True, time_limit=7200)
 def warm_entity_cache_task(self, user_id):
     """
     Gather mails, contracts, transactions; warm entity cache.
     Track progress in the DB via WarmProgress.
     """
-    from .models import BigBrotherConfig
+    from .models import BigBrotherConfig, WarmProgress
     cfg = BigBrotherConfig.get_solo()
     if not cfg.is_active or not cfg.is_warmer_active:
         return
@@ -239,12 +239,7 @@ def warm_entity_cache_task(self, user_id):
     if not corptools_active():
         return
     user_main = resolve_corporation_name(user_id) or str(user_id)
-    logger.info(f"corp_name: {user_main}")
-    qs = WarmProgress.objects.all()
-    users = [
-        {"user": wp.user_main, "current": wp.current, "total": wp.total}
-        for wp in qs
-    ]
+
     # Check for existing progress entry
     try:
         progress = WarmProgress.objects.get(user_main=user_main)
@@ -274,52 +269,86 @@ def warm_entity_cache_task(self, user_id):
                 f"[{user_main}] no progress in 20 s (still {first_current}); continuing with new task."
             )
 
-    # Build list of (entity_id, timestamp)
-    entries = []
-    contracts = gather_user_contracts(user_id)
-    trans = gather_user_transactions(user_id)
-    candidates = []
-    for c in contracts:
-        issuer_id = get_character_id(c.issuer_name)
-        candidates.append((issuer_id, getattr(c, "date_issued")))
-        assignee = c.assignee_id or c.acceptor_id
-        candidates.append((assignee, getattr(c, "date_issued")))
-    for t in trans:
-        candidates.append((t.first_party_id, getattr(t, "date")))
-        candidates.append((t.second_party_id, getattr(t, "date")))
-    from django.db.models import Q
-    from .models import EntityInfoCache
-    query_filter = Q()
-    for entity_id, as_of in candidates:
-        query_filter |= Q(entity_id=entity_id, as_of=as_of)
+    try:
+        # Initialize progress record as "Scanning"
+        WarmProgress.objects.update_or_create(
+            user_main=user_main,
+            defaults={"current": 0, "total": 1}
+        )
 
-    existing = set(
-        EntityInfoCache.objects.filter(query_filter)
-        .values_list('entity_id', 'as_of')
-    )
+        # Build list of (entity_id, timestamp)
+        entries = []
+        contracts = gather_user_contracts(user_id)
+        trans = gather_user_transactions(user_id)
+        candidates = []
+        for c in contracts:
+            issuer_id = get_character_id(c.issuer_name)
+            if issuer_id:
+                candidates.append((issuer_id, getattr(c, "date_issued")))
+            assignee = c.assignee_id or c.acceptor_id
+            if assignee:
+                candidates.append((assignee, getattr(c, "date_issued")))
+        for t in trans:
+            if t.first_party_id:
+                candidates.append((t.first_party_id, getattr(t, "date")))
+            if t.second_party_id:
+                candidates.append((t.second_party_id, getattr(t, "date")))
 
-    for candidate in candidates:
-        if candidate not in existing:  # Only fetch entity info when cache lacks the tuple.
-            entries.append(candidate)
+        # Normalize candidate timestamps to the hour for cache matching
+        candidates = [
+            (eid, ts.replace(minute=0, second=0, microsecond=0) if hasattr(ts, 'replace') else ts)
+            for eid, ts in candidates
+        ]
+        # Deduplicate candidates
+        candidates = sorted(list(set(candidates)))
 
-    total = len(entries)
-    logger.info(f"Starting warm cache for {user_main} ({total} entries)")
+        from django.db.models import Q
+        from .models import EntityInfoCache
 
-    # Initialize or update the progress record
-    WarmProgress.objects.update_or_create(
-        user_main=user_main,
-        defaults={"current": 0, "total": total}
-    )
+        existing = set()
+        # Process in chunks to avoid hitting database query complexity limits
+        CHUNK_SIZE = 500
+        for i in range(0, len(candidates), CHUNK_SIZE):
+            chunk = candidates[i:i + CHUNK_SIZE]
+            query_filter = Q()
+            for entity_id, as_of in chunk:
+                query_filter |= Q(entity_id=entity_id, as_of=as_of)
 
-    # Process each entry, updating the DB record
-    for idx, (eid, ts) in enumerate(entries, start=1):
-        WarmProgress.objects.filter(user_main=user_main).update(current=idx)
-        get_entity_info(eid, ts)
+            existing.update(
+                EntityInfoCache.objects.filter(query_filter)
+                .values_list('entity_id', 'as_of')
+            )
 
-    # Clean up when done
-    WarmProgress.objects.filter(user_main=user_main).delete()
-    logger.info(f"Completed warm cache for {user_main}")
-    return total
+        for candidate in candidates:
+            if candidate not in existing:  # Only fetch entity info when cache lacks the tuple.
+                entries.append(candidate)
+
+        total = len(entries)
+        logger.info(f"Starting warm cache for {user_main} ({total} entries)")
+
+        if total == 0:
+            logger.info(f"Warm cache for {user_main} is already up to date.")
+            return 0
+
+        # Update the progress record with real total
+        WarmProgress.objects.update_or_create(
+            user_main=user_main,
+            defaults={"current": 0, "total": total}
+        )
+
+        # Process each entry, updating the DB record
+        for idx, (eid, ts) in enumerate(entries, start=1):
+            WarmProgress.objects.filter(user_main=user_main).update(current=idx)
+            get_entity_info(eid, ts)
+
+        logger.info(f"Completed warm cache for {user_main}")
+        return total
+    except Exception as e:
+        logger.exception(f"Error in warm cache task for {user_main}: {e}")
+        raise
+    finally:
+        # Clean up when done
+        WarmProgress.objects.filter(user_main=user_main).delete()
 
 @login_required
 @permission_required("aa_bb.basic_access_cb")
@@ -487,6 +516,19 @@ def stream_contracts_sse(request: WSGIRequest):
                 yield "event: done\ndata:0\n\n"
                 return
 
+            headers = [
+                "issued_date", "end_date",
+                "contract_type", "issuer_name", "issuer_corporation",
+                "issuer_alliance", "assignee_name", "assignee_corporation",
+                "assignee_alliance", "status", "start_location", "end_location",
+            ]
+            header_html = (
+                "<tr>" +
+                "".join(f"<th>{html.escape(h.replace('_',' ').title())}</th>" for h in headers) +
+                "</tr>"
+            )
+            yield f"event: header\ndata:{json.dumps(header_html)}\n\n"
+
             batch_size = 50
             for i in range(0, total, batch_size):
                 batch = qs[i : i + batch_size]
@@ -542,6 +584,58 @@ def stream_contracts_sse(request: WSGIRequest):
     resp["X-Accel-Buffering"] = "no"
     return resp
 
+
+@login_required
+@permission_required("aa_bb.basic_access_cb")
+def stream_assets_sse(request):
+    """Stream hostile assets for a corporation via SSE."""
+    corp_id = request.GET.get("option", "")
+    if not corp_id:
+        return HttpResponseBadRequest("Missing corp_id")
+
+    if not corptools_active():
+        return HttpResponseForbidden("Corptools required")
+
+    def generator():
+        try:
+            yield ": ok\n\n"
+            systems = get_corp_hostile_asset_locations(corp_id)
+            total = len(systems)
+            processed = hostile_count = 0
+
+            if total == 0:
+                yield "event: done\ndata:0\n\n"
+                return
+
+            headers = ["System", "Location", "Owner", "Region"]
+            header_html = "<tr>" + "".join(f"<th>{html.escape(h)}</th>" for h in headers) + "</tr>"
+            yield f"event: header\ndata:{json.dumps(header_html)}\n\n"
+
+            now_ts = timezone.now()
+
+            for system_id, data in systems.items():
+                processed += 1
+                system_name = data.get("name") or f"ID {system_id}"
+                owner = data.get("owner", "Unresolvable")
+                region = data.get("region", "Unknown Region")
+
+                for rec in data.get("records", []):
+                    hostile_count += 1
+                    loc_name = rec.get("location_name", "Unknown Location")
+                    tr = f"<tr><td>{html.escape(system_name)}</td><td>{html.escape(loc_name)}</td><td><span class='text-danger'>{html.escape(owner)}</span></td><td>{html.escape(region)}</td></tr>"
+                    yield f"event: asset\ndata:{json.dumps(tr)}\n\n"
+
+                yield f"event: progress\ndata:{processed},{total},{hostile_count}\n\n"
+
+            yield "event: done\ndata:bye\n\n"
+        except Exception as e:
+            logger.error(f"Error in corp asset stream for {corp_id}: {e}", exc_info=True)
+            yield f"event: error\ndata:{json.dumps(str(e))}\n\n"
+
+    resp = StreamingHttpResponse(generator(), content_type='text/event-stream')
+    resp["Cache-Control"] = "no-cache"
+    resp["X-Accel-Buffering"] = "no"
+    return resp
 
 
 VISIBLE = [
