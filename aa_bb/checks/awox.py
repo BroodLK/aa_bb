@@ -8,7 +8,9 @@ care about throttling or HTML generation.
 
 import html
 import time
+from collections import deque
 from functools import lru_cache
+from threading import Lock
 
 import requests
 from allianceauth.authentication.models import CharacterOwnership
@@ -17,7 +19,6 @@ from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 from esi.exceptions import HTTPNotModified
 from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 
 from ..app_settings import (
     DATASOURCE,
@@ -50,6 +51,12 @@ AWOX_CACHE_TTL_SECONDS = 60 * 60  # 60 minutes
 
 # How many recent zKill entries we will hydrate per character (prevents runaway ESI calls)
 MAX_KILLS_LIMIT = 100
+
+# Hard cap to stay well under zKill's 10 req/s limit across the process.
+ZKILL_MAX_REQUESTS_PER_SECOND = 5
+_ZKILL_RATE_WINDOW_SECONDS = 1.0
+_zkill_request_times = deque()
+_zkill_rate_lock = Lock()
 
 # Limit zKill "down" notifications to once every 2 hours
 _last_zkill_down_notice_monotonic = 0.0
@@ -98,11 +105,61 @@ def _notify_zkill_down_once(preview: str, status: int | None, content_type: str 
         logger.warning(f"Failed to send zKill down notification: {e}")
 
 
+def _try_acquire_zkill_slot() -> bool:
+    now = time.monotonic()
+    with _zkill_rate_lock:
+        cutoff = now - _ZKILL_RATE_WINDOW_SECONDS
+        while _zkill_request_times and _zkill_request_times[0] <= cutoff:
+            _zkill_request_times.popleft()
+        if len(_zkill_request_times) >= ZKILL_MAX_REQUESTS_PER_SECOND:
+            return False
+        _zkill_request_times.append(now)
+        return True
+
+
+def _parse_cached_kill_date(value):
+    if hasattr(value, "strftime"):
+        return value
+    if not value:
+        return None
+    try:
+        from django.utils.dateparse import parse_datetime
+        return parse_datetime(value)
+    except Exception:
+        return None
+
+
+def _merge_cached_kills(existing_data, new_data, cutoff):
+    merged = {}
+    for entry in existing_data or []:
+        if not isinstance(entry, dict):
+            continue
+        link = entry.get("link")
+        if not link:
+            continue
+        dt = _parse_cached_kill_date(entry.get("date"))
+        if not dt or dt < cutoff:
+            continue
+        cached_entry = dict(entry)
+        cached_entry["date"] = dt
+        merged[link] = cached_entry
+
+    for entry in new_data:
+        link = entry.get("link")
+        if not link:
+            continue
+        merged[link] = entry
+
+    merged_list = list(merged.values())
+    merged_list.sort(key=lambda x: x["date"], reverse=True)
+    return merged_list
+
+
 def _get_requests_session() -> requests.Session:
     session = requests.Session()
     session.headers.update(HEADERS)
-    retries = Retry(total=3, backoff_factor=0.2, status_forcelist=[500, 502, 503, 504])
-    adapter = HTTPAdapter(max_retries=retries)
+    # Disable automatic retries so the global rate limiter governs every request.
+    adapter = HTTPAdapter(max_retries=0)
     session.mount("https://", adapter)
     session.mount("http://", adapter)
     return session
@@ -158,12 +215,16 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
 
     session = _get_requests_session()
     processed_kills = {} # kill_id -> data
+    skipped_char_ids = []
 
     try:
         for char_id in char_ids:
             # Use the awox endpoint which only returns friendly-fire kills
             zkill_url = f"https://zkillboard.com/api/characterID/{char_id}/awox/1/"
             try:
+                if not _try_acquire_zkill_slot():
+                    skipped_char_ids.append(char_id)
+                    continue
                 response = session.get(zkill_url, timeout=(5, 15))
                 response.raise_for_status()
 
@@ -260,7 +321,15 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
             kill for kill in processed_kills.values()
             if kill["date"] >= cutoff
         ]
-        new_data.sort(key=lambda x: x["date"], reverse=True)
+        if skipped_char_ids:
+            logger.info(
+                "[AWOX] Skipped %d character(s) for user %s due to zKill rate limit; will retry next cycle.",
+                len(skipped_char_ids),
+                user_id,
+            )
+            new_data = _merge_cached_kills(existing_data, new_data, cutoff)
+        else:
+            new_data.sort(key=lambda x: x["date"], reverse=True)
 
         # Update cache
         AwoxKillsCache.objects.update_or_create(
