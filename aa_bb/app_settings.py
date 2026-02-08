@@ -20,6 +20,7 @@ from django.apps import apps
 from django.utils import timezone
 from typing import Optional, Dict, Tuple, Any, List
 from django.db import transaction, IntegrityError, OperationalError
+from django.db.utils import ProgrammingError
 from django.db.models import Q
 
 from .models import (
@@ -2180,7 +2181,28 @@ def send_message(message, hook: str = None):
       - str  -> sent as {"content": message}, with chunking.
       - dict -> sent directly as JSON, for embeds etc.
     """
-    webhook_url = hook or BigBrotherConfig.get_solo().webhook
+    cfg = None
+    if hook:
+        webhook_url = hook
+        try:
+            cfg = BigBrotherConfig.get_solo()
+        except (OperationalError, ProgrammingError):
+            cfg = None
+    else:
+        cfg = BigBrotherConfig.get_solo()
+        webhook_url = cfg.webhook
+
+    webhook_username = None
+    if cfg:
+        webhook_username = (cfg.webhook_app_name or "").strip()
+        if not webhook_username:
+            webhook_username = None
+
+    def _apply_webhook_username(payload: dict) -> dict:
+        if webhook_username and "username" not in payload:
+            payload = dict(payload)
+            payload["username"] = webhook_username
+        return payload
 
     if VERBOSE_WEBHOOK_LOGGING:
         logger.debug(
@@ -2313,7 +2335,7 @@ def send_message(message, hook: str = None):
                 "[WEBHOOK] sending embed payload | embeds=%d",
                 len(message.get("embeds", [])),
             )
-        return _post_with_retries(message)
+        return _post_with_retries(_apply_webhook_username(message))
 
     # message is str
     if VERBOSE_WEBHOOK_LOGGING:
@@ -2323,7 +2345,7 @@ def send_message(message, hook: str = None):
         )
 
     if len(message) <= MAX_LEN:
-        return _post_with_retries({"content": message})
+        return _post_with_retries(_apply_webhook_username({"content": message}))
 
     # Chunking path
     logger.info(
@@ -2354,7 +2376,7 @@ def send_message(message, hook: str = None):
                 "[WEBHOOK] flushing chunk | length=%d",
                 len(buffer),
             )
-            _post_with_retries({"content": buffer})
+            _post_with_retries(_apply_webhook_username({"content": buffer}))
             buffer = part
         else:
             buffer = candidate
@@ -2364,7 +2386,7 @@ def send_message(message, hook: str = None):
             "[WEBHOOK] flushing final chunk | length=%d",
             len(buffer),
         )
-        _post_with_retries({"content": buffer})
+        _post_with_retries(_apply_webhook_username({"content": buffer}))
 
 
 def send_status_embed(

@@ -161,6 +161,7 @@ class BB_ConfigAdmin(SingletonModelAdmin):
             {
                 "description": "Configure Discord webhook URLs for various notification types",
                 "fields": (
+                    "webhook_app_name",
                     "webhook",
                     "user_compliance_webhook",
                     "corp_compliance_webhook",

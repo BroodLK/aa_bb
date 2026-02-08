@@ -939,6 +939,14 @@ class BigBrotherConfig(SingletonModel):
         verbose_name=_("Corporation Scopes")
     )
 
+    webhook_app_name = models.CharField(
+        max_length=80,
+        blank=True,
+        default="",
+        help_text=_("Name shown for Discord webhook messages sent by this app."),
+        verbose_name=_("Webhook App Name")
+    )
+
     webhook = models.URLField(
         blank=True,
         null=True,
