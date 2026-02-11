@@ -2459,15 +2459,14 @@ def send_status_embed(
             len(description),
         )
 
-    embed = {
-        "embeds": [
-            {
-                "title": title,
-                "description": description,
-                "color": color,
-            }
-        ]
+    embed_body = {
+        "description": description,
+        "color": color,
     }
+    if title:
+        embed_body["title"] = title
+
+    embed = {"embeds": [embed_body]}
 
     if VERBOSE_WEBHOOK_LOGGING:
         logger.debug("✅  [AA-BB] - [Embed] - sending embed payload")

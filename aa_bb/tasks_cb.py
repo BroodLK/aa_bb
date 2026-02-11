@@ -610,10 +610,11 @@ def BB_send_daily_messages():
 
     message = random.choice(list(unsent_messages))
     send_status_embed(
-        subject="Daily Message",
+        subject="",
         lines=[message.text],
+        override_title="",
         color=0x3498db,
-        hook=webhook
+        hook=webhook,
     )
 
     # Mark as sent
@@ -643,10 +644,11 @@ def BB_send_opt_message1():
 
     message = random.choice(list(unsent_messages))
     send_status_embed(
-        subject="Optional Message #1",
+        subject="",
         lines=[message.text],
+        override_title="",
         color=0x3498db,
-        hook=webhook
+        hook=webhook,
     )
 
     # Mark as sent
@@ -676,10 +678,11 @@ def BB_send_opt_message2():
 
     message = random.choice(list(unsent_messages))
     send_status_embed(
-        subject="Optional Message #2",
+        subject="",
         lines=[message.text],
+        override_title="",
         color=0x3498db,
-        hook=webhook
+        hook=webhook,
     )
 
     # Mark as sent
@@ -709,10 +712,11 @@ def BB_send_opt_message3():
 
     message = random.choice(list(unsent_messages))
     send_status_embed(
-        subject="Optional Message #3",
+        subject="",
         lines=[message.text],
+        override_title="",
         color=0x3498db,
-        hook=webhook
+        hook=webhook,
     )
 
     # Mark as sent
@@ -742,10 +746,11 @@ def BB_send_opt_message4():
 
     message = random.choice(list(unsent_messages))
     send_status_embed(
-        subject="Optional Message #4",
+        subject="",
         lines=[message.text],
+        override_title="",
         color=0x3498db,
-        hook=webhook
+        hook=webhook,
     )
 
     # Mark as sent
@@ -775,10 +780,11 @@ def BB_send_opt_message5():
 
     message = random.choice(list(unsent_messages))
     send_status_embed(
-        subject="Optional Message #5",
+        subject="",
         lines=[message.text],
+        override_title="",
         color=0x3498db,
-        hook=webhook
+        hook=webhook,
     )
 
     # Mark as sent
