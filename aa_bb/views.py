@@ -35,7 +35,13 @@ from .app_settings import (
     resolve_location_name, afat_active, discordbot_active, corptools_active,
     get_hostile_state, get_safe_entities, is_safe_entity
 )
-from .models import BigBrotherConfig, WarmProgress, LeaveRequest, ComplianceTicket, ComplianceTicketComment
+from .models import (
+    BigBrotherConfig,
+    WarmProgress,
+    LeaveRequest,
+    ComplianceTicket,
+    ComplianceTicketComment,
+)
 
 from aa_bb.checks.awox import render_awox_kills_html, fetch_awox_kills
 from aa_bb.checks.corp_changes import get_frequent_corp_changes
@@ -180,6 +186,7 @@ def get_user_id(character_name):
         return ownership.user.id
     except CharacterOwnership.DoesNotExist:
         return None
+
 
 # Single-card loader
 @login_required

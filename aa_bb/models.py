@@ -103,6 +103,68 @@ class General(models.Model):
             ("ticket_manager", _("Can manage compliance tickets")),
         )
 
+
+class AdminLogEntry(models.Model):
+    """Unified audit log for auth/admin events."""
+    CATEGORY_STATE = "state"
+    CATEGORY_GROUP = "group"
+    CATEGORY_DISCORD = "discord"
+    CATEGORY_ADMIN = "admin"
+    CATEGORY_AUTH = "auth"
+    CATEGORY_SYSTEM = "system"
+    CATEGORY_OTHER = "other"
+
+    CATEGORY_CHOICES = [
+        (CATEGORY_STATE, "State Change"),
+        (CATEGORY_GROUP, "Group Change"),
+        (CATEGORY_DISCORD, "Discord Change"),
+        (CATEGORY_ADMIN, "Admin Action"),
+        (CATEGORY_AUTH, "Auth Change"),
+        (CATEGORY_SYSTEM, "System"),
+        (CATEGORY_OTHER, "Other"),
+    ]
+
+    category = models.CharField(max_length=32, choices=CATEGORY_CHOICES, db_index=True)
+    action = models.CharField(max_length=64, db_index=True)
+    source = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    task_name = models.CharField(max_length=128, blank=True, default="", db_index=True)
+    reason = models.TextField(blank=True, default="")
+    actor = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="admin_log_entries",
+    )
+    target_user = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="admin_log_targets",
+    )
+    target_label = models.CharField(max_length=255, blank=True, default="")
+    message = models.TextField(blank=True, default="")
+    metadata = JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        verbose_name = "Admin Log Entry"
+        verbose_name_plural = "Admin Log Entries"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["category", "action"], name="aa_bb_adminlog_cat_action_idx"),
+            models.Index(fields=["source", "task_name"], name="aa_bb_adminlog_source_task_idx"),
+            models.Index(fields=["actor"], name="aa_bb_adminlog_actor_idx"),
+            models.Index(fields=["target_user"], name="aa_bb_adminlog_target_idx"),
+            models.Index(fields=["created_at"], name="aa_bb_adminlog_created_idx"),
+        ]
+
+    def __str__(self):
+        actor_name = self.actor.username if self.actor else "System"
+        target_name = self.target_user.username if self.target_user else self.target_label or "n/a"
+        return f"{self.created_at} {self.category}:{self.action} {actor_name} -> {target_name}"
+
 class UserStatus(models.Model):
     """
     Cached snapshot of every per-user signal displayed on BigBrother.

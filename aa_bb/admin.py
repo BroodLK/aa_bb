@@ -31,6 +31,7 @@ from .models import (
     ComplianceTicket,
     ComplianceThread,
     EveItemPrice,
+    AdminLogEntry,
 )
 
 @admin.register(BigBrotherConfig)
@@ -508,6 +509,37 @@ class WarmProgressConfig(admin.ModelAdmin):
 class UserStatusConfig(admin.ModelAdmin):
     """Simple heartbeat for per-user card status."""
     list_display = ["user", "updated"]
+
+
+@admin.register(AdminLogEntry)
+class AdminLogEntryAdmin(admin.ModelAdmin):
+    """Read-only audit log for auth/admin events."""
+    date_hierarchy = "created_at"
+    list_display = ["created_at", "category", "action", "reason", "source", "task_name", "actor", "target_user", "target_label"]
+    list_filter = ["category", "action", "source", "task_name"]
+    search_fields = ["reason", "message", "action", "source", "task_name", "target_label", "actor__username", "target_user__username"]
+    list_select_related = ["actor", "target_user"]
+    list_per_page = 100
+    ordering = ["-created_at"]
+    readonly_fields = [
+        "created_at",
+        "category",
+        "action",
+        "source",
+        "task_name",
+        "reason",
+        "actor",
+        "target_user",
+        "target_label",
+        "message",
+        "metadata",
+    ]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
 
 
 class ReasonFilter(admin.SimpleListFilter):
