@@ -21,6 +21,11 @@ class AdminLogContextMiddleware:
             "method": getattr(request, "method", ""),
             "ip": ip_addr,
         }
+        if user is not None:
+            meta["actor_id"] = getattr(user, "pk", None)
+            meta["actor_username"] = getattr(user, "get_username", lambda: None)()
+            meta["actor_is_staff"] = getattr(user, "is_staff", False)
+            meta["actor_is_superuser"] = getattr(user, "is_superuser", False)
         user_agent = request.META.get("HTTP_USER_AGENT", "")
         if user_agent:
             meta["user_agent"] = user_agent[:512]

@@ -69,6 +69,9 @@ INSTALLED_APPS += [
     PACKAGE,
 ]
 
+# Capture request actors for admin log attribution.
+MIDDLEWARE += ["aa_bb.middleware.AdminLogContextMiddleware"]
+
 # By default, apps are prevented from having public views for security reasons.
 # If you want to allow specific apps to have public views,
 # you can put their names here (same name as in INSTALLED_APPS).

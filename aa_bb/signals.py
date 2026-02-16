@@ -30,6 +30,12 @@ except ImportError:
     DiscordUser = None
 
 try:
+    from allianceauth.groupmanagement.models import GroupRequest, RequestLog
+except ImportError:
+    GroupRequest = None
+    RequestLog = None
+
+try:
     from allianceauth.authentication.models import OwnershipRecord, State
 except ImportError:
     OwnershipRecord = None
@@ -39,6 +45,11 @@ try:
     from esi.models import Token
 except ImportError:
     Token = None
+
+try:
+    from celery import signals as celery_signals
+except Exception:
+    celery_signals = None
 
 
 def _get_current_task_context():
@@ -619,3 +630,156 @@ if State is not None:
                 source="auth",
                 metadata=_m2m_meta(pk_set),
             )
+
+if GroupRequest is not None:
+    @receiver(post_save, sender=GroupRequest)
+    def log_group_request_created(sender, instance, created, **kwargs):
+        """Log when a user applies to join/leave a group."""
+        if not created:
+            return
+        action = "group_leave_request_created" if instance.leave_request else "group_join_request_created"
+        log_admin_event(
+            category=AdminLogEntry.CATEGORY_GROUP,
+            action=action,
+            actor=instance.user,
+            target_user=instance.user,
+            target_label=instance.group.name,
+            message="Group request created",
+            reason=action,
+            source="groupmanagement",
+            metadata={
+                "group_id": instance.group_id,
+                "leave_request": bool(instance.leave_request),
+                "group_request_id": instance.pk,
+            },
+        )
+
+
+    @receiver(pre_delete, sender=GroupRequest)
+    def log_group_request_cancelled(sender, instance, **kwargs):
+        """Log when a user cancels their own request (best-effort)."""
+        actor, _meta = get_request_context()
+        if actor and instance.user_id == actor.id:
+            action = "group_leave_request_cancelled" if instance.leave_request else "group_join_request_cancelled"
+            log_admin_event(
+                category=AdminLogEntry.CATEGORY_GROUP,
+                action=action,
+                actor=actor,
+                target_user=instance.user,
+                target_label=instance.group.name,
+                message="Group request cancelled",
+                reason=action,
+                source="groupmanagement",
+                metadata={
+                    "group_id": instance.group_id,
+                    "leave_request": bool(instance.leave_request),
+                    "group_request_id": instance.pk,
+                },
+            )
+
+
+if RequestLog is not None:
+    def _requestlog_requestor(info):
+        if not info:
+            return None
+        if ":" not in info:
+            return info
+        return info.split(":", 1)[0]
+
+
+    def _requestlog_type_label(request_type):
+        if request_type is True:
+            return "leave"
+        if request_type is False:
+            return "join"
+        return "removed"
+
+
+    @receiver(post_save, sender=RequestLog)
+    def log_group_request_processed(sender, instance, created, **kwargs):
+        """Log when a group request is accepted or rejected."""
+        if not created:
+            return
+        type_label = _requestlog_type_label(instance.request_type)
+        action_label = "accepted" if instance.action else "rejected"
+        action = f"group_request_{type_label}_{action_label}"
+        requestor_name = _requestlog_requestor(instance.request_info)
+        target_user = None
+        if requestor_name:
+            target_user = User.objects.filter(username=requestor_name).first()
+
+        log_admin_event(
+            category=AdminLogEntry.CATEGORY_GROUP,
+            action=action,
+            actor=instance.request_actor,
+            target_user=target_user,
+            target_label=instance.group.name,
+            message="Group request processed",
+            reason=action,
+            source="groupmanagement",
+            metadata={
+                "request_type": instance.request_type,
+                "action": instance.action,
+                "request_info": instance.request_info,
+                "group_id": instance.group_id,
+                "request_log_id": instance.pk,
+            },
+        )
+
+
+if celery_signals is not None:
+    def _is_discord_update_groups_task(sender):
+        name = (getattr(sender, "name", "") or "").lower()
+        return bool(name) and ("discord" in name and "update_groups" in name)
+
+
+    @celery_signals.task_success.connect
+    def log_discord_task_success(sender=None, result=None, args=None, kwargs=None, **extras):
+        if not sender or not _is_discord_update_groups_task(sender):
+            return
+        user_pk = None
+        if args and len(args) > 0:
+            user_pk = args[0]
+        if kwargs and "user_pk" in kwargs:
+            user_pk = kwargs.get("user_pk")
+        target_user = User.objects.filter(pk=user_pk).first() if user_pk else None
+        log_admin_event(
+            category=AdminLogEntry.CATEGORY_DISCORD,
+            action="discord_roles_updated",
+            target_user=target_user,
+            target_label=getattr(target_user, "username", "") if target_user else "",
+            message="Discord roles update completed",
+            reason="discord_update_groups_success",
+            source="discord",
+            task_name=getattr(sender, "name", ""),
+            metadata={
+                "result": result,
+                "user_pk": user_pk,
+            },
+        )
+
+
+    @celery_signals.task_failure.connect
+    def log_discord_task_failure(sender=None, exception=None, args=None, kwargs=None, **extras):
+        if not sender or not _is_discord_update_groups_task(sender):
+            return
+        user_pk = None
+        if args and len(args) > 0:
+            user_pk = args[0]
+        if kwargs and "user_pk" in kwargs:
+            user_pk = kwargs.get("user_pk")
+        target_user = User.objects.filter(pk=user_pk).first() if user_pk else None
+        log_admin_event(
+            category=AdminLogEntry.CATEGORY_DISCORD,
+            action="discord_roles_update_failed",
+            target_user=target_user,
+            target_label=getattr(target_user, "username", "") if target_user else "",
+            message="Discord roles update failed",
+            reason="discord_update_groups_failed",
+            source="discord",
+            task_name=getattr(sender, "name", ""),
+            metadata={
+                "error": str(exception) if exception else "",
+                "user_pk": user_pk,
+            },
+        )
