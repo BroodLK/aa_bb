@@ -23,6 +23,15 @@ from .request_context import get_request_context
 
 logger = get_extension_logger(__name__)
 
+try:
+    LOGENTRY_ADDITION = LogEntry.ActionFlag.ADDITION
+    LOGENTRY_CHANGE = LogEntry.ActionFlag.CHANGE
+    LOGENTRY_DELETION = LogEntry.ActionFlag.DELETION
+except Exception:
+    LOGENTRY_ADDITION = getattr(LogEntry, "ADDITION", 1)
+    LOGENTRY_CHANGE = getattr(LogEntry, "CHANGE", 2)
+    LOGENTRY_DELETION = getattr(LogEntry, "DELETION", 3)
+
 
 try:
     from allianceauth.services.modules.discord.models import DiscordUser
@@ -421,9 +430,9 @@ def log_admin_actions(sender, instance, created, **kwargs):
             return
 
     action_map = {
-        LogEntry.ADDITION: "admin_add",
-        LogEntry.CHANGE: "admin_change",
-        LogEntry.DELETION: "admin_delete",
+        LOGENTRY_ADDITION: "admin_add",
+        LOGENTRY_CHANGE: "admin_change",
+        LOGENTRY_DELETION: "admin_delete",
     }
     action = action_map.get(instance.action_flag, "admin_action")
     target_user = _resolve_target_user_from_log_entry(instance)
