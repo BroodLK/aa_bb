@@ -12,6 +12,7 @@ from django.contrib import admin
 from .app_settings import afat_active, discordbot_active, charlink_active
 from django.contrib.admin.sites import NotRegistered
 from django.utils.html import format_html_join
+from django.utils.safestring import mark_safe
 
 from .models import (
     BigBrotherConfig,
@@ -595,7 +596,7 @@ class AdminLogEntryAdmin(admin.ModelAdmin):
 
         if not lines:
             return "-"
-        return format_html_join("<br>", "{}", ((line,) for line in lines))
+        return format_html_join(mark_safe("<br>"), "{}", ((line,) for line in lines))
 
     details.short_description = "Details"
 
