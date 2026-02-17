@@ -10,6 +10,7 @@ Currently:
 from django.dispatch import receiver
 from django.db.models.signals import post_save, pre_delete, pre_save, m2m_changed
 from django.db.utils import OperationalError, ProgrammingError
+from django.utils import timezone
 
 from allianceauth.authentication.models import CharacterOwnership, UserProfile
 from allianceauth.services.hooks import get_extension_logger
@@ -124,6 +125,89 @@ def log_admin_event(
         return
     except Exception as e:
         logger.error("Failed to write admin log entry: %s", e, exc_info=True)
+
+
+def _get_latest_discord_log_entry(user_id):
+    if not user_id:
+        return None
+    try:
+        return (
+            AdminLogEntry.objects
+            .filter(category=AdminLogEntry.CATEGORY_DISCORD, target_user_id=user_id)
+            .order_by("-created_at")
+            .first()
+        )
+    except (OperationalError, ProgrammingError):
+        return None
+    except Exception as e:
+        logger.error("Failed to fetch latest discord log entry: %s", e, exc_info=True)
+        return None
+
+
+def _extract_discord_id_from_log(entry):
+    if not entry:
+        return None
+    meta = getattr(entry, "metadata", None)
+    if isinstance(meta, dict):
+        discord_id = meta.get("discord_id")
+        if discord_id:
+            return str(discord_id)
+    if entry.target_label:
+        return str(entry.target_label)
+    return None
+
+
+def _send_discord_relink_alert(user, old_discord_id, new_discord_id):
+    if not user or not old_discord_id or not new_discord_id:
+        return
+    try:
+        if old_discord_id != new_discord_id:
+            from .app_settings import send_message
+            username = getattr(user, "username", "unknown")
+            content = (
+                "ALERT: Discord relink detected: "
+                f"{username} (user_id={user.id}) "
+                f"unlinked {old_discord_id} and linked a different discord ID {new_discord_id}."
+            )
+            send_message(content)
+    except (OperationalError, ProgrammingError):
+        return
+    except Exception as e:
+        logger.error("Failed to send discord relink alert: %s", e, exc_info=True)
+
+
+def _get_token_created_at(token):
+    for attr in ("created", "created_at", "created_on", "created_date"):
+        value = getattr(token, attr, None)
+        if value:
+            return value
+    return None
+
+
+def _format_age_seconds(age_seconds):
+    if age_seconds is None:
+        return None
+    try:
+        age_seconds = float(age_seconds)
+    except (TypeError, ValueError):
+        return None
+    if age_seconds < 60:
+        return f"{int(age_seconds)}s"
+    if age_seconds < 3600:
+        return f"{int(age_seconds // 60)}m"
+    if age_seconds < 86400:
+        return f"{int(age_seconds // 3600)}h"
+    return f"{int(age_seconds // 86400)}d"
+
+
+def _infer_token_reason_hint(request_meta, task_name=""):
+    request_meta = request_meta or {}
+    path = (request_meta.get("path") or "").strip()
+    if path:
+        return path
+    if task_name:
+        return f"task:{task_name}"
+    return None
 
 @receiver(post_save, sender=BigBrotherConfig)
 @receiver(post_save, sender=TicketToolConfig)
@@ -459,6 +543,16 @@ if DiscordUser is not None:
     def log_discord_user_change(sender, instance, created, **kwargs):
         """Log when a Discord account is linked or updated."""
         discord_id = getattr(instance, "uid", None) or getattr(instance, "discord_id", None)
+        prior_entry = _get_latest_discord_log_entry(getattr(instance, "user_id", None))
+        prior_unlink = prior_entry and prior_entry.action == "discord_unlinked"
+        prior_discord_id = _extract_discord_id_from_log(prior_entry) if prior_unlink else None
+        new_discord_id = str(discord_id) if discord_id else None
+        should_alert = (
+            prior_unlink
+            and prior_discord_id
+            and new_discord_id
+            and prior_discord_id != new_discord_id
+        )
         log_admin_event(
             category=AdminLogEntry.CATEGORY_DISCORD,
             action="discord_linked" if created else "discord_updated",
@@ -469,6 +563,8 @@ if DiscordUser is not None:
             source="discord",
             metadata={"discord_id": discord_id},
         )
+        if should_alert:
+            _send_discord_relink_alert(instance.user, prior_discord_id, new_discord_id)
 
 
     @receiver(pre_delete, sender=DiscordUser)
@@ -500,24 +596,39 @@ if Token is not None:
         """Log when an ESI token is created."""
         if not created:
             return
+        _ctx_user, request_meta = get_request_context()
+        request_meta = request_meta or {}
+        task_name, _task_id = _get_current_task_context()
+        reason_hint = _infer_token_reason_hint(request_meta, task_name)
         scopes = []
         try:
             scopes = sorted(s.name for s in instance.scopes.all())
         except Exception:
             scopes = []
+        message_parts = ["ESI token created"]
+        if reason_hint:
+            message_parts.append(f"via {reason_hint}")
+        if not scopes:
+            message_parts.append("(scopes pending)")
         log_admin_event(
             category=AdminLogEntry.CATEGORY_AUTH,
             action="token_created",
             actor=instance.user,
             target_user=instance.user,
             target_label=instance.character_name,
-            message="ESI token created",
+            message=" ".join(message_parts),
             reason="token_created",
             source="esi",
             metadata={
                 "character_id": instance.character_id,
                 "token_type": instance.token_type,
                 "scopes": scopes,
+                "scopes_count": len(scopes),
+                "scopes_empty": not scopes,
+                "reason_hint": reason_hint,
+                "request_path": request_meta.get("path"),
+                "request_method": request_meta.get("method"),
+                "request_ip": request_meta.get("ip"),
             },
         )
 
@@ -525,18 +636,79 @@ if Token is not None:
     @receiver(pre_delete, sender=Token)
     def log_token_deleted(sender, instance, **kwargs):
         """Log when an ESI token is deleted."""
+        _ctx_user, request_meta = get_request_context()
+        request_meta = request_meta or {}
+        task_name, _task_id = _get_current_task_context()
+        reason_hint = _infer_token_reason_hint(request_meta, task_name)
+        scopes = []
+        try:
+            scopes = sorted(s.name for s in instance.scopes.all())
+        except Exception:
+            scopes = []
+        created_at = _get_token_created_at(instance)
+        age_seconds = None
+        age_human = None
+        if created_at:
+            if timezone.is_naive(created_at):
+                created_at = timezone.make_aware(created_at, timezone.get_current_timezone())
+            age_seconds = (timezone.now() - created_at).total_seconds()
+            age_human = _format_age_seconds(age_seconds)
+        message_parts = ["ESI token deleted"]
+        if age_human:
+            message_parts.append(f"(age {age_human})")
+        if reason_hint:
+            message_parts.append(f"via {reason_hint}")
         log_admin_event(
             category=AdminLogEntry.CATEGORY_AUTH,
             action="token_deleted",
             actor=instance.user,
             target_user=instance.user,
             target_label=instance.character_name,
-            message="ESI token deleted",
+            message=" ".join(message_parts),
             reason="token_deleted",
             source="esi",
             metadata={
                 "character_id": instance.character_id,
                 "token_type": instance.token_type,
+                "scopes": scopes,
+                "scopes_count": len(scopes),
+                "scopes_empty": not scopes,
+                "age_seconds": age_seconds,
+                "age_human": age_human,
+                "reason_hint": reason_hint,
+                "request_path": request_meta.get("path"),
+                "request_method": request_meta.get("method"),
+                "request_ip": request_meta.get("ip"),
+            },
+        )
+
+
+    @receiver(m2m_changed, sender=Token.scopes.through)
+    def log_token_scopes_changed(sender, instance, action, pk_set, **kwargs):
+        """Log when ESI token scopes are attached or removed."""
+        if action not in ("post_add", "post_remove", "post_clear"):
+            return
+        scopes = []
+        try:
+            scopes = sorted(s.name for s in instance.scopes.all())
+        except Exception:
+            scopes = []
+        log_admin_event(
+            category=AdminLogEntry.CATEGORY_AUTH,
+            action="token_scopes_updated",
+            actor=instance.user,
+            target_user=instance.user,
+            target_label=instance.character_name,
+            message=f"ESI token scopes {action.replace('post_', '')}",
+            reason=f"token_scopes_{action}",
+            source="esi",
+            metadata={
+                "character_id": instance.character_id,
+                "token_type": instance.token_type,
+                "scopes": scopes,
+                "scopes_count": len(scopes),
+                "scopes_empty": not scopes,
+                "scope_change_action": action,
             },
         )
 

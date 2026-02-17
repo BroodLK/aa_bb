@@ -11,6 +11,7 @@ from solo.admin import SingletonModelAdmin
 from django.contrib import admin
 from .app_settings import afat_active, discordbot_active, charlink_active
 from django.contrib.admin.sites import NotRegistered
+from django.utils.html import format_html_join
 
 from .models import (
     BigBrotherConfig,
@@ -532,6 +533,7 @@ class AdminLogEntryAdmin(admin.ModelAdmin):
         "target_user",
         "target_label",
         "message",
+        "details",
         "metadata",
     ]
 
@@ -540,6 +542,62 @@ class AdminLogEntryAdmin(admin.ModelAdmin):
 
     def has_change_permission(self, request, obj=None):
         return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def get_actions(self, request):
+        actions = super().get_actions(request)
+        actions.pop("delete_selected", None)
+        return actions
+
+    def details(self, obj):
+        """Human-friendly summary for token and request metadata."""
+        meta = obj.metadata or {}
+        request_meta = meta.get("request") or {}
+        lines = []
+
+        if obj.action and obj.action.startswith("token_"):
+            token_type = meta.get("token_type")
+            character_id = meta.get("character_id")
+            if token_type:
+                lines.append(f"Token type: {token_type}")
+            if character_id or obj.target_label:
+                if character_id:
+                    lines.append(f"Character: {obj.target_label} (id={character_id})")
+                else:
+                    lines.append(f"Character: {obj.target_label}")
+            scopes = meta.get("scopes")
+            if scopes is not None:
+                if scopes:
+                    lines.append(f"Scopes: {', '.join(scopes)}")
+                else:
+                    lines.append("Scopes: none (may be pending)")
+            if "scopes_count" in meta:
+                lines.append(f"Scope count: {meta.get('scopes_count')}")
+            reason_hint = meta.get("reason_hint")
+            if reason_hint:
+                lines.append(f"Reason hint: {reason_hint}")
+            age_human = meta.get("age_human")
+            if age_human:
+                lines.append(f"Token age: {age_human}")
+
+        method = request_meta.get("method") or meta.get("request_method")
+        path = request_meta.get("path") or meta.get("request_path")
+        ip_addr = request_meta.get("ip") or meta.get("request_ip")
+        if method or path:
+            lines.append(f"Request: {(method or '').strip()} {(path or '').strip()}".strip())
+        if ip_addr:
+            lines.append(f"IP: {ip_addr}")
+        user_agent = request_meta.get("user_agent")
+        if user_agent:
+            lines.append(f"User agent: {user_agent}")
+
+        if not lines:
+            return "-"
+        return format_html_join("<br>", "{}", ((line,) for line in lines))
+
+    details.short_description = "Details"
 
 
 class ReasonFilter(admin.SimpleListFilter):
