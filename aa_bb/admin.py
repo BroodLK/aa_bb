@@ -517,7 +517,7 @@ class UserStatusConfig(admin.ModelAdmin):
 class AdminLogEntryAdmin(admin.ModelAdmin):
     """Read-only audit log for auth/admin events."""
     date_hierarchy = "created_at"
-    list_display = ["created_at", "category", "action", "reason", "source", "task_name", "actor", "target_user", "target_label"]
+    list_display = ["created_at", "category", "action", "summary", "reason", "source", "task_name", "actor", "target_user", "target_label"]
     list_filter = ["category", "action", "source", "task_name"]
     search_fields = ["reason", "message", "action", "source", "task_name", "target_label", "actor__username", "target_user__username"]
     list_select_related = ["actor", "target_user"]
@@ -551,6 +551,25 @@ class AdminLogEntryAdmin(admin.ModelAdmin):
         actions = super().get_actions(request)
         actions.pop("delete_selected", None)
         return actions
+
+    def summary(self, obj):
+        meta = obj.metadata or {}
+        if obj.action == "state_changed":
+            old_state = meta.get("old_state")
+            new_state = meta.get("new_state")
+            if old_state or new_state:
+                return f"{old_state or '?'} -> {new_state or '?'}"
+        if obj.action in ("token_created", "token_deleted", "token_scopes_updated"):
+            scopes = meta.get("scopes")
+            if scopes is not None:
+                if scopes:
+                    return f"scopes {len(scopes)}"
+                return "scopes none"
+        if obj.action in ("group_added", "group_removed"):
+            return obj.target_label or ""
+        return ""
+
+    summary.short_description = "Summary"
 
     def details(self, obj):
         """Human-friendly summary for token and request metadata."""

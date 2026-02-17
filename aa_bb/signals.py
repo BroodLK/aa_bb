@@ -77,6 +77,11 @@ def _get_current_task_context():
         return None, None
 
 
+def _is_discord_update_groups_task_name(task_name):
+    name = (task_name or "").lower()
+    return bool(name) and ("discord" in name and "update_groups" in name)
+
+
 def log_admin_event(
     category,
     action,
@@ -208,6 +213,27 @@ def _infer_token_reason_hint(request_meta, task_name=""):
     if task_name:
         return f"task:{task_name}"
     return None
+
+
+def _extract_discord_role_changes(result):
+    added = []
+    removed = []
+    if isinstance(result, dict):
+        added = result.get("added") or result.get("roles_added") or result.get("add") or []
+        removed = result.get("removed") or result.get("roles_removed") or result.get("remove") or []
+        if not added and not removed:
+            before = result.get("before") or result.get("old") or []
+            after = result.get("after") or result.get("new") or []
+            if isinstance(before, (list, tuple)) and isinstance(after, (list, tuple)):
+                before_set = set(str(v) for v in before)
+                after_set = set(str(v) for v in after)
+                added = sorted(after_set - before_set)
+                removed = sorted(before_set - after_set)
+    elif isinstance(result, (list, tuple)) and len(result) == 2:
+        added, removed = result
+    added = [str(v) for v in (added or []) if v is not None]
+    removed = [str(v) for v in (removed or []) if v is not None]
+    return added, removed
 
 @receiver(post_save, sender=BigBrotherConfig)
 @receiver(post_save, sender=TicketToolConfig)
@@ -447,6 +473,11 @@ def log_group_changes(sender, instance, action, pk_set, **kwargs):
     if action not in ("post_add", "post_remove", "post_clear"):
         return
 
+    task_name, _task_id = _get_current_task_context()
+    is_discord_task = _is_discord_update_groups_task_name(task_name)
+    source = "discord" if is_discord_task else "auth"
+    reason = "discord_update_groups" if is_discord_task else "group_membership_changed"
+
     if action == "post_clear":
         log_admin_event(
             category=AdminLogEntry.CATEGORY_GROUP,
@@ -454,7 +485,8 @@ def log_group_changes(sender, instance, action, pk_set, **kwargs):
             target_user=instance,
             message="All groups cleared for user",
             reason="groups_cleared",
-            source="auth",
+            source=source,
+            task_name=task_name or "",
         )
         return
 
@@ -466,9 +498,10 @@ def log_group_changes(sender, instance, action, pk_set, **kwargs):
             target_user=instance,
             target_label=group.name,
             message=f"Group {'added' if action == 'post_add' else 'removed'}: {group.name}",
-            reason="group_membership_changed",
-            source="auth",
-            metadata={"group_id": group.id},
+            reason=reason,
+            source=source,
+            task_name=task_name or "",
+            metadata={"group_id": group.id, "via_task": task_name or ""},
         )
 
 
@@ -610,8 +643,11 @@ if Token is not None:
             message_parts.append(f"via {reason_hint}")
         if not scopes:
             message_parts.append("(scopes pending)")
+        else:
+            message_parts.append(f"(scopes {len(scopes)})")
+        category = AdminLogEntry.CATEGORY_AUTH if scopes else AdminLogEntry.CATEGORY_SYSTEM
         log_admin_event(
-            category=AdminLogEntry.CATEGORY_AUTH,
+            category=category,
             action="token_created",
             actor=instance.user,
             target_user=instance.user,
@@ -654,12 +690,17 @@ if Token is not None:
             age_seconds = (timezone.now() - created_at).total_seconds()
             age_human = _format_age_seconds(age_seconds)
         message_parts = ["ESI token deleted"]
+        if scopes:
+            message_parts.append(f"(scopes {len(scopes)})")
+        else:
+            message_parts.append("(scopes none)")
         if age_human:
             message_parts.append(f"(age {age_human})")
         if reason_hint:
             message_parts.append(f"via {reason_hint}")
+        category = AdminLogEntry.CATEGORY_AUTH if scopes else AdminLogEntry.CATEGORY_SYSTEM
         log_admin_event(
-            category=AdminLogEntry.CATEGORY_AUTH,
+            category=category,
             action="token_deleted",
             actor=instance.user,
             target_user=instance.user,
@@ -910,8 +951,8 @@ if RequestLog is not None:
 
 if celery_signals is not None:
     def _is_discord_update_groups_task(sender):
-        name = (getattr(sender, "name", "") or "").lower()
-        return bool(name) and ("discord" in name and "update_groups" in name)
+        name = getattr(sender, "name", "") or ""
+        return _is_discord_update_groups_task_name(name)
 
 
     @celery_signals.task_success.connect
@@ -924,20 +965,56 @@ if celery_signals is not None:
         if kwargs and "user_pk" in kwargs:
             user_pk = kwargs.get("user_pk")
         target_user = User.objects.filter(pk=user_pk).first() if user_pk else None
-        log_admin_event(
-            category=AdminLogEntry.CATEGORY_DISCORD,
-            action="discord_roles_updated",
-            target_user=target_user,
-            target_label=getattr(target_user, "username", "") if target_user else "",
-            message="Discord roles update completed",
-            reason="discord_update_groups_success",
-            source="discord",
-            task_name=getattr(sender, "name", ""),
-            metadata={
-                "result": result,
-                "user_pk": user_pk,
-            },
-        )
+        task_name = getattr(sender, "name", "")
+        added, removed = _extract_discord_role_changes(result)
+        if added or removed:
+            for role in added:
+                log_admin_event(
+                    category=AdminLogEntry.CATEGORY_DISCORD,
+                    action="discord_role_added",
+                    target_user=target_user,
+                    target_label=role,
+                    message=f"Discord role added: {role}",
+                    reason="discord_update_groups_success",
+                    source="discord",
+                    task_name=task_name,
+                    metadata={
+                        "role": role,
+                        "change": "added",
+                        "user_pk": user_pk,
+                    },
+                )
+            for role in removed:
+                log_admin_event(
+                    category=AdminLogEntry.CATEGORY_DISCORD,
+                    action="discord_role_removed",
+                    target_user=target_user,
+                    target_label=role,
+                    message=f"Discord role removed: {role}",
+                    reason="discord_update_groups_success",
+                    source="discord",
+                    task_name=task_name,
+                    metadata={
+                        "role": role,
+                        "change": "removed",
+                        "user_pk": user_pk,
+                    },
+                )
+        else:
+            log_admin_event(
+                category=AdminLogEntry.CATEGORY_DISCORD,
+                action="discord_roles_updated",
+                target_user=target_user,
+                target_label=getattr(target_user, "username", "") if target_user else "",
+                message="Discord roles update completed (no changes detected)",
+                reason="discord_update_groups_success",
+                source="discord",
+                task_name=task_name,
+                metadata={
+                    "result": result,
+                    "user_pk": user_pk,
+                },
+            )
 
 
     @celery_signals.task_failure.connect
