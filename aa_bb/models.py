@@ -2185,6 +2185,7 @@ class SovereigntyMapCache(models.Model):
     updated = models.DateTimeField(auto_now=True)
 
     class Meta:
+        pass
 
     @property
     def is_fresh(self):
