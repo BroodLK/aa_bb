@@ -46,6 +46,8 @@ def reverse_noop(apps_registry, schema_editor):
 
 class Migration(migrations.Migration):
 
+    atomic = False
+
     dependencies = [
         ("aa_bb", "0117_tickettoolconfig_compliance_filter_column"),
     ]

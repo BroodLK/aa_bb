@@ -54,6 +54,8 @@ def reverse_noop(apps_registry, schema_editor):
 
 class Migration(migrations.Migration):
 
+    atomic = False
+
     dependencies = [
         ("aa_bb", "0116_remove_custom_table_names"),
     ]

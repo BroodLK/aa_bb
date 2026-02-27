@@ -12,8 +12,7 @@
 - Resolved OpenAPI ESI handler syntax issues and aligned error handling across result and results paths.
 - Hardened charlink compliance filter handling to be schema-stable regardless of plugin install/uninstall, with runtime checks and admin wiring.
 - Added a cross-process zKillboard rate limiter and stopped forced refresh calls to reduce 429s on large installs.
-- Capped cache warmer entity scans to the most recent 5,000 entries for both user and corp warm jobs.
-- Normalized non-ASCII characters in `app_settings.py` to prevent formatting/encoding issues.
+- Capped contract/mail/transaction streams and pagination to the most recent 5,000 entries.
 
 ## [3.2.10] - 2026-01-30
 
