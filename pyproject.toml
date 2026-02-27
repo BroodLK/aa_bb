@@ -42,7 +42,7 @@ dependencies = [
     "allianceauth>=4.3.1",
     "allianceauth-corptools>=2.12.0",
     "django-esi >= 8.2.0",
-    "django-eveonline-sde >= 0.2.0",
+    "django-eveonline-sde >= 0.0.1b2",
 ]
 urls.Changelog = "https://github.com/BroodLK/aa_bb/blob/main/CHANGELOG.md"
 urls."Issue / Bug Reports" = "https://github.com/BroodLK/aa_bb/issues"
