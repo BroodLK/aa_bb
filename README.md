@@ -36,7 +36,7 @@ All while invisible to the general membership unless you choose to expose it to 
 allianceauth >= 4.3.1
 allianceauth-corptools >= 2.12.0
 django-esi >= 8.2.0
-django-eveonline-sde >= 0.2.0
+django-eveonline-sde >= 0.0.1b2
 ```
 ### Recommended plugins
 ```md
@@ -51,24 +51,34 @@ aa-contacts >= 0.10.2              # Automatic hostile/friendly contact syncing
 ```
 
 ### SDE Setup (required for static data)
-- Ensure `modeltranslation` is first in `INSTALLED_APPS`.
-- Add `eve_sde` to `INSTALLED_APPS`.
-- Load the SDE data with `python manage.py esde_load_sde`.
-- Optional: add a periodic task to check for SDE updates.
+> [!CAUTION]
+>
+> This MUST be installed if moving to 3.3.0+.
+>
+> [https://github.com/Solar-Helix-Independent-Transport/django-eveonline-sde](https://github.com/Solar-Helix-Independent-Transport/django-eveonline-sde)
 
-```python
-from celery.schedules import crontab
+Add the following to your `local.py`:
 
-INSTALLED_APPS = ["modeltranslation"] + INSTALLED_APPS
-INSTALLED_APPS += [
-    "eve_sde",
+```py
+INSTALLED_APPS = [
+    # ...
+    "eve_sde",  # Only if not already added for another app
+    # ...
 ]
 
+NSTALLED_APPS = ["modeltranslation"] + INSTALLED_APPS
+
 if "eve_sde" in INSTALLED_APPS:
+    # Run at 12:00 UTC each day
     CELERYBEAT_SCHEDULE["EVE SDE :: Check for SDE Updates"] = {
         "task": "eve_sde.tasks.check_for_sde_updates",
         "schedule": crontab(minute="0", hour="12"),
     }
+```
+
+And run:
+```
+auth esde_load_sde
 ```
 
 ## Install Instructions
@@ -77,7 +87,7 @@ After making sure to add the above prerequisite applications.
 source /home/allianceserver/venv/auth/bin/activate && cd /home/allianceserver/myauth/
 ```
 ```bash
-pip install aa-bb==3.2.11
+pip install aa-bb
 ```
 ```bash
 vi myauth/settings/local.py
@@ -92,9 +102,12 @@ exit your venv
 sudo supervisorctl restart myauth:
 ```
 > [!IMPORTANT]
+>
+> [Bare Metal Only]
+>
 > It is recommended to use a threaded worker setup with memmon for this application. Also note that threaded workers are provided by default with allianceauth, this serves as a reminder that these values can be adjusted to suit your needs. The following is an example
 
-In your supervisor.conf
+In your supervisor.conf (baremetal only, skip if docker)
 ```bash
 [program:worker]
 command=/home/allianceserver/venv/auth/bin/celery -A myauth worker -P threads -c 10 -l INFO -n %(program_name)s_%(process_num)02d
@@ -119,8 +132,9 @@ stdout_logfile=/home/allianceserver/myauth/log/memmon.log
 stderr_logfile=/home/allianceserver/myauth/log/memmon.log
 ```
 
-It is also recommended to disable gunicorn timeout, an example can be seen here:
+It is also recommended to disable gunicorn timeout, an example can be seen here: (both docker and baremetal)
 
+- For baremetal
 ```bash
 [program:gunicorn]
 user = allianceserver
@@ -131,6 +145,24 @@ stderr_logfile=/home/allianceserver/myauth/log/gunicorn.log
 autostart=true
 autorestart=true
 stopsignal=INT
+```
+
+- For docker
+```bash
+allianceauth_gunicorn:
+  ports:
+    - 8000:8000
+  container_name: allianceauth_gunicorn
+  <<: *allianceauth-base
+  entrypoint: [
+    "gunicorn",
+    "myauth.wsgi",
+    "--bind=0.0.0.0:8000",
+    "--workers=2",
+    "--timeout=0",
+    "--max-requests=500",
+    "--max-requests-jitter=50"
+  ]
 ```
 
 then reload supervisor and restart auth
