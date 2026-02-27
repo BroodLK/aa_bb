@@ -1062,8 +1062,8 @@ def BB_run_regular_updates():
             char = EveCharacter.objects.all().first()
         if char:  # only populate config when a character is available to inspect
             corp_name = char.corporation_name
-            alliance_id = char.alliance_id or None
-            alliance_name = char.alliance_name if alliance_id else None  # unaffiliated corps report None for alliance
+            alliance_id = char.alliance_id or 0
+            alliance_name = char.alliance_name if alliance_id else ""  # unaffiliated corps report None for alliance
 
             instance.main_corporation_id = char.corporation_id
             instance.main_corporation = corp_name

@@ -1169,14 +1169,14 @@ class BigBrotherConfig(SingletonModel):
     )
 
     main_alliance_id = models.PositiveIntegerField(
-        default=123456789,
+        default=0,
         editable=False,
         help_text=_("Your Alliance ID"),
         verbose_name=_("Main Alliance ID")
     )
 
     main_alliance = models.TextField(
-        default=123456789,
+        default="",
         editable=False,
         help_text=_("Your Alliance"),
         verbose_name=_("Main Alliance")
