@@ -60,14 +60,6 @@ except ImportError as e:
     CharacterMarketTransaction = None
     Structure = None
 
-from django.apps import apps
-EVEUNIVERSE_INSTALLED = apps.is_installed("eveuniverse")
-if EVEUNIVERSE_INSTALLED:
-    try:
-        from eveuniverse.models import EveMarketPrice
-    except ImportError:
-        EVEUNIVERSE_INSTALLED = False
-
 from django.db.models import Q
 from ..models import BigBrotherConfig, ProcessedTransaction, SusTransactionNote, EveItemPrice, EntityInfoCache
 

@@ -36,7 +36,7 @@ All while invisible to the general membership unless you choose to expose it to 
 allianceauth >= 4.3.1
 allianceauth-corptools >= 2.12.0
 django-esi >= 8.2.0
-django-eveuniverse >= 1.5.9
+django-eveonline-sde >= 0.2.0
 ```
 ### Recommended plugins
 ```md
@@ -50,13 +50,34 @@ allianceauth-blacklist >= 0.1.1    # Add / check for blacklisted characters
 aa-contacts >= 0.10.2              # Automatic hostile/friendly contact syncing
 ```
 
+### SDE Setup (required for static data)
+- Ensure `modeltranslation` is first in `INSTALLED_APPS`.
+- Add `eve_sde` to `INSTALLED_APPS`.
+- Load the SDE data with `python manage.py esde_load_sde`.
+- Optional: add a periodic task to check for SDE updates.
+
+```python
+from celery.schedules import crontab
+
+INSTALLED_APPS = ["modeltranslation"] + INSTALLED_APPS
+INSTALLED_APPS += [
+    "eve_sde",
+]
+
+if "eve_sde" in INSTALLED_APPS:
+    CELERYBEAT_SCHEDULE["EVE SDE :: Check for SDE Updates"] = {
+        "task": "eve_sde.tasks.check_for_sde_updates",
+        "schedule": crontab(minute="0", hour="12"),
+    }
+```
+
 ## Install Instructions
 After making sure to add the above prerequisite applications.
 ```bash
 source /home/allianceserver/venv/auth/bin/activate && cd /home/allianceserver/myauth/
 ```
 ```bash
-pip install aa-bb==3.2.10
+pip install aa-bb==3.2.11
 ```
 ```bash
 vi myauth/settings/local.py

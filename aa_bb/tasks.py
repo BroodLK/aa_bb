@@ -118,7 +118,7 @@ def BB_update_single_user(user_id, char_name):
             state_result = determine_character_state(user_id, True, cfg=instance)
 
             logger.info(f"✅  [AA-BB] - [BB_update_single_user] - [{char_name}] Fetching AWOX Links...")
-            awox_data = get_awox_kill_links(user_id, force_refresh=True)
+            awox_data = get_awox_kill_links(user_id)
             awox_links = [x["link"] for x in awox_data]
             attacker_links_all = [x["link"] for x in awox_data if x.get("is_attacker")]
             awox_map = {x["link"]: x for x in awox_data}

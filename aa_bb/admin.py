@@ -9,6 +9,7 @@ and prevent accidental multi-row creation of what should be one-off configs.
 from solo.admin import SingletonModelAdmin
 
 from django.contrib import admin
+from django.apps import apps
 from .app_settings import afat_active, discordbot_active, charlink_active
 from django.contrib.admin.sites import NotRegistered
 from django.utils.html import format_html_join
@@ -430,6 +431,21 @@ class TicketToolConfigAdmin(SingletonModelAdmin):
         if 'role_id' in form.base_fields:
             form.base_fields['role_id'].widget = forms.Textarea(attrs={'rows': 3, 'cols': 40})
 
+        if charlink_active():
+            try:
+                ComplianceFilter = apps.get_model("charlink", "ComplianceFilter")
+                form.base_fields["compliance_filter"] = forms.ModelChoiceField(
+                    queryset=ComplianceFilter.objects.all(),
+                    required=False,
+                    help_text="Select your compliance filter",
+                )
+                if obj and obj.compliance_filter_id:
+                    form.base_fields["compliance_filter"].initial = (
+                        ComplianceFilter.objects.filter(pk=obj.compliance_filter_id).first()
+                    )
+            except LookupError:
+                pass
+
         if not discordbot_active():
             from .models import TicketToolConfig
             # Restrict choices if bot is not active
@@ -439,6 +455,12 @@ class TicketToolConfigAdmin(SingletonModelAdmin):
             ]
             form.base_fields['ticket_type'].choices = allowed_choices
         return form
+
+    def save_model(self, request, obj, form, change):
+        if charlink_active() and "compliance_filter" in form.cleaned_data:
+            compliance_filter = form.cleaned_data.get("compliance_filter")
+            obj.compliance_filter_id = compliance_filter.pk if compliance_filter else None
+        super().save_model(request, obj, form, change)
 
     def has_add_permission(self, request):
         """Prevent duplicate ticket config entries."""

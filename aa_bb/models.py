@@ -1,4 +1,3 @@
-import sys
 from datetime import timedelta, time
 
 from django.db import models
@@ -21,7 +20,6 @@ logger = get_extension_logger(__name__)
 from django.utils.translation import gettext_lazy as _
 from django.apps import apps
 AA_CONTACTS_INSTALLED = apps.is_installed("aa_contacts")
-CHARLINK_INSTALLED = apps.is_installed("charlink")
 
 
 DEFAULT_CHARACTER_SCOPES = ",".join([
@@ -1299,7 +1297,6 @@ class Corporation_names(models.Model):
     )
 
     class Meta:
-        db_table = 'aa_bb_corporations'
         verbose_name = 'Corporation Name'
         verbose_name_plural = 'Corporation Names'
 
@@ -1328,7 +1325,6 @@ class Alliance_names(models.Model):
     )
 
     class Meta:
-        db_table = 'aa_bb_alliances'
         verbose_name = 'Alliance Name'
         verbose_name_plural = 'Alliance Names'
 
@@ -1357,7 +1353,6 @@ class Character_names(models.Model):
     )
 
     class Meta:
-        db_table = 'aa_bb_characters'
         verbose_name = 'Character Name'
         verbose_name_plural = 'Character Names'
 
@@ -1391,7 +1386,6 @@ class id_types(models.Model):
     )
 
     class Meta:
-        db_table = 'aa_bb_ids'
         verbose_name = 'ID Type'
         verbose_name_plural = 'ID Types'
 
@@ -1413,7 +1407,6 @@ class ProcessedMail(models.Model):
     )
 
     class Meta:
-        db_table = "aa_bb_processed_mails"
         verbose_name = "Processed Mail"
         verbose_name_plural = "Processed Mails"
 
@@ -1446,7 +1439,6 @@ class SusMailNote(models.Model):
     )
 
     class Meta:
-        db_table = "aa_bb_sus_mail_notes"
         verbose_name = "Suspicious Mail Note"
         verbose_name_plural = "Suspicious Mail Notes"
 
@@ -1468,7 +1460,6 @@ class ProcessedContract(models.Model):
     )
 
     class Meta:
-        db_table = "aa_bb_processed_contracts"
         verbose_name = "Processed Contract"
         verbose_name_plural = "Processed Contracts"
 
@@ -1501,7 +1492,6 @@ class SusContractNote(models.Model):
     )
 
     class Meta:
-        db_table = "aa_bb_sus_contract_notes"
         verbose_name = "Suspicious Contract Note"
         verbose_name_plural = "Suspicious Contract Notes"
 
@@ -1523,7 +1513,6 @@ class ProcessedTransaction(models.Model):
     )
 
     class Meta:
-        db_table = "aa_bb_processed_transactions"
         verbose_name = "Processed Transaction"
         verbose_name_plural = "Processed Transactions"
 
@@ -1556,7 +1545,6 @@ class SusTransactionNote(models.Model):
     )
 
     class Meta:
-        db_table = "aa_bb_sus_transaction_notes"
         verbose_name = "Suspicious Transaction Note"
         verbose_name_plural = "Suspicious Transaction Notes"
 
@@ -1704,7 +1692,7 @@ class TicketToolConfig(SingletonModel):
     Configuration that drives the Discord compliance ticket automation.
 
     Major sections:
-    - compliance_filter: optional charlink filter to scope the population.
+    - compliance_filter_id: optional charlink filter id to scope the population.
     - ticket_counter: sequential number used for naming ticket channels.
     - *_check_enabled, *_check, *_check_frequency, *_reason, *_reminder:
       toggles and thresholds for the corp token compliance, PAP compliance,
@@ -1772,6 +1760,12 @@ class TicketToolConfig(SingletonModel):
     corp_check_include_user = models.BooleanField(
         default=True,
         help_text=_("Include the user in the ticket (Discord channel/thread).")
+    )
+
+    compliance_filter_id = models.BigIntegerField(
+        blank=True,
+        null=True,
+        help_text=_("Select your compliance filter (charlink).")
     )
 
     corp_check = models.PositiveIntegerField(
@@ -1988,20 +1982,30 @@ class TicketToolConfig(SingletonModel):
         verbose_name = "Ticket Tool Configuration"
         verbose_name_plural = "Ticket Tool Configuration"
 
+    def get_compliance_filter(self):
+        """Return the charlink ComplianceFilter instance if available."""
+        if not apps.is_installed("charlink"):
+            return None
+        if not self.compliance_filter_id:
+            return None
+        try:
+            ComplianceFilter = apps.get_model("charlink", "ComplianceFilter")
+        except LookupError:
+            return None
+        return ComplianceFilter.objects.filter(pk=self.compliance_filter_id).first()
 
-# Dynamically add compliance_filter field if charlink is installed
-if CHARLINK_INSTALLED and 'makemigrations' not in sys.argv and 'migrate' not in sys.argv:
-    TicketToolConfig.add_to_class(
-        'compliance_filter',
-        models.ForeignKey(
-            "charlink.ComplianceFilter",
-            related_name="compliance_filter",
-            blank=True,
-            null=True,
-            on_delete=models.SET_NULL,
-            help_text="Select your compliance filter"
-        )
-    )
+    @property
+    def compliance_filter(self):
+        """Compatibility shim for legacy code paths."""
+        return self.get_compliance_filter()
+
+    @compliance_filter.setter
+    def compliance_filter(self, value):
+        """Allow assigning a ComplianceFilter instance or id."""
+        if value is None:
+            self.compliance_filter_id = None
+        else:
+            self.compliance_filter_id = getattr(value, "pk", value)
 
 
 class BBUpdateState(SingletonModel):
@@ -2023,7 +2027,6 @@ class CharacterEmploymentCache(models.Model):
     last_accessed = models.DateTimeField(default=timezone.now)
 
     class Meta:
-        db_table = "character_employment_cache"
         indexes = [
             models.Index(fields=["updated"]),
             models.Index(fields=["last_accessed"]),
@@ -2038,7 +2041,6 @@ class FrequentCorpChangesCache(models.Model):
     last_accessed = models.DateTimeField(default=timezone.now)
 
     class Meta:
-        db_table = "frequent_corp_changes_cache"
         indexes = [
             models.Index(fields=["updated"]),
             models.Index(fields=["last_accessed"]),
@@ -2054,7 +2056,6 @@ class CurrentStintCache(models.Model):
     last_accessed = models.DateTimeField(default=timezone.now)
 
     class Meta:
-        db_table = "current_stint_cache"
         unique_together = ("char_id", "corp_id")
         indexes = [
             models.Index(fields=["char_id", "corp_id"]),
@@ -2071,7 +2072,6 @@ class AwoxKillsCache(models.Model):
     last_accessed = models.DateTimeField(default=timezone.now)
 
     class Meta:
-        db_table = "awox_kills_cache"
         indexes = [
             models.Index(fields=["updated"]),
             models.Index(fields=["last_accessed"]),
@@ -2134,7 +2134,6 @@ class CorporationInfoCache(models.Model):
     updated = models.DateTimeField(auto_now=True)  # auto-updated on save
 
     class Meta:
-        db_table = "corporation_info_cache"
         indexes = [
             models.Index(fields=["updated"]),
         ]
@@ -2164,7 +2163,6 @@ class AllianceHistoryCache(models.Model):
     updated = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = "alliance_history_cache"
         indexes = [
             models.Index(fields=["updated"]),
         ]
@@ -2187,7 +2185,6 @@ class SovereigntyMapCache(models.Model):
     updated = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = "sovereignty_map_cache"
 
     @property
     def is_fresh(self):

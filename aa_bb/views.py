@@ -86,6 +86,8 @@ from aa_bb.checks.skills import render_user_skills_html
 
 logger = get_extension_logger(__name__)
 
+WARM_CACHE_MAX_ENTRIES = 5000
+
 try:
     if corptools_active():
         from corptools.models import Contract, CharacterAudit
@@ -307,7 +309,7 @@ def warm_entity_cache_task(self, user_id, user_main=None):
 
         # Build list of (entity_id, timestamp)
         entries = []
-        fetch_awox_kills(user_id, force_refresh=True)
+        fetch_awox_kills(user_id)
         contracts = gather_user_contracts(user_id)
         trans = gather_user_transactions(user_id)
         mails = gather_user_mails(user_id)
@@ -357,8 +359,22 @@ def warm_entity_cache_task(self, user_id, user_main=None):
             (eid, ts.replace(minute=0, second=0, microsecond=0) if hasattr(ts, 'replace') else ts)
             for eid, ts in candidates
         ]
-        # Deduplicate candidates
-        candidates = sorted(list(set(candidates)))
+        # Deduplicate candidates, then keep only the most recent N
+        candidates = list(set(candidates))
+        if len(candidates) > WARM_CACHE_MAX_ENTRIES:
+            def _ts_key(item):
+                ts = item[1]
+                try:
+                    return ts.timestamp()
+                except Exception:
+                    return 0
+            candidates = sorted(
+                candidates,
+                key=lambda item: (_ts_key(item), item[0]),
+                reverse=True
+            )[:WARM_CACHE_MAX_ENTRIES]
+        else:
+            candidates = sorted(candidates)
 
         from django.db.models import Q
         from .models import EntityInfoCache

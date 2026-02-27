@@ -7,7 +7,10 @@ Currently:
 3. Admin/Auth audit logging for state/group/discord/admin events.
 """
 
+from datetime import timedelta
+
 from django.dispatch import receiver
+from django.conf import settings
 from django.db.models.signals import post_save, pre_delete, pre_save, m2m_changed
 from django.db.utils import OperationalError, ProgrammingError
 from django.utils import timezone
@@ -23,6 +26,12 @@ from django.contrib.admin.models import LogEntry
 from .request_context import get_request_context
 
 logger = get_extension_logger(__name__)
+
+TOKEN_SCOPE_LOG_DEBOUNCE_SECONDS = getattr(
+    settings,
+    "AA_BB_TOKEN_SCOPE_LOG_DEBOUNCE_SECONDS",
+    5,
+)
 
 try:
     LOGENTRY_ADDITION = LogEntry.ActionFlag.ADDITION
@@ -623,6 +632,55 @@ def _m2m_meta(pk_set):
     return {"count": len(ids), "sample_ids": ids[:20]}
 
 
+def _merge_recent_token_scopes_log(instance, message, reason, metadata):
+    if not instance or not instance.user_id:
+        return False
+    window_seconds = TOKEN_SCOPE_LOG_DEBOUNCE_SECONDS
+    if not window_seconds or window_seconds <= 0:
+        return False
+    since = timezone.now() - timedelta(seconds=window_seconds)
+    try:
+        qs = AdminLogEntry.objects.filter(
+            action="token_scopes_updated",
+            source="esi",
+            target_user_id=instance.user_id,
+            created_at__gte=since,
+        )
+        target_label = instance.character_name or ""
+        if target_label:
+            qs = qs.filter(target_label=target_label)
+        try:
+            qs = qs.filter(metadata__token_id=instance.pk)
+        except Exception:
+            pass
+        entry = qs.order_by("-created_at").first()
+        if not entry:
+            return False
+        entry.message = message
+        entry.reason = reason
+        entry.metadata = metadata
+        if target_label:
+            entry.target_label = target_label
+        entry.target_user = instance.user
+        entry.actor = instance.user
+        entry.source = "esi"
+        entry.action = "token_scopes_updated"
+        entry.save(update_fields=[
+            "message",
+            "reason",
+            "metadata",
+            "target_label",
+            "target_user",
+            "actor",
+            "source",
+            "action",
+        ])
+        return True
+    except Exception as e:
+        logger.error("Failed to merge token scope log entry: %s", e, exc_info=True)
+        return False
+
+
 if Token is not None:
     @receiver(post_save, sender=Token)
     def log_token_created(sender, instance, created, **kwargs):
@@ -734,23 +792,29 @@ if Token is not None:
             scopes = sorted(s.name for s in instance.scopes.all())
         except Exception:
             scopes = []
+        message = f"ESI token scopes {action.replace('post_', '')}"
+        reason = f"token_scopes_{action}"
+        metadata = {
+            "token_id": instance.pk,
+            "character_id": instance.character_id,
+            "token_type": instance.token_type,
+            "scopes": scopes,
+            "scopes_count": len(scopes),
+            "scopes_empty": not scopes,
+            "scope_change_action": action,
+        }
+        if _merge_recent_token_scopes_log(instance, message, reason, metadata):
+            return
         log_admin_event(
             category=AdminLogEntry.CATEGORY_AUTH,
             action="token_scopes_updated",
             actor=instance.user,
             target_user=instance.user,
             target_label=instance.character_name,
-            message=f"ESI token scopes {action.replace('post_', '')}",
-            reason=f"token_scopes_{action}",
+            message=message,
+            reason=reason,
             source="esi",
-            metadata={
-                "character_id": instance.character_id,
-                "token_type": instance.token_type,
-                "scopes": scopes,
-                "scopes_count": len(scopes),
-                "scopes_empty": not scopes,
-                "scope_change_action": action,
-            },
+            metadata=metadata,
         )
 
 
