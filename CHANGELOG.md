@@ -1,18 +1,21 @@
-## [3.2.11] - 2026-02-24
+## [3.3.0] - 2026-03-2
+> [!CAUTION]
+> This version includes a dependency change, so please make sure to read the update
+instructions carefully before updating to this version, otherwise, the app will
+not work properly.
 
 ### Changed
-- Centralized OpenAPI ESI handling via a shared `ESIHandler` wrapper (plain results, expiry handling, and helper methods).
-- ESI call sites now use the OpenAPI wrapper consistently, including ETag/304 fallback and tenant header support.
+- Centralized OpenAPI ESI handling via a shared `ESIHandler` wrapper
 - Replaced `django-eveuniverse` usage with `django-eveonline-sde` and `modeltranslation` for SDE-backed static data.
-- Admin log entries now include clearer, human-friendly details for audit events (including state changes, token scope presence, and request context).
+- Admin log entries test
 - Discord webhook name handling updated to support the new configurable webhook name.
 - Optional message streams no longer add the extra titles such as "Optional Message 1".
 
 ### Fixed
-- Resolved OpenAPI ESI handler syntax issues and aligned error handling across result and results paths.
 - Hardened charlink compliance filter handling to be schema-stable regardless of plugin install/uninstall, with runtime checks and admin wiring.
 - Added a cross-process zKillboard rate limiter and stopped forced refresh calls to reduce 429s on large installs.
-- Capped contract/mail/transaction streams and pagination to the most recent 5,000 entries.
+- Capped streaming scans to the most recent 5,000 entries for both user and corp warm jobs.
+- Process would fail if user did not belong to any alliance.
 
 ## [3.2.10] - 2026-01-30
 
