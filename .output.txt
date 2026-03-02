@@ -1,215 +1,627 @@
-
-    Directory: C:\Users\brood\PycharmProjects\aa_bb\aa_bb\migrations
-Mode                 LastWriteTime         Length Name
-----                 -------------         ------ ----
-d-----          1/8/2026     09:44                __pycache__
--a----        11/20/2025     16:25            726 0001_initial.py
--a----        11/20/2025     16:25           3557 0002_bigbrotherconfig_usersta
-                                                  tus.py
--a----        11/20/2025     16:25            525 0003_alter_bigbrotherconfig_p
-                                                  ingroleid.py
--a----        11/20/2025     16:25            760 0004_alter_bigbrotherconfig_i
-                                                  s_active_and_more.py
--a----        11/20/2025     16:25            870 0005_alter_bigbrotherconfig_h
-                                                  ostile_alliances.py
--a----        11/20/2025     16:25            523 0006_alter_bigbrotherconfig_p
-                                                  ingroleid.py
--a----        11/20/2025     16:25            616 0007_alter_general_options.py
--a----        11/20/2025     16:26           1758 0008_alliance_names_corporati
-                                                  on_names.py
--a----        11/20/2025     16:26           1563 0009_userstatus_sus_contacts_
-                                                  userstatus_sus_contracts_and_
-                                                  more.py
--a----        11/20/2025     16:26           1491 0010_alter_userstatus_awox_ki
-                                                  ll_links_and_more.py
--a----        11/20/2025     16:26           1004 0011_character_names.py
--a----        11/20/2025     16:26            933 0012_id_types.py
--a----        11/20/2025     16:26            953 0013_bigbrotherconfig_mail_ke
-                                                  ywords.py
--a----        11/20/2025     16:26           3683 0014_processedcontract_proces
-                                                  sedmail_and_more.py
--a----        11/20/2025     16:26           2002 0015_processedtransaction_sus
-                                                  transactionnote.py
--a----        11/20/2025     16:27            745 0016_warmprogress.py
--a----        11/20/2025     16:27            960 0017_entityinfocache.py
--a----        11/20/2025     16:27            721 0018_userstatus_cyno_userstat
-                                                  us_has_skills_and_more.py
--a----        11/20/2025     16:27            792 0019_bigbrotherconfig_whiteli
-                                                  st_alliances_and_more.py
--a----        11/20/2025     16:27           1208 0020_messages_bigbrotherconfi
-                                                  g_are_daily_messages_active_a
-                                                  nd_more.py
--a----        11/19/2025     16:15            641 0021_alter_messages_id_alter_
-                                                  messages_text.py
--a----        11/19/2025     16:15            414 0022_messages_sent_in_cycle.p
-                                                  y
--a----        11/19/2025     16:15           4426 0023_optmessages1_optmessages
-                                                  2_optmessages3_optmessages4_a
-                                                  nd_more.py
--a----        11/19/2025     16:15           2460 0024_bigbrotherconfig_dailysc
-                                                  hedule_and_more.py
--a----        11/19/2025     16:15           1309 0025_alter_messages_options_a
-                                                  lter_optmessages1_options_and
-                                                  _more.py
--a----        11/19/2025     16:15           4443 0026_alter_general_options_al
-                                                  ter_bigbrotherconfig_id_and_m
-                                                  ore.py
--a----        11/19/2025     16:15           1306 0027_alter_general_options_bi
-                                                  gbrotherconfig_is_loa_active_
-                                                  and_more.py
--a----        11/19/2025     16:15            575 0028_alter_bigbrotherconfig_i
-                                                  s_loa_active.py
--a----        11/19/2025     16:15            497 0029_leaverequest_main_charac
-                                                  ter.py
--a----        11/19/2025     16:15            806 0030_alter_general_options.py
--a----        11/19/2025     16:15           3529 0031_bigbrotherconfig_loa_max
-                                                  _logoff_days_and_more.py
--a----        11/19/2025     16:15            577 0032_alter_leaverequest_statu
-                                                  s.py
--a----        11/19/2025     16:15           1988 0033_messagetype_bigbrotherco
-                                                  nfig_pingroleid2_and_more.py
--a----        11/19/2025     16:15            404 0034_rename_last_updated_user
-                                                  status_updated.py
--a----        11/19/2025     16:15            417 0035_alter_userstatus_options
-                                                  .py
--a----        11/19/2025     16:15            945 0036_alter_general_options.py
--a----        11/19/2025     16:15           1258 0037_corpstatus.py
--a----        11/19/2025     16:15            501 0038_bigbrotherconfig_ignored
-                                                  _corporations.py
--a----        11/19/2025     16:15            569 0039_alter_bigbrotherconfig_i
-                                                  gnored_corporations.py
--a----        11/19/2025     16:15           1791 0040_sovereigntymapcache_corp
-                                                  orationinfocache_and_more.py
--a----        11/19/2025     16:15            634 0041_bigbrotherconfig_is_warm
-                                                  er_active.py
--a----        11/19/2025     16:15           1433 0042_alter_general_options_an
-                                                  d_more.py
--a----        11/19/2025     16:15            896 0043_bigbrotherconfig_bb_memb
-                                                  er_states_and_more.py
--a----        11/19/2025     16:15           2306 0044_bigbrotherconfig_charact
-                                                  er_scopes_and_more.py
--a----        11/19/2025     16:15            435 0045_userstatus_sp_age_ratio_
-                                                  result.py
--a----        11/19/2025     16:15            506 0046_bigbrotherconfig_member_
-                                                  corporations.py
--a----        11/19/2025     16:15            506 0047_bigbrotherconfig_member_
-                                                  alliances.py
--a----        11/19/2025     16:15            669 0048_characteraccountstate.py
--a----        11/19/2025     16:15            407 0049_userstatus_clone_status.
-                                                  py
--a----        11/19/2025     16:15           1381 0050_alter_general_options_an
-                                                  d_more.py
--a----        11/20/2025     16:27           1342 0051_monthlypapstats.py
--a----        11/20/2025     16:28           1306 0052_papsconfig_delete_monthl
-                                                  ypapstats.py
--a----        11/20/2025     16:28           1345 0053_alter_papsconfig_corp_mo
-                                                  difier_and_more.py
--a----        11/19/2025     16:15           1132 0054_alter_general_options.py
--a----        11/19/2025     16:15            776 0055_papsconfig_group_paps_pa
-                                                  psconfig_group_paps_modifier.
-                                                  py
--a----        11/19/2025     16:15            611 0056_alter_papsconfig_group_p
-                                                  aps.py
--a----        11/19/2025     16:15           1249 0057_papsconfig_excluded_grou
-                                                  ps_papsconfig_excluded_users_
-                                                  and_more.py
--a----        11/19/2025     16:15           1270 0058_papsconfig_excluded_grou
-                                                  ps_get_paps_and_more.py
--a----        11/19/2025     16:15            552 0059_alter_papsconfig_exclude
-                                                  d_groups_get_paps.py
--a----        11/19/2025     16:15           2032 0060_papsconfig_cap_group_pap
-                                                  sconfig_cap_group_paps_and_mo
-                                                  re.py
--a----        11/19/2025     16:15           1631 0061_remove_papsconfig_cap_gr
-                                                  oup_and_more.py
--a----        11/20/2025     16:28           1249 0062_complianceticket.py
--a----        11/19/2025     16:15            584 0063_alter_complianceticket_u
-                                                  ser.py
--a----        11/20/2025     16:28            566 0064_alter_complianceticket_r
-                                                  eason.py
--a----        11/20/2025     16:28            962 0065_alter_complianceticket_r
-                                                  eason_and_more.py
--a----        11/20/2025     16:28           5906 0066_tickettoolconfig_papcomp
-                                                  liance.py
--a----        11/19/2025     16:15            468 0067_remove_tickettoolconfig_
-                                                  category_id_and_more.py
--a----        11/19/2025     16:15            770 0068_tickettoolconfig_categor
-                                                  y_id_and_more.py
--a----        11/19/2025     16:15            497 0069_tickettoolconfig_ticket_
-                                                  counter.py
--a----        11/20/2025     16:29           2182 0070_remove_tickettoolconfig_
-                                                  role_id_and_more.py
--a----        11/19/2025     16:15            517 0071_tickettoolconfig_role_id
-                                                  .py
--a----        11/20/2025     16:30            630 0072_alter_complianceticket_r
-                                                  eason.py
--a----        11/19/2025     16:15            514 0073_tickettoolconfig_startin
-                                                  g_pap_compliance.py
--a----        11/19/2025     16:15            879 0074_alter_bigbrotherconfig_h
-                                                  ostile_alliances.py
--a----        11/20/2025     16:29           1940 0075_bbupdatestate_tickettool
-                                                  config_afk_check_frequency_an
-                                                  d_more.py
--a----        11/19/2025     16:15           3567 0076_id_types_last_accessed_f
-                                                  requentcorpchangescache_and_m
-                                                  ore.py
--a----        11/20/2025     16:29           1110 0077_complianceticket_ticket_
-                                                  id_and_more.py
--a----        11/19/2025     16:15            477 0078_tickettoolconfig_awox_mo
-                                                  nitor_enabled.py
--a----        11/19/2025     16:15           4670 0079_helptext_guidance.py
--a----        11/19/2025     16:15           2240 0080_bigbrotherconfig_dlc_fla
-                                                  gs.py
--a----        11/20/2025     16:30           1930 0081_remove_papsconfig_imp_mo
-                                                  difier_and_more.py
--a----        11/19/2025     16:15           3683 0082_remove_bigbrotherconfig_
-                                                  token_and_more.py
--a----        11/20/2025     16:31           2966 0083_alter_bigbrotherredditme
-                                                  ssage_options_and_more.py
--a----        11/24/2025     11:13           1870 0084_bigbrotherconfig_conside
-                                                  r_all_structures_hostile_and_
-                                                  more.py
--a----        11/25/2025     11:40           1278 0085_bigbrotherconfig_awox_no
-                                                  tify_and_more.py
--a----        11/25/2025     14:25           3606 0086_bigbrotherconfig_are_rec
-                                                  urring_stats_active_and_more.
-                                                  py
--a----        11/25/2025     14:31            542 0087_bigbrotherconfig_dlc_are
-                                                  _recurring_stats_active.py
--a----        12/12/2025     18:58            495 0088_bigbrotherconfig_cyno_no
-                                                  tify.py
--a----        12/12/2025     18:55           2502 0089_bigbrotherconfig_asset_n
-                                                  otify_and_more.py
--a----        12/15/2025     12:46          31226 0090_alter_papsconfig_options
-                                                  _and_more.py
--a----        12/17/2025     10:38           2961 0091_remove_bigbrotherconfig_
-                                                  dlc_are_recurring_stats_activ
-                                                  e_and_more.py
--a----        12/18/2025     17:23            823 0092_userstatus_baseline_init
-                                                  ialized.py
--a----        12/24/2025     22:54           8692 0093_eveitemprice_delete_bigb
-                                                  rotherredditmessage_and_more.
-                                                  py
--a----        12/24/2025     22:54           1123 0094_bigbrotherconfig_corp_co
-                                                  mpliance_webhook_and_more.py
--a----        12/24/2025     22:54            723 0095_alter_bigbrotherconfig_l
-                                                  imit_to_main_corp.py
--a----        12/24/2025     22:54            905 0096_bigbrotherconfig_clone_s
-                                                  tate_notify_and_more.py
--a----        12/27/2025     11:06            646 0097_bigbrotherconfig_hostile
-                                                  _everyone_else.py
--a----        12/28/2025     10:35           1120 0098_bigbrotherconfig_exclude
-                                                  _high_sec_and_more.py
--a----          1/2/2026     18:08            605 0099_tickettoolconfig_hr_foru
-                                                  m_webhook.py
--a----          1/2/2026     20:54            611 0100_tickettoolconfig_use_for
-                                                  um_threads.py
--a----          1/5/2026     15:15           6338 0101_userstatus_compliance_fo
-                                                  rum_thread_id.py
--a----          1/5/2026     14:47           3495 0102_remove_tickettoolconfig_
-                                                  use_forum_threads_and_more.py
--a----          1/5/2026     16:51           2720 0103_tickettoolconfig_afk_che
-                                                  ck_include_user_and_more.py
--a----          1/8/2026     10:05            814 0104_alter_bigbrotherconfig_i
-                                                  s_active.py
--a----        11/19/2025     16:15              0 __init__.py
+CharacterMarketTransaction not available in corptools
+Found 32 test(s).
+Creating test database for alias 'default' ('file:memorydb_default?mode=memory&cache=shared')...
+Operations to perform:
+  Synchronize unmigrated apps: allianceauth, bootstrapform, darkly, django_bootstrap5, flatly, framework, humanize, materia, messages, navhelper, solo, sortedm2m, sri, staticfiles, theme
+  Apply all migrations: aa_bb, admin, analytics, auth, authentication, charlink, contenttypes, corptools, crontab, custom_css, discord, django_celery_beat, esi, eveonline, eveuniverse, groupmanagement, menu, notifications, services, sessions
+Synchronizing apps without migrations:
+  Creating tables...
+    Running deferred SQL...
+Running migrations:
+  Applying contenttypes.0001_initial... OK
+  Applying auth.0001_initial... OK
+  Applying eveonline.0001_initial... OK
+  Applying eveonline.0002_remove_eveapikeypair_error_count... OK
+  Applying eveonline.0003_auto_20161026_0149... OK
+  Applying eveonline.0004_eveapikeypair_sso_verified... OK
+  Applying eveonline.0005_remove_eveallianceinfo_member_count... OK
+  Applying eveonline.0006_allow_null_evecharacter_alliance... OK
+  Applying eveonline.0007_unique_id_name... OK
+  Applying eveonline.0008_remove_apikeys... OK
+  Applying eveonline.0009_on_delete... OK
+  Applying eveonline.0010_alliance_ticker... OK
+  Applying eveonline.0011_ids_to_integers... OK
+  Applying eveonline.0012_index_additions... OK
+  Applying eveonline.0013_evecorporationinfo_ceo_id... OK
+  Applying eveonline.0014_auto_20210105_1413... OK
+  Applying eveonline.0015_factions... OK
+  Applying eveonline.0016_character_names_are_not_unique... OK
+  Applying eveonline.0017_alliance_and_corp_names_are_not_unique... OK
+  Applying contenttypes.0002_remove_content_type_name... OK
+  Applying auth.0002_alter_permission_name_max_length... OK
+  Applying auth.0003_alter_user_email_max_length... OK
+  Applying auth.0004_alter_user_username_opts... OK
+  Applying auth.0005_alter_user_last_login_null... OK
+  Applying auth.0006_require_contenttypes_0002... OK
+  Applying auth.0007_alter_validators_add_error_messages... OK
+  Applying auth.0008_alter_user_username_max_length... OK
+  Applying groupmanagement.0001_initial... OK
+  Applying groupmanagement.0002_auto_20160906_2354... OK
+  Applying groupmanagement.0003_default_groups... OK
+  Applying groupmanagement.0004_authgroup... OK
+  Applying groupmanagement.0005_authgroup_public... OK
+  Applying groupmanagement.0006_request_groups_perm... OK
+  Applying groupmanagement.0007_on_delete... OK
+  Applying groupmanagement.0008_remove_authgroup_permissions... OK
+  Applying groupmanagement.0009_requestlog... OK
+  Applying esi.0013_squashed_0012_fix_token_type_choices... OK
+  Applying authentication.0001_initial... OK
+  Applying authentication.0002_auto_20160907_1914... OK
+  Applying authentication.0003_authservicesinfo_state... OK
+  Applying authentication.0004_create_permissions... OK
+  Applying authentication.0005_delete_perms... OK
+  Applying authentication.0006_auto_20160910_0542... OK
+  Applying authentication.0007_remove_authservicesinfo_is_blue... OK
+  Applying authentication.0008_set_state... OK
+  Applying authentication.0009_auto_20161021_0228... OK
+  Applying authentication.0010_only_one_authservicesinfo... OK
+  Applying authentication.0011_authservicesinfo_user_onetoonefield... OK
+  Applying authentication.0012_remove_add_delete_authservicesinfo_permissions... OK
+  Applying authentication.0013_service_modules... OK
+  Applying authentication.0014_fleetup_permission... OK
+  Applying authentication.0015_user_profiles... OK
+  Applying authentication.0016_ownershiprecord... OK
+  Applying groupmanagement.0010_authgroup_states... OK
+  Applying groupmanagement.0011_requestlog_date...C:\Users\brood\PycharmProjects\autosrp\.venv\Lib\site-packages\django\db\models\fields\__init__.py:1595: RuntimeWarning: DateTimeField RequestLog.date received a naive datetime (2018-12-07 08:56:33.846342) while time zone support is active.
+  warnings.warn(
+ OK
+  Applying auth.0009_alter_user_last_name_max_length... OK
+  Applying auth.0010_alter_group_name_max_length... OK
+  Applying auth.0011_update_proxy_permissions... OK
+  Applying groupmanagement.0012_group_leads... OK
+  Applying groupmanagement.0013_fix_requestlog_date_field... OK
+  Applying groupmanagement.0014_auto_20200918_1412... OK
+  Applying groupmanagement.0015_make_descriptions_great_again... OK
+  Applying groupmanagement.0016_remove_grouprequest_status_field... OK
+  Applying authentication.0017_remove_fleetup_permission... OK
+  Applying authentication.0018_state_member_factions... OK
+  Applying authentication.0018_alter_state_name_length... OK
+  Applying authentication.0019_merge_20211026_0919... OK
+  Applying auth.0012_alter_user_first_name_max_length... OK
+  Applying groupmanagement.0017_improve_groups_documentation... OK
+  Applying groupmanagement.0018_reservedgroupname... OK
+  Applying groupmanagement.0019_adding_restricted_to_groups... OK
+  Applying django_celery_beat.0001_initial... OK
+  Applying django_celery_beat.0002_auto_20161118_0346... OK
+  Applying django_celery_beat.0003_auto_20161209_0049... OK
+  Applying django_celery_beat.0004_auto_20170221_0000... OK
+  Applying django_celery_beat.0005_add_solarschedule_events_choices... OK
+  Applying django_celery_beat.0006_auto_20180322_0932... OK
+  Applying django_celery_beat.0007_auto_20180521_0826... OK
+  Applying django_celery_beat.0008_auto_20180914_1922... OK
+  Applying django_celery_beat.0006_auto_20180210_1226... OK
+  Applying django_celery_beat.0006_periodictask_priority... OK
+  Applying django_celery_beat.0009_periodictask_headers... OK
+  Applying django_celery_beat.0010_auto_20190429_0326... OK
+  Applying django_celery_beat.0011_auto_20190508_0153... OK
+  Applying django_celery_beat.0012_periodictask_expire_seconds... OK
+  Applying django_celery_beat.0013_auto_20200609_0727... OK
+  Applying django_celery_beat.0014_remove_clockedschedule_enabled... OK
+  Applying django_celery_beat.0015_edit_solarschedule_events_choices... OK
+  Applying django_celery_beat.0016_alter_crontabschedule_timezone... OK
+  Applying django_celery_beat.0017_alter_crontabschedule_month_of_year... OK
+  Applying django_celery_beat.0018_improve_crontab_helptext... OK
+  Applying django_celery_beat.0019_alter_periodictasks_options... OK
+  Applying authentication.0020_userprofile_language_userprofile_night_mode... OK
+  Applying authentication.0021_alter_userprofile_language... OK
+  Applying authentication.0022_userprofile_theme... OK
+  Applying authentication.0023_alter_userprofile_language... OK
+  Applying authentication.0024_alter_userprofile_language... OK
+  Applying aa_bb.0001_initial... OK
+  Applying aa_bb.0002_bigbrotherconfig_userstatus... OK
+  Applying aa_bb.0003_alter_bigbrotherconfig_pingroleid... OK
+  Applying aa_bb.0004_alter_bigbrotherconfig_is_active_and_more... OK
+  Applying aa_bb.0005_alter_bigbrotherconfig_hostile_alliances... OK
+  Applying aa_bb.0006_alter_bigbrotherconfig_pingroleid... OK
+  Applying aa_bb.0007_alter_general_options... OK
+  Applying aa_bb.0008_alliance_names_corporation_names... OK
+  Applying aa_bb.0009_userstatus_sus_contacts_userstatus_sus_contracts_and_more... OK
+  Applying aa_bb.0010_alter_userstatus_awox_kill_links_and_more... OK
+  Applying aa_bb.0011_character_names... OK
+  Applying aa_bb.0012_id_types... OK
+  Applying aa_bb.0013_bigbrotherconfig_mail_keywords... OK
+  Applying aa_bb.0014_processedcontract_processedmail_and_more... OK
+  Applying aa_bb.0015_processedtransaction_sustransactionnote... OK
+  Applying aa_bb.0016_warmprogress... OK
+  Applying aa_bb.0017_entityinfocache... OK
+  Applying aa_bb.0018_userstatus_cyno_userstatus_has_skills_and_more... OK
+  Applying aa_bb.0019_bigbrotherconfig_whitelist_alliances_and_more... OK
+  Applying aa_bb.0020_messages_bigbrotherconfig_are_daily_messages_active_and_more... OK
+  Applying aa_bb.0021_alter_messages_id_alter_messages_text... OK
+  Applying aa_bb.0022_messages_sent_in_cycle... OK
+  Applying aa_bb.0023_optmessages1_optmessages2_optmessages3_optmessages4_and_more... OK
+  Applying aa_bb.0024_bigbrotherconfig_dailyschedule_and_more... OK
+  Applying aa_bb.0025_alter_messages_options_alter_optmessages1_options_and_more... OK
+  Applying aa_bb.0026_alter_general_options_alter_bigbrotherconfig_id_and_more... OK
+  Applying aa_bb.0027_alter_general_options_bigbrotherconfig_is_loa_active_and_more... OK
+  Applying aa_bb.0028_alter_bigbrotherconfig_is_loa_active... OK
+  Applying aa_bb.0029_leaverequest_main_character... OK
+  Applying aa_bb.0030_alter_general_options... OK
+  Applying aa_bb.0031_bigbrotherconfig_loa_max_logoff_days_and_more... OK
+  Applying aa_bb.0032_alter_leaverequest_status... OK
+  Applying aa_bb.0033_messagetype_bigbrotherconfig_pingroleid2_and_more... OK
+  Applying aa_bb.0034_rename_last_updated_userstatus_updated... OK
+  Applying aa_bb.0035_alter_userstatus_options... OK
+  Applying aa_bb.0036_alter_general_options... OK
+  Applying aa_bb.0037_corpstatus... OK
+  Applying aa_bb.0038_bigbrotherconfig_ignored_corporations... OK
+  Applying aa_bb.0039_alter_bigbrotherconfig_ignored_corporations... OK
+  Applying aa_bb.0040_sovereigntymapcache_corporationinfocache_and_more... OK
+  Applying aa_bb.0041_bigbrotherconfig_is_warmer_active... OK
+  Applying aa_bb.0042_alter_general_options_and_more... OK
+  Applying aa_bb.0043_bigbrotherconfig_bb_member_states_and_more... OK
+  Applying aa_bb.0044_bigbrotherconfig_character_scopes_and_more... OK
+  Applying aa_bb.0045_userstatus_sp_age_ratio_result... OK
+  Applying aa_bb.0046_bigbrotherconfig_member_corporations... OK
+  Applying aa_bb.0047_bigbrotherconfig_member_alliances... OK
+  Applying aa_bb.0048_characteraccountstate... OK
+  Applying aa_bb.0049_userstatus_clone_status... OK
+  Applying aa_bb.0050_alter_general_options_and_more... OK
+  Applying aa_bb.0051_monthlypapstats... OK
+  Applying aa_bb.0052_papsconfig_delete_monthlypapstats... OK
+  Applying aa_bb.0053_alter_papsconfig_corp_modifier_and_more... OK
+  Applying aa_bb.0054_alter_general_options... OK
+  Applying aa_bb.0055_papsconfig_group_paps_papsconfig_group_paps_modifier... OK
+  Applying aa_bb.0056_alter_papsconfig_group_paps... OK
+  Applying aa_bb.0057_papsconfig_excluded_groups_papsconfig_excluded_users_and_more... OK
+  Applying aa_bb.0058_papsconfig_excluded_groups_get_paps_and_more... OK
+  Applying aa_bb.0059_alter_papsconfig_excluded_groups_get_paps... OK
+  Applying aa_bb.0060_papsconfig_cap_group_papsconfig_cap_group_paps_and_more... OK
+  Applying aa_bb.0061_remove_papsconfig_cap_group_and_more... OK
+  Applying aa_bb.0062_complianceticket... OK
+  Applying aa_bb.0063_alter_complianceticket_user... OK
+  Applying aa_bb.0064_alter_complianceticket_reason... OK
+  Applying aa_bb.0065_alter_complianceticket_reason_and_more... OK
+  Applying aa_bb.0066_tickettoolconfig_papcompliance... OK
+  Applying aa_bb.0067_remove_tickettoolconfig_category_id_and_more... OK
+  Applying aa_bb.0068_tickettoolconfig_category_id_and_more... OK
+  Applying aa_bb.0069_tickettoolconfig_ticket_counter... OK
+  Applying aa_bb.0070_remove_tickettoolconfig_role_id_and_more... OK
+  Applying aa_bb.0071_tickettoolconfig_role_id... OK
+  Applying aa_bb.0072_alter_complianceticket_reason... OK
+  Applying aa_bb.0073_tickettoolconfig_starting_pap_compliance... OK
+  Applying aa_bb.0074_alter_bigbrotherconfig_hostile_alliances... OK
+  Applying aa_bb.0075_bbupdatestate_tickettoolconfig_afk_check_frequency_and_more... OK
+  Applying aa_bb.0076_id_types_last_accessed_frequentcorpchangescache_and_more... OK
+  Applying aa_bb.0077_complianceticket_ticket_id_and_more... OK
+  Applying aa_bb.0078_tickettoolconfig_awox_monitor_enabled... OK
+  Applying aa_bb.0079_helptext_guidance... OK
+  Applying aa_bb.0080_bigbrotherconfig_dlc_flags... OK
+  Applying aa_bb.0081_remove_papsconfig_imp_modifier_and_more... OK
+  Applying aa_bb.0082_remove_bigbrotherconfig_token_and_more... OK
+  Applying aa_bb.0083_alter_bigbrotherredditmessage_options_and_more... OK
+  Applying aa_bb.0084_bigbrotherconfig_consider_all_structures_hostile_and_more... OK
+  Applying aa_bb.0085_bigbrotherconfig_awox_notify_and_more... OK
+  Applying aa_bb.0086_bigbrotherconfig_are_recurring_stats_active_and_more... OK
+  Applying aa_bb.0087_bigbrotherconfig_dlc_are_recurring_stats_active... OK
+  Applying aa_bb.0088_bigbrotherconfig_cyno_notify... OK
+  Applying aa_bb.0089_bigbrotherconfig_asset_notify_and_more... OK
+  Applying aa_bb.0090_alter_papsconfig_options_and_more... OK
+  Applying aa_bb.0091_remove_bigbrotherconfig_dlc_are_recurring_stats_active_and_more... OK
+  Applying aa_bb.0092_userstatus_baseline_initialized... OK
+  Applying aa_bb.0093_eveitemprice_delete_bigbrotherredditmessage_and_more... OK
+  Applying aa_bb.0094_bigbrotherconfig_corp_compliance_webhook_and_more... OK
+  Applying aa_bb.0095_alter_bigbrotherconfig_limit_to_main_corp... OK
+  Applying aa_bb.0096_bigbrotherconfig_clone_state_notify_and_more... OK
+  Applying aa_bb.0097_bigbrotherconfig_hostile_everyone_else... OK
+  Applying aa_bb.0098_bigbrotherconfig_exclude_high_sec_and_more... OK
+  Applying aa_bb.0099_tickettoolconfig_hr_forum_webhook... OK
+  Applying aa_bb.0100_tickettoolconfig_use_forum_threads... OK
+  Applying aa_bb.0101_userstatus_compliance_forum_thread_id... OK
+  Applying aa_bb.0102_remove_tickettoolconfig_use_forum_threads_and_more... OK
+  Applying aa_bb.0103_tickettoolconfig_afk_check_include_user_and_more... OK
+  Applying aa_bb.0104_alter_bigbrotherconfig_is_active... OK
+  Applying aa_bb.0105_remove_tickettoolconfig_compliance_filter... OK
+  Applying aa_bb.0106_bigbrotherconfig_consider_lowsec_hostile... OK
+  Applying aa_bb.0107_remove_tickettoolconfig_role_id_and_more... OK
+  Applying aa_bb.0108_bigbrotherconfig_exclude_neutral_contacts... OK
+  Applying aa_bb.0109_alter_tickettoolconfig_discord_check_reason_and_more... OK
+  Applying aa_bb.0110_bigbrotherconfig_hide_unaudited_users... OK
+  Applying aa_bb.0111_alter_entityinfocache_as_of_and_more... OK
+  Applying aa_bb.0112_complianceticket_details_and_more... OK
+  Applying aa_bb.0113_bigbrotherconfig_discord_message_tracking... OK
+  Applying admin.0001_initial... OK
+  Applying admin.0002_logentry_remove_auto_add... OK
+  Applying admin.0003_logentry_add_action_flag_choices... OK
+  Applying analytics.0001_initial... OK
+  Applying analytics.0002_add_AA_Team_Token... OK
+  Applying analytics.0003_Generate_Identifier... OK
+  Applying analytics.0004_auto_20211015_0502... OK
+  Applying analytics.0005_alter_analyticspath_ignore_path... OK
+  Applying analytics.0006_more_ignore_paths... OK
+  Applying analytics.0007_analyticstokens_secret... OK
+  Applying analytics.0008_add_AA_GA-4_Team_Token ... OK
+  Applying analytics.0009_remove_analyticstokens_ignore_paths_and_more... OK
+  Applying analytics.0010_alter_analyticsidentifier_options... OK
+  Applying authentication.0025_userprofile_minimize_sidebar... OK
+  Applying charlink.0001_initial... OK
+  Applying charlink.0002_appsettings_alter_general_options... OK
+  Applying charlink.0003_compliancefilter... OK
+  Applying corptools.0001_initial... OK
+  Applying corptools.0002_auto_20200507_1104... OK
+  Applying corptools.0003_auto_20200507_1115... OK
+  Applying corptools.0004_auto_20200507_1133... OK
+  Applying corptools.0005_auto_20200508_1506... OK
+  Applying corptools.0006_invtypematerials_type_id... OK
+  Applying corptools.0007_auto_20200510_1357... OK
+  Applying corptools.0008_auto_20200511_0801... OK
+  Applying corptools.0009_auto_20200511_0816... OK
+  Applying corptools.0010_auto_20200511_0853... OK
+  Applying corptools.0011_characterwalletjournalentry_corporationwalletdivision_corporationwalletjournalentry... OK
+  Applying corptools.0012_skilltotals... OK
+  Applying corptools.0013_eveitemdogmaattribute... OK
+  Applying corptools.0014_characteraudit_balance... OK
+  Applying corptools.0015_auto_20200614_0935... OK
+  Applying corptools.0016_auto_20200622_0643... OK
+  Applying corptools.0017_auto_20200727_0041... OK
+  Applying corptools.0018_corporationwalletdivision_name... OK
+  Applying corptools.0019_implant_jumpclone... OK
+  Applying corptools.0020_clone... OK
+  Applying corptools.0021_auto_20200804_0941... OK
+  Applying corptools.0022_mapsystemgate_skilllist... OK
+  Applying corptools.0023_auto_20200810_1350... OK
+  Applying corptools.0024_auto_20200810_1458... OK
+  Applying corptools.0025_mapjumpbridge... OK
+  Applying corptools.0026_auto_20200811_0846... OK
+  Applying corptools.0027_skilllistfile... OK
+  Applying corptools.0028_delete_skilllistfile... OK
+  Applying corptools.0029_auto_20200815_0554... OK
+  Applying corptools.0030_charactermarketorder_corporationmarketorder... OK
+  Applying corptools.0031_auto_20200828_0855... OK
+  Applying corptools.0032_auto_20200901_0537... OK
+  Applying corptools.0033_skilllist_order_weight... OK
+  Applying corptools.0034_auto_20200928_0005... OK
+  Applying corptools.0035_auto_20200929_0114... OK
+  Applying corptools.0036_auto_20201017_0641... OK
+  Applying corptools.0037_mapsystemmoon_mapsystemplanet... OK
+  Applying corptools.0038_auto_20210112_0102... OK
+  Applying corptools.0039_auto_20210112_0402... OK
+  Applying corptools.0040_auto_20210112_0449... OK
+  Applying corptools.0041_auto_20210112_1359... OK
+  Applying corptools.0042_remove_skilllist_eft... OK
+  Applying corptools.0043_auto_20210125_0758... OK
+  Applying corptools.0044_auto_20210322_0805... OK
+  Applying corptools.0045_bigkey_assets_fix... OK
+  Applying corptools.0046_auto_20210427_0734... OK
+  Applying corptools.0047_auto_20210531_1025... OK
+  Applying corptools.0048_maillabel_mailmessage_mailrecipient... OK
+  Applying corptools.0049_alter_mailmessage_is_read... OK
+  Applying corptools.0050_auto_20210713_0408... OK
+  Applying corptools.0051_auto_20210713_0557... OK
+  Applying corptools.0052_charactercontact_charactercontactlabel_corporationcontact_corporationcontactlabel... OK
+  Applying corptools.0053_characteraudit_last_update_contacts... OK
+  Applying corptools.0054_auto_20210808_0138... OK
+  Applying corptools.0055_alter_characterroles_character... OK
+  Applying corptools.0056_auto_20210808_0414... OK
+  Applying corptools.0057_alter_titlefilter_options... OK
+  Applying corptools.0058_auto_20210808_0635... OK
+  Applying corptools.0059_invtypematerials_met_type... OK
+  Applying corptools.0060_bridgeozonelevel... OK
+  Applying corptools.0061_notificationtext... OK
+  Applying corptools.0062_notificaiton_refactor...Starting Migration!
+this will look like it has hung but it is doing bulk migration of data in the background
+ OK
+  Applying corptools.0063_notification_verification... OK
+  Applying corptools.0064_notification_note_text... OK
+  Applying corptools.0065_notification_sync...
+Starting Sync 0 to sync
+ OK
+  Applying corptools.0066_final_notification_checks... OK
+  Applying corptools.0067_remove_notification_notification_text... OK
+  Applying corptools.0068_rename_note_text_notification_notification_text... OK
+  Applying corptools.0069_corptoolsconfiguration... OK
+  Applying corptools.0070_create_settings... OK
+  Applying corptools.0071_alter_corptoolsconfiguration_options... OK
+  Applying corptools.0072_alter_corporationaudit_options... OK
+  Applying corptools.0073_remove_miningtaxpaymentcorp_corp_delete_miningtax_and_more... OK
+  Applying corptools.0074_evelocation_managed_evelocation_managed_char_and_more... OK
+  Applying corptools.0075_remove_notification_corptools_n_notific_77c7f2_idx... OK
+  Applying corptools.0076_remove_characterasset_corptools_c_type_id_05ccc2_idx_and_more... OK
+  Applying corptools.0077_fullyloadedfilter_reversed_logic... OK
+  Applying corptools.0078_characterwalletjournalentry_corptools_c_date_aebcea_idx_and_more... OK
+  Applying corptools.0079_characteraudit_last_update_location_and_more... OK
+  Applying corptools.0080_alter_characterlocation_character... OK
+  Applying corptools.0081_characterlocation_current_ship_name_and_more... OK
+  Applying corptools.0082_characteraudit_last_update_contracts_contract_and_more... OK
+  Applying corptools.0083_skilltotalhistory... OK
+  Applying corptools.0084_characteraudit_last_update_loyaltypoints_and_more... OK
+  Applying corptools.0085_characteraudit_last_update_mining_and_more... OK
+  Applying corptools.0086_characterindustryjob... OK
+  Applying corptools.0087_characteraudit_last_update_indy... OK
+  Applying corptools.0088_alter_characterindustryjob_end_date... OK
+  Applying corptools.0089_highestspfilter... OK
+  Applying corptools.0090_rename_cache_expire_assets_corporationaudit_last_change_assets_and_more... OK
+  Applying corptools.0091_assetsfilter_count_message_only_and_more... OK
+  Applying corptools.0092_poco... OK
+  Applying corptools.0093_alter_characteraudit_options... OK
+  Applying corptools.0094_lastloginfilter_characteraudit_last_known_login_and_more... OK
+  Applying corptools.0095_lastloginfilter_main_corp_only_and_more... OK
+  Applying corptools.0096_rolefilter_main_only... OK
+  Applying corptools.0097_rolefilter_alliances_filter_rolefilter_corps_filter... OK
+  Applying corptools.0098_migrate_role_filters... OK
+  Applying corptools.0099_remove_rolefilter_alliance_filter_and_more... OK
+  Applying corptools.0100_mapjumpbridge_manually_input... OK
+  Applying corptools.0101_corporatecontract_corporatecontractitem... OK
+  Applying corptools.0102_corporationaudit_last_change_contracts_and_more... OK
+  Applying corptools.0103_currentshipfilter... OK
+  Applying corptools.0104_remove_currentshipfilter_categories_and_more... OK
+  Applying corptools.0105_homestationfilter... OK
+  Applying corptools.0106_remove_homestationfilter_constellations_and_more... OK
+  Applying corptools.0107_rename_structures_homestationfilter_evelocation... OK
+  Applying corptools.0108_jumpclonefilter... OK
+  Applying corptools.0109_corptoolsconfiguration_disable_verification_assets_and_more... OK
+  Applying corptools.0110_rename_oreprice_typeprice... OK
+  Applying corptools.0111_corptoolsconfiguration_disable_update_assets_and_more... OK
+  Applying corptools.0112_alter_corptoolsconfiguration_holding_corps... OK
+  Applying corptools.0113_timeincorpfilter_reversed_logic... OK
+  Applying corptools.0114_alter_skilllist_skill_list... OK
+  Applying corptools.0115_assetcoordiante... OK
+  Applying corptools.0116_starbase... OK
+  Applying corptools.0117_starbase_name... OK
+  Applying corptools.0118_alter_skill_id... OK
+  Applying corptools.0119_characteragefilter... OK
+  Applying corptools.0120_corptoolsconfiguration_aggregate_lookback... OK
+  Applying corptools.0121_charassetcoordiante... OK
+  Applying corptools.0122_characteraudit_total_logins... OK
+  Applying corptools.0123_characterwalletjournalentry_processed_and_more... OK
+  Applying corptools.0124_characterbountyevent_characterbountystat... OK
+  Applying corptools.0125_corporationaudit_last_change_industry_jobs_and_more... OK
+  Applying corptools.0126_assetsfilter_reversed_logic... OK
+  Applying corptools.0127_alter_corporationaudit_options... OK
+  Applying crontab.0001_initial... OK
+  Applying custom_css.0001_initial... OK
+  Applying discord.0001_initial... OK
+  Applying discord.0002_service_permissions... OK
+  Applying discord.0003_big_overhaul... OK
+  Applying eveuniverse.0001_initial... OK
+  Applying eveuniverse.0002_load_eveunit... OK
+  Applying eveuniverse.0003_evemarketprice... OK
+  Applying eveuniverse.0004_effect_longer_name... OK
+  Applying eveuniverse.0005_type_materials_and_sections... OK
+  Applying eveuniverse.0006_alter_evedogmaeffectmodifier_operator... OK
+  Applying eveuniverse.0007_evetype_description... OK
+  Applying eveuniverse.0008_eveindustryactivity_alter_evetype_enabled_sections_and_more... OK
+  Applying eveuniverse.0009_load_industry_activities... OK
+  Applying eveuniverse.0010_alter_eveindustryactivityduration_eve_type_and_more... OK
+  Applying eveuniverse.0011_extend_industry_activites... OK
+  Applying menu.0001_initial... OK
+  Applying notifications.0001_initial... OK
+  Applying notifications.0002_auto_20160910_1649... OK
+  Applying notifications.0003_make_strings_more_stringy... OK
+  Applying notifications.0004_performance_tuning... OK
+  Applying notifications.0005_fix_level_choices... OK
+  Applying services.0001_squashed_0003_delete_groupcache... OK
+  Applying services.0002_nameformatter... OK
+  Applying services.0003_remove_broken_link... OK
+  Applying sessions.0001_initial... OK
+System check identified no issues (0 silenced).
+test_omega_detection_from_omega_only_skill (aa_bb.tests.test_clone_state_logic.CloneStateLogicTest.test_omega_detection_from_omega_only_skill)
+Verify that a character with an active Omega-only skill is detected as Omega. ... FAIL
+test_clone_state_performance (aa_bb.tests.test_performance.PerformanceTest.test_clone_state_performance)
+Test performance of determine_character_state with simulated skills. ...
+[PERFORMANCE] determine_character_state avg time: 0.002603s
+ok
+test_is_above_threshold_logic_performance (aa_bb.tests.test_performance.PerformanceTest.test_is_above_threshold_logic_performance)
+Test the performance of the price threshold logic itself. ... [PERFORMANCE] is_above_threshold logic avg time: 0.000030s
+ok
+test_transaction_threshold_performance (aa_bb.tests.test_performance.PerformanceTest.test_transaction_threshold_performance)
+Test performance of transaction filtering and threshold checking. ... [PERFORMANCE] get_user_hostile_transactions (100 tx) avg time: 0.001103s
+ok
+test_price_timer_configurable (aa_bb.tests.test_price_timer.TestPriceTimer.test_price_timer_configurable) ... ok
+test_hostile_notification_with_neutral_standing (aa_bb.tests.test_sus_contacts.TestSusContacts.test_hostile_notification_with_neutral_standing) ... ERROR
+test_hostile_notification_with_positive_standing (aa_bb.tests.test_sus_contacts.TestSusContacts.test_hostile_notification_with_positive_standing) ... ERROR
+test_no_hostile_notification_with_negative_standing (aa_bb.tests.test_sus_contacts.TestSusContacts.test_no_hostile_notification_with_negative_standing) ... ok
+test_major_hub_filtering_enabled (aa_bb.tests.test_sus_trans.TestSusTrans.test_major_hub_filtering_enabled) ... ESI error resolving 1: <HTTPClientError 404 details=None error='Ensure all IDs are valid before resolving.' Headers([('date', 'Mon, 26 Jan 2026 15:14:27 GMT'), ('content-type', 'application/json; charset=UTF-8'), ('content-length', '54'), ('access-control-allow-credentials', 'true'), ('access-control-allow-origin', '*'), ('access-control-expose-headers', 'Etag, Retry-After, X-Compatibility-Date, X-Esi-Error-Limit-Remain, X-Esi-Error-Limit-Reset, X-Pages, X-Ratelimit-Group, X-Ratelimit-Limit, X-Ratelimit-Remaining, X-Ratelimit-Used'), ('content-language', 'en'), ('strict-transport-security', 'max-age=31536000'), ('vary', 'Accept-Language'), ('vary', 'X-Compatibility-Date'), ('x-compatibility-date', '2020-01-01'), ('x-esi-cache-status', 'MISS'), ('x-esi-error-limit-remain', '99'), ('x-esi-error-limit-reset', '33'), ('x-esi-request-id', 'ed02ddc2-5f34-40e8-bea6-9a8eeb839fb0')])>
+ok
+test_major_hub_hostile_corp_show_market_disabled (aa_bb.tests.test_sus_trans.TestSusTrans.test_major_hub_hostile_corp_show_market_disabled) ... ESI error resolving 1: <HTTPClientError 404 details=None error='Ensure all IDs are valid before resolving.' Headers([('date', 'Mon, 26 Jan 2026 15:14:29 GMT'), ('content-type', 'application/json; charset=UTF-8'), ('content-length', '54'), ('access-control-allow-credentials', 'true'), ('access-control-allow-origin', '*'), ('access-control-expose-headers', 'Etag, Retry-After, X-Compatibility-Date, X-Esi-Error-Limit-Remain, X-Esi-Error-Limit-Reset, X-Pages, X-Ratelimit-Group, X-Ratelimit-Limit, X-Ratelimit-Remaining, X-Ratelimit-Used'), ('content-language', 'en'), ('strict-transport-security', 'max-age=31536000'), ('vary', 'Accept-Language'), ('vary', 'X-Compatibility-Date'), ('x-compatibility-date', '2020-01-01'), ('x-esi-cache-status', 'MISS'), ('x-esi-error-limit-remain', '98'), ('x-esi-error-limit-reset', '31'), ('x-esi-request-id', 'a2b72868-5018-408f-8ba2-c6be89159595')])>
+ok
+test_major_hub_hostile_corp_show_market_disabled_cb (aa_bb.tests.test_sus_trans.TestSusTrans.test_major_hub_hostile_corp_show_market_disabled_cb) ... ESI error resolving 1: <HTTPClientError 404 details=None error='Ensure all IDs are valid before resolving.' Headers([('date', 'Mon, 26 Jan 2026 15:14:30 GMT'), ('content-type', 'application/json; charset=UTF-8'), ('content-length', '54'), ('access-control-allow-credentials', 'true'), ('access-control-allow-origin', '*'), ('access-control-expose-headers', 'Etag, Retry-After, X-Compatibility-Date, X-Esi-Error-Limit-Remain, X-Esi-Error-Limit-Reset, X-Pages, X-Ratelimit-Group, X-Ratelimit-Limit, X-Ratelimit-Remaining, X-Ratelimit-Used'), ('content-language', 'en'), ('strict-transport-security', 'max-age=31536000'), ('vary', 'Accept-Language'), ('vary', 'X-Compatibility-Date'), ('x-compatibility-date', '2020-01-01'), ('x-esi-cache-status', 'MISS'), ('x-esi-error-limit-remain', '97'), ('x-esi-error-limit-reset', '30'), ('x-esi-request-id', 'e1a1442d-67eb-4f01-951f-0ec39278ef84')])>
+ok
+test_major_hub_hostile_corp_show_market_enabled (aa_bb.tests.test_sus_trans.TestSusTrans.test_major_hub_hostile_corp_show_market_enabled) ... ESI error resolving 1: <HTTPClientError 404 details=None error='Ensure all IDs are valid before resolving.' Headers([('date', 'Mon, 26 Jan 2026 15:14:32 GMT'), ('content-type', 'application/json; charset=UTF-8'), ('content-length', '54'), ('access-control-allow-credentials', 'true'), ('access-control-allow-origin', '*'), ('access-control-expose-headers', 'Etag, Retry-After, X-Compatibility-Date, X-Esi-Error-Limit-Remain, X-Esi-Error-Limit-Reset, X-Pages, X-Ratelimit-Group, X-Ratelimit-Limit, X-Ratelimit-Remaining, X-Ratelimit-Used'), ('content-language', 'en'), ('strict-transport-security', 'max-age=31536000'), ('vary', 'Accept-Language'), ('vary', 'X-Compatibility-Date'), ('x-compatibility-date', '2020-01-01'), ('x-esi-cache-status', 'MISS'), ('x-esi-error-limit-remain', '96'), ('x-esi-error-limit-reset', '28'), ('x-esi-request-id', '5d0cd587-ef02-413f-9ba7-c32a88f12e75')])>
+ok
+test_string_system_id (aa_bb.tests.test_sus_trans.TestSusTrans.test_string_system_id) ... ESI error resolving 1: <HTTPClientError 404 details=None error='Ensure all IDs are valid before resolving.' Headers([('date', 'Mon, 26 Jan 2026 15:14:33 GMT'), ('content-type', 'application/json; charset=UTF-8'), ('content-length', '54'), ('access-control-allow-credentials', 'true'), ('access-control-allow-origin', '*'), ('access-control-expose-headers', 'Etag, Retry-After, X-Compatibility-Date, X-Esi-Error-Limit-Remain, X-Esi-Error-Limit-Reset, X-Pages, X-Ratelimit-Group, X-Ratelimit-Limit, X-Ratelimit-Remaining, X-Ratelimit-Used'), ('content-language', 'en'), ('strict-transport-security', 'max-age=31536000'), ('vary', 'Accept-Language'), ('vary', 'X-Compatibility-Date'), ('x-compatibility-date', '2020-01-01'), ('x-esi-cache-status', 'MISS'), ('x-esi-error-limit-remain', '95'), ('x-esi-error-limit-reset', '27'), ('x-esi-request-id', '40ce6077-f224-4015-9be5-dd60e1b81b65')])>
+ok
+test_string_system_id_cb (aa_bb.tests.test_sus_trans.TestSusTrans.test_string_system_id_cb) ... ESI error resolving 1: <HTTPClientError 404 details=None error='Ensure all IDs are valid before resolving.' Headers([('date', 'Mon, 26 Jan 2026 15:14:35 GMT'), ('content-type', 'application/json; charset=UTF-8'), ('content-length', '54'), ('access-control-allow-credentials', 'true'), ('access-control-allow-origin', '*'), ('access-control-expose-headers', 'Etag, Retry-After, X-Compatibility-Date, X-Esi-Error-Limit-Remain, X-Esi-Error-Limit-Reset, X-Pages, X-Ratelimit-Group, X-Ratelimit-Limit, X-Ratelimit-Remaining, X-Ratelimit-Used'), ('content-language', 'en'), ('strict-transport-security', 'max-age=31536000'), ('vary', 'Accept-Language'), ('vary', 'X-Compatibility-Date'), ('x-compatibility-date', '2020-01-01'), ('x-esi-cache-status', 'MISS'), ('x-esi-error-limit-remain', '94'), ('x-esi-error-limit-reset', '25'), ('x-esi-request-id', '3584aa14-2f41-443e-b55d-52875a029587')])>
+ok
+test_structure_id_resolution (aa_bb.tests.test_sus_trans.TestSusTrans.test_structure_id_resolution) ... ERROR
+test_structure_id_resolution_cb (aa_bb.tests.test_sus_trans.TestSusTrans.test_structure_id_resolution_cb) ... ERROR
+test_transaction_location_hostility (aa_bb.tests.test_sus_trans.TestSusTrans.test_transaction_location_hostility) ... ok
+test_format_task_name (aa_bb.tests.test_task_setup.TestTaskSetup.test_format_task_name) ... ok
+test_persistent_lifecycle (aa_bb.tests.test_task_setup.TestTaskSetup.test_persistent_lifecycle) ... ok
+test_setup_periodic_task_creation (aa_bb.tests.test_task_setup.TestTaskSetup.test_setup_periodic_task_creation) ... ok
+test_setup_periodic_task_renaming (aa_bb.tests.test_task_setup.TestTaskSetup.test_setup_periodic_task_renaming) ... ok
+test_no_notification_on_first_run_when_disabled (aa_bb.tests.test_tasks_notifications.TestTasksNotifications.test_no_notification_on_first_run_when_disabled) ... ok
+test_stats_with_member_filter (aa_bb.tests.test_tasks_recurring_stats.TestTasksRecurringStats.test_stats_with_member_filter) ... ok
+test_stats_without_member_filter (aa_bb.tests.test_tasks_recurring_stats.TestTasksRecurringStats.test_stats_without_member_filter) ... ok
+test_available_cards_logic (aa_bb.tests.test_views.TestDashboardViews.test_available_cards_logic) ... ok
+test_index_access (aa_bb.tests.test_views.TestDashboardViews.test_index_access) ... ok
+test_index_dropdown_options_full_access (aa_bb.tests.test_views.TestDashboardViews.test_index_dropdown_options_full_access) ... ok
+test_index_dropdown_options_recruiter_access (aa_bb.tests.test_views.TestDashboardViews.test_index_dropdown_options_recruiter_access) ... ok
+test_load_card_ajax (aa_bb.tests.test_views.TestDashboardViews.test_load_card_ajax) ... ok
+test_load_card_invalid_params (aa_bb.tests.test_views.TestDashboardViews.test_load_card_invalid_params) ... ok
+test_manual_modules_view (aa_bb.tests.test_views.TestDashboardViews.test_manual_modules_view) ... ok
+test_superuser_access (aa_bb.tests.test_views.TestDashboardViews.test_superuser_access) ... ok
+======================================================================
+ERROR: test_hostile_notification_with_neutral_standing (aa_bb.tests.test_sus_contacts.TestSusContacts.test_hostile_notification_with_neutral_standing)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\brood\AppData\Local\Programs\Python\Python311\Lib\unittest\mock.py", line 1378, in patched
+    return func(*newargs, **newkeywargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\brood\PycharmProjects\aa_bb\aa_bb\tests\test_sus_contacts.py", line 76, in test_hostile_notification_with_neutral_standing
+    notifications = get_user_hostile_notifications(1)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\brood\PycharmProjects\aa_bb\aa_bb\checks\sus_contacts.py", line 324, in get_user_hostile_notifications
+    alerts = _get_contact_alerts(cid, info, cfg=cfg, safe_entities=safe_entities, entity_info_cache=entity_info_cache)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\brood\PycharmProjects\aa_bb\aa_bb\checks\sus_contacts.py", line 214, in _get_contact_alerts
+    if get_hostile_state(cid, 'character', safe_entities=safe_entities, entity_info_cache=entity_info_cache, cfg=cfg):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\brood\AppData\Local\Programs\Python\Python311\Lib\unittest\mock.py", line 1124, in __call__
+    return self._mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\brood\AppData\Local\Programs\Python\Python311\Lib\unittest\mock.py", line 1128, in _mock_call
+    return self._execute_mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\brood\AppData\Local\Programs\Python\Python311\Lib\unittest\mock.py", line 1189, in _execute_mock_call
+    result = effect(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: TestSusContacts.test_hostile_notification_with_neutral_standing.<locals>.<lambda>() got an unexpected keyword argument 'safe_entities'
+======================================================================
+ERROR: test_hostile_notification_with_positive_standing (aa_bb.tests.test_sus_contacts.TestSusContacts.test_hostile_notification_with_positive_standing)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\brood\AppData\Local\Programs\Python\Python311\Lib\unittest\mock.py", line 1378, in patched
+    return func(*newargs, **newkeywargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\brood\PycharmProjects\aa_bb\aa_bb\tests\test_sus_contacts.py", line 30, in test_hostile_notification_with_positive_standing
+    notifications = get_user_hostile_notifications(1)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\brood\PycharmProjects\aa_bb\aa_bb\checks\sus_contacts.py", line 324, in get_user_hostile_notifications
+    alerts = _get_contact_alerts(cid, info, cfg=cfg, safe_entities=safe_entities, entity_info_cache=entity_info_cache)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\brood\PycharmProjects\aa_bb\aa_bb\checks\sus_contacts.py", line 214, in _get_contact_alerts
+    if get_hostile_state(cid, 'character', safe_entities=safe_entities, entity_info_cache=entity_info_cache, cfg=cfg):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\brood\AppData\Local\Programs\Python\Python311\Lib\unittest\mock.py", line 1124, in __call__
+    return self._mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\brood\AppData\Local\Programs\Python\Python311\Lib\unittest\mock.py", line 1128, in _mock_call
+    return self._execute_mock_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\brood\AppData\Local\Programs\Python\Python311\Lib\unittest\mock.py", line 1189, in _execute_mock_call
+    result = effect(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: TestSusContacts.test_hostile_notification_with_positive_standing.<locals>.<lambda>() got an unexpected keyword argument 'safe_entities'
+======================================================================
+ERROR: test_structure_id_resolution (aa_bb.tests.test_sus_trans.TestSusTrans.test_structure_id_resolution)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\brood\AppData\Local\Programs\Python\Python311\Lib\unittest\mock.py", line 1378, in patched
+    return func(*newargs, **newkeywargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\brood\PycharmProjects\aa_bb\aa_bb\tests\test_sus_trans.py", line 179, in test_structure_id_resolution
+    result = get_user_transactions(qs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\brood\PycharmProjects\aa_bb\aa_bb\checks\sus_trans.py", line 159, in get_user_transactions
+    info_map = {
+               ^
+  File "C:\Users\brood\PycharmProjects\autosrp\.venv\Lib\site-packages\django\db\models\query.py", line 398, in __iter__
+    self._fetch_all()
+  File "C:\Users\brood\PycharmProjects\autosrp\.venv\Lib\site-packages\django\db\models\query.py", line 1881, in _fetch_all
+    self._result_cache = list(self._iterable_class(self))
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\brood\PycharmProjects\autosrp\.venv\Lib\site-packages\django\db\models\query.py", line 91, in __iter__
+    results = compiler.execute_sql(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\brood\PycharmProjects\autosrp\.venv\Lib\site-packages\django\db\models\sql\compiler.py", line 1549, in execute_sql
+    sql, params = self.as_sql()
+                  ^^^^^^^^^^^^^
+  File "C:\Users\brood\PycharmProjects\autosrp\.venv\Lib\site-packages\django\db\models\sql\compiler.py", line 764, in as_sql
+    self.compile(self.where) if self.where is not None else ("", [])
+    ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\brood\PycharmProjects\autosrp\.venv\Lib\site-packages\django\db\models\sql\compiler.py", line 546, in compile
+    sql, params = node.as_sql(self, self.connection)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\brood\PycharmProjects\autosrp\.venv\Lib\site-packages\django\db\models\sql\where.py", line 145, in as_sql
+    sql, params = compiler.compile(child)
+                  ^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\brood\PycharmProjects\autosrp\.venv\Lib\site-packages\django\db\models\sql\compiler.py", line 546, in compile
+    sql, params = node.as_sql(self, self.connection)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\brood\PycharmProjects\autosrp\.venv\Lib\site-packages\django\db\models\lookups.py", line 465, in as_sql
+    return super().as_sql(compiler, connection)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\brood\PycharmProjects\autosrp\.venv\Lib\site-packages\django\db\models\lookups.py", line 225, in as_sql
+    rhs_sql, rhs_params = self.process_rhs(compiler, connection)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\brood\PycharmProjects\autosrp\.venv\Lib\site-packages\django\db\models\lookups.py", line 449, in process_rhs
+    sqls, sqls_params = self.batch_process_rhs(compiler, connection, rhs)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\brood\PycharmProjects\autosrp\.venv\Lib\site-packages\django\db\models\lookups.py", line 302, in batch_process_rhs
+    sql, params = zip(
+                  ^^^^
+  File "C:\Users\brood\PycharmProjects\autosrp\.venv\Lib\site-packages\django\db\models\lookups.py", line 304, in <genexpr>
+    self.resolve_expression_parameter(compiler, connection, sql, param)
+  File "C:\Users\brood\PycharmProjects\autosrp\.venv\Lib\site-packages\django\db\models\lookups.py", line 293, in resolve_expression_parameter
+    sql, params = compiler.compile(param)
+                  ^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\brood\PycharmProjects\autosrp\.venv\Lib\site-packages\django\db\models\sql\compiler.py", line 544, in compile
+    sql, params = vendor_impl(self, self.connection)
+    ^^^^^^^^^^^
+ValueError: not enough values to unpack (expected 2, got 0)
+======================================================================
+ERROR: test_structure_id_resolution_cb (aa_bb.tests.test_sus_trans.TestSusTrans.test_structure_id_resolution_cb)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\brood\AppData\Local\Programs\Python\Python311\Lib\unittest\mock.py", line 1378, in patched
+    return func(*newargs, **newkeywargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\brood\PycharmProjects\aa_bb\aa_bb\tests\test_sus_trans.py", line 220, in test_structure_id_resolution_cb
+    result = get_user_transactions_cb(qs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\brood\PycharmProjects\aa_bb\aa_bb\checks_cb\sus_trans.py", line 159, in get_user_transactions
+    info_map = {
+               ^
+  File "C:\Users\brood\PycharmProjects\autosrp\.venv\Lib\site-packages\django\db\models\query.py", line 398, in __iter__
+    self._fetch_all()
+  File "C:\Users\brood\PycharmProjects\autosrp\.venv\Lib\site-packages\django\db\models\query.py", line 1881, in _fetch_all
+    self._result_cache = list(self._iterable_class(self))
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\brood\PycharmProjects\autosrp\.venv\Lib\site-packages\django\db\models\query.py", line 91, in __iter__
+    results = compiler.execute_sql(
+              ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\brood\PycharmProjects\autosrp\.venv\Lib\site-packages\django\db\models\sql\compiler.py", line 1549, in execute_sql
+    sql, params = self.as_sql()
+                  ^^^^^^^^^^^^^
+  File "C:\Users\brood\PycharmProjects\autosrp\.venv\Lib\site-packages\django\db\models\sql\compiler.py", line 764, in as_sql
+    self.compile(self.where) if self.where is not None else ("", [])
+    ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\brood\PycharmProjects\autosrp\.venv\Lib\site-packages\django\db\models\sql\compiler.py", line 546, in compile
+    sql, params = node.as_sql(self, self.connection)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\brood\PycharmProjects\autosrp\.venv\Lib\site-packages\django\db\models\sql\where.py", line 145, in as_sql
+    sql, params = compiler.compile(child)
+                  ^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\brood\PycharmProjects\autosrp\.venv\Lib\site-packages\django\db\models\sql\compiler.py", line 546, in compile
+    sql, params = node.as_sql(self, self.connection)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\brood\PycharmProjects\autosrp\.venv\Lib\site-packages\django\db\models\lookups.py", line 465, in as_sql
+    return super().as_sql(compiler, connection)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\brood\PycharmProjects\autosrp\.venv\Lib\site-packages\django\db\models\lookups.py", line 225, in as_sql
+    rhs_sql, rhs_params = self.process_rhs(compiler, connection)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\brood\PycharmProjects\autosrp\.venv\Lib\site-packages\django\db\models\lookups.py", line 449, in process_rhs
+    sqls, sqls_params = self.batch_process_rhs(compiler, connection, rhs)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\brood\PycharmProjects\autosrp\.venv\Lib\site-packages\django\db\models\lookups.py", line 302, in batch_process_rhs
+    sql, params = zip(
+                  ^^^^
+  File "C:\Users\brood\PycharmProjects\autosrp\.venv\Lib\site-packages\django\db\models\lookups.py", line 304, in <genexpr>
+    self.resolve_expression_parameter(compiler, connection, sql, param)
+  File "C:\Users\brood\PycharmProjects\autosrp\.venv\Lib\site-packages\django\db\models\lookups.py", line 293, in resolve_expression_parameter
+    sql, params = compiler.compile(param)
+                  ^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\brood\PycharmProjects\autosrp\.venv\Lib\site-packages\django\db\models\sql\compiler.py", line 544, in compile
+    sql, params = vendor_impl(self, self.connection)
+    ^^^^^^^^^^^
+ValueError: not enough values to unpack (expected 2, got 0)
+======================================================================
+FAIL: test_omega_detection_from_omega_only_skill (aa_bb.tests.test_clone_state_logic.CloneStateLogicTest.test_omega_detection_from_omega_only_skill)
+Verify that a character with an active Omega-only skill is detected as Omega.
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\brood\AppData\Local\Programs\Python\Python311\Lib\unittest\mock.py", line 1378, in patched
+    return func(*newargs, **newkeywargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\brood\PycharmProjects\aa_bb\aa_bb\tests\test_clone_state_logic.py", line 74, in test_omega_detection_from_omega_only_skill
+    self.assertEqual(result[1001]["state"], "omega", "Character with active Omega-only skill should be Omega")
+AssertionError: 'unknown' != 'omega'
+- unknown
++ omega
+ : Character with active Omega-only skill should be Omega
+----------------------------------------------------------------------
+Ran 32 tests in 21.630s
+FAILED (failures=1, errors=4)
+Destroying test database for alias 'default' ('file:memorydb_default?mode=memory&cache=shared')...

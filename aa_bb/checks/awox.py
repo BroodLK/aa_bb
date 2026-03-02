@@ -9,15 +9,16 @@ care about throttling or HTML generation.
 import html
 import time
 from collections import deque
+from datetime import timedelta
 from functools import lru_cache
 from threading import Lock
 
 import requests
 from allianceauth.authentication.models import CharacterOwnership
+from django.core.cache import cache
 from django.utils import timezone
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
-from esi.exceptions import HTTPNotModified
 from requests.adapters import HTTPAdapter
 
 from ..app_settings import (
@@ -33,7 +34,7 @@ from ..app_settings import (
     send_status_embed,
 )
 
-from ..esi_client import call_result, esi
+from ..esi_client import ESIHandler
 from ..models import AwoxKillsCache, BigBrotherConfig
 
 from allianceauth.services.hooks import get_extension_logger
@@ -105,6 +106,23 @@ def _notify_zkill_down_once(preview: str, status: int | None, content_type: str 
         logger.warning(f"Failed to send zKill down notification: {e}")
 
 
+def _try_acquire_zkill_global_slot() -> bool:
+    """
+    Cross-process rate limiter via Django cache.
+
+    Falls back to allow if cache is unavailable.
+    """
+    try:
+        bucket = int(time.time() // _ZKILL_RATE_WINDOW_SECONDS)
+        cache_key = f"aa_bb:zkill_rate:{bucket}"
+        if cache.add(cache_key, 1, timeout=int(_ZKILL_RATE_WINDOW_SECONDS * 2)):
+            return True
+        count = cache.incr(cache_key)
+        return count <= ZKILL_MAX_REQUESTS_PER_SECOND
+    except Exception:
+        return True
+
+
 def _try_acquire_zkill_slot() -> bool:
     now = time.monotonic()
     with _zkill_rate_lock:
@@ -114,7 +132,7 @@ def _try_acquire_zkill_slot() -> bool:
         if len(_zkill_request_times) >= ZKILL_MAX_REQUESTS_PER_SECOND:
             return False
         _zkill_request_times.append(now)
-        return True
+        return _try_acquire_zkill_global_slot()
 
 
 def _parse_cached_kill_date(value):
@@ -170,11 +188,7 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
     Fetch AWOX kills from zKillboard for all characters owned by the user
     within the past 24 hours.
     """
-    from allianceauth.authentication.models import CharacterOwnership
     from allianceauth.eveonline.models import EveCharacter
-    from django.utils import timezone
-    from datetime import timedelta
-    import time
 
     now = timezone.now()
     cutoff = now - timedelta(days=365)
@@ -248,13 +262,23 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
                         if not hash_:
                             continue
 
-                        operation = esi.client.Killmails.GetKillmailsKillmailIdKillmailHash(
-                            killmail_id=kill_id, killmail_hash=hash_, **esi_tenant_kwargs(DATASOURCE)
+                        full_kill = ESIHandler.get_killmails_killmail_id_killmail_hash(
+                            killmail_id=kill_id,
+                            killmail_hash=hash_,
+                            operation_kwargs=esi_tenant_kwargs(DATASOURCE),
+                            allow_not_modified=True,
+                            swallow_errors=True,
                         )
-                        try:
-                            full_kill, _ = call_result(operation)
-                        except HTTPNotModified:
-                            full_kill, _ = call_result(operation, use_etag=False)
+                        if full_kill is None:
+                            full_kill = ESIHandler.get_killmails_killmail_id_killmail_hash(
+                                killmail_id=kill_id,
+                                killmail_hash=hash_,
+                                operation_kwargs=esi_tenant_kwargs(DATASOURCE),
+                                use_etag=False,
+                                swallow_errors=True,
+                            )
+                        if not full_kill:
+                            continue
 
                         victim = full_kill.get("victim", {})
                         victim_id = victim.get("character_id")

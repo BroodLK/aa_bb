@@ -20,6 +20,7 @@ from django.apps import apps
 from django.utils import timezone
 from typing import Optional, Dict, Tuple, Any, List
 from django.db import transaction, IntegrityError, OperationalError
+from django.db.utils import ProgrammingError
 from django.db.models import Q
 
 from .models import (
@@ -30,7 +31,7 @@ from .models import (
 
 MAJOR_HUBS = {30000142, 30002187, 30002659, 30002510, 30002053}
 SECONDARY_HUBS = {30002661, 30003733, 30001389, 30000144}
-EVEUNIVERSE_INSTALLED = apps.is_installed("eveuniverse")
+EVE_SDE_INSTALLED = apps.is_installed("eve_sde")
 
 from dateutil.parser import parse as parse_datetime
 import time
@@ -38,14 +39,78 @@ from httpx import RequestError
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from django.contrib.auth import get_user_model
 from allianceauth.framework.api.user import get_main_character_name_from_user
-from esi.exceptions import HTTPClientError, HTTPServerError, HTTPNotModified
-from .esi_client import esi, to_plain, call_result, call_results, parse_expires
+from esi.exceptions import HTTPClientError, HTTPServerError
+from .esi_client import ESIHandler
 from .esi_cache import expiry_cache_key, get_cached_expiry, set_cached_expiry
-from allianceauth.eveonline.models import EveCorporationInfo, EveAllianceInfo
-from eveuniverse.models import EveSolarSystem
 from django.core.cache import cache
 from django.conf import settings
 from functools import lru_cache
+
+
+def _get_sde_model(*names: str):
+    if not EVE_SDE_INSTALLED:
+        return None
+    for name in names:
+        try:
+            return apps.get_model("eve_sde", name)
+        except LookupError:
+            continue
+    return None
+
+
+def _get_attr(obj, *attrs: str):
+    if obj is None:
+        return None
+    for attr in attrs:
+        if hasattr(obj, attr):
+            return getattr(obj, attr)
+    return None
+
+
+def _get_model_field(model, *names: str):
+    if model is None:
+        return None
+    try:
+        fields = {f.name for f in model._meta.get_fields()}
+    except Exception:
+        return None
+    for name in names:
+        if name in fields:
+            return name
+    return None
+
+
+def _get_sde_solar_system(system_id: int):
+    SolarSystem = _get_sde_model("SolarSystem")
+    if not SolarSystem:
+        return None
+    try:
+        return SolarSystem.objects.get(id=system_id)
+    except SolarSystem.DoesNotExist:
+        return None
+
+
+def _get_sde_station(station_id: int):
+    Station = _get_sde_model("Station", "NpcStation", "NPCStation")
+    if not Station:
+        return None
+    try:
+        return Station.objects.get(id=station_id)
+    except Station.DoesNotExist:
+        return None
+
+
+def _get_sde_region_info_from_system(system_id: int):
+    sys_obj = _get_sde_solar_system(system_id)
+    if not sys_obj:
+        return None, None
+    constellation = _get_attr(sys_obj, "constellation", "eve_constellation", "map_constellation")
+    region = _get_attr(constellation, "region", "eve_region", "map_region")
+    if not region:
+        region = _get_attr(sys_obj, "region", "eve_region", "map_region")
+    region_id = _get_attr(region, "id", "region_id")
+    region_name = _get_attr(region, "name", "region_name")
+    return region_id, region_name
 
 logger = get_extension_logger(__name__)
 
@@ -70,14 +135,17 @@ def _resolve_names_via_esi(ids: list[int]) -> dict[int, str]:
     ids = [i for i in ids if i]
     if not ids:  # Nothing to resolve when the caller supplied no IDs.
         return {}
-    operation = esi.client.Universe.PostUniverseNames(
-        body=ids,
-        **esi_tenant_kwargs(DATASOURCE),
+    rows = ESIHandler.post_universe_names(
+        ids,
+        operation_kwargs=esi_tenant_kwargs(DATASOURCE),
+        allow_not_modified=True,
     )
-    try:
-        rows = to_plain(operation.result())
-    except HTTPNotModified:
-        rows = to_plain(operation.result(use_etag=False))
+    if rows is None:
+        rows = ESIHandler.post_universe_names(
+            ids,
+            operation_kwargs=esi_tenant_kwargs(DATASOURCE),
+            use_etag=False,
+        )
     return {
         int(row.get("id")): row.get("name")
         for row in (rows or [])
@@ -161,14 +229,18 @@ def get_eve_entity_type_int(eve_id: int, datasource: str | None = None) -> str |
 
     for attempt in range(1, max_retries + 1):
         try:
-            operation = esi.client.Universe.PostUniverseNames(
-                body=[eve_id],
-                **esi_tenant_kwargs(datasource),
+            op_kwargs = esi_tenant_kwargs(datasource)
+            results = ESIHandler.post_universe_names(
+                [eve_id],
+                operation_kwargs=op_kwargs,
+                allow_not_modified=True,
             )
-            try:
-                results = to_plain(operation.result())
-            except HTTPNotModified:
-                results = to_plain(operation.result(use_etag=False))
+            if results is None:
+                results = ESIHandler.post_universe_names(
+                    [eve_id],
+                    operation_kwargs=op_kwargs,
+                    use_etag=False,
+                )
             break
         except (HTTPClientError, HTTPServerError) as exc:
             logger.warning(f"ESI error resolving {eve_id}: {exc}")
@@ -213,7 +285,7 @@ def get_eve_entity_type(
     except id_types.DoesNotExist:
         pass
 
-    # 2. Cache miss — resolve via ESI
+    # 2. Cache miss - resolve via ESI
     entity_type = get_eve_entity_type_int(eve_id, datasource=datasource)
     if entity_type is None:  # ESI could not resolve the ID.
         return None
@@ -260,14 +332,19 @@ def get_character_id(name: str) -> int | None:
         return record.id
 
     # Step 2: Resolve via ESI and reconcile duplicates
-    operation = esi.client.Universe.PostUniverseIds(
-        body=[str(name)],
-        **esi_tenant_kwargs(DATASOURCE),
-    )
     try:
-        data = to_plain(operation.result())
-    except HTTPNotModified:
-        data = to_plain(operation.result(use_etag=False))
+        op_kwargs = esi_tenant_kwargs(DATASOURCE)
+        data = ESIHandler.post_universe_ids(
+            [str(name)],
+            operation_kwargs=op_kwargs,
+            allow_not_modified=True,
+        )
+        if data is None:
+            data = ESIHandler.post_universe_ids(
+                [str(name)],
+                operation_kwargs=op_kwargs,
+                use_etag=False,
+            )
     except (HTTPClientError, HTTPServerError) as e:
         logger.error(f"ESI error resolving character name '{name}': {e}")
         # Fallback to most recent local record if present
@@ -307,14 +384,18 @@ def get_character_id(name: str) -> int | None:
             try:
                 # Resolve correct names for stale IDs using ESI
                 stale_ids = [int(s.id) for s in stale_qs]
-                name_future = esi.client.Universe.PostUniverseNames(
-                    body=stale_ids,
-                    **esi_tenant_kwargs(DATASOURCE),
+                op_kwargs = esi_tenant_kwargs(DATASOURCE)
+                name_data = ESIHandler.post_universe_names(
+                    stale_ids,
+                    operation_kwargs=op_kwargs,
+                    allow_not_modified=True,
                 )
-                try:
-                    name_data = to_plain(name_future.result())
-                except HTTPNotModified:
-                    name_data = to_plain(name_future.result(use_etag=False))
+                if name_data is None:
+                    name_data = ESIHandler.post_universe_names(
+                        stale_ids,
+                        operation_kwargs=op_kwargs,
+                        use_etag=False,
+                    )
                 name_rows = {
                     int(r.get("id")): r.get("name")
                     for r in (name_data or [])
@@ -549,25 +630,29 @@ def get_character_employment(character_or_id) -> list[dict]:
         cache_entry = None
 
     # 3. Fetch the corp history from ESI
-    operation = esi.client.Character.GetCharactersCharacterIdCorporationhistory(
-        character_id=char_id
-    )
     try:
-        response, new_expiry = call_results(operation)
-        set_cached_expiry(expiry_key, new_expiry)
-    except HTTPNotModified as exc:
-        set_cached_expiry(expiry_key, parse_expires(getattr(exc, "headers", {})))
-        if cache_entry:  # Use DB cache when ESI returned 304.
-            try:
-                cache_entry.updated = timezone.now()
-                cache_entry.last_accessed = timezone.now()
-                cache_entry.save(update_fields=["updated", "last_accessed"])
-            except Exception:
-                cache_entry.save()
-            return cached_rows or _deser_employment(cache_entry.data)
-        logger.debug("ESI returned 304 for char %s but no cache available", char_id)
-        response, new_expiry = call_results(operation, use_etag=False)
-        set_cached_expiry(expiry_key, new_expiry)
+        response, new_expiry = ESIHandler.get_characters_corporation_history_with_expiry(
+            char_id,
+            allow_not_modified=True,
+        )
+        if new_expiry:
+            set_cached_expiry(expiry_key, new_expiry)
+        if response is None:
+            if cache_entry:  # Use DB cache when ESI returned 304.
+                try:
+                    cache_entry.updated = timezone.now()
+                    cache_entry.last_accessed = timezone.now()
+                    cache_entry.save(update_fields=["updated", "last_accessed"])
+                except Exception:
+                    cache_entry.save()
+                return cached_rows or _deser_employment(cache_entry.data)
+            logger.debug("ESI returned 304 for char %s but no cache available", char_id)
+            response, new_expiry = ESIHandler.get_characters_corporation_history_with_expiry(
+                char_id,
+                use_etag=False,
+            )
+            if new_expiry:
+                set_cached_expiry(expiry_key, new_expiry)
     except Exception as e:
         logger.exception(f"ESI failure for character_id {char_id}: {e}")
         return []
@@ -627,9 +712,9 @@ def get_user_characters(user_id: int) -> dict[int, str]:
 def format_int(value: int) -> str:
     """
     Format an integer SP value using dots as thousands separators.
-    E.g. 65861521 → "65.861.521"
+    E.g. 65861521 -> "65.861.521"
     """
-    # Python’s built-in uses commas; swap them out for dots
+    # Python's built-in uses commas; swap them out for dots
     return f"{value:,}".replace(",", ".")
 
 def is_npc_corporation(corp_id):
@@ -661,31 +746,28 @@ def get_corporation_info(corp_id):
 
     # 2) Fetch fresh from ESI
     try:
-        operation = esi.client.Corporation.GetCorporationsCorporationId(
-            corporation_id=corp_id
+        result, expires_at = ESIHandler.get_corporations_corporation_id_with_expiry(
+            corp_id,
+            allow_not_modified=True,
         )
-        result, expires_at = call_result(operation)
-        set_cached_expiry(expiry_key, expires_at)
+        if expires_at:
+            set_cached_expiry(expiry_key, expires_at)
+        if result is None:
+            if cached_entry:  # Serve stale entry if ESI returned 304.
+                cached_entry.updated = timezone.now()
+                cached_entry.save(update_fields=["updated"])
+                return {"name": cached_entry.name, "member_count": cached_entry.member_count}
+            logger.debug("ESI returned 304 for corp %s but no cache exists", corp_id)
+            result, expires_at = ESIHandler.get_corporations_corporation_id_with_expiry(
+                corp_id,
+                use_etag=False,
+            )
+            if expires_at:
+                set_cached_expiry(expiry_key, expires_at)
         info = {
             "name": result.get("name", f"Unknown ({corp_id})"),
             "member_count": result.get("member_count", 0),
         }
-    except HTTPNotModified as exc:
-        set_cached_expiry(expiry_key, parse_expires(getattr(exc, "headers", {})))
-        if cached_entry:  # Serve stale entry if ESI returned 304.
-            cached_entry.updated = timezone.now()
-            cached_entry.save(update_fields=["updated"])
-            return {"name": cached_entry.name, "member_count": cached_entry.member_count}
-        logger.debug("ESI returned 304 for corp %s but no cache exists", corp_id)
-        try:
-            result, expires_at = call_result(operation, use_etag=False)
-            set_cached_expiry(expiry_key, expires_at)
-            return {
-                "name": result.get("name", f"Unknown ({corp_id})"),
-                "member_count": result.get("member_count", 0),
-            }
-        except Exception:
-            return {"name": f"Unknown Corp ({corp_id})", "member_count": 0}
     except (SystemExit, KeyboardInterrupt):
         raise
     except Exception as e:
@@ -709,19 +791,22 @@ def ensure_datetime(value):
 
 def _fetch_alliance_history(corp_id, expiry_key, cached_history=None):
     """Wrapper around the alliance-history endpoint that respects caching hints."""
-    operation = esi.client.Corporation.GetCorporationsCorporationIdAlliancehistory(
-        corporation_id=corp_id
-    )
     try:
-        data, expires_at = call_results(operation)
-        set_cached_expiry(expiry_key, expires_at)
-        return data
-    except HTTPNotModified as exc:
-        set_cached_expiry(expiry_key, parse_expires(getattr(exc, "headers", {})))
-        if cached_history is not None:  # Use cached history when ESI returns 304.
-            return cached_history
-        data, expires_at = call_results(operation, use_etag=False)
-        set_cached_expiry(expiry_key, expires_at)
+        data, expires_at = ESIHandler.get_corporations_alliance_history_with_expiry(
+            corp_id,
+            allow_not_modified=True,
+        )
+        if expires_at:
+            set_cached_expiry(expiry_key, expires_at)
+        if data is None:
+            if cached_history is not None:  # Use cached history when ESI returns 304.
+                return cached_history
+            data, expires_at = ESIHandler.get_corporations_alliance_history_with_expiry(
+                corp_id,
+                use_etag=False,
+            )
+            if expires_at:
+                set_cached_expiry(expiry_key, expires_at)
         return data
     except (SystemExit, KeyboardInterrupt):
         raise
@@ -816,12 +901,11 @@ def _get_sov_map() -> list:
     except SovereigntyMapCache.DoesNotExist:
         pass
 
-    operation = esi.client.Sovereignty.GetSovereigntyMap(
-        **esi_tenant_kwargs(DATASOURCE),
+    data, _ = ESIHandler.get_sovereignty_map_with_expiry(
+        operation_kwargs=esi_tenant_kwargs(DATASOURCE),
+        allow_not_modified=True,
     )
-    try:
-        data, _ = call_results(operation)
-    except HTTPNotModified:
+    if data is None:
         if entry:  # Serve cached data on 304 responses when cache exists.
             try:
                 entry.updated = timezone.now()
@@ -829,7 +913,10 @@ def _get_sov_map() -> list:
             except Exception:
                 entry.save()
             return entry.data
-        data, _ = call_results(operation, use_etag=False)
+        data, _ = ESIHandler.get_sovereignty_map_with_expiry(
+            operation_kwargs=esi_tenant_kwargs(DATASOURCE),
+            use_etag=False,
+        )
 
     SovereigntyMapCache.objects.update_or_create(
         pk=1,
@@ -847,7 +934,7 @@ def _get_sov_dict() -> Dict[int, Dict]:
 
 def resolve_alliance_name(owner_id: int) -> str:
     """
-    Resolve alliance/faction ID to name via ESI, storing permanently in aa_bb_alliances.
+    Resolve alliance/faction ID to name via ESI, storing permanently in the alliance name model.
     On lookup failure, falls back to stale DB record or returns 'Unresolvable <Error>'.
     """
     if not owner_id:
@@ -894,7 +981,7 @@ def resolve_alliance_name(owner_id: int) -> str:
 
 def resolve_corporation_name(corp_id: int) -> str:
     """
-    Resolve corporation ID to name via ESI, storing permanently in aa_bb_corporations.
+    Resolve corporation ID to name via ESI, storing permanently in the corporation name model.
     On lookup failure, falls back to stale DB record or returns 'Unresolvable <Error>'.
     """
     if not corp_id:
@@ -1019,14 +1106,14 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
         parent_system_id = resolve_location_system_id(system_id)
         if parent_system_id:
             try:
-                from eveuniverse.models import EveSolarSystem
-                sys_obj = EveSolarSystem.objects.select_related("eve_constellation__eve_region").get(id=parent_system_id)
-                region_id = str(sys_obj.eve_constellation.eve_region.id)
-                region_name = sys_obj.eve_constellation.eve_region.name
+                reg_id, reg_name = _get_sde_region_info_from_system(parent_system_id)
+                if reg_id is not None:
+                    region_id = str(reg_id)
+                if reg_name:
+                    region_name = reg_name
             except Exception:
                 pass
 
-        # Check for individual location ownership (Structure or Station) BEFORE falling back to system SOV
         res = None
         if system_id:
             # Player Structure (Upwell)
@@ -1080,12 +1167,12 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
             # NPC Station
             elif 60000000 <= system_id <= 64000000:
                 try:
-                    from eveuniverse.models import EveStation
-                    station_obj = EveStation.objects.get(id=system_id)
-                    if station_obj.owner_id:
+                    station_obj = _get_sde_station(system_id)
+                    station_owner = _get_attr(station_obj, "owner_id", "corporation_id")
+                    if station_owner:
                         res = {
-                            "owner_id": str(station_obj.owner_id),
-                            "owner_name": resolve_corporation_name(station_obj.owner_id),
+                            "owner_id": str(station_owner),
+                            "owner_name": resolve_corporation_name(station_owner),
                             "owner_type": "corporation",
                             "region_id": region_id,
                             "region_name": region_name
@@ -1108,15 +1195,15 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
             if target_sov_id:
                 if 30000000 <= target_sov_id <= 34000000:
                     try:
-                        from eveuniverse.models import EveSolarSystem
-                        sys_obj = EveSolarSystem.objects.get(id=target_sov_id)
-                        res = {
-                            "owner_id": "0",
-                            "owner_name": "Unclaimed",
-                            "owner_type": "unknown",
-                            "region_id": region_id,
-                            "region_name": region_name
-                        }
+                        sys_obj = _get_sde_solar_system(target_sov_id)
+                        if sys_obj:
+                            res = {
+                                "owner_id": "0",
+                                "owner_name": "Unclaimed",
+                                "owner_type": "unknown",
+                                "region_id": region_id,
+                                "region_name": region_name
+                            }
                     except Exception:
                         pass
 
@@ -1305,17 +1392,20 @@ def is_above_market_threshold(type_id, unit_price, threshold_percent):
 
     avg_price = None
 
-    if EVEUNIVERSE_INSTALLED:
+    if EVE_SDE_INSTALLED:
         cfg = BigBrotherConfig.get_solo()
         try:
-            from eveuniverse.models import EveMarketPrice
-            price_obj = EveMarketPrice.objects.filter(eve_type_id=type_id).first()
-            if price_obj and price_obj.average_price and price_obj.average_price > 0:
-                # Check age
-                if hasattr(price_obj, 'updated_at') and price_obj.updated_at > timezone.now() - timedelta(days=cfg.market_transactions_price_max_age):
-                    avg_price = float(price_obj.average_price)
+            PriceModel = _get_sde_model("MarketPrice", "ItemMarketPrice")
+            type_field = _get_model_field(PriceModel, "eve_type_id", "type_id", "item_type_id")
+            if PriceModel and type_field:
+                price_obj = PriceModel.objects.filter(**{type_field: type_id}).first()
+                avg_price_val = _get_attr(price_obj, "average_price", "avg_price")
+                if avg_price_val and float(avg_price_val) > 0:
+                    updated_at = _get_attr(price_obj, "updated_at", "updated")
+                    if not updated_at or updated_at > timezone.now() - timedelta(days=cfg.market_transactions_price_max_age):
+                        avg_price = float(avg_price_val)
         except Exception:
-            logger.exception("Error checking EveUniverse price")
+            logger.exception("Error checking SDE price")
 
     if avg_price is None:
         # Fallback to local cache / Janice / Fuzzwork
@@ -1762,25 +1852,28 @@ def get_user_id(character_name):
 def is_nullsec(system_id):
     try:
         system_id = int(system_id)
-        sys = EveSolarSystem.objects.get(id=system_id)
-        return sys.security_status <= 0.0
-    except (EveSolarSystem.DoesNotExist, ValueError, TypeError):
+        sys = _get_sde_solar_system(system_id)
+        security = _get_attr(sys, "security_status", "security")
+        return security is not None and security <= 0.0
+    except (ValueError, TypeError):
         return False
 
 def is_highsec(system_id):
     try:
         system_id = int(system_id)
-        sys = EveSolarSystem.objects.get(id=system_id)
-        return sys.security_status >= 0.45
-    except (EveSolarSystem.DoesNotExist, ValueError, TypeError):
+        sys = _get_sde_solar_system(system_id)
+        security = _get_attr(sys, "security_status", "security")
+        return security is not None and security >= 0.45
+    except (ValueError, TypeError):
         return False
 
 def is_lowsec(system_id):
     try:
         system_id = int(system_id)
-        sys = EveSolarSystem.objects.get(id=system_id)
-        return 0.0 < sys.security_status < 0.45
-    except (EveSolarSystem.DoesNotExist, ValueError, TypeError):
+        sys = _get_sde_solar_system(system_id)
+        security = _get_attr(sys, "security_status", "security")
+        return security is not None and 0.0 < security < 0.45
+    except (ValueError, TypeError):
         return False
 
 def is_player_structure(location_id):
@@ -1818,16 +1911,16 @@ def resolve_location_name(location_id: int) -> Optional[str]:
     # 1) Solar System
     if 30000000 <= location_id <= 34000000:
         try:
-            from eveuniverse.models import EveSolarSystem
-            name = EveSolarSystem.objects.get(id=location_id).name
+            sys_obj = _get_sde_solar_system(location_id)
+            name = _get_attr(sys_obj, "name", "solar_system_name")
         except Exception:
             pass
 
     # 2) NPC Station
     if not name and 60000000 <= location_id <= 64000000:
         try:
-            from eveuniverse.models import EveStation
-            name = EveStation.objects.get(id=location_id).name
+            station = _get_sde_station(location_id)
+            name = _get_attr(station, "name", "station_name")
         except Exception:
             pass
 
@@ -1911,9 +2004,8 @@ def resolve_location_system_id(location_id: int) -> Optional[int]:
     # 2) NPC Station
     if not sys_id and 60000000 <= location_id <= 64000000:
         try:
-            from eveuniverse.models import EveStation
-            station = EveStation.objects.get(id=location_id)
-            sys_id = station.eve_solar_system_id
+            station = _get_sde_station(location_id)
+            sys_id = _get_attr(station, "solar_system_id", "system_id", "eve_solar_system_id")
         except Exception:
             pass
 
@@ -2008,11 +2100,14 @@ def is_ship(type_id):
             it = EveItemType.objects.select_related('group__category').get(pk=type_id)
             if it.group and it.group.category and it.group.category.name == "Ship":
                 is_ship_bool = True
-        elif EVEUNIVERSE_INSTALLED:
-            from eveuniverse.models import EveType
-            it = EveType.objects.select_related('eve_group__eve_category').get(pk=type_id)
-            if it.eve_group and it.eve_group.eve_category and it.eve_group.eve_category.name == "Ship":
-                is_ship_bool = True
+        elif EVE_SDE_INSTALLED:
+            ItemType = _get_sde_model("ItemType", "Type", "InvType")
+            if ItemType:
+                it = ItemType.objects.get(pk=type_id)
+                group = _get_attr(it, "item_group", "group", "inv_group", "eve_group")
+                category = _get_attr(group, "item_category", "category", "inv_category", "eve_category")
+                if _get_attr(category, "name", "category_name") == "Ship":
+                    is_ship_bool = True
     except Exception:
         pass
 
@@ -2094,25 +2189,30 @@ def get_alliance_name(alliance_id):
             return rec.name
 
     cached_name = rec.name if rec else None
-    operation = esi.client.Alliance.GetAlliancesAllianceId(
-        alliance_id=alliance_id
-    )
     try:
-        result, expires_at = call_result(operation)
-        set_cached_expiry(expiry_key, expires_at)
-        name = result.get("name", f"Unknown ({alliance_id})")
-    except HTTPNotModified as exc:
-        set_cached_expiry(expiry_key, parse_expires(getattr(exc, "headers", {})))
-        if cached_name:  # Use stale DB name when ESI returned 304.
-            name = cached_name
+        result, expires_at = ESIHandler.get_alliances_alliance_id_with_expiry(
+            alliance_id,
+            allow_not_modified=True,
+        )
+        if expires_at:
+            set_cached_expiry(expiry_key, expires_at)
+        if result is None:
+            if cached_name:  # Use stale DB name when ESI returned 304.
+                name = cached_name
+            else:
+                try:
+                    result, expires_at = ESIHandler.get_alliances_alliance_id_with_expiry(
+                        alliance_id,
+                        use_etag=False,
+                    )
+                    if expires_at:
+                        set_cached_expiry(expiry_key, expires_at)
+                    name = result.get("name", f"Unknown ({alliance_id})")
+                except Exception as e:
+                    logger.warning(f"Error fetching alliance {alliance_id} after 304: {e}")
+                    name = f"Unknown ({alliance_id})"
         else:
-            try:
-                result, expires_at = call_result(operation, use_etag=False)
-                set_cached_expiry(expiry_key, expires_at)
-                name = result.get("name", f"Unknown ({alliance_id})")
-            except Exception as e:
-                logger.warning(f"Error fetching alliance {alliance_id} after 304: {e}")
-                name = f"Unknown ({alliance_id})"
+            name = result.get("name", f"Unknown ({alliance_id})")
     except (HTTPClientError, HTTPServerError) as e:
         logger.warning(f"ESI error fetching alliance {alliance_id}: {e}")
         name = f"Unknown ({alliance_id})"
@@ -2180,7 +2280,28 @@ def send_message(message, hook: str = None):
       - str  -> sent as {"content": message}, with chunking.
       - dict -> sent directly as JSON, for embeds etc.
     """
-    webhook_url = hook or BigBrotherConfig.get_solo().webhook
+    cfg = None
+    if hook:
+        webhook_url = hook
+        try:
+            cfg = BigBrotherConfig.get_solo()
+        except (OperationalError, ProgrammingError):
+            cfg = None
+    else:
+        cfg = BigBrotherConfig.get_solo()
+        webhook_url = cfg.webhook
+
+    webhook_username = None
+    if cfg:
+        webhook_username = (cfg.webhook_app_name or "").strip()
+        if not webhook_username:
+            webhook_username = None
+
+    def _apply_webhook_username(payload: dict) -> dict:
+        if webhook_username and "username" not in payload:
+            payload = dict(payload)
+            payload["username"] = webhook_username
+        return payload
 
     if VERBOSE_WEBHOOK_LOGGING:
         logger.debug(
@@ -2313,7 +2434,7 @@ def send_message(message, hook: str = None):
                 "[WEBHOOK] sending embed payload | embeds=%d",
                 len(message.get("embeds", [])),
             )
-        return _post_with_retries(message)
+        return _post_with_retries(_apply_webhook_username(message))
 
     # message is str
     if VERBOSE_WEBHOOK_LOGGING:
@@ -2323,7 +2444,7 @@ def send_message(message, hook: str = None):
         )
 
     if len(message) <= MAX_LEN:
-        return _post_with_retries({"content": message})
+        return _post_with_retries(_apply_webhook_username({"content": message}))
 
     # Chunking path
     logger.info(
@@ -2354,7 +2475,7 @@ def send_message(message, hook: str = None):
                 "[WEBHOOK] flushing chunk | length=%d",
                 len(buffer),
             )
-            _post_with_retries({"content": buffer})
+            _post_with_retries(_apply_webhook_username({"content": buffer}))
             buffer = part
         else:
             buffer = candidate
@@ -2364,7 +2485,7 @@ def send_message(message, hook: str = None):
             "[WEBHOOK] flushing final chunk | length=%d",
             len(buffer),
         )
-        _post_with_retries({"content": buffer})
+        _post_with_retries(_apply_webhook_username({"content": buffer}))
 
 
 def send_status_embed(
@@ -2387,7 +2508,7 @@ def send_status_embed(
 
     if VERBOSE_WEBHOOK_LOGGING:
         logger.debug(
-            "✅  [AA-BB] - [Embed] - send_status_embed called | subject=%r | lines=%d",
+            "[OK]  [AA-BB] - [Embed] - send_status_embed called | subject=%r | lines=%d",
             subject,
             len(lines) if lines else 0,
         )
@@ -2395,7 +2516,7 @@ def send_status_embed(
     # Defensive: never send empty embeds
     if not lines:
         if VERBOSE_WEBHOOK_LOGGING:
-            logger.debug("ℹ️  [AA-BB] - [Embed] - aborted: no lines supplied")
+            logger.debug("[INFO]  [AA-BB] - [Embed] - aborted: no lines supplied")
         return
 
     # Discord limits
@@ -2406,7 +2527,7 @@ def send_status_embed(
 
     if VERBOSE_WEBHOOK_LOGGING:
         logger.debug(
-            "✅  [AA-BB] - [Embed] - title resolved | title=%r | color=%#x",
+            "[OK]  [AA-BB] - [Embed] - title resolved | title=%r | color=%#x",
             title,
             color,
         )
@@ -2415,7 +2536,7 @@ def send_status_embed(
     safe_lines = lines[:MAX_LINES]
     if len(lines) > MAX_LINES:
         logger.warning(
-            "ℹ️  [AA-BB] - [Embed] - line cap exceeded | original=%d | capped=%d",
+            "[INFO]  [AA-BB] - [Embed] - line cap exceeded | original=%d | capped=%d",
             len(lines),
             MAX_LINES,
         )
@@ -2425,30 +2546,29 @@ def send_status_embed(
     # Hard truncate if someone messed up
     if len(description) > MAX_DESC:
         logger.error(
-            "ℹ️  [AA-BB] - [Embed] - description overflow | chars=%d | truncating",
+            "[INFO]  [AA-BB] - [Embed] - description overflow | chars=%d | truncating",
             len(description),
         )
         description = description[: MAX_DESC - 3] + "..."
 
     if VERBOSE_WEBHOOK_LOGGING:
         logger.debug(
-            "✅  [AA-BB] - [Embed] - payload ready | lines=%d | chars=%d",
+            "[OK]  [AA-BB] - [Embed] - payload ready | lines=%d | chars=%d",
             len(safe_lines),
             len(description),
         )
 
-    embed = {
-        "embeds": [
-            {
-                "title": title,
-                "description": description,
-                "color": color,
-            }
-        ]
+    embed_body = {
+        "description": description,
+        "color": color,
     }
+    if title:
+        embed_body["title"] = title
+
+    embed = {"embeds": [embed_body]}
 
     if VERBOSE_WEBHOOK_LOGGING:
-        logger.debug("✅  [AA-BB] - [Embed] - sending embed payload")
+        logger.debug("[OK]  [AA-BB] - [Embed] - sending embed payload")
 
     time.sleep(0.25)
     send_message(embed, hook=hook)
@@ -2459,7 +2579,7 @@ def _chunk_embed_lines(lines, max_chars=1900):
     Split a list of lines into chunks whose joined text length
     is <= max_chars, without breaking ``` code blocks.
 
-    Returns: List[List[str]] – each inner list is one embed body.
+    Returns: List[List[str]] - each inner list is one embed body.
     """
     # First, group into "segments": either a full code block or a run of normal lines
     segments = []

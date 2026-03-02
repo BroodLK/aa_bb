@@ -16,7 +16,7 @@ from allianceauth.services.hooks import get_extension_logger
 
 logger = get_extension_logger(__name__)
 
-from .app_settings import get_user_profiles, get_character_id, send_status_embed, _chunk_embed_lines, send_message, afat_active, discordbot_active, corptools_active
+from .app_settings import get_user_profiles, get_character_id, send_status_embed, _chunk_embed_lines, send_message, afat_active, discordbot_active, corptools_active, charlink_active
 
 try:
     if discordbot_active():
@@ -67,18 +67,18 @@ def corp_check(user) -> bool:
         logger.warning("✅  [AA-BB] - [corp_check] - TicketToolConfig.get_solo() failed; treating user as compliant.")
         return True
 
-    # Check if compliance_filter field exists (charlink installed)
-    if not hasattr(cfg, 'compliance_filter'):
+    if not charlink_active():
         logger.warning("✅  [AA-BB] - [corp_check] - charlink not installed, compliance_filter unavailable; treating user as compliant.")
         return True
 
-    if not cfg or not cfg.compliance_filter:  # Missing configuration leaves everyone compliant.
+    compliance_filter = cfg.get_compliance_filter() if cfg else None
+    if not compliance_filter:  # Missing configuration leaves everyone compliant.
         return True
 
     try:
         # process_filter(user) returns the 'check' boolean for this user,
         # where 'check' already applies the filter and the 'negate' flag.
-        return bool(cfg.compliance_filter.process_filter(user))
+        return bool(compliance_filter.process_filter(user))
     except Exception:
         # Misconfiguration or unexpected error: log and be lenient.
         logger.exception("✅  [AA-BB] - [corp_check] - Error while running compliance filter for user id=%s", user.id)

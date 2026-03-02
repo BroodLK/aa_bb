@@ -112,7 +112,7 @@ class PerformanceTest(TestCase):
         }
 
         # Mocking external price fetches
-        with patch('aa_bb.app_settings.EVEUNIVERSE_INSTALLED', False), \
+        with patch('aa_bb.app_settings.EVE_SDE_INSTALLED', False), \
              patch('aa_bb.app_settings.get_or_create_prices') as mock_prices:
 
             mock_price_obj = MagicMock()

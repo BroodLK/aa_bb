@@ -27,6 +27,8 @@ from allianceauth.services.hooks import get_extension_logger
 
 logger = get_extension_logger(__name__)
 
+STREAM_MAX_ENTRIES = 5000
+
 from aa_bb.checks_cb.hostile_assets import render_assets, get_corp_hostile_asset_locations
 from aa_bb.checks_cb.sus_trans import (
     get_user_transactions,
@@ -421,7 +423,7 @@ def list_contract_ids(request):
 
     qs = gather_user_contracts(option)
     if hasattr(qs, 'order_by'):
-        qs = qs.order_by('-date_issued')
+        qs = qs.order_by('-date_issued')[:STREAM_MAX_ENTRIES]
     qs = qs.values_list('contract_id', 'date_issued')
 
     contracts = [
@@ -449,7 +451,16 @@ def check_contract_batch(request):
     qs_all = cache.get(cache_key)
     if qs_all is None:
         qs_all = gather_user_contracts(option)
+        if hasattr(qs_all, "order_by"):
+            qs_all = qs_all.order_by("-date_issued")[:STREAM_MAX_ENTRIES]
+        else:
+            qs_all = qs_all[:STREAM_MAX_ENTRIES]
         cache.set(cache_key, qs_all, 300)
+    else:
+        if hasattr(qs_all, "order_by"):
+            qs_all = qs_all.order_by("-date_issued")[:STREAM_MAX_ENTRIES]
+        else:
+            qs_all = qs_all[:STREAM_MAX_ENTRIES]
 
     # 2) Slice out just this batch of model instances
     batch_qs = qs_all[start:start + limit]
@@ -499,7 +510,13 @@ def stream_contracts_sse(request: WSGIRequest):
 
     try:
         qs    = gather_user_contracts(user_id)
+        if hasattr(qs, "order_by"):
+            qs = qs.order_by("-date_issued")[:STREAM_MAX_ENTRIES]
+        else:
+            qs = qs[:STREAM_MAX_ENTRIES]
         total = qs.count() if hasattr(qs, 'count') else len(qs)
+        if total > STREAM_MAX_ENTRIES:
+            total = STREAM_MAX_ENTRIES
         connection.close()
     except Exception as e:
         logger.error(f"Error initializing contract stream for {option}: {e}", exc_info=True)
@@ -710,8 +727,12 @@ def stream_transactions_sse(request):
     try:
         qs = gather_user_transactions(user_id, ref_types=ref_types)
         if hasattr(qs, 'order_by'):
-            qs = qs.order_by('-date')
+            qs = qs.order_by('-date')[:STREAM_MAX_ENTRIES]
+        else:
+            qs = qs[:STREAM_MAX_ENTRIES]
         total = qs.count() if hasattr(qs, 'count') else len(qs)
+        if total > STREAM_MAX_ENTRIES:
+            total = STREAM_MAX_ENTRIES
         connection.close()
         if total == 0:  # No transactions -> return SSE stream with no data message
             def empty_generator():

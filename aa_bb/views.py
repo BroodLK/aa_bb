@@ -35,7 +35,13 @@ from .app_settings import (
     resolve_location_name, afat_active, discordbot_active, corptools_active,
     get_hostile_state, get_safe_entities, is_safe_entity
 )
-from .models import BigBrotherConfig, WarmProgress, LeaveRequest, ComplianceTicket, ComplianceTicketComment
+from .models import (
+    BigBrotherConfig,
+    WarmProgress,
+    LeaveRequest,
+    ComplianceTicket,
+    ComplianceTicketComment,
+)
 
 from aa_bb.checks.awox import render_awox_kills_html, fetch_awox_kills
 from aa_bb.checks.corp_changes import get_frequent_corp_changes
@@ -79,6 +85,8 @@ from aa_bb.checks.clone_state import render_character_states_html
 from aa_bb.checks.skills import render_user_skills_html
 
 logger = get_extension_logger(__name__)
+
+STREAM_MAX_ENTRIES = 5000
 
 try:
     if corptools_active():
@@ -180,6 +188,7 @@ def get_user_id(character_name):
         return ownership.user.id
     except CharacterOwnership.DoesNotExist:
         return None
+
 
 # Single-card loader
 @login_required
@@ -300,7 +309,7 @@ def warm_entity_cache_task(self, user_id, user_main=None):
 
         # Build list of (entity_id, timestamp)
         entries = []
-        fetch_awox_kills(user_id, force_refresh=True)
+        fetch_awox_kills(user_id)
         contracts = gather_user_contracts(user_id)
         trans = gather_user_transactions(user_id)
         mails = gather_user_mails(user_id)
@@ -523,7 +532,7 @@ def list_contract_ids(request):
     if Contract is not None:
         qs = Contract.objects.filter(
             character__character__character_id__in=user_chars
-        ).order_by('-date_issued').values_list('contract_id', 'date_issued')
+        ).order_by('-date_issued').values_list('contract_id', 'date_issued')[:STREAM_MAX_ENTRIES]
     else:
         qs = []
 
@@ -554,7 +563,16 @@ def check_contract_batch(request):
     qs_all = cache.get(cache_key)
     if qs_all is None:  # Cache miss, gather the entire contract queryset now.
         qs_all = gather_user_contracts(user_id)
+        if hasattr(qs_all, "order_by"):
+            qs_all = qs_all.order_by("-date_issued")[:STREAM_MAX_ENTRIES]
+        else:
+            qs_all = qs_all[:STREAM_MAX_ENTRIES]
         cache.set(cache_key, qs_all, 300)
+    else:
+        if hasattr(qs_all, "order_by"):
+            qs_all = qs_all.order_by("-date_issued")[:STREAM_MAX_ENTRIES]
+        else:
+            qs_all = qs_all[:STREAM_MAX_ENTRIES]
 
     # 2) Slice out just this batch of model instances
     batch_qs = qs_all[start:start + limit]
@@ -604,7 +622,13 @@ def stream_contracts_sse(request: WSGIRequest):
 
     try:
         qs    = gather_user_contracts(user_id)
+        if hasattr(qs, "order_by"):
+            qs = qs.order_by("-date_issued")[:STREAM_MAX_ENTRIES]
+        else:
+            qs = qs[:STREAM_MAX_ENTRIES]
         total = qs.count() if hasattr(qs, 'count') else len(qs)
+        if total > STREAM_MAX_ENTRIES:
+            total = STREAM_MAX_ENTRIES
         connection.close()
     except Exception as e:
         logger.error(f"Error initializing contract stream for {option}: {e}", exc_info=True)
@@ -784,7 +808,13 @@ def stream_mails_sse(request):
 
     try:
         qs    = gather_user_mails(user_id)
-        total = qs.count()
+        if hasattr(qs, "order_by"):
+            qs = qs.order_by("-timestamp")[:STREAM_MAX_ENTRIES]
+        else:
+            qs = qs[:STREAM_MAX_ENTRIES]
+        total = qs.count() if hasattr(qs, "count") else len(qs)
+        if total > STREAM_MAX_ENTRIES:
+            total = STREAM_MAX_ENTRIES
         connection.close()
     except Exception as e:
         logger.error(f"Error initializing mail stream for {option}: {e}", exc_info=True)
@@ -869,8 +899,12 @@ def stream_transactions_sse(request):
         qs = gather_user_transactions(user_id, ref_types=ref_types)
         if hasattr(qs, 'order_by'):
             # Journal entries are best viewed in descending date order
-            qs = qs.order_by('-date')
+            qs = qs.order_by('-date')[:STREAM_MAX_ENTRIES]
+        else:
+            qs = qs[:STREAM_MAX_ENTRIES]
         total = qs.count() if hasattr(qs, 'count') else len(qs)
+        if total > STREAM_MAX_ENTRIES:
+            total = STREAM_MAX_ENTRIES
         logger.info(f"Transaction stream for {option}: found {total} total transactions (filtered by {ref_types})")
         connection.close()
     except Exception as e:

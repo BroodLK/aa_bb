@@ -1,3 +1,29 @@
+## [3.3.0] - 2026-03-2
+> [!CAUTION]
+> This version includes a dependency change, so please make sure to read the update
+instructions carefully before updating to this version, otherwise, the app will
+not work properly.
+
+### Changed
+- Centralized OpenAPI ESI handling via a shared `ESIHandler` wrapper
+- Replaced `django-eveuniverse` usage with `django-eveonline-sde` and `modeltranslation` for SDE-backed static data.
+- Admin log entries test
+- Discord webhook name handling updated to support the new configurable webhook name.
+- Optional message streams no longer add the extra titles such as "Optional Message 1".
+
+### Fixed
+- Hardened charlink compliance filter handling to be schema-stable regardless of plugin install/uninstall, with runtime checks and admin wiring.
+- Added a cross-process zKillboard rate limiter and stopped forced refresh calls to reduce 429s on large installs.
+- Capped streaming scans to the most recent 5,000 entries for both user and corp warm jobs.
+- Process would fail if user did not belong to any alliance.
+
+## [3.2.10] - 2026-01-30
+
+
+### Changed
+- ZKill Backoff to comply with 10 requests per second API rule limit, this affects any installation that has more than 36,000 characters total AND any installation that has multiple users that exceed 10 characters on audit.
+
+
 ## [3.2.9] - 2026-01-22
 
 > [!CAUTION]
@@ -6,7 +32,6 @@
 ```bash
 python manage.py bb_purge_entity_cache
 ```
-
 
 ### Added
 - Compliance tickets now close automatically when a removed character is added back.

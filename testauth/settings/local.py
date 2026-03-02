@@ -9,8 +9,12 @@ Test settings
 # Every setting in base.py can be overloaded by redefining it here.
 
 from .base import *
+from celery.schedules import crontab
 
 PACKAGE = "aa_bb"
+
+# modeltranslation must be first for eve_sde
+INSTALLED_APPS = ["modeltranslation"] + INSTALLED_APPS
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/1.10/howto/static-files/
@@ -62,12 +66,22 @@ NOTIFICATIONS_MAX_PER_USER = 50
 
 # Add any additional apps to this list.
 INSTALLED_APPS += [
-    "eveuniverse",
+    "eve_sde",
     "corptools",
     "charlink",
     "allianceauth.services.modules.discord",
     PACKAGE,
 ]
+
+if "eve_sde" in INSTALLED_APPS:
+    CELERYBEAT_SCHEDULE["EVE SDE :: Check for SDE Updates"] = {
+        "task": "eve_sde.tasks.check_for_sde_updates",
+        "schedule": crontab(minute="0", hour="12"),
+        "apply_offset": True,
+    }
+
+# Capture request actors for admin log attribution.
+MIDDLEWARE += ["aa_bb.middleware.AdminLogContextMiddleware"]
 
 # By default, apps are prevented from having public views for security reasons.
 # If you want to allow specific apps to have public views,

@@ -9,8 +9,11 @@ and prevent accidental multi-row creation of what should be one-off configs.
 from solo.admin import SingletonModelAdmin
 
 from django.contrib import admin
+from django.apps import apps
 from .app_settings import afat_active, discordbot_active, charlink_active
 from django.contrib.admin.sites import NotRegistered
+from django.utils.html import format_html_join
+from django.utils.safestring import mark_safe
 
 from .models import (
     BigBrotherConfig,
@@ -31,6 +34,7 @@ from .models import (
     ComplianceTicket,
     ComplianceThread,
     EveItemPrice,
+    AdminLogEntry,
 )
 
 @admin.register(BigBrotherConfig)
@@ -161,6 +165,7 @@ class BB_ConfigAdmin(SingletonModelAdmin):
             {
                 "description": "Configure Discord webhook URLs for various notification types",
                 "fields": (
+                    "webhook_app_name",
                     "webhook",
                     "user_compliance_webhook",
                     "corp_compliance_webhook",
@@ -426,6 +431,21 @@ class TicketToolConfigAdmin(SingletonModelAdmin):
         if 'role_id' in form.base_fields:
             form.base_fields['role_id'].widget = forms.Textarea(attrs={'rows': 3, 'cols': 40})
 
+        if charlink_active():
+            try:
+                ComplianceFilter = apps.get_model("charlink", "ComplianceFilter")
+                form.base_fields["compliance_filter"] = forms.ModelChoiceField(
+                    queryset=ComplianceFilter.objects.all(),
+                    required=False,
+                    help_text="Select your compliance filter",
+                )
+                if obj and obj.compliance_filter_id:
+                    form.base_fields["compliance_filter"].initial = (
+                        ComplianceFilter.objects.filter(pk=obj.compliance_filter_id).first()
+                    )
+            except LookupError:
+                pass
+
         if not discordbot_active():
             from .models import TicketToolConfig
             # Restrict choices if bot is not active
@@ -435,6 +455,12 @@ class TicketToolConfigAdmin(SingletonModelAdmin):
             ]
             form.base_fields['ticket_type'].choices = allowed_choices
         return form
+
+    def save_model(self, request, obj, form, change):
+        if charlink_active() and "compliance_filter" in form.cleaned_data:
+            compliance_filter = form.cleaned_data.get("compliance_filter")
+            obj.compliance_filter_id = compliance_filter.pk if compliance_filter else None
+        super().save_model(request, obj, form, change)
 
     def has_add_permission(self, request):
         """Prevent duplicate ticket config entries."""
@@ -507,6 +533,113 @@ class WarmProgressConfig(admin.ModelAdmin):
 class UserStatusConfig(admin.ModelAdmin):
     """Simple heartbeat for per-user card status."""
     list_display = ["user", "updated"]
+
+
+@admin.register(AdminLogEntry)
+class AdminLogEntryAdmin(admin.ModelAdmin):
+    """Read-only audit log for auth/admin events."""
+    date_hierarchy = "created_at"
+    list_display = ["created_at", "category", "action", "summary", "reason", "source", "task_name", "actor", "target_user", "target_label"]
+    list_filter = ["category", "action", "source", "task_name"]
+    search_fields = ["reason", "message", "action", "source", "task_name", "target_label", "actor__username", "target_user__username"]
+    list_select_related = ["actor", "target_user"]
+    list_per_page = 100
+    ordering = ["-created_at"]
+    readonly_fields = [
+        "created_at",
+        "category",
+        "action",
+        "source",
+        "task_name",
+        "reason",
+        "actor",
+        "target_user",
+        "target_label",
+        "message",
+        "details",
+        "metadata",
+    ]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def get_actions(self, request):
+        actions = super().get_actions(request)
+        actions.pop("delete_selected", None)
+        return actions
+
+    def summary(self, obj):
+        meta = obj.metadata or {}
+        if obj.action == "state_changed":
+            old_state = meta.get("old_state")
+            new_state = meta.get("new_state")
+            if old_state or new_state:
+                return f"{old_state or '?'} -> {new_state or '?'}"
+        if obj.action in ("token_created", "token_deleted", "token_scopes_updated"):
+            scopes = meta.get("scopes")
+            if scopes is not None:
+                if scopes:
+                    return f"scopes {len(scopes)}"
+                return "scopes none"
+        if obj.action in ("group_added", "group_removed"):
+            return obj.target_label or ""
+        return ""
+
+    summary.short_description = "Summary"
+
+    def details(self, obj):
+        """Human-friendly summary for token and request metadata."""
+        meta = obj.metadata or {}
+        request_meta = meta.get("request") or {}
+        lines = []
+
+        if obj.action and obj.action.startswith("token_"):
+            token_type = meta.get("token_type")
+            character_id = meta.get("character_id")
+            if token_type:
+                lines.append(f"Token type: {token_type}")
+            if character_id or obj.target_label:
+                if character_id:
+                    lines.append(f"Character: {obj.target_label} (id={character_id})")
+                else:
+                    lines.append(f"Character: {obj.target_label}")
+            scopes = meta.get("scopes")
+            if scopes is not None:
+                if scopes:
+                    lines.append(f"Scopes: {', '.join(scopes)}")
+                else:
+                    lines.append("Scopes: none (may be pending)")
+            if "scopes_count" in meta:
+                lines.append(f"Scope count: {meta.get('scopes_count')}")
+            reason_hint = meta.get("reason_hint")
+            if reason_hint:
+                lines.append(f"Reason hint: {reason_hint}")
+            age_human = meta.get("age_human")
+            if age_human:
+                lines.append(f"Token age: {age_human}")
+
+        method = request_meta.get("method") or meta.get("request_method")
+        path = request_meta.get("path") or meta.get("request_path")
+        ip_addr = request_meta.get("ip") or meta.get("request_ip")
+        if method or path:
+            lines.append(f"Request: {(method or '').strip()} {(path or '').strip()}".strip())
+        if ip_addr:
+            lines.append(f"IP: {ip_addr}")
+        user_agent = request_meta.get("user_agent")
+        if user_agent:
+            lines.append(f"User agent: {user_agent}")
+
+        if not lines:
+            return "-"
+        return format_html_join(mark_safe("<br>"), "{}", ((line,) for line in lines))
+
+    details.short_description = "Details"
 
 
 class ReasonFilter(admin.SimpleListFilter):
