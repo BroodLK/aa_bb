@@ -205,7 +205,15 @@ def get_user_transactions(qs) -> Dict[int, Dict]:
                 location_id = getattr(m_tx, "location_id", None)
                 if hasattr(m_tx, "location") and m_tx.location:
                     system_id = getattr(m_tx.location, "system_id", None)
-                type_id = m_tx.type_id
+                type_id = (
+                    getattr(m_tx, "type_id", None)
+                    or getattr(m_tx, "type_name_id", None)
+                    or getattr(getattr(m_tx, "type_name", None), "pk", None)
+                )
+                try:
+                    type_id = int(type_id) if type_id is not None else None
+                except (TypeError, ValueError):
+                    pass
                 quantity = m_tx.quantity
         else:
             context = f"{context_type}: {context_id}"

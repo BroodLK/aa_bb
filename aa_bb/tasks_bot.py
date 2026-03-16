@@ -39,6 +39,7 @@ __all__ = [
     "close_ticket_channel",
     "join_thread",
     "unarchive_thread",
+    "audit_existing_guild_bots",
     "rebalance_ticket_categories",
     "TicketCommands",
     "setup",
@@ -509,6 +510,68 @@ async def unarchive_thread(bot, thread_id: int, **kwargs):
             await channel.edit(archived=False)
         await channel.join()
 
+
+async def _report_bot_members(guild: discord.Guild, bot_members: list, source: str):
+    """
+    Report detected Discord bot accounts to configured compliance webhooks.
+    """
+    if not bot_members:
+        return
+
+    cfg = await sync_to_async(BigBrotherConfig.get_solo)()
+    hook = cfg.user_compliance_webhook or cfg.webhook
+    if not hook:
+        logger.warning(
+            "Discord bot-member check found %s bot account(s) in guild %s (%s), "
+            "but no webhook is configured.",
+            len(bot_members),
+            getattr(guild, "id", "unknown"),
+            getattr(guild, "name", "unknown"),
+        )
+        return
+
+    from aa_bb.app_settings import send_status_embed, _chunk_embed_lines
+
+    lines = [
+        f"Source: {source}",
+        f"Guild: {getattr(guild, 'name', 'Unknown')} ({getattr(guild, 'id', 'unknown')})",
+        f"Detected {len(bot_members)} Discord bot account(s).",
+    ]
+    for member in bot_members[:50]:
+        display = getattr(member, "display_name", None) or getattr(member, "name", "Unknown")
+        lines.append(f"- {display} ({getattr(member, 'id', 'unknown')})")
+    if len(bot_members) > 50:
+        lines.append(f"- ... and {len(bot_members) - 50} more")
+
+    for chunk in _chunk_embed_lines(lines):
+        await sync_to_async(send_status_embed)(
+            subject="Discord Bot Account Check",
+            lines=chunk,
+            color=0xE67E22,
+            hook=hook,
+        )
+
+
+async def audit_existing_guild_bots(bot, **kwargs):
+    """
+    Weekly audit for existing guild members to detect bot accounts.
+    """
+    close_old_connections()
+    if not getattr(bot, "guilds", None):
+        return
+
+    for guild in bot.guilds:
+        try:
+            members = list(getattr(guild, "members", []) or [])
+            bot_members = [m for m in members if getattr(m, "bot", False)]
+            if bot_members:
+                await _report_bot_members(guild, bot_members, source="weekly_audit")
+        except Exception:
+            logger.exception(
+                "Failed weekly bot-member audit for guild %s",
+                getattr(guild, "id", "unknown"),
+            )
+
 def get_next_ticket_number():
     """
     Returns the next ticket number as a zero-padded string (0000–9999),
@@ -528,6 +591,20 @@ class TicketCommands(commands.Cog):
     """Cog for operators handling compliance tickets via commands or phrases."""
     def __init__(self, bot):
         self.bot = bot
+
+    @commands.Cog.listener("on_member_join")
+    async def on_member_join(self, member):
+        """
+        Check all new joins and report if the joining account is a bot.
+        """
+        close_old_connections()
+        try:
+            if not member or not getattr(member, "guild", None):
+                return
+            if getattr(member, "bot", False):
+                await _report_bot_members(member.guild, [member], source="member_join")
+        except Exception:
+            logger.exception("Failed bot-member join check for member %s", getattr(member, "id", "unknown"))
 
     @commands.Cog.listener("on_message")
     async def ticket_message_listener(self, message: discord.Message):

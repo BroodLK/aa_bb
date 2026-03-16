@@ -1,3 +1,12 @@
+## [3.3.1] - 2026-03-03
+
+### Changed
+- Skill injection detection now supports configurable raw SP delta and SP/age ratio delta modes, with a toggle to switch between them.
+- Main corp/alliance auto-population now prefers each superuser's main character before falling back to any owned character.
+
+### Fixed
+- Prevented crashes when a main character temporarily has no alliance (e.g., during an alliance switch), by avoiding null saves for main alliance fields.
+
 ## [3.3.0] - 2026-03-2
 > [!CAUTION]
 > This version includes a dependency change, so please make sure to read the update
@@ -15,7 +24,7 @@ not work properly.
 - Hardened charlink compliance filter handling to be schema-stable regardless of plugin install/uninstall, with runtime checks and admin wiring.
 - Added a cross-process zKillboard rate limiter and stopped forced refresh calls to reduce 429s on large installs.
 - Capped streaming scans to the most recent 5,000 entries for both user and corp warm jobs.
-- Process would fail if user did not belong to any alliance.
+- The process would fail if the user did not belong to any alliance.
 
 ## [3.2.10] - 2026-01-30
 

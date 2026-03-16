@@ -2087,6 +2087,10 @@ def is_ship(type_id):
     """Checks if a type_id belongs to a ship."""
     if not type_id:
         return False
+    try:
+        type_id = int(type_id)
+    except (TypeError, ValueError):
+        return False
 
     cache_key = f"aa_bb_is_ship_{type_id}"
     res = cache.get(cache_key)
@@ -2098,7 +2102,9 @@ def is_ship(type_id):
         if corptools_active():
             from corptools.models import EveItemType
             it = EveItemType.objects.select_related('group__category').get(pk=type_id)
-            if it.group and it.group.category and it.group.category.name == "Ship":
+            group = _get_attr(it, "group", "item_group", "eve_group")
+            category = _get_attr(group, "category", "item_category", "eve_category")
+            if _get_attr(category, "name", "category_name") == "Ship":
                 is_ship_bool = True
         elif EVE_SDE_INSTALLED:
             ItemType = _get_sde_model("ItemType", "Type", "InvType")

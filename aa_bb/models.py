@@ -511,6 +511,29 @@ class BigBrotherConfig(SingletonModel):
         verbose_name=_("Skill Point Injection Discord Notifications")
     )
 
+    sp_inject_detection_mode = models.CharField(
+        max_length=16,
+        default="raw",
+        choices=(
+            ("raw", "Raw SP delta"),
+            ("ratio", "SP/age ratio delta"),
+        ),
+        help_text=_("How to detect skill injections"),
+        verbose_name=_("Skill Injection Detection Mode")
+    )
+
+    sp_inject_threshold = models.PositiveIntegerField(
+        default=300000,
+        help_text=_("Minimum SP delta required to flag a skill injection alert"),
+        verbose_name=_("Skill Injection Threshold (SP)")
+    )
+
+    sp_inject_ratio_delta = models.FloatField(
+        default=0.0,
+        help_text=_("Minimum SP/age ratio delta required to flag a skill injection alert"),
+        verbose_name=_("Skill Injection Ratio Delta")
+    )
+
     clone_notify = models.BooleanField(
         default=True,
         help_text=_("Whether to send Hostile Jump Clone Location Change notifications to discord"),

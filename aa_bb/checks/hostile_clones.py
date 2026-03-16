@@ -144,7 +144,13 @@ def get_clones(user_id: int) -> Dict[int, dict]:
         char = char_map.get(jc.character_id)
         if not char:
             continue
-        implants = [i.type_name.name for i in jc.implant_set.all() if i.type_name]
+        implants = [
+            getattr(i.type_name, "name", None)
+            or getattr(i.type_name, "type_name", None)
+            for i in jc.implant_set.all()
+            if i.type_name
+        ]
+        implants = [name for name in implants if name]
         status = jc.name or "Jump Clone"
         if jc.location_id == active_locs.get(jc.character_id):
             status += " (Current Location)"
