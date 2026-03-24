@@ -1,13 +1,14 @@
-## [3.3.1] - 2026-03-03
+## [3.3.1] - 2026-03-24
 
 ### Changed
 - Skill injection detection now supports configurable raw SP delta and SP/age ratio delta modes, with a toggle to switch between them.
-- Main corp/alliance auto-population now prefers each superuser's main character before falling back to any owned character.
+- Can now manually set the main corp.
 
 ### Fixed
 - Prevented crashes when a main character temporarily has no alliance (e.g., during an alliance switch), by avoiding null saves for main alliance fields.
+- Issues with Corptools > 3.0.0b6
 
-## [3.3.0] - 2026-03-2
+## [3.3.0] - 2026-03-02
 > [!CAUTION]
 > This version includes a dependency change, so please make sure to read the update
 instructions carefully before updating to this version, otherwise, the app will
