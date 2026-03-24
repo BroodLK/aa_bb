@@ -1118,6 +1118,24 @@ def BB_run_regular_updates():
                 instance.main_alliance = ""
                 update_fields.append("main_alliance")
 
+        if instance.manual_main_corporation_override:
+            # Manual override takes precedence over auto-detected superuser data.
+            before = (
+                instance.main_corporation_id,
+                instance.main_corporation,
+                instance.main_alliance_id,
+                instance.main_alliance,
+            )
+            instance._apply_manual_main_corporation_override()
+            after = (
+                instance.main_corporation_id,
+                instance.main_corporation,
+                instance.main_alliance_id,
+                instance.main_alliance,
+            )
+            if before != after:
+                update_fields = ["main_corporation_id", "main_corporation", "main_alliance_id", "main_alliance"]
+
         if update_fields:
             instance.save(update_fields=update_fields)
 

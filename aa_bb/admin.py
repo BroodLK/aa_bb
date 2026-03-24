@@ -270,8 +270,10 @@ class BB_ConfigAdmin(SingletonModelAdmin):
             "Main Corp / Alliance Info",
             {
                 "classes": ("collapse",),
-                "description": "Auto-populated information about your main corporation and alliance",
+                "description": "Auto-populated main corp/alliance information, with an optional manual main corporation override",
                 "fields": (
+                    "manual_main_corporation_override",
+                    "manual_main_corporation_id",
                     "main_corporation_id",
                     "main_corporation",
                     "main_alliance_id",

@@ -77,5 +77,22 @@
             toggleSpInjectFields(); // Initial state
         }
 
+        // Manual main corporation override toggle
+        const manualMainCorpOverride = $('#id_manual_main_corporation_override');
+        const manualMainCorpIdField = $('.field-manual_main_corporation_id');
+
+        function toggleManualMainCorpField() {
+            if (manualMainCorpOverride.is(':checked')) {
+                manualMainCorpIdField.show();
+            } else {
+                manualMainCorpIdField.hide();
+            }
+        }
+
+        if (manualMainCorpOverride.length && manualMainCorpIdField.length) {
+            manualMainCorpOverride.on('change', toggleManualMainCorpField);
+            toggleManualMainCorpField(); // Initial state
+        }
+
     });
 }
