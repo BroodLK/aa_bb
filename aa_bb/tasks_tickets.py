@@ -486,6 +486,38 @@ def hourly_compliance_check():
         pass
 
 
+@shared_task(time_limit=7200)
+def weekly_discord_bot_member_check():
+    """Queue a weekly Discord-side member sweep for bot-account detection."""
+    close_old_connections()
+    bb_cfg = BigBrotherConfig.get_solo()
+    if not bb_cfg.is_active:
+        logger.warning(
+            "ℹ️  [AA-BB] - [weekly_discord_bot_member_check] - Plugin is disabled "
+            "(is_active=False), skipping bot-member check."
+        )
+        return
+
+    if not discordbot_active() or not run_task_function:
+        logger.info(
+            "ℹ️  [AA-BB] - [weekly_discord_bot_member_check] - Discord bot integration "
+            "not active, skipping bot-member check."
+        )
+        return
+
+    try:
+        run_task_function.apply_async(
+            args=["aa_bb.tasks_bot.audit_existing_guild_bots"],
+            kwargs={
+                "task_args": [],
+                "task_kwargs": {}
+            },
+            queue='aadiscordbot'
+        )
+    except Exception:
+        logger.exception("Failed to queue weekly Discord bot-member check")
+
+
 def ensure_ticket(user, reason, details=None):
     """
     Guarantee there is an open compliance ticket for the given user/reason pair.

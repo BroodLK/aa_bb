@@ -241,8 +241,11 @@ def BB_update_single_user(user_id, char_name):
                     status.clone_status = state_result
                     status_changed = True
 
-            if set(sp_age_ratio_result) != set(status.sp_age_ratio_result or []):  # detect changes in SP-to-age ratios
+            if sp_age_ratio_result != (status.sp_age_ratio_result or {}):  # detect SP injection via configured mode
                 flaggs = []
+                mode = (instance.sp_inject_detection_mode or "raw").lower()
+                threshold = max(int(instance.sp_inject_threshold or 0), 0)
+                ratio_delta = max(float(instance.sp_inject_ratio_delta or 0), 0.0)
 
                 def _safe_ratio(info: dict):
                     age = info.get("char_age")
@@ -253,9 +256,6 @@ def BB_update_single_user(user_id, char_name):
                 for char_nameee, new_info in sp_age_ratio_result.items():
                     old_info = (status.sp_age_ratio_result or {}).get(char_nameee, {})
 
-                    old_ratio = _safe_ratio(old_info)
-                    new_ratio = _safe_ratio(new_info)
-
                     # Pull total SP values (fallback to 0 if missing)
                     old_total_sp = old_info.get("total_sp") or 0
                     new_total_sp = new_info.get("total_sp") or 0
@@ -263,34 +263,56 @@ def BB_update_single_user(user_id, char_name):
                     # Estimated injected SP is simply the SP delta, clamped at 0
                     injected_est = max(0, new_total_sp - old_total_sp)
 
-                    # Only flag when ratio increased and we have both ratios
-                    if old_ratio is not None and new_ratio is not None and new_ratio > old_ratio:
-                        # Format nicely with thousand separators and trimmed ratios
-                        flaggs.append(
-                            "- **{name}**:\n"
-                            "  • Previous total SP: {old_sp:,}\n"
-                            "  • New total SP: {new_sp:,}\n"
-                            "  • Est. injected: **{inj_sp:,} SP**\n"
-                            "  • SP/age ratio: {old_r:.2f} → **{new_r:.2f}**\n".format(
-                                name=char_nameee,
-                                old_sp=old_total_sp,
-                                new_sp=new_total_sp,
-                                inj_sp=injected_est,
-                                old_r=old_ratio,
-                                new_r=new_ratio,
+                    if mode == "ratio":
+                        old_ratio = _safe_ratio(old_info)
+                        new_ratio = _safe_ratio(new_info)
+                        if old_ratio is None or new_ratio is None:
+                            continue
+                        delta = new_ratio - old_ratio
+                        if delta >= ratio_delta:
+                            flaggs.append(
+                                "- **{name}**:\n"
+                                "  - Previous total SP: {old_sp:,}\n"
+                                "  - New total SP: {new_sp:,}\n"
+                                "  - Est. injected: **{inj_sp:,} SP**\n"
+                                "  - SP/age ratio: {old_r:.2f} -> **{new_r:.2f}** (delta {delta:.2f})\n".format(
+                                    name=char_nameee,
+                                    old_sp=old_total_sp,
+                                    new_sp=new_total_sp,
+                                    inj_sp=injected_est,
+                                    old_r=old_ratio,
+                                    new_r=new_ratio,
+                                    delta=delta,
+                                )
                             )
+                    else:
+                        if injected_est > 0 and injected_est >= threshold:
+                            flaggs.append(
+                                "- **{name}**:\n"
+                                "  - Previous total SP: {old_sp:,}\n"
+                                "  - New total SP: {new_sp:,}\n"
+                                "  - Est. injected: **{inj_sp:,} SP**\n".format(
+                                    name=char_nameee,
+                                    old_sp=old_total_sp,
+                                    new_sp=new_total_sp,
+                                    inj_sp=injected_est,
+                                )
+                            )
+
+                if flaggs and instance.sp_inject_notify:
+                    sp_list = "".join(flaggs)
+                    if mode == "ratio":
+                        changes.append(
+                            f"## {get_pings('SP Injected')} Skill Injection detected (ratio delta: {ratio_delta:.2f}):\n{sp_list}"
+                        )
+                    else:
+                        changes.append(
+                            f"## {get_pings('SP Injected')} Skill Injection detected (threshold: {threshold:,} SP):\n{sp_list}"
                         )
 
-                if flaggs:  # only send notification when at least one character’s ratio increased
-                    sp_list = "".join(flaggs)
-                    if instance.sp_inject_notify:
-                        changes.append(f"## {get_pings('SP Injected')} Skill Injection detected:\n{sp_list}")
-
-            # Only update sp_age_ratio if it actually changed
-            if sp_age_ratio_result != (status.sp_age_ratio_result or {}):
+                # Only update sp_age_ratio if it actually changed
                 status.sp_age_ratio_result = sp_age_ratio_result
                 status_changed = True
-
             if status.has_awox_kills != has_awox or set(awox_links) != set(
                 status.awox_kill_links or []):  # new awox activity?
                 # detect new AWOX links and optionally raise a ticket
@@ -1054,12 +1076,22 @@ def BB_run_regular_updates():
         User = get_user_model()
         # find a superuser's main to anchor corp/alliance fields
         superusers = User.objects.filter(is_superuser=True)
-        char = EveCharacter.objects.filter(
-            character_ownership__user__in=superusers
-        ).first()
+        char = None
+        for su in superusers.select_related("profile__main_character"):
+            profile = getattr(su, "profile", None)
+            main_char = getattr(profile, "main_character", None) if profile else None
+            if main_char:
+                char = main_char
+                break
+
+        if not char:
+            char = EveCharacter.objects.filter(
+                character_ownership__user__in=superusers
+            ).first()
 
         if not char:  # no superuser alt yet → fall back to first available character
             char = EveCharacter.objects.all().first()
+        update_fields = []
         if char:  # only populate config when a character is available to inspect
             corp_name = char.corporation_name
             alliance_id = char.alliance_id or 0
@@ -1070,7 +1102,42 @@ def BB_run_regular_updates():
             instance.main_alliance_id = alliance_id
             instance.main_alliance = alliance_name
 
-        instance.save(update_fields=["main_corporation_id", "main_corporation", "main_alliance_id", "main_alliance"])
+            update_fields = ["main_corporation_id", "main_corporation", "main_alliance_id", "main_alliance"]
+        else:
+            # Safeguard against legacy NULLs in non-nullable columns.
+            if instance.main_corporation_id is None:
+                instance.main_corporation_id = 0
+                update_fields.append("main_corporation_id")
+            if instance.main_corporation is None:
+                instance.main_corporation = 0
+                update_fields.append("main_corporation")
+            if instance.main_alliance_id is None:
+                instance.main_alliance_id = 0
+                update_fields.append("main_alliance_id")
+            if instance.main_alliance is None:
+                instance.main_alliance = ""
+                update_fields.append("main_alliance")
+
+        if instance.manual_main_corporation_override:
+            # Manual override takes precedence over auto-detected superuser data.
+            before = (
+                instance.main_corporation_id,
+                instance.main_corporation,
+                instance.main_alliance_id,
+                instance.main_alliance,
+            )
+            instance._apply_manual_main_corporation_override()
+            after = (
+                instance.main_corporation_id,
+                instance.main_corporation,
+                instance.main_alliance_id,
+                instance.main_alliance,
+            )
+            if before != after:
+                update_fields = ["main_corporation_id", "main_corporation", "main_alliance_id", "main_alliance"]
+
+        if update_fields:
+            instance.save(update_fields=update_fields)
 
         # walk each eligible user and rebuild their status snapshot
         if instance.is_active:  # skip user iteration entirely when plugin disabled/unlicensed
@@ -1524,3 +1591,4 @@ def BB_sync_contacts_from_aa_contacts(self):
             "whitelist_alliances", "whitelist_corporations",
             "contacts_import_cache"
         ])
+

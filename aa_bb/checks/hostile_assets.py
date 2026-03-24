@@ -86,13 +86,32 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
         if not asset.type_name:
             continue
 
+        # Corptools ItemType shape differs across versions; resolve type id defensively.
+        asset_type_id = (
+            getattr(asset.type_name, "type_id", None)
+            or getattr(asset, "type_name_id", None)
+            or getattr(asset.type_name, "pk", None)
+        )
+        if not asset_type_id:
+            continue
+        try:
+            asset_type_id = int(asset_type_id)
+        except (TypeError, ValueError):
+            pass
+
+        asset_type_name = (
+            getattr(asset.type_name, "name", None)
+            or getattr(asset.type_name, "type_name", None)
+            or str(asset_type_id)
+        )
+
         char = char_map.get(asset.character_id)
         if not char:
             continue
 
         # Unique combo check: (character, location, type)
         # Prevents redundant processing of multiple stacks of the same item
-        combo = (char.character_id, asset.location_id, asset.type_name.type_id)
+        combo = (char.character_id, asset.location_id, asset_type_id)
         if combo in processed_combos:
             continue
 
@@ -153,8 +172,8 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
         system_map[key]["locations"][loc_key]["assets"].append({
             "char_id": char.character_id,
             "char_name": char.character_name,
-            "type_id": asset.type_name.type_id,
-            "type_name": asset.type_name.name,
+            "type_id": asset_type_id,
+            "type_name": asset_type_name,
         })
 
     del processed_combos, _loc_sys_cache, _loc_name_cache, char_map, audit_ids

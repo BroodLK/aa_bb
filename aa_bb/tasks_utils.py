@@ -223,6 +223,13 @@ def sync_periodic_tasks():
             "update_schedule": True,
         },
         {
+            "name": "BB weekly discord bot member check",
+            "task_path": "aa_bb.tasks_tickets.weekly_discord_bot_member_check",
+            "schedule": weekly_sun_12_schedule,
+            "active_attr": "is_active",
+            "update_schedule": True,
+        },
+        {
             "name": "BB run regular LoA updates",
             "task_path": "aa_bb.tasks_cb.BB_run_regular_loa_updates",
             "schedule": daily_12_schedule,

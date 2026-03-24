@@ -1,4 +1,14 @@
-## [3.3.0] - 2026-03-2
+## [3.3.1] - 2026-03-24
+
+### Changed
+- Skill injection detection now supports configurable raw SP delta and SP/age ratio delta modes, with a toggle to switch between them.
+- Can now manually set the main corp.
+
+### Fixed
+- Prevented crashes when a main character temporarily has no alliance (e.g., during an alliance switch), by avoiding null saves for main alliance fields.
+- Issues with Corptools > 3.0.0b6
+
+## [3.3.0] - 2026-03-02
 > [!CAUTION]
 > This version includes a dependency change, so please make sure to read the update
 instructions carefully before updating to this version, otherwise, the app will
@@ -15,7 +25,7 @@ not work properly.
 - Hardened charlink compliance filter handling to be schema-stable regardless of plugin install/uninstall, with runtime checks and admin wiring.
 - Added a cross-process zKillboard rate limiter and stopped forced refresh calls to reduce 429s on large installs.
 - Capped streaming scans to the most recent 5,000 entries for both user and corp warm jobs.
-- Process would fail if user did not belong to any alliance.
+- The process would fail if the user did not belong to any alliance.
 
 ## [3.2.10] - 2026-01-30
 

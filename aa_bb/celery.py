@@ -56,6 +56,10 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'aa_bb.tasks_other.BB_send_recurring_stats',
         'schedule': crontab(minute=0, hour=12, day_of_week=0),
     },
+    'BB-weekly-discord-bot-member-check': {
+        'task': 'aa_bb.tasks_tickets.weekly_discord_bot_member_check',
+        'schedule': crontab(minute=0, hour=12, day_of_week=0),
+    },
     'BB-sync-contacts-from-aa-contacts': {
         'task': 'aa_bb.tasks.BB_sync_contacts_from_aa_contacts',
         'schedule': crontab(minute=0, hour=1),

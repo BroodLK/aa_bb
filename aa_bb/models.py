@@ -495,7 +495,7 @@ class BigBrotherConfig(SingletonModel):
     - dailyschedule / optschedule1-5: celery-beat schedules for those webhooks; paired with `optwebhook*`.
     - is_loa_active / is_paps_active / is_warmer_active / are_daily_messages_active / are_opt_messages*_active:
       feature toggles that gate LoA, PAPs, the cache warmer, and message streams.
-    - main_corporation / main_alliance IDs + names, member thresholds, and handshake booleans (is_active) are populated by the updater.
+    - main_corporation / main_alliance IDs + names are auto-populated by the updater, or derived from a manual override.
     - bigbrother_tokens, bb_install_token, update timing fields, and reddit/daily message pointers track upstream licensing and version checks.
     """
 
@@ -509,6 +509,29 @@ class BigBrotherConfig(SingletonModel):
         default=True,
         help_text=_("Whether to send SP Injection notifications to discord"),
         verbose_name=_("Skill Point Injection Discord Notifications")
+    )
+
+    sp_inject_detection_mode = models.CharField(
+        max_length=16,
+        default="raw",
+        choices=(
+            ("raw", "Raw SP delta"),
+            ("ratio", "SP/age ratio delta"),
+        ),
+        help_text=_("How to detect skill injections"),
+        verbose_name=_("Skill Injection Detection Mode")
+    )
+
+    sp_inject_threshold = models.PositiveIntegerField(
+        default=300000,
+        help_text=_("Minimum SP delta required to flag a skill injection alert"),
+        verbose_name=_("Skill Injection Threshold (SP)")
+    )
+
+    sp_inject_ratio_delta = models.FloatField(
+        default=0.0,
+        help_text=_("Minimum SP/age ratio delta required to flag a skill injection alert"),
+        verbose_name=_("Skill Injection Ratio Delta")
     )
 
     clone_notify = models.BooleanField(
@@ -1154,6 +1177,19 @@ class BigBrotherConfig(SingletonModel):
         verbose_name=_("Optional Messages #5 Schedule")
     )
 
+    manual_main_corporation_override = models.BooleanField(
+        default=False,
+        help_text=_("If enabled, BigBrother uses the manual corporation ID below instead of auto-detecting the main corporation from a superuser character."),
+        verbose_name=_("Manual Main Corporation Override")
+    )
+
+    manual_main_corporation_id = models.BigIntegerField(
+        default=0,
+        blank=True,
+        help_text=_("Corporation ID to use as the primary/main corporation when manual override is enabled."),
+        verbose_name=_("Manual Main Corporation ID")
+    )
+
     main_corporation_id = models.BigIntegerField(
         default=0,
         editable=False,
@@ -1268,7 +1304,56 @@ class BigBrotherConfig(SingletonModel):
     def __str__(self):
         return "BigBrother Configuration"
 
+    def clean(self):
+        super().clean()
+        if self.manual_main_corporation_override and not self.manual_main_corporation_id:
+            raise ValidationError(
+                {"manual_main_corporation_id": _("Set a corporation ID when manual override is enabled.")}
+            )
+
+    def _apply_manual_main_corporation_override(self):
+        corp_id = int(self.manual_main_corporation_id or 0)
+        if corp_id <= 0:
+            return
+
+        corp_name = f"Unknown ({corp_id})"
+        alliance_id = 0
+        alliance_name = ""
+
+        corp = EveCorporationInfo.objects.filter(corporation_id=corp_id).first()
+        if corp:
+            corp_name = getattr(corp, "corporation_name", None) or corp_name
+            alliance_id = int(getattr(corp, "alliance_id", 0) or 0)
+
+        if alliance_id:
+            alliance = EveAllianceInfo.objects.filter(alliance_id=alliance_id).first()
+            if alliance:
+                alliance_name = getattr(alliance, "alliance_name", "") or ""
+
+        self.main_corporation_id = corp_id
+        self.main_corporation = corp_name
+        self.main_alliance_id = alliance_id
+        self.main_alliance = alliance_name
+
     def save(self, *args, **kwargs):
+        if self.manual_main_corporation_override:
+            if not self.manual_main_corporation_id:
+                raise ValidationError(
+                    {"manual_main_corporation_id": _("Set a corporation ID when manual override is enabled.")}
+                )
+            self._apply_manual_main_corporation_override()
+            if kwargs.get("update_fields") is not None:
+                update_fields = set(kwargs["update_fields"])
+                update_fields.update(
+                    {
+                        "main_corporation_id",
+                        "main_corporation",
+                        "main_alliance_id",
+                        "main_alliance",
+                    }
+                )
+                kwargs["update_fields"] = list(update_fields)
+
         if not self.pk and BigBrotherConfig.objects.exists():
             raise ValidationError(
                 'Only one BigBrotherConfig instance is allowed!'

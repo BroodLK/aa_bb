@@ -24,12 +24,16 @@
     </thead>
     <tbody>
       <tr>
+        <td><code>manual_main_corporation_override</code> / <code>manual_main_corporation_id</code></td>
+        <td>{% translate "Optional override for primary corporation detection. When enabled, the configured corporation ID is used as the main corporation source." %}</td>
+      </tr>
+      <tr>
         <td><code>main_corporation_id</code> / <code>main_corporation</code></td>
-        <td>{% translate "Populated automatically from the first superuser character detected during the scheduled update task. Identifies your primary corporation." %}</td>
+        <td>{% translate "Derived main corporation snapshot used across checks and filters. Auto-populated from the first superuser character unless manual override is enabled." %}</td>
       </tr>
       <tr>
         <td><code>main_alliance_id</code> / <code>main_alliance</code></td>
-        <td>{% translate "Automatically captured alliance counterpart. Both fields are read-only snapshots managed by the updater." %}</td>
+        <td>{% translate "Alliance counterpart derived from the resolved main corporation. These fields remain read-only snapshots." %}</td>
       </tr>
       <tr>
         <td><code>is_active</code></td>

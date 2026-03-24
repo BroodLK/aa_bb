@@ -58,6 +58,9 @@ class BB_ConfigAdmin(SingletonModelAdmin):
                     "awox_notify",
                     "cyno_notify",
                     "sp_inject_notify",
+                    "sp_inject_detection_mode",
+                    "sp_inject_threshold",
+                    "sp_inject_ratio_delta",
                     "clone_notify",
                     "clone_state_notify",
                     "asset_notify",
@@ -267,8 +270,10 @@ class BB_ConfigAdmin(SingletonModelAdmin):
             "Main Corp / Alliance Info",
             {
                 "classes": ("collapse",),
-                "description": "Auto-populated information about your main corporation and alliance",
+                "description": "Auto-populated main corp/alliance information, with an optional manual main corporation override",
                 "fields": (
+                    "manual_main_corporation_override",
+                    "manual_main_corporation_id",
                     "main_corporation_id",
                     "main_corporation",
                     "main_alliance_id",
