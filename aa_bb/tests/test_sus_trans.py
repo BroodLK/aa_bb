@@ -1,4 +1,5 @@
 from django.test import TestCase
+from django.utils import timezone
 from unittest.mock import MagicMock, patch
 from aa_bb.models import BigBrotherConfig
 from aa_bb.checks.sus_trans import is_transaction_hostile, get_user_transactions
@@ -163,7 +164,7 @@ class TestSusTrans(TestCase):
         # Create a mock entry
         entry = MagicMock()
         entry.entry_id = 1001
-        entry.date = MagicMock()
+        entry.date = timezone.now()
         entry.first_party_id = 1
         entry.second_party_id = 2
         entry.context_id = 123456789
@@ -181,6 +182,39 @@ class TestSusTrans(TestCase):
         tx = result[1001]
         self.assertEqual(tx["context"], "Structure: Test Structure")
         self.assertEqual(tx["system_id"], 30000142)
+
+    @patch('aa_bb.checks.sus_trans._resolve_market_type_id')
+    @patch('aa_bb.checks.sus_trans.get_entity_info')
+    def test_market_transaction_reason_fallback(self, mock_get_entity_info, mock_resolve_type_id):
+        mock_get_entity_info.return_value = {
+            'name': 'Test Character',
+            'corp_id': 123,
+            'corp_name': 'Test Corp',
+            'alli_id': 456,
+            'alli_name': 'Test Alliance'
+        }
+        mock_resolve_type_id.return_value = 34
+
+        entry = MagicMock()
+        entry.entry_id = 1002
+        entry.date = timezone.now()
+        entry.first_party_id = 1
+        entry.second_party_id = 2
+        entry.context_id = 424242
+        entry.context_id_type = "market_transaction_id"
+        entry.amount = 1050
+        entry.balance = 5000
+        entry.description = "Market transaction"
+        entry.reason = "5x Tritanium @ 210.00 ISK"
+        entry.ref_type = "market_transaction"
+
+        result = get_user_transactions([entry])
+
+        tx = result[1002]
+        self.assertEqual(tx["context"], "Market Transaction: 5x Tritanium @ 210.00 ISK")
+        self.assertEqual(tx["quantity"], 5)
+        self.assertEqual(tx["type_id"], 34)
+        self.assertIsNone(tx["system_id"])
 
     @patch('aa_bb.checks_cb.sus_trans.resolve_location_name')
     @patch('aa_bb.checks_cb.sus_trans.resolve_location_system_id')
@@ -204,7 +238,7 @@ class TestSusTrans(TestCase):
         # Create a mock entry
         entry = MagicMock()
         entry.entry_id = 2001
-        entry.date = MagicMock()
+        entry.date = timezone.now()
         entry.first_party_id = 1
         entry.second_party_id = 2
         entry.context_id = 987654321
@@ -222,3 +256,36 @@ class TestSusTrans(TestCase):
         tx = result[2001]
         self.assertEqual(tx["context"], "Structure: Test Structure CB")
         self.assertEqual(tx["system_id"], 30000142)
+
+    @patch('aa_bb.checks_cb.sus_trans._resolve_market_type_id')
+    @patch('aa_bb.checks_cb.sus_trans.get_entity_info')
+    def test_market_transaction_reason_fallback_cb(self, mock_get_entity_info, mock_resolve_type_id):
+        mock_get_entity_info.return_value = {
+            'name': 'Test Character',
+            'corp_id': 123,
+            'corp_name': 'Test Corp',
+            'alli_id': 456,
+            'alli_name': 'Test Alliance'
+        }
+        mock_resolve_type_id.return_value = 35
+
+        entry = MagicMock()
+        entry.entry_id = 2002
+        entry.date = timezone.now()
+        entry.first_party_id = 1
+        entry.second_party_id = 2
+        entry.context_id = 525252
+        entry.context_id_type = "market_transaction_id"
+        entry.amount = 2200
+        entry.balance = 6000
+        entry.description = "Corp market transaction"
+        entry.reason = "10x Pyerite @ 220.00 ISK"
+        entry.ref_type = "market_transaction"
+
+        result = get_user_transactions_cb([entry])
+
+        tx = result[2002]
+        self.assertEqual(tx["context"], "Market Transaction: 10x Pyerite @ 220.00 ISK")
+        self.assertEqual(tx["quantity"], 10)
+        self.assertEqual(tx["type_id"], 35)
+        self.assertIsNone(tx["system_id"])
