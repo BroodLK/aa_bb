@@ -21,7 +21,7 @@ requires-python = ">=3.10"
 classifiers = [
     "Environment :: Web Environment",
     "Framework :: Django",
-    "Framework :: Django :: 4.2",
+    "Framework :: Django :: 5.2",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
     "Operating System :: OS Independent",
@@ -39,9 +39,9 @@ dynamic = [
 ]
 dependencies = [
     "matplotlib>=3.7.2",
-    "allianceauth>=4.3.1",
-    "allianceauth-corptools>=2.12.0",
-    "django-esi >= 8.2.0",
+    "allianceauth>=4.13.1",
+    "allianceauth-corptools>=3.0.0b13",
+    "django-esi>=8.3.1",
     "django-eveonline-sde >= 0.0.1b2",
 ]
 urls.Changelog = "https://github.com/BroodLK/aa_bb/blob/main/CHANGELOG.md"

@@ -34,8 +34,7 @@ class CloneStateLogicTest(TestCase):
 
         # Mocking fallback_skill_ids to include 21803
         with patch('aa_bb.checks.clone_state._load_fallback_skill_ids', return_value=[21803]):
-            # Simulate the character has Capital Repair Systems at level 1 active
-            # This skill is NOT in alpha_skills.json
+            # Current implementation bulk-fetches alpha and fallback skills in one query.
             mock_skill.objects.filter.return_value.values.return_value = [
                 {
                     "character__character__character_id": 1001,
@@ -44,30 +43,6 @@ class CloneStateLogicTest(TestCase):
                     "active_skill_level": 1,
                 }
             ]
-
-            # For the first call in determine_character_state (fetching skills in alpha_skill_ids | extra_skill_ids)
-            # 21803 is not in alpha_skill_ids, and we haven't specified it as extra_skill_id.
-            # So the first query (line 148) might return empty if 21803 is not in alpha_skill_ids.
-            # But the fallback query (line 210) will fetch it.
-
-            # To be safe, let's make the filter for line 148 return empty
-            # and the filter for line 211 return our skill row.
-
-            mock_skill_filter = mock_skill.objects.filter
-            def side_effect(*args, **kwargs):
-                if 'skill_id__in' in kwargs:
-                    # Check if it's the fallback query
-                    if 21803 in kwargs['skill_id__in'] and len(kwargs['skill_id__in']) == 1:
-                        return MagicMock(values=MagicMock(return_value=[
-                            {
-                                "skill_id": 21803,
-                                "trained_skill_level": 1,
-                                "active_skill_level": 1,
-                            }
-                        ]))
-                return MagicMock(values=MagicMock(return_value=[]))
-
-            mock_skill_filter.side_effect = side_effect
 
             result = determine_character_state(self.user.id)
 

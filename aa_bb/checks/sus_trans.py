@@ -4,9 +4,11 @@ flag suspicious counterparties, and keep deduplicated notes for alerts.
 """
 
 import html
+import re
 import requests
 from typing import Dict, Optional
 from datetime import datetime, timedelta
+from django.apps import apps
 from django.utils import timezone
 
 from allianceauth.services.hooks import get_extension_logger
@@ -37,33 +39,22 @@ else:
 
 try:
     if corptools_active():
-        from corptools.models import (
-            CharacterWalletJournalEntry as WalletJournalEntry,
-            Structure,
-        )
-        # Try to import CharacterMarketTransaction, but don't fail if it doesn't exist
-        try:
-            from corptools.models import CharacterMarketTransaction
-        except ImportError:
-            CharacterMarketTransaction = None
-            logger.warning("CharacterMarketTransaction not available in corptools")
-
+        from corptools.models import CharacterWalletJournalEntry as WalletJournalEntry
         logger.info(f"Successfully imported WalletJournalEntry: {WalletJournalEntry}")
     else:
         logger.warning("corptools_active() returned False at import time")
         WalletJournalEntry = None
-        CharacterMarketTransaction = None
-        Structure = None
 except ImportError as e:
     logger.error(f"Failed to import corptools models: {e}")
     WalletJournalEntry = None
-    CharacterMarketTransaction = None
-    Structure = None
 
 from django.db.models import Q
 from ..models import BigBrotherConfig, ProcessedTransaction, SusTransactionNote, EveItemPrice, EntityInfoCache
 
 SUS_TYPES = ("player_trading", "corporation_account_withdrawal", "player_donation")
+MARKET_REASON_RE = re.compile(
+    r"^\s*(?P<quantity>\d+)x\s+(?P<type_name>.+?)\s+@\s+(?P<unit_price>[0-9][0-9,]*(?:\.\d+)?)\s+ISK\s*$"
+)
 
 
 def _find_employment_at(employment: list, date: datetime) -> Optional[dict]:
@@ -82,6 +73,62 @@ def _find_alliance_at(history: list, date: datetime) -> Optional[int]:
         if start and start <= date and (next_start is None or date < next_start):
             return rec.get("alliance_id")
     return None
+
+
+def _resolve_market_type_id(type_name: str) -> Optional[int]:
+    if not type_name:
+        return None
+
+    for app_label, model_name in (
+        ("eve_sde", "ItemType"),
+        ("eve_sde", "Type"),
+        ("corptools", "EveItemType"),
+    ):
+        try:
+            model = apps.get_model(app_label, model_name)
+        except LookupError:
+            continue
+
+        try:
+            field_names = {field.name for field in model._meta.get_fields()}
+        except Exception:
+            continue
+
+        name_field = next((name for name in ("name", "type_name") if name in field_names), None)
+        if not name_field:
+            continue
+
+        try:
+            type_id = model.objects.filter(**{name_field: type_name}).values_list("pk", flat=True).first()
+        except Exception:
+            continue
+
+        if type_id is not None:
+            try:
+                return int(type_id)
+            except (TypeError, ValueError):
+                return None
+
+    return None
+
+
+def _parse_market_reason(reason: Optional[str]) -> dict:
+    if not reason:
+        return {}
+
+    reason = reason.strip()
+    if not reason or reason == "None":
+        return {}
+
+    parsed = {"context": f"Market Transaction: {reason}"}
+    match = MARKET_REASON_RE.match(reason)
+    if not match:
+        return parsed
+
+    # Corptools 3.x only backfills market transaction detail into the journal reason field.
+    parsed["quantity"] = max(int(match.group("quantity")), 1)
+    parsed["type_id"] = _resolve_market_type_id(match.group("type_name").strip())
+    return parsed
 
 
 def gather_user_transactions(user_id: int, ref_types: list = None):
@@ -113,20 +160,6 @@ def get_user_transactions(qs) -> Dict[int, Dict]:
         return {}
 
     result: Dict[int, Dict] = {}
-
-    # Bulk fetch CharacterMarketTransaction if needed
-    market_tx_ids = [
-        e.context_id for e in entries
-        if e.context_id_type == "market_transaction_id" and e.context_id
-    ]
-    market_tx_map = {}
-    if market_tx_ids and CharacterMarketTransaction:
-        market_tx_map = {
-            m.transaction_id: m
-            for m in CharacterMarketTransaction.objects.filter(
-                transaction_id__in=market_tx_ids
-            ).select_related("location")
-        }
 
     # Pre-collect all entity IDs and their normalized timestamps for bulk fetching info
     # EntityInfoCache normalizes to the hour.
@@ -201,21 +234,11 @@ def get_user_transactions(qs) -> Dict[int, Dict]:
             context = "None"
         elif context_type == "market_transaction_id":
             context = f"Market Transaction ID: {context_id}"
-            m_tx = market_tx_map.get(context_id)
-            if m_tx:
-                location_id = getattr(m_tx, "location_id", None)
-                if hasattr(m_tx, "location") and m_tx.location:
-                    system_id = getattr(m_tx.location, "system_id", None)
-                type_id = (
-                    getattr(m_tx, "type_id", None)
-                    or getattr(m_tx, "type_name_id", None)
-                    or getattr(getattr(m_tx, "type_name", None), "pk", None)
-                )
-                try:
-                    type_id = int(type_id) if type_id is not None else None
-                except (TypeError, ValueError):
-                    pass
-                quantity = m_tx.quantity
+            parsed_market_reason = _parse_market_reason(entry.reason)
+            if parsed_market_reason:
+                context = parsed_market_reason.get("context", context)
+                type_id = parsed_market_reason.get("type_id", type_id)
+                quantity = parsed_market_reason.get("quantity", quantity)
         else:
             context = f"{context_type}: {context_id}"
 

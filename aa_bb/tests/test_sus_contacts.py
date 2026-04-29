@@ -25,12 +25,12 @@ class TestSusContacts(TestCase):
                 'alliance': 'Hostile Alliance',
             }
         }
-        mock_hostile_state.side_effect = lambda cid, ctype: True
+        mock_hostile_state.side_effect = lambda cid, ctype, **kwargs: True
 
         notifications = get_user_hostile_notifications(1)
 
         self.assertEqual(len(notifications), 1)
-        self.assertIn("is on hostile list", notifications[123])
+        self.assertIn("is hostile", notifications[123])
 
     @patch('aa_bb.checks.sus_contacts.get_user_contacts')
     @patch('aa_bb.checks.sus_contacts.get_hostile_state')
@@ -48,7 +48,7 @@ class TestSusContacts(TestCase):
                 'alliance': 'Hostile Alliance',
             }
         }
-        mock_hostile_state.side_effect = lambda cid, ctype: True
+        mock_hostile_state.side_effect = lambda cid, ctype, **kwargs: True
 
         notifications = get_user_hostile_notifications(1)
 
@@ -71,9 +71,9 @@ class TestSusContacts(TestCase):
                 'alliance': 'Hostile Alliance',
             }
         }
-        mock_hostile_state.side_effect = lambda cid, ctype: True
+        mock_hostile_state.side_effect = lambda cid, ctype, **kwargs: True
 
         notifications = get_user_hostile_notifications(1)
 
         self.assertEqual(len(notifications), 1)
-        self.assertIn("is on hostile list", notifications[123])
+        self.assertIn("is hostile", notifications[123])

@@ -1,68 +1,73 @@
 """
 AppConfig bootstrap for aa_bb.
 
-The AppConfig ensures Django wires up signals, celery tasks, message types,
-and periodic scheduler entries as soon as the app loads.
+Database-backed bootstrap work is deferred until after migrations so Django 5
+does not warn about database access during app initialization.
 """
 
-from django.apps import AppConfig, apps
+import logging
+
+from django.apps import AppConfig
 from django.db.utils import OperationalError, ProgrammingError
-from django.db import IntegrityError, transaction
+from django.db.models.signals import post_migrate
+
+
+logger = logging.getLogger(__name__)
+
+PREDEFINED_MESSAGE_TYPES = [
+    "LoA Request",
+    "LoA Changed Status",
+    "LoA Inactivity",
+    "New Version",
+    "Error",
+    "AwoX",
+    "Can Light Cyno",
+    "Cyno Update",
+    "New Hostile Assets",
+    "New Hostile Clones",
+    "New Sus Contacts",
+    "New Sus Contracts",
+    "New Sus Mails",
+    "New Sus Transactions",
+    "New Blacklist Entry",
+    "skills",
+    "All Cyno Changes",
+    "Compliance",
+    "SP Injected",
+    "Omega Detected",
+]
+
+
+def bootstrap_runtime_state(**kwargs):
+    """
+    Ensure aa_bb's DB-backed runtime records exist once migrations are complete.
+    """
+    from .models import MessageType
+    from .tasks_utils import sync_periodic_tasks
+
+    try:
+        for msg_name in PREDEFINED_MESSAGE_TYPES:
+            obj, created = MessageType.objects.get_or_create(name=msg_name)
+            if created:
+                logger.info("Added predefined MessageType: %s", msg_name)
+
+        sync_periodic_tasks()
+    except (OperationalError, ProgrammingError):
+        logger.info("Database not ready yet, skipping aa_bb runtime bootstrap.")
+
 
 class AaBbConfig(AppConfig):
-    """App bootstrap that wires signals, tasks, and beat entries."""
+    """App bootstrap that wires signals and defers DB setup until post-migrate."""
+
     default_auto_field = "django.db.models.BigAutoField"
     name = "aa_bb"
     verbose_name = "aa_bb"
 
     def ready(self):
-        """Register signals and ensure Celery beat tasks/message types exist."""
-        import aa_bb.signals
-        import logging
-        from django.db.utils import OperationalError, ProgrammingError
-        logger = logging.getLogger(__name__)
-        from .models import MessageType
-        from allianceauth.authentication.models import State
+        import aa_bb.signals  # noqa: F401
 
-        PREDEFINED_MESSAGE_TYPES = [
-            "LoA Request",
-            "LoA Changed Status",
-            "LoA Inactivity",
-            "New Version",
-            "Error",
-            "AwoX",
-            "Can Light Cyno",
-            "Cyno Update",
-            "New Hostile Assets",
-            "New Hostile Clones",
-            "New Sus Contacts",
-            "New Sus Contracts",
-            "New Sus Mails",
-            "New Sus Transactions",
-            "New Blacklist Entry",
-            "skills",
-            "All Cyno Changes",
-            "Compliance",
-            "SP Injected",
-            "Omega Detected",
-        ]
-
-        try:
-            for msg_name in PREDEFINED_MESSAGE_TYPES:
-                obj, created = MessageType.objects.get_or_create(name=msg_name)
-                if created:  # Log whenever a predefined message type is inserted.
-                    logger.info(f"✅  [AA-BB] - [Apps] - Added predefined MessageType: {msg_name}")
-        except (OperationalError, ProgrammingError):
-            # Database isn't ready (e.g., before migrations)
-            logger.info(f"ℹ️  [AA-BB] - [Apps] - Database not ready yet, skipping MessageType registration.")
-            pass
-
-        try:
-            from django.db import connection
-            if "aa_bb_bigbrotherconfig" not in connection.introspection.table_names():
-                return
-
-            from .tasks_utils import sync_periodic_tasks
-            sync_periodic_tasks()
-        except (OperationalError, ProgrammingError, ImportError):
-            pass
+        post_migrate.connect(
+            bootstrap_runtime_state,
+            sender=self,
+            dispatch_uid="aa_bb.bootstrap_runtime_state",
+        )

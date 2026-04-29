@@ -2,7 +2,7 @@
 ![PyPI - Downloads](https://img.shields.io/pypi/dm/aa-bb?style=for-the-badge)
 ![PyPI - Format](https://img.shields.io/pypi/format/aa-bb?style=for-the-badge)
 ![python versions](https://img.shields.io/pypi/pyversions/aa-bb?style=for-the-badge)
-![django versions](https://img.shields.io/badge/django-3.2%2B-blue?style=for-the-badge)
+![django versions](https://img.shields.io/badge/django-5.2-blue?style=for-the-badge)
 ![license](https://img.shields.io/badge/license-GPLv3-green?style=for-the-badge)
 
 
@@ -33,9 +33,9 @@ All while invisible to the general membership unless you choose to expose it to 
 ### The following AllianceAuth plugins are **_required_**:
 
 ```md
-allianceauth >= 4.3.1
-allianceauth-corptools >= 2.12.0
-django-esi >= 8.2.0
+allianceauth >= 4.13.1
+allianceauth-corptools >= 3.0.0b13
+django-esi >= 8.3.1
 django-eveonline-sde >= 0.0.1b2
 ```
 ### Recommended plugins
