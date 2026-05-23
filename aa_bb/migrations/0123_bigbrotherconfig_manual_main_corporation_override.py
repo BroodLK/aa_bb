@@ -4,7 +4,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("aa_bb", "0121_bigbrotherconfig_sp_inject_threshold"),
+        ("aa_bb", "0122_bigbrotherconfig_sp_inject_detection_mode"),
     ]
 
     operations = [
