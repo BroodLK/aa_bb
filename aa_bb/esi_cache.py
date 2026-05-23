@@ -2,7 +2,7 @@
 Helpers for caching ESI expiry timestamps in Django's cache backend.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone as dt_timezone
 
 from django.core.cache import cache
 from django.utils import timezone
@@ -19,7 +19,7 @@ def get_cached_expiry(key: str) -> datetime | None:
     if ts is None:
         return None
     try:
-        return datetime.fromtimestamp(float(ts), tz=timezone.utc)
+        return datetime.fromtimestamp(float(ts), tz=dt_timezone.utc)
     except (TypeError, ValueError):
         cache.delete(key)
         return None

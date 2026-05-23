@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import timezone as dt_timezone
 from typing import Any
 
 from django.utils import timezone
@@ -60,8 +61,8 @@ def parse_expires(headers: dict | None):
     except (TypeError, ValueError):
         return None
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+        dt = dt.replace(tzinfo=dt_timezone.utc)
+    return dt.astimezone(dt_timezone.utc)
 
 
 def _parse_response_expires(response):
