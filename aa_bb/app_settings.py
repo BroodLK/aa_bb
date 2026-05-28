@@ -1367,17 +1367,24 @@ def get_or_create_prices(item_id, force_refresh=True):
                 logger.error(f"Fuzzwork price fetch failed for {item_id}: {e}")
 
     if buy is not None and sell is not None:
-        if price_obj:
-            price_obj.buy = buy
-            price_obj.sell = sell
-            price_obj.save()
-            return price_obj
-        else:
-            return EveItemPrice.objects.create(
-                eve_type_id=item_id,
-                buy=buy,
-                sell=sell
-            )
+        if not price_obj:
+            try:
+                return EveItemPrice.objects.create(
+                    eve_type_id=item_id,
+                    buy=buy,
+                    sell=sell
+                )
+            except IntegrityError:
+                logger.warning(
+                    "IntegrityError while creating price cache for %s, fetching existing row.",
+                    item_id,
+                )
+                price_obj = EveItemPrice.objects.get(eve_type_id=item_id)
+
+        price_obj.buy = buy
+        price_obj.sell = sell
+        price_obj.save()
+        return price_obj
 
     return price_obj
 

@@ -1,9 +1,11 @@
 from django.test import TestCase
 from django.utils import timezone
+from django.db import IntegrityError
 from datetime import timedelta
 from unittest.mock import patch, MagicMock
 from aa_bb.models import BigBrotherConfig, EveItemPrice
 from aa_bb.app_settings import get_or_create_prices
+
 
 class TestPriceTimer(TestCase):
     def setUp(self):
@@ -11,7 +13,7 @@ class TestPriceTimer(TestCase):
         self.config.market_transactions_price_max_age = 10
         self.config.save()
 
-    @patch('aa_bb.checks.sus_trans.requests.get')
+    @patch('aa_bb.app_settings.requests.get')
     def test_price_timer_configurable(self, mock_get):
         # Create a price object that is 8 days old
         # With default 7 days it should refresh
@@ -59,4 +61,34 @@ class TestPriceTimer(TestCase):
 
         # Verify it DID refresh
         self.assertTrue(mock_get.called)
-        self.assertEqual(result.buy, 200.0) # market_transactions_price_instant is True by default
+        self.assertEqual(result.buy, 200.0)  # market_transactions_price_instant is True by default
+
+    @patch('aa_bb.app_settings.requests.get')
+    def test_price_creation_recovers_from_duplicate_insert(self, mock_get):
+        item_id = 4321
+        self.config.market_transactions_price_method = 'Fuzzwork'
+        self.config.save()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            str(item_id): {
+                "buy": {"max": 300.0, "percentile": 290.0},
+                "sell": {"min": 330.0, "percentile": 340.0},
+            }
+        }
+        mock_get.return_value = mock_response
+
+        original_create = EveItemPrice.objects.create
+
+        def create_then_raise(*args, **kwargs):
+            original_create(*args, **kwargs)
+            raise IntegrityError("Duplicate entry for primary key")
+
+        with patch.object(EveItemPrice.objects, 'create', side_effect=create_then_raise):
+            result = get_or_create_prices(item_id)
+
+        self.assertEqual(result.eve_type_id, item_id)
+        self.assertEqual(result.buy, 300.0)
+        self.assertEqual(result.sell, 330.0)
+        self.assertEqual(EveItemPrice.objects.filter(eve_type_id=item_id).count(), 1)
