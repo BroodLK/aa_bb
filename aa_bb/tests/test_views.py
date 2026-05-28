@@ -36,10 +36,11 @@ class TestDashboardViews(TestCase):
         perms = Permission.objects.filter(content_type=content_type)
 
         basic_access = perms.get(codename="basic_access")
+        basic_access_cb = perms.get(codename="basic_access_cb")
         full_access = perms.get(codename="full_access")
         recruiter_access = perms.get(codename="recruiter_access")
 
-        cls.admin_user.user_permissions.add(basic_access, full_access)
+        cls.admin_user.user_permissions.add(basic_access, basic_access_cb, full_access)
         cls.recruiter_user.user_permissions.add(basic_access, recruiter_access)
         cls.basic_user.user_permissions.add(basic_access)
 
@@ -150,6 +151,44 @@ class TestDashboardViews(TestCase):
         options = response.context["dropdown_options"]
         self.assertNotIn("Member Char", options)
         self.assertIn("Guest Char", options)
+
+    def test_index_disabled_when_inactive(self):
+        self.assertTrue(self.client.login(username="basic", password="password"))
+        config = BigBrotherConfig.get_solo()
+        config.is_active = False
+        config.save()
+
+        response = self.client.get(reverse("aa_bb:index"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "aa_bb/disabled.html")
+        self.assertContains(response, "Big Brother is currently inactive.")
+        self.assertFalse(BigBrotherConfig.get_solo().is_active)
+
+    def test_json_dashboard_endpoints_forbidden_when_inactive(self):
+        self.assertTrue(self.client.login(username="admin", password="password"))
+        config = BigBrotherConfig.get_solo()
+        config.is_active = False
+        config.save()
+
+        response = self.client.get(reverse("aa_bb:load_card"))
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json(), {"error": "Big Brother is currently inactive.", "inactive": True})
+        self.assertFalse(BigBrotherConfig.get_solo().is_active)
+
+    def test_corpbrother_index_disabled_when_inactive(self):
+        self.assertTrue(self.client.login(username="admin", password="password"))
+        config = BigBrotherConfig.get_solo()
+        config.is_active = False
+        config.save()
+
+        response = self.client.get(reverse("aa_cb:index"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "aa_cb/disabled.html")
+        self.assertContains(response, "Corp Brother is currently inactive.")
+        self.assertFalse(BigBrotherConfig.get_solo().is_active)
 
     def test_available_cards_logic(self):
         # With URLs configured, both blacklist cards should be present

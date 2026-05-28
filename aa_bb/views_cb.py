@@ -8,7 +8,6 @@ import time
 # Third Party
 from celery import shared_task
 from celery.exceptions import Ignore
-from django_celery_beat.models import PeriodicTask
 
 # Django
 from django.contrib.auth.decorators import login_required, permission_required
@@ -26,9 +25,9 @@ from django.utils import timezone
 
 # Alliance Auth
 from allianceauth.authentication.models import CharacterOwnership
+from allianceauth.eveonline.models import EveCorporationInfo
 from allianceauth.services.hooks import get_extension_logger
-
-from .task_helpers.periodic_tasks import format_task_name
+from esi.models import Token
 
 logger = get_extension_logger(__name__)
 
@@ -58,6 +57,12 @@ from .app_settings import (
     resolve_corporation_name,
 )
 from .models import BigBrotherConfig, WarmProgress
+from .ui_state import (
+    CORP_BROTHER_INACTIVE_MESSAGE,
+    require_active_http,
+    require_active_json,
+    require_active_page,
+)
 
 if aablacklist_active():
     # AA BigBrother
@@ -80,24 +85,15 @@ CARD_DEFINITIONS = [
 ]
 
 
-# Alliance Auth
-from allianceauth.eveonline.models import EveCorporationInfo
-from esi.models import Token
-
-
 # Index view
 @login_required
 @permission_required("aa_bb.basic_access_cb")
+@require_active_page("aa_cb/disabled.html", CORP_BROTHER_INACTIVE_MESSAGE)
 def index(request: WSGIRequest):
     """Render the CorpBrother dashboard with corp dropdown options."""
     dropdown_options = []
-    task_name = format_task_name("BB run regular updates")
-    task = PeriodicTask.objects.filter(name=task_name).first()
-    BigBrotherConfig.get_solo().is_active = True
-    if not BigBrotherConfig.get_solo().is_active:  # Inactive BB -> show disabled page.
-        msg = "Corp Brother is currently inactive; please fill settings and enable the task"
-        return render(request, "aa_cb/disabled.html", {"message": msg})
-    ignored_str = BigBrotherConfig.get_solo().ignored_corporations or ""
+    cfg = BigBrotherConfig.get_solo()
+    ignored_str = cfg.ignored_corporations or ""
     ignored_ids = {int(s) for s in ignored_str.split(",") if s.strip().isdigit()}
     ignored_corps = EveCorporationInfo.objects.filter(corporation_id__in=ignored_ids).distinct()
     logger.info(f"ignored ids: {str(ignored_ids)}, corps {len(ignored_corps)}")
@@ -106,7 +102,7 @@ def index(request: WSGIRequest):
         qs = EveCorporationInfo.objects.all()
 
     elif request.user.has_perm("aa_bb.recruiter_access_cb"):  # Recruiters only see guest-state corp tokens.
-        guest_states = BigBrotherConfig.get_solo().bb_guest_states.all()
+        guest_states = cfg.bb_guest_states.all()
         qs = EveCorporationInfo.objects.filter(
             corporation_id__in=Token.objects.filter(
                 token_type=Token.TOKEN_TYPE_CORPORATION, user__state__in=guest_states
@@ -139,6 +135,7 @@ def index(request: WSGIRequest):
 # Bulk loader (fallback)
 @login_required
 @permission_required("aa_bb.basic_access_cb")
+@require_active_json(CORP_BROTHER_INACTIVE_MESSAGE)
 def load_cards(request: WSGIRequest) -> JsonResponse:
     """Legacy bulk loader that fetches every CorpBrother card for a corp."""
     corp_id = request.GET.get("option")  # now contains corporation_id
@@ -201,6 +198,7 @@ def get_card_data(request, corp_id: int, key: str):
 # Single-card loader
 @login_required
 @permission_required("aa_bb.basic_access_cb")
+@require_active_json(CORP_BROTHER_INACTIVE_MESSAGE)
 def load_card(request):
     """Return a single CorpBrother card payload for the selected corp."""
     corp_id = request.GET.get("option")
@@ -357,6 +355,7 @@ def warm_entity_cache_task(self, user_id):
 
 @login_required
 @permission_required("aa_bb.basic_access_cb")
+@require_active_json(CORP_BROTHER_INACTIVE_MESSAGE)
 def warm_cache(request):
     """
     Endpoint to kick off warming for a given corporation ID.
@@ -382,6 +381,7 @@ def warm_cache(request):
 
 @login_required
 @permission_required("aa_bb.basic_access_cb")
+@require_active_json(CORP_BROTHER_INACTIVE_MESSAGE)
 def get_warm_progress(request):
     """AJAX helper returning progress for corp cache warm jobs."""
     try:
@@ -409,6 +409,7 @@ def get_warm_progress(request):
 # Paginated endpoints for Suspicious Contracts
 @login_required
 @permission_required("aa_bb.basic_access_cb")
+@require_active_json(CORP_BROTHER_INACTIVE_MESSAGE)
 def list_contract_ids(request):
     """
     Return JSON list of all contract IDs and issue dates for the selected corporation.
@@ -428,6 +429,7 @@ def list_contract_ids(request):
 
 @login_required
 @permission_required("aa_bb.basic_access_cb")
+@require_active_json(CORP_BROTHER_INACTIVE_MESSAGE)
 def check_contract_batch(request):
     """
     Check a slice of contracts for hostility by start/limit parameters.
@@ -487,6 +489,7 @@ def check_contract_batch(request):
 
 @login_required
 @permission_required("aa_bb.basic_access_cb")
+@require_active_http(CORP_BROTHER_INACTIVE_MESSAGE)
 def stream_contracts_sse(request: WSGIRequest):
     """Push suspicious corp contracts over SSE for the recruiter dashboard."""
     option = request.GET.get("option", "")
@@ -595,6 +598,7 @@ def stream_contracts_sse(request: WSGIRequest):
 
 @login_required
 @permission_required("aa_bb.basic_access_cb")
+@require_active_http(CORP_BROTHER_INACTIVE_MESSAGE)
 def stream_assets_sse(request):
     """Stream hostile assets for a corporation via SSE."""
     corp_id = request.GET.get("option", "")
@@ -712,6 +716,7 @@ def _render_contract_row_html(row: dict) -> str:
 
 @login_required
 @permission_required("aa_bb.basic_access_cb")
+@require_active_http(CORP_BROTHER_INACTIVE_MESSAGE)
 def stream_transactions_sse(request):
     """
     Stream hostile wallet‐transactions one <tr> at a time via SSE,

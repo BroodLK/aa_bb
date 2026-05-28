@@ -7,7 +7,6 @@ import time
 # Third Party
 from celery import shared_task
 from celery.exceptions import Ignore
-from django_celery_beat.models import PeriodicTask
 
 # Django
 from django.contrib import messages
@@ -74,6 +73,12 @@ from .models import (
     ComplianceTicket,
     LeaveRequest,
     WarmProgress,
+)
+from .ui_state import (
+    BIG_BROTHER_INACTIVE_MESSAGE,
+    require_active_http,
+    require_active_json,
+    require_active_page,
 )
 from .views_cb import CARD_DEFINITIONS
 
@@ -210,6 +215,7 @@ def get_user_id(character_name):
 # Single-card loader
 @login_required
 @permission_required("aa_bb.basic_access")
+@require_active_json(BIG_BROTHER_INACTIVE_MESSAGE)
 def load_card(request):
     """Return the rendered HTML for a single dashboard card."""
     option = request.GET.get("option")
@@ -261,6 +267,7 @@ def load_card(request):
 # Bulk loader (fallback)
 @login_required
 @permission_required("aa_bb.basic_access")
+@require_active_json(BIG_BROTHER_INACTIVE_MESSAGE)
 def load_cards(request: WSGIRequest) -> JsonResponse:
     """Bulk-load every card for a selected user (fallback for legacy UI)."""
     selected_option = request.GET.get("option")
@@ -437,6 +444,7 @@ def warm_entity_cache_task(self, user_id, user_main=None):
 
 @login_required
 @permission_required("aa_bb.basic_access")
+@require_active_json(BIG_BROTHER_INACTIVE_MESSAGE)
 def warm_cache(request):
     """
     Endpoint to kick off warming for a given character name (option).
@@ -460,6 +468,7 @@ def warm_cache(request):
 
 @login_required
 @permission_required("aa_bb.basic_access")
+@require_active_json(BIG_BROTHER_INACTIVE_MESSAGE)
 def get_warm_progress(request):
     """
     AJAX endpoint returning all in-flight and queued warm-up info:
@@ -490,18 +499,11 @@ def get_warm_progress(request):
 # Index view
 @login_required
 @permission_required("aa_bb.basic_access")
+@require_active_page("aa_bb/disabled.html", BIG_BROTHER_INACTIVE_MESSAGE)
 def index(request: WSGIRequest):
     """Render the dashboard shell plus dropdown options for authorized recruiters."""
     dropdown_options = []
-    from .task_helpers.periodic_tasks import format_task_name
-
-    task_name = format_task_name("BB run regular updates")
-    task = PeriodicTask.objects.filter(name=task_name).first()
     cfg = BigBrotherConfig.get_solo()
-    cfg.is_active = True
-    if not cfg.is_active:  # Guard against misconfigured BB.
-        msg = "Big Brother is currently inactive; please fill settings and enable the task"
-        return render(request, "aa_bb/disabled.html", {"message": msg})
 
     member_states = cfg.bb_member_states.all()
     guest_states = cfg.bb_guest_states.all()
@@ -537,6 +539,7 @@ def index(request: WSGIRequest):
 # Paginated endpoints for Suspicious Contracts
 @login_required
 @permission_required("aa_bb.basic_access")
+@require_active_json(BIG_BROTHER_INACTIVE_MESSAGE)
 def list_contract_ids(request):
     """
     Return JSON list of all contract IDs and issue dates for the selected user.
@@ -562,6 +565,7 @@ def list_contract_ids(request):
 
 @login_required
 @permission_required("aa_bb.basic_access")
+@require_active_json(BIG_BROTHER_INACTIVE_MESSAGE)
 def check_contract_batch(request):
     """
     Check a slice of contracts for hostility by start/limit parameters.
@@ -623,6 +627,7 @@ def check_contract_batch(request):
 
 @login_required
 @permission_required("aa_bb.basic_access")
+@require_active_http(BIG_BROTHER_INACTIVE_MESSAGE)
 def stream_contracts_sse(request: WSGIRequest):
     """Push suspicious contract rows to the browser using server-sent events."""
     option = request.GET.get("option", "")
@@ -823,6 +828,7 @@ def _render_mail_row_html(row: dict) -> str:
 
 @login_required
 @permission_required("aa_bb.basic_access")
+@require_active_http(BIG_BROTHER_INACTIVE_MESSAGE)
 def stream_mails_sse(request):
     """Stream hostile mails one row at a time via SSE, hydrating sender+recipients."""
     option = request.GET.get("option", "")
@@ -902,6 +908,7 @@ def stream_mails_sse(request):
 
 @login_required
 @permission_required("aa_bb.basic_access")
+@require_active_http(BIG_BROTHER_INACTIVE_MESSAGE)
 def stream_transactions_sse(request):
     """
     Stream hostile wallet‐transactions one <tr> at a time via SSE,
@@ -1079,6 +1086,7 @@ def stream_transactions_sse(request):
 
 @login_required
 @permission_required("aa_bb.basic_access")
+@require_active_http(BIG_BROTHER_INACTIVE_MESSAGE)
 def stream_assets_sse(request):
     """Stream hostile assets one system at a time via SSE."""
     option = request.GET.get("option", "")
@@ -1166,6 +1174,7 @@ def stream_assets_sse(request):
 
 @login_required
 @permission_required("aa_bb.basic_access")
+@require_active_http(BIG_BROTHER_INACTIVE_MESSAGE)
 def stream_clones_sse(request):
     """Stream hostile clones via SSE."""
     option = request.GET.get("option", "")
@@ -1249,6 +1258,7 @@ def stream_clones_sse(request):
 
 @login_required
 @permission_required("aa_bb.basic_access")
+@require_active_http(BIG_BROTHER_INACTIVE_MESSAGE)
 def stream_contacts_sse(request):
     """Stream suspicious contacts via SSE."""
     option = request.GET.get("option", "")
@@ -1385,6 +1395,7 @@ def get_card_data(request, target_user_id: int, key: str):
 
 @require_POST
 @permission_required("can_blacklist_characters")
+@require_active_http(BIG_BROTHER_INACTIVE_MESSAGE)
 def add_blacklist_view(request):
     """POST endpoint to add all of a target's characters to the corp blacklist."""
     issuer_id = int(request.POST["issuer_user_id"])
@@ -1397,6 +1408,7 @@ def add_blacklist_view(request):
 
 @login_required
 @permission_required("aa_bb.can_access_loa")
+@require_active_page("aa_bb/disabled.html", BIG_BROTHER_INACTIVE_MESSAGE)
 def loa_loa(request):
     """Display the LoA dashboard for the requesting user."""
     cfg = BigBrotherConfig.get_solo()
@@ -1408,6 +1420,7 @@ def loa_loa(request):
 
 @login_required
 @permission_required("aa_bb.can_view_all_loa")
+@require_active_page("aa_bb/disabled.html", BIG_BROTHER_INACTIVE_MESSAGE)
 def loa_admin(request):
     """Administrative LoA queue view with filtering."""
     cfg = BigBrotherConfig.get_solo()
@@ -1441,6 +1454,7 @@ def loa_admin(request):
 
 @login_required
 @permission_required("aa_bb.can_access_loa")
+@require_active_page("aa_bb/disabled.html", BIG_BROTHER_INACTIVE_MESSAGE)
 def loa_request(request):
     """Handle LoA request creation form (GET/POST)."""
     cfg = BigBrotherConfig.get_solo()
@@ -1482,6 +1496,7 @@ def loa_request(request):
 
 @login_required
 @permission_required("aa_bb.can_access_loa")
+@require_active_http(BIG_BROTHER_INACTIVE_MESSAGE)
 def delete_request(request, pk):
     """Allow a user to delete their own pending LoA."""
     if request.method == "POST":  # Only accept POST to mutate state.
@@ -1508,6 +1523,7 @@ def delete_request(request, pk):
 
 @login_required
 @permission_required("aa_bb.can_manage_loa")
+@require_active_http(BIG_BROTHER_INACTIVE_MESSAGE)
 def delete_request_admin(request, pk):
     """Admin-only delete path for any LoA request."""
     if request.method == "POST":  # Guard mutation behind POST.
@@ -1532,6 +1548,7 @@ def delete_request_admin(request, pk):
 
 @login_required
 @permission_required("aa_bb.can_manage_loa")
+@require_active_http(BIG_BROTHER_INACTIVE_MESSAGE)
 def approve_request(request, pk):
     """Mark an LoA approved and notify Discord."""
     if request.method == "POST":  # Only process POST actions.
@@ -1557,6 +1574,7 @@ def approve_request(request, pk):
 
 @login_required
 @permission_required("aa_bb.can_manage_loa")
+@require_active_http(BIG_BROTHER_INACTIVE_MESSAGE)
 def deny_request(request, pk):
     """Mark an LoA denied and notify Discord."""
     if request.method == "POST":  # Only mutate via POST requests.
@@ -1582,6 +1600,7 @@ def deny_request(request, pk):
 
 @login_required
 @permission_required("aa_bb.ticket_manager")
+@require_active_page("aa_bb/disabled.html", BIG_BROTHER_INACTIVE_MESSAGE)
 def ticket_list(request):
     """List compliance tickets."""
     # Django
@@ -1610,6 +1629,7 @@ def ticket_list(request):
 
 @login_required
 @permission_required("aa_bb.ticket_manager")
+@require_active_page("aa_bb/disabled.html", BIG_BROTHER_INACTIVE_MESSAGE)
 def ticket_view(request, pk):
     """View details and comments for a specific ticket."""
     ticket = get_object_or_404(ComplianceTicket.objects.select_related("user__profile__main_character"), pk=pk)
@@ -1622,6 +1642,7 @@ def ticket_view(request, pk):
 @login_required
 @permission_required("aa_bb.ticket_manager")
 @require_POST
+@require_active_http(BIG_BROTHER_INACTIVE_MESSAGE)
 def ticket_resolve(request, pk):
     """Resolve a ticket via the UI."""
     ticket = get_object_or_404(ComplianceTicket, pk=pk)
@@ -1638,6 +1659,7 @@ def ticket_resolve(request, pk):
 @login_required
 @permission_required("aa_bb.ticket_manager")
 @require_POST
+@require_active_http(BIG_BROTHER_INACTIVE_MESSAGE)
 def ticket_reopen(request, pk):
     """Reopen a resolved ticket."""
     ticket = get_object_or_404(ComplianceTicket, pk=pk)
@@ -1651,6 +1673,7 @@ def ticket_reopen(request, pk):
 @login_required
 @permission_required("aa_bb.ticket_manager")
 @require_POST
+@require_active_http(BIG_BROTHER_INACTIVE_MESSAGE)
 def ticket_mark_exception(request, pk):
     """Mark a ticket as an exception."""
     ticket = get_object_or_404(ComplianceTicket, pk=pk)
@@ -1666,6 +1689,7 @@ def ticket_mark_exception(request, pk):
 @login_required
 @permission_required("aa_bb.ticket_manager")
 @require_POST
+@require_active_http(BIG_BROTHER_INACTIVE_MESSAGE)
 def ticket_clear_exception(request, pk):
     """Clear exception status from a ticket."""
     ticket = get_object_or_404(ComplianceTicket, pk=pk)
@@ -1680,6 +1704,7 @@ def ticket_clear_exception(request, pk):
 @login_required
 @permission_required("aa_bb.ticket_manager")
 @require_POST
+@require_active_http(BIG_BROTHER_INACTIVE_MESSAGE)
 def ticket_add_comment(request, pk):
     """Add a comment to a ticket and optionally post to Discord."""
     ticket = get_object_or_404(ComplianceTicket, pk=pk)

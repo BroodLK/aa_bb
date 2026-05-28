@@ -10,8 +10,8 @@
 
 <!-- Error / Info Message -->
 <div id="messageBox" class="alert alert-danger">
-    Corp Brother is currently in an inactive state, please make sure it is up to date, you have filled the settings and turned on the task.
-    </div>
+    {{ message|default:"Corp Brother is currently inactive. Please review the configuration and re-enable the plugin when ready." }}
+</div>
 
 {% endblock %}
 
