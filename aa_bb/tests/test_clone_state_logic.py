@@ -1,11 +1,18 @@
-from unittest.mock import patch, MagicMock
-from django.test import TestCase
+# Standard Library
+from unittest.mock import patch
+
+# Django
 from django.contrib.auth.models import User
-from django.utils import timezone
-from allianceauth.eveonline.models import EveCharacter
+from django.test import TestCase
+
+# Alliance Auth
 from allianceauth.authentication.models import CharacterOwnership
-from aa_bb.models import BigBrotherConfig
+from allianceauth.eveonline.models import EveCharacter
+
+# AA BigBrother
 from aa_bb.checks.clone_state import determine_character_state
+from aa_bb.models import BigBrotherConfig
+
 
 class CloneStateLogicTest(TestCase):
     @classmethod
@@ -22,9 +29,9 @@ class CloneStateLogicTest(TestCase):
         # Ensure config exists
         BigBrotherConfig.get_solo()
 
-    @patch('aa_bb.checks.clone_state.CharacterAudit')
-    @patch('aa_bb.checks.clone_state.Skill')
-    @patch('aa_bb.checks.clone_state.get_user_characters')
+    @patch("aa_bb.checks.clone_state.CharacterAudit")
+    @patch("aa_bb.checks.clone_state.Skill")
+    @patch("aa_bb.checks.clone_state.get_user_characters")
     def test_omega_detection_from_omega_only_skill(self, mock_get_chars, mock_skill, mock_audit):
         """
         Verify that a character with an active Omega-only skill is detected as Omega.
@@ -33,7 +40,7 @@ class CloneStateLogicTest(TestCase):
         mock_get_chars.return_value = {1001: "Test Character"}
 
         # Mocking fallback_skill_ids to include 21803
-        with patch('aa_bb.checks.clone_state._load_fallback_skill_ids', return_value=[21803]):
+        with patch("aa_bb.checks.clone_state._load_fallback_skill_ids", return_value=[21803]):
             # Current implementation bulk-fetches alpha and fallback skills in one query.
             mock_skill.objects.filter.return_value.values.return_value = [
                 {

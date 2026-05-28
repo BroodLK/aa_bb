@@ -2,8 +2,11 @@
 Helpers for caching ESI expiry timestamps in Django's cache backend.
 """
 
-from datetime import datetime, timezone as dt_timezone
+# Standard Library
+from datetime import datetime
+from datetime import timezone as dt_timezone
 
+# Django
 from django.core.cache import cache
 from django.utils import timezone
 

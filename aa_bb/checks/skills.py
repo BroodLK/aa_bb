@@ -5,23 +5,27 @@ These helpers fetch and render frequently referenced skills as well as
 generic routines (get_user_skill_info) that other check modules import.
 """
 
-from allianceauth.services.hooks import get_extension_logger
-
-
-from django.utils.html import format_html
-from ..app_settings import get_user_characters, format_int, get_character_id, corptools_active
+# Standard Library
 import json
 import os
 from typing import Dict
-from django.utils.safestring import mark_safe
+
+# Django
 from django.utils import timezone
-from functools import lru_cache
+from django.utils.html import format_html
+from django.utils.safestring import mark_safe
+
+# Alliance Auth
+from allianceauth.services.hooks import get_extension_logger
+
+from ..app_settings import corptools_active, get_character_id, get_user_characters
 
 logger = get_extension_logger(__name__)
 
 try:
     if corptools_active():
-        from corptools.models import CharacterAudit, Skill, SkillTotals, CorporationHistory
+        # Third Party
+        from corptools.models import CharacterAudit, CorporationHistory, Skill, SkillTotals
     else:
         CharacterAudit = None
         Skill = None
@@ -36,7 +40,7 @@ except ImportError:
 _SKILLS_JSON_PATH = os.path.join(os.path.dirname(__file__), "skills.json")
 
 skill_ids = [
-    3426,   # CPU Management
+    3426,  # CPU Management
     21603,  # Cynosural Field Theory
     22761,  # Recon Ships
     28609,  # Heavy Interdiction Cruisers
@@ -52,12 +56,13 @@ skill_ids = [
     33856,  # Expedition Frigates
 ]
 
+
 def get_skill_map():
     """Return a mapping of skill_id -> localized name parsed from skills.json."""
     try:
         with open(_SKILLS_JSON_PATH, "r", encoding="utf-8") as f:
             _raw = json.load(f)
-    except (OSError, ValueError) as e:
+    except (OSError, ValueError):
         # Fallback to an empty mapping if the file is missing or invalid.
         _raw = {}
     # Flatten into { skill_id: skill_name }
@@ -75,6 +80,7 @@ def get_skill_map():
                 skill_name_map[sid] = val
     return skill_name_map
 
+
 def get_user_skill_info(user_id: int, skill_id: int) -> dict:
     """
     Given an AllianceAuth user ID and an EVE skill ID, returns a dict
@@ -91,8 +97,7 @@ def get_user_skill_info(user_id: int, skill_id: int) -> dict:
 
     # 2) fetch audits only for those character IDs
     audits = (
-        CharacterAudit.objects
-        .filter(character__character_id__in=ownership_map.keys())
+        CharacterAudit.objects.filter(character__character_id__in=ownership_map.keys())
         .select_related("skilltotals")
         .prefetch_related("skill_set")
     )
@@ -105,21 +110,23 @@ def get_user_skill_info(user_id: int, skill_id: int) -> dict:
         try:
             skill = audit.skill_set.get(skill_id=skill_id)
             trained = skill.trained_skill_level
-            active  = skill.active_skill_level
+            active = skill.active_skill_level
         except Skill.DoesNotExist:
             trained = 0
-            active  = 0
+            active = 0
         if hasattr(audit, "skilltotals"):  # Prefer real SkillTotals rows when available.
             totals = audit.skilltotals  # SkillTotals instance
         else:
+
             class DummyTotals:
                 total_sp = 0
+
             totals = DummyTotals()
 
         result[char_name] = {
             "trained_skill_level": trained,
-            "active_skill_level":  active,
-            "total_sp":            totals.total_sp,
+            "active_skill_level": active,
+            "total_sp": totals.total_sp,
         }
 
     return result
@@ -135,27 +142,28 @@ def get_multiple_user_skill_info(user_id: int, skill_ids: list[int]) -> dict[str
     """
     # 1) Load all characters owned by this user
     ownership_map = get_user_characters(user_id)
-    #logger.info(f"ownership: {len(ownership_map)}")
-    #logger.info(f"ownership: {str(ownership_map)}")
+    # logger.info(f"ownership: {len(ownership_map)}")
+    # logger.info(f"ownership: {str(ownership_map)}")
 
     if not ownership_map:  # Bail out when the user has zero characters.
         return {}
 
     # 2) Fetch audits and related totals and skills in bulk
     audits = (
-        CharacterAudit.objects
-        .filter(character__character_id__in=ownership_map.keys())             # single SQL WHERE IN :contentReference[oaicite:1]{index=1}
-        .select_related("skilltotals")                              # JOIN to grab SkillTotals in one query :contentReference[oaicite:2]{index=2}
-        .prefetch_related("skill_set")                             # prefetch all Skill rows per character :contentReference[oaicite:3]{index=3}
+        CharacterAudit.objects.filter(
+            character__character_id__in=ownership_map.keys()
+        )  # single SQL WHERE IN :contentReference[oaicite:1]{index=1}
+        .select_related("skilltotals")  # JOIN to grab SkillTotals in one query :contentReference[oaicite:2]{index=2}
+        .prefetch_related("skill_set")  # prefetch all Skill rows per character :contentReference[oaicite:3]{index=3}
     )
-    #logger.info(f"audits: {len(audits)}")
+    # logger.info(f"audits: {len(audits)}")
 
     result: dict[str, dict] = {}
 
     # 3) Build the output dict
     for audit in audits:
         name = ownership_map[audit.character.character_id]
-        #logger.info(name)
+        # logger.info(name)
         totals = audit.skilltotals
 
         # Gather this character's skills into a lookup by skill_id
@@ -178,12 +186,13 @@ def get_multiple_user_skill_info(user_id: int, skill_ids: list[int]) -> dict[str
                 active_level = 0
             entry[sid] = {
                 "trained": trained_level,
-                "active":  active_level,
+                "active": active_level,
             }
 
         result[name] = entry
 
     return result
+
 
 def render_user_skills_html(user_id: int) -> str:
     """
@@ -197,7 +206,7 @@ def render_user_skills_html(user_id: int) -> str:
     # 1) Fetch all characters’ skill info in one go
     data = get_multiple_user_skill_info(user_id, skill_ids)
     # data is: { "CharName": { "total_sp": int, skill_id: {"trained": int, "active": int}, ... }, ... }
-    #logger.info(len(data))
+    # logger.info(len(data))
     html_parts = []
     for char_name, info in data.items():
         total_sp = info.get("total_sp", 0)
@@ -207,8 +216,6 @@ def render_user_skills_html(user_id: int) -> str:
             sp_days = (total_sp - 384000) / 64800
         else:
             sp_days = 0
-
-
 
         # Guard against missing or zero age
         if isinstance(char_age, (int, float)) and char_age > 0:  # Only compute ratios when age data available.
@@ -221,23 +228,25 @@ def render_user_skills_html(user_id: int) -> str:
             age_display = "N/A"
 
         # Header with total SP next to name
-        html_parts.append(format_html(
-            "<h3>{}</h3> <small>(<b>{}</b> SP || <b>{}</b> Days Old || SP to Age Ratio: <b>{}</b>)</small>",
-            char_name,
-            "{:,}".format(total_sp),
-            age_display,
-            ratio_display,
-        ))
+        html_parts.append(
+            format_html(
+                "<h3>{}</h3> <small>(<b>{}</b> SP || <b>{}</b> Days Old || SP to Age Ratio: <b>{}</b>)</small>",
+                char_name,
+                "{:,}".format(total_sp),
+                age_display,
+                ratio_display,
+            )
+        )
 
         # Build table header
         html_parts.append(
             '<table class="table table-striped table-hover stats">'
-            '<thead><tr>'
-            '<th>Skill</th>'
-            '<th>Trained Level</th>'
-            '<th>Active Level</th>'
-            '</tr></thead>'
-            '<tbody>'
+            "<thead><tr>"
+            "<th>Skill</th>"
+            "<th>Trained Level</th>"
+            "<th>Active Level</th>"
+            "</tr></thead>"
+            "<tbody>"
         )
 
         # One row per skill_id, following the global list order
@@ -245,31 +254,30 @@ def render_user_skills_html(user_id: int) -> str:
             levels = info.get(sid, {"trained": 0, "active": 0})
             trained = levels["trained"]
             active = levels["active"]
-            style_t = ''
-            style_a = ''
+            style_t = ""
+            style_a = ""
             skill_name = skill_name_map.get(sid, str(sid))
             if trained > 0 and sid != 3426 or trained > 3:  # Highlight suspiciously high-trained levels.
                 style_t = ' class="text-danger"'
             if active > 0 and sid != 3426 or active > 3:  # Same for active levels beyond alpha caps.
                 style_a = ' class="text-danger"'
-            html_parts.append(format_html(
-                "<tr>"
-                "<td>{skill}</td>"
-                "<td {t_attr}>{t_val}</td>"
-                "<td {a_attr}>{a_val}</td>"
-                "</tr>",
-                skill=skill_name,
-                t_attr=mark_safe(style_t),
-                t_val=trained,
-                a_attr=mark_safe(style_a),
-                a_val=active,
-            ))
+            html_parts.append(
+                format_html(
+                    "<tr>" "<td>{skill}</td>" "<td {t_attr}>{t_val}</td>" "<td {a_attr}>{a_val}</td>" "</tr>",
+                    skill=skill_name,
+                    t_attr=mark_safe(style_t),
+                    t_val=trained,
+                    a_attr=mark_safe(style_a),
+                    a_val=active,
+                )
+            )
 
         # Close table
         html_parts.append("</tbody></table>")
 
     # Join everything into one HTML-safe string
     return format_html("".join(html_parts))
+
 
 def get_char_age(char_id: int) -> int | None:
     """
@@ -281,17 +289,14 @@ def get_char_age(char_id: int) -> int | None:
         return None
     try:
         # 1) Find the audit record for this EVE character ID
-        audit = CharacterAudit.objects.get(
-            character__character_id=char_id
-        )
+        audit = CharacterAudit.objects.get(character__character_id=char_id)
     except CharacterAudit.DoesNotExist:
         return None
 
     # 2) Get the earliest corp history entry for that audit
     first_hist = (
-        CorporationHistory.objects
-        .filter(character=audit)
-        .order_by('start_date')    # ORDER BY start_date ASC :contentReference[oaicite:0]{index=0}
+        CorporationHistory.objects.filter(character=audit)
+        .order_by("start_date")  # ORDER BY start_date ASC :contentReference[oaicite:0]{index=0}
         .first()
     )
     if not first_hist:  # No corp history entries available → cannot compute age.

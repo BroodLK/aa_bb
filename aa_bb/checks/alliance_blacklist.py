@@ -3,8 +3,11 @@ alliance blacklist helper utilities. All rendering happens elsewhere, but
 collecting the character names in one helper makes templating easier.
 """
 
-from ..models import BigBrotherConfig
+# Django
 from django.utils.html import format_html
+
+from ..models import BigBrotherConfig
+
 
 def get_alliance_blacklist_link():
     """
@@ -15,7 +18,5 @@ def get_alliance_blacklist_link():
     if not url:
         return "Alliance Blacklist URL not configured."
     return format_html(
-        '<a href="{}" target="_blank" class="btn btn-primary btn-block">Go to Alliance Blacklist</a>',
-        url
+        '<a href="{}" target="_blank" class="btn btn-primary btn-block">Go to Alliance Blacklist</a>', url
     )
-

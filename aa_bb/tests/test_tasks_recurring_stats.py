@@ -1,10 +1,18 @@
-from django.test import TestCase
+# Standard Library
+from unittest.mock import patch
+
+# Django
 from django.contrib.auth.models import User
+from django.test import TestCase
+
+# Alliance Auth
 from allianceauth.authentication.models import State, UserProfile
 from allianceauth.eveonline.models import EveCharacter
+
+# AA BigBrother
 from aa_bb.models import BigBrotherConfig, RecurringStatsConfig
 from aa_bb.tasks_other import BB_send_recurring_stats
-from unittest.mock import patch, MagicMock
+
 
 class TestTasksRecurringStats(TestCase):
     @classmethod
@@ -24,7 +32,7 @@ class TestTasksRecurringStats(TestCase):
             corporation_id=201,
             corporation_name="Member Corp",
             alliance_id=301,
-            alliance_name="Member Alliance"
+            alliance_name="Member Alliance",
         )
         cls.profile_member.main_character = cls.char_member
         cls.profile_member.save()
@@ -39,7 +47,7 @@ class TestTasksRecurringStats(TestCase):
             corporation_id=202,
             corporation_name="Guest Corp",
             alliance_id=302,
-            alliance_name="Guest Alliance"
+            alliance_name="Guest Alliance",
         )
         cls.profile_guest.main_character = cls.char_guest
         cls.profile_guest.save()

@@ -2,8 +2,11 @@
 Helpers for constructing links against shared blacklist tools.
 """
 
-from ..models import BigBrotherConfig
+# Django
 from django.utils.html import format_html
+
+from ..models import BigBrotherConfig
+
 
 def get_external_blacklist_link():
     """
@@ -14,6 +17,5 @@ def get_external_blacklist_link():
     if not url:
         return "External Blacklist URL not configured."
     return format_html(
-        '<a href="{}" target="_blank" class="btn btn-primary btn-block">Go to External Blacklist</a>',
-        url
+        '<a href="{}" target="_blank" class="btn btn-primary btn-block">Go to External Blacklist</a>', url
     )

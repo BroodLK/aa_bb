@@ -8,8 +8,10 @@ Test settings
 # local.py settings
 # Every setting in base.py can be overloaded by redefining it here.
 
-from .base import *
+# Third Party
 from celery.schedules import crontab
+
+from .base import *
 
 PACKAGE = "aa_bb"
 

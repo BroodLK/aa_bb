@@ -5,14 +5,15 @@ Database-backed bootstrap work is deferred until after migrations so Django 5
 does not warn about database access during app initialization.
 """
 
-import logging
-
+# Django
 from django.apps import AppConfig
-from django.db.utils import OperationalError, ProgrammingError
 from django.db.models.signals import post_migrate
+from django.db.utils import OperationalError, ProgrammingError
 
+# Alliance Auth
+from allianceauth.services.hooks import get_extension_logger
 
-logger = logging.getLogger(__name__)
+logger = get_extension_logger(__name__)
 
 PREDEFINED_MESSAGE_TYPES = [
     "LoA Request",
@@ -43,7 +44,7 @@ def bootstrap_runtime_state(**kwargs):
     Ensure aa_bb's DB-backed runtime records exist once migrations are complete.
     """
     from .models import MessageType
-    from .tasks_utils import sync_periodic_tasks
+    from .task_helpers.periodic_tasks import sync_periodic_tasks
 
     try:
         for msg_name in PREDEFINED_MESSAGE_TYPES:
@@ -64,6 +65,7 @@ class AaBbConfig(AppConfig):
     verbose_name = "aa_bb"
 
     def ready(self):
+        # AA BigBrother
         import aa_bb.signals  # noqa: F401
 
         post_migrate.connect(

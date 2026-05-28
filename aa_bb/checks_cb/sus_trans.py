@@ -2,40 +2,40 @@
 Corporate wallet journal analysis helpers mirroring the member-level checks.
 """
 
+# Standard Library
 import html
 import re
-import requests
-from typing import Dict, Optional, List
-from datetime import datetime, timedelta
-from django.apps import apps
-from django.utils import timezone
+from datetime import datetime
+from typing import Dict, List, Optional
 
+# Django
+from django.apps import apps
+
+# Alliance Auth
 from allianceauth.eveonline.models import EveCorporationInfo
 from allianceauth.services.hooks import get_extension_logger
 
 logger = get_extension_logger(__name__)
 
 from ..app_settings import (
-    get_eve_entity_type,
-    get_entity_info,
-    get_safe_entities,
     aablacklist_active,
+    corptools_active,
+    get_entity_info,
+    get_hostile_state,
+    get_system_owner,
+    is_hostile_unified,
+    is_location_hostile,
     resolve_location_name,
     resolve_location_system_id,
-    is_location_hostile,
-    get_system_owner,
-    get_hostile_state,
-    is_highsec,
-    is_lowsec,
-    corptools_active,
-    is_hostile_unified
 )
 
 if aablacklist_active():
-    from aa_bb.checks.add_to_blacklist import check_char_add_to_bl
+    # AA BigBrother
+    pass
 
 try:
     if corptools_active():
+        # Third Party
         from corptools.models import CorporationAudit, CorporationWalletJournalEntry
     else:
         CorporationAudit = None
@@ -44,19 +44,21 @@ except ImportError:
     CorporationAudit = None
     CorporationWalletJournalEntry = None
 
-from django.db.models import Q
-from ..models import BigBrotherConfig, ProcessedTransaction, SusTransactionNote, EveItemPrice, EntityInfoCache
+# Django
+
+from ..models import BigBrotherConfig, EntityInfoCache, ProcessedTransaction, SusTransactionNote
 
 SUS_TYPES = ("player_trading", "corporation_account_withdrawal", "player_donation")
 MARKET_REASON_RE = re.compile(
     r"^\s*(?P<quantity>\d+)x\s+(?P<type_name>.+?)\s+@\s+(?P<unit_price>[0-9][0-9,]*(?:\.\d+)?)\s+ISK\s*$"
 )
 
+
 def _find_employment_at(employment: list, date: datetime) -> Optional[dict]:
     """Compat helper that returns the corp active at the provided date."""
     for i, rec in enumerate(employment):
-        start = rec.get('start_date')
-        end = rec.get('end_date')
+        start = rec.get("start_date")
+        end = rec.get("end_date")
         if start and start <= date and (end is None or date < end):  # Match when the timestamp falls inside the stint.
             return rec
     return None
@@ -65,13 +67,15 @@ def _find_employment_at(employment: list, date: datetime) -> Optional[dict]:
 def _find_alliance_at(history: list, date: datetime) -> Optional[int]:
     """Compat helper returning the alliance id active during the period."""
     for i, rec in enumerate(history):
-        start = rec.get('start_date')
+        start = rec.get("start_date")
         if i + 1 < len(history):  # Use the next record to bound the range.
-            next_start = history[i+1]['start_date']
+            next_start = history[i + 1]["start_date"]
         else:  # Open ended when last history entry.
             next_start = None
-        if start and start <= date and (next_start is None or date < next_start):  # Same overlap logic for alliance history.
-            return rec.get('alliance_id')
+        if (
+            start and start <= date and (next_start is None or date < next_start)
+        ):  # Same overlap logic for alliance history.
+            return rec.get("alliance_id")
     return None
 
 
@@ -182,10 +186,7 @@ def get_user_transactions(qs) -> Dict[int, Dict]:
     cache_entries = EntityInfoCache.objects.filter(entity_id__in=eids, as_of__in=hours)
 
     # Map them by (entity_id, as_of)
-    info_map = {
-        (ce.entity_id, ce.as_of): ce.data
-        for ce in cache_entries
-    }
+    info_map = {(ce.entity_id, ce.as_of): ce.data for ce in cache_entries}
 
     def _get_info(eid: int, when: datetime) -> dict:
         if not eid:
@@ -271,7 +272,7 @@ def get_user_transactions(qs) -> Dict[int, Dict]:
             "info_cache": {
                 first_party_id: iinfo,
                 second_party_id: ainfo,
-            }
+            },
         }
 
     return result
@@ -297,10 +298,12 @@ def is_transaction_hostile(tx: dict, safe_entities: set = None) -> bool:
         system_id=tx.get("system_id"),
         is_market=is_market,
         market_item_id=tx.get("type_id"),
-        market_unit_price=abs(tx.get("raw_amount")) / (tx.get("quantity") or 1) if tx.get("raw_amount") is not None else None,
+        market_unit_price=(
+            abs(tx.get("raw_amount")) / (tx.get("quantity") or 1) if tx.get("raw_amount") is not None else None
+        ),
         when=tx.get("date"),
         safe_entities=safe_entities,
-        entity_info_cache=tx.get("info_cache")
+        entity_info_cache=tx.get("info_cache"),
     )
 
 
@@ -313,16 +316,19 @@ def render_transactions(corp_id: int) -> str:
         txs = get_user_transactions(qs)
 
         from ..app_settings import get_safe_entities
+
         safe_entities = get_safe_entities()
 
         # sort by date desc
-        all_list = sorted(txs.values(), key=lambda x: x['date'], reverse=True)
+        all_list = sorted(txs.values(), key=lambda x: x["date"], reverse=True)
         hostile: List[dict] = []
         for tx in all_list:
-            if is_transaction_hostile(tx, safe_entities=safe_entities):  # Keep only transactions that tripped hostility logic.
+            if is_transaction_hostile(
+                tx, safe_entities=safe_entities
+            ):  # Keep only transactions that tripped hostility logic.
                 hostile.append(tx)
         if not hostile:  # No hostile rows were identified.
-            return '<p>No hostile transactions found.</p>'
+            return "<p>No hostile transactions found.</p>"
 
         limit = 50
         display = hostile[:limit]
@@ -330,58 +336,69 @@ def render_transactions(corp_id: int) -> str:
 
         # define headers to show
         first = display[0]
-        HIDDEN = {'first_party_id','second_party_id','first_party_corporation_id','second_party_corporation_id',
-                  'first_party_alliance_id','second_party_alliance_id','entry_id'}
+        HIDDEN = {
+            "first_party_id",
+            "second_party_id",
+            "first_party_corporation_id",
+            "second_party_corporation_id",
+            "first_party_alliance_id",
+            "second_party_alliance_id",
+            "entry_id",
+        }
         headers = []
         for column in first.keys():
             if column not in HIDDEN:  # Hide ids/foreign keys that are not user-facing.
                 headers.append(column)
 
-        parts = ['<table class="table table-striped table-hover stats">','<thead>','<tr>']
+        parts = ['<table class="table table-striped table-hover stats">', "<thead>", "<tr>"]
         for h in headers:
             parts.append(f'<th>{html.escape(h.replace("_"," ").title())}</th>')
-        parts.extend(['</tr>','</thead>','<tbody>'])
+        parts.extend(["</tr>", "</thead>", "<tbody>"])
 
         cfg = BigBrotherConfig.get_solo()
-        hostile_corps = {s.strip() for s in (cfg.hostile_corporations or "").split(",") if s.strip()}
-        hostile_allis = {s.strip() for s in (cfg.hostile_alliances or "").split(",") if s.strip()}
+        {s.strip() for s in (cfg.hostile_corporations or "").split(",") if s.strip()}
+        {s.strip() for s in (cfg.hostile_alliances or "").split(",") if s.strip()}
 
         for t in display:
-            parts.append('<tr>')
+            parts.append("<tr>")
             for col in headers:
                 val = html.escape(str(t.get(col)))
-                style = ''
+                style = ""
                 # reuse contract style logic by mapping to transaction
-                if col == 'type':  # Highlight suspicious ref types inline.
+                if col == "type":  # Highlight suspicious ref types inline.
                     for key in SUS_TYPES:
-                        if key in t['type']:  # Suspect ref-type.
-                            style = 'color: red;'
+                        if key in t["type"]:  # Suspect ref-type.
+                            style = "color: red;"
                     if cfg.show_market_transactions:
-                        if "market_escrow" in t['type'] or "market_transaction" in t['type']:
-                            style = 'color: red;'
-                if col in ('first_party_name', 'second_party_name'):
-                    pid = t.get(col + '_id')
-                    if get_hostile_state(pid, 'character'):
-                        style = 'color: red;'
-                if col.endswith('corporation'):
-                    cid = t.get(col + '_id')
-                    if get_hostile_state(cid, 'corporation'):
-                        style = 'color: red;'
-                if col.endswith('alliance'):
-                    aid = t.get(col + '_id')
-                    if get_hostile_state(aid, 'alliance'):
-                        style = 'color: red;'
+                        if "market_escrow" in t["type"] or "market_transaction" in t["type"]:
+                            style = "color: red;"
+                if col in ("first_party_name", "second_party_name"):
+                    pid = t.get(col + "_id")
+                    if get_hostile_state(pid, "character"):
+                        style = "color: red;"
+                if col.endswith("corporation"):
+                    cid = t.get(col + "_id")
+                    if get_hostile_state(cid, "corporation"):
+                        style = "color: red;"
+                if col.endswith("alliance"):
+                    aid = t.get(col + "_id")
+                    if get_hostile_state(aid, "alliance"):
+                        style = "color: red;"
+
                 def make_td(val, style=""):
                     """Render a TD with optional inline style for hostile cues."""
                     style_attr = f' style="{style}"' if style else ""
                     return f"<td{style_attr}>{val}</td>"
-                parts.append(make_td(val, style))
-            parts.append('</tr>')
 
-        parts.extend(['</tbody>','</table>'])
+                parts.append(make_td(val, style))
+            parts.append("</tr>")
+
+        parts.extend(["</tbody>", "</table>"])
         if skipped:  # Let the reviewer know older hostile rows are omitted.
-            parts.append(f'<p>Showing {limit} of {len(hostile)} hostile transactions; skipped {skipped} older ones.</p>')
-        return '\n'.join(parts)
+            parts.append(
+                f"<p>Showing {limit} of {len(hostile)} hostile transactions; skipped {skipped} older ones.</p>"
+            )
+        return "\n".join(parts)
     except Exception as e:
         logger.exception(f"Error rendering transactions for corp {corp_id}")
         return f"<p class='text-danger'>Error rendering transactions: {str(e)}</p>"
@@ -392,9 +409,8 @@ def get_corp_hostile_transactions(corp_id: int) -> Dict[int, str]:
     Persist and return formatted notes for hostile corporate transactions.
     """
     qs_all = gather_user_transactions(corp_id)
-    all_ids = list(qs_all.values_list('entry_id', flat=True))
-    seen = set(ProcessedTransaction.objects.filter(entry_id__in=all_ids)
-                                              .values_list('entry_id', flat=True))
+    all_ids = list(qs_all.values_list("entry_id", flat=True))
+    seen = set(ProcessedTransaction.objects.filter(entry_id__in=all_ids).values_list("entry_id", flat=True))
     notes: Dict[int, str] = {}
     new: List[int] = []
     for eid in all_ids:
@@ -410,6 +426,7 @@ def get_corp_hostile_transactions(corp_id: int) -> Dict[int, str]:
         rows = get_user_transactions(new_qs)
 
         from ..app_settings import get_safe_entities
+
         safe_entities = get_safe_entities()
 
         for eid, tx in rows.items():
@@ -419,25 +436,25 @@ def get_corp_hostile_transactions(corp_id: int) -> Dict[int, str]:
             if not is_transaction_hostile(tx, safe_entities=safe_entities):  # Ignore non-hostile transactions.
                 continue
             flags = []
-            if tx['type']:  # Skip type analysis when CCP omitted the ref type.
+            if tx["type"]:  # Skip type analysis when CCP omitted the ref type.
                 for key in SUS_TYPES:
-                    if key in tx['type']:  # Tag suspicious ref types for operators.
+                    if key in tx["type"]:  # Tag suspicious ref types for operators.
                         flags.append(f"Transaction type is **{tx['type']}**")
                 if BigBrotherConfig.get_solo().show_market_transactions:
-                    if "market_escrow" in tx['type'] or "market_transaction" in tx['type']:
+                    if "market_escrow" in tx["type"] or "market_transaction" in tx["type"]:
                         flags.append(f"Transaction type is **{tx['type']}**")
-            cfg = BigBrotherConfig.get_solo()
+            BigBrotherConfig.get_solo()
 
             fpid = tx.get("first_party_id")
-            if get_hostile_state(fpid, 'character'):
+            if get_hostile_state(fpid, "character"):
                 flags.append(f"first_party **{tx['first_party_name']}** is hostile/blacklisted")
 
             spid = tx.get("second_party_id")
-            if get_hostile_state(spid, 'character'):
+            if get_hostile_state(spid, "character"):
                 flags.append(f"second_party **{tx['second_party_name']}** is hostile/blacklisted")
 
-            loc_id = tx.get('location_id') or tx.get('system_id')
-            if loc_id and is_location_hostile(tx.get('location_id'), tx.get('system_id')):
+            loc_id = tx.get("location_id") or tx.get("system_id")
+            if loc_id and is_location_hostile(tx.get("location_id"), tx.get("system_id")):
                 loc_name = resolve_location_name(loc_id) or f"ID {loc_id}"
                 owner_info = get_system_owner({"id": loc_id})
                 oname = owner_info.get("owner_name")
@@ -464,13 +481,12 @@ def get_corp_hostile_transactions(corp_id: int) -> Dict[int, str]:
                 f"\n  - **Flags:**"
                 f"\n    - {flags_text}"
             )
-            SusTransactionNote.objects.update_or_create(
-                transaction=pt,
-                defaults={'user_id': corp_id, 'note': note}
-            )
+            SusTransactionNote.objects.update_or_create(transaction=pt, defaults={"user_id": corp_id, "note": note})
             notes[eid] = note
 
-    for note_obj in SusTransactionNote.objects.filter(user_id=corp_id):  # Merge previously stored notes to maintain history.
+    for note_obj in SusTransactionNote.objects.filter(
+        user_id=corp_id
+    ):  # Merge previously stored notes to maintain history.
         notes[note_obj.transaction.entry_id] = note_obj.note
 
     return notes

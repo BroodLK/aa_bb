@@ -7,23 +7,25 @@ Currently:
 3. Admin/Auth audit logging for state/group/discord/admin events.
 """
 
+# Standard Library
 from datetime import timedelta
 
-from django.dispatch import receiver
+# Django
 from django.conf import settings
-from django.db.models.signals import post_save, pre_delete, pre_save, m2m_changed
+from django.contrib.admin.models import LogEntry
+from django.contrib.auth.models import Group, User
+from django.db.models.signals import m2m_changed, post_save, pre_delete, pre_save
 from django.db.utils import OperationalError, ProgrammingError
+from django.dispatch import receiver
 from django.utils import timezone
 
+# Alliance Auth
 from allianceauth.authentication.models import CharacterOwnership, UserProfile
 from allianceauth.services.hooks import get_extension_logger
 
-from .models import BigBrotherConfig, TicketToolConfig, AdminLogEntry
-from .tasks_cb import BB_register_message_tasks
-from django.contrib.auth.models import User, Group
-from django.contrib.admin.models import LogEntry
-
+from .models import AdminLogEntry, BigBrotherConfig, TicketToolConfig
 from .request_context import get_request_context
+from .tasks_cb import BB_register_message_tasks
 
 logger = get_extension_logger(__name__)
 
@@ -44,28 +46,33 @@ except Exception:
 
 
 try:
+    # Alliance Auth
     from allianceauth.services.modules.discord.models import DiscordUser
 except ImportError:
     DiscordUser = None
 
 try:
+    # Alliance Auth
     from allianceauth.groupmanagement.models import GroupRequest, RequestLog
 except ImportError:
     GroupRequest = None
     RequestLog = None
 
 try:
+    # Alliance Auth
     from allianceauth.authentication.models import OwnershipRecord, State
 except ImportError:
     OwnershipRecord = None
     State = None
 
 try:
+    # Alliance Auth
     from esi.models import Token
 except ImportError:
     Token = None
 
 try:
+    # Third Party
     from celery import signals as celery_signals
 except Exception:
     celery_signals = None
@@ -73,13 +80,16 @@ except Exception:
 
 def _get_current_task_context():
     try:
+        # Third Party
         from celery import current_task
     except Exception:
         return None, None
     try:
         if current_task is None:
             return None, None
-        task_name = getattr(current_task, "name", None) or getattr(getattr(current_task, "request", None), "task", None)
+        task_name = getattr(current_task, "name", None) or getattr(
+            getattr(current_task, "request", None), "task", None
+        )
         task_id = getattr(getattr(current_task, "request", None), "id", None)
         return task_name, task_id
     except Exception:
@@ -146,8 +156,7 @@ def _get_latest_discord_log_entry(user_id):
         return None
     try:
         return (
-            AdminLogEntry.objects
-            .filter(category=AdminLogEntry.CATEGORY_DISCORD, target_user_id=user_id)
+            AdminLogEntry.objects.filter(category=AdminLogEntry.CATEGORY_DISCORD, target_user_id=user_id)
             .order_by("-created_at")
             .first()
         )
@@ -177,6 +186,7 @@ def _send_discord_relink_alert(user, old_discord_id, new_discord_id):
     try:
         if old_discord_id != new_discord_id:
             from .app_settings import send_message
+
             username = getattr(user, "username", "unknown")
             content = (
                 "ALERT: Discord relink detected: "
@@ -244,6 +254,7 @@ def _extract_discord_role_changes(result):
     removed = [str(v) for v in (removed or []) if v is not None]
     return added, removed
 
+
 @receiver(post_save, sender=BigBrotherConfig)
 @receiver(post_save, sender=TicketToolConfig)
 def trigger_task_sync(sender, instance, **kwargs):
@@ -268,16 +279,18 @@ def removed_character(sender, instance, **kwargs):
 
         if bb_cfg.limit_to_main_corp:
             # Check if the user's main character belongs to the primary corporation
-            profile = getattr(instance.user, 'profile', None)
-            main_char = getattr(profile, 'main_character', None) if profile else None
+            profile = getattr(instance.user, "profile", None)
+            main_char = getattr(profile, "main_character", None) if profile else None
             if not main_char or main_char.corporation_id != bb_cfg.main_corporation_id:
                 return
 
         from .tasks_tickets import ensure_ticket
+
         ensure_ticket(instance.user, "char_removed", details=str(character))
 
     except Exception as e:
         logger.error("✅  [AA-BB] - [Signals] - Failed to create character-removed ticket: %s", e)
+
 
 @receiver(pre_delete, sender=CharacterOwnership)
 def audit_character_removed(sender, instance, **kwargs):
@@ -333,9 +346,7 @@ def cache_profile_state(sender, instance, **kwargs):
         instance._bb_prev_state_id = prev.state_id
         instance._bb_prev_state_name = prev.state.name if prev.state else None
         instance._bb_prev_main_character_id = prev.main_character_id
-        instance._bb_prev_main_character_name = (
-            prev.main_character.character_name if prev.main_character else None
-        )
+        instance._bb_prev_main_character_name = prev.main_character.character_name if prev.main_character else None
     except UserProfile.DoesNotExist:
         instance._bb_prev_state_id = None
         instance._bb_prev_state_name = None
@@ -366,9 +377,7 @@ def log_profile_changes(sender, instance, created, **kwargs):
     prev_main_id = getattr(instance, "_bb_prev_main_character_id", None)
     if prev_main_id is not None and prev_main_id != instance.main_character_id:
         old_char = getattr(instance, "_bb_prev_main_character_name", None)
-        new_char = (
-            instance.main_character.character_name if instance.main_character else None
-        )
+        new_char = instance.main_character.character_name if instance.main_character else None
         log_admin_event(
             category=AdminLogEntry.CATEGORY_AUTH,
             action="main_character_changed",
@@ -581,6 +590,7 @@ def log_admin_actions(sender, instance, created, **kwargs):
 
 
 if DiscordUser is not None:
+
     @receiver(post_save, sender=DiscordUser)
     def log_discord_user_change(sender, instance, created, **kwargs):
         """Log when a Discord account is linked or updated."""
@@ -589,12 +599,7 @@ if DiscordUser is not None:
         prior_unlink = prior_entry and prior_entry.action == "discord_unlinked"
         prior_discord_id = _extract_discord_id_from_log(prior_entry) if prior_unlink else None
         new_discord_id = str(discord_id) if discord_id else None
-        should_alert = (
-            prior_unlink
-            and prior_discord_id
-            and new_discord_id
-            and prior_discord_id != new_discord_id
-        )
+        should_alert = prior_unlink and prior_discord_id and new_discord_id and prior_discord_id != new_discord_id
         log_admin_event(
             category=AdminLogEntry.CATEGORY_DISCORD,
             action="discord_linked" if created else "discord_updated",
@@ -607,7 +612,6 @@ if DiscordUser is not None:
         )
         if should_alert:
             _send_discord_relink_alert(instance.user, prior_discord_id, new_discord_id)
-
 
     @receiver(pre_delete, sender=DiscordUser)
     def log_discord_user_unlink(sender, instance, **kwargs):
@@ -665,16 +669,18 @@ def _merge_recent_token_scopes_log(instance, message, reason, metadata):
         entry.actor = instance.user
         entry.source = "esi"
         entry.action = "token_scopes_updated"
-        entry.save(update_fields=[
-            "message",
-            "reason",
-            "metadata",
-            "target_label",
-            "target_user",
-            "actor",
-            "source",
-            "action",
-        ])
+        entry.save(
+            update_fields=[
+                "message",
+                "reason",
+                "metadata",
+                "target_label",
+                "target_user",
+                "actor",
+                "source",
+                "action",
+            ]
+        )
         return True
     except Exception as e:
         logger.error("Failed to merge token scope log entry: %s", e, exc_info=True)
@@ -682,6 +688,7 @@ def _merge_recent_token_scopes_log(instance, message, reason, metadata):
 
 
 if Token is not None:
+
     @receiver(post_save, sender=Token)
     def log_token_created(sender, instance, created, **kwargs):
         """Log when an ESI token is created."""
@@ -725,7 +732,6 @@ if Token is not None:
                 "request_ip": request_meta.get("ip"),
             },
         )
-
 
     @receiver(pre_delete, sender=Token)
     def log_token_deleted(sender, instance, **kwargs):
@@ -781,7 +787,6 @@ if Token is not None:
             },
         )
 
-
     @receiver(m2m_changed, sender=Token.scopes.through)
     def log_token_scopes_changed(sender, instance, action, pk_set, **kwargs):
         """Log when ESI token scopes are attached or removed."""
@@ -819,6 +824,7 @@ if Token is not None:
 
 
 if OwnershipRecord is not None:
+
     @receiver(post_save, sender=OwnershipRecord)
     def log_ownership_record_created(sender, instance, created, **kwargs):
         """Log when an ownership record is created."""
@@ -840,6 +846,7 @@ if OwnershipRecord is not None:
 
 
 if State is not None:
+
     @receiver(post_save, sender=State)
     def log_state_saved(sender, instance, created, **kwargs):
         """Log when a state definition is created or updated."""
@@ -853,8 +860,8 @@ if State is not None:
             metadata={"state_id": instance.id},
         )
 
-
     if hasattr(State, "member_characters"):
+
         @receiver(m2m_changed, sender=State.member_characters.through)
         def log_state_member_characters_changed(sender, instance, action, pk_set, **kwargs):
             if action not in ("post_add", "post_remove", "post_clear"):
@@ -869,8 +876,8 @@ if State is not None:
                 metadata=_m2m_meta(pk_set),
             )
 
-
     if hasattr(State, "member_corporations"):
+
         @receiver(m2m_changed, sender=State.member_corporations.through)
         def log_state_member_corporations_changed(sender, instance, action, pk_set, **kwargs):
             if action not in ("post_add", "post_remove", "post_clear"):
@@ -885,8 +892,8 @@ if State is not None:
                 metadata=_m2m_meta(pk_set),
             )
 
-
     if hasattr(State, "member_alliances"):
+
         @receiver(m2m_changed, sender=State.member_alliances.through)
         def log_state_member_alliances_changed(sender, instance, action, pk_set, **kwargs):
             if action not in ("post_add", "post_remove", "post_clear"):
@@ -901,8 +908,8 @@ if State is not None:
                 metadata=_m2m_meta(pk_set),
             )
 
-
     if hasattr(State, "member_factions"):
+
         @receiver(m2m_changed, sender=State.member_factions.through)
         def log_state_member_factions_changed(sender, instance, action, pk_set, **kwargs):
             if action not in ("post_add", "post_remove", "post_clear"):
@@ -917,7 +924,9 @@ if State is not None:
                 metadata=_m2m_meta(pk_set),
             )
 
+
 if GroupRequest is not None:
+
     @receiver(post_save, sender=GroupRequest)
     def log_group_request_created(sender, instance, created, **kwargs):
         """Log when a user applies to join/leave a group."""
@@ -939,7 +948,6 @@ if GroupRequest is not None:
                 "group_request_id": instance.pk,
             },
         )
-
 
     @receiver(pre_delete, sender=GroupRequest)
     def log_group_request_cancelled(sender, instance, **kwargs):
@@ -965,6 +973,7 @@ if GroupRequest is not None:
 
 
 if RequestLog is not None:
+
     def _requestlog_requestor(info):
         if not info:
             return None
@@ -972,14 +981,12 @@ if RequestLog is not None:
             return info
         return info.split(":", 1)[0]
 
-
     def _requestlog_type_label(request_type):
         if request_type is True:
             return "leave"
         if request_type is False:
             return "join"
         return "removed"
-
 
     @receiver(post_save, sender=RequestLog)
     def log_group_request_processed(sender, instance, created, **kwargs):
@@ -1014,10 +1021,10 @@ if RequestLog is not None:
 
 
 if celery_signals is not None:
+
     def _is_discord_update_groups_task(sender):
         name = getattr(sender, "name", "") or ""
         return _is_discord_update_groups_task_name(name)
-
 
     @celery_signals.task_success.connect
     def log_discord_task_success(sender=None, result=None, args=None, kwargs=None, **extras):
@@ -1079,7 +1086,6 @@ if celery_signals is not None:
                     "user_pk": user_pk,
                 },
             )
-
 
     @celery_signals.task_failure.connect
     def log_discord_task_failure(sender=None, exception=None, args=None, kwargs=None, **extras):

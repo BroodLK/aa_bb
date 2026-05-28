@@ -29,9 +29,7 @@ app.conf.broker_transport_options = {
     "priority_steps": list(range(10)),  # setup que to have 10 steps
     "queue_order_strategy": "priority",  # setup que to use prio sorting
 }
-app.conf.task_default_priority = (
-    5  # anything called with the task.delay() will be given normal priority (5)
-)
+app.conf.task_default_priority = 5  # anything called with the task.delay() will be given normal priority (5)
 app.conf.worker_prefetch_multiplier = (
     1  # only prefetch single tasks at a time on the workers so that prio tasks happen
 )

@@ -1,19 +1,18 @@
-import secrets
-import requests
-from urllib.parse import quote_plus
+# Standard Library
 
+# Third Party
+from django_celery_beat.models import PeriodicTask
+
+# Django
 from django.apps import apps as django_apps
-from django.contrib import messages
 from django.contrib.auth.decorators import login_required, permission_required
 from django.core.handlers.wsgi import WSGIRequest
 from django.db import OperationalError, ProgrammingError
-from django.http import HttpResponseBadRequest, HttpResponseForbidden
-from django.shortcuts import redirect, render
-from django.urls import reverse
+from django.http import HttpResponseForbidden
+from django.shortcuts import render
 from django.utils import timezone
 from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
-from django_celery_beat.models import PeriodicTask
 
 from .app_settings import afat_active, discordbot_active
 from .models import (
@@ -21,6 +20,7 @@ from .models import (
     PapsConfig,
     TicketToolConfig,
 )
+from .task_helpers.periodic_tasks import format_task_name
 
 
 @login_required
@@ -72,7 +72,7 @@ def manual_settings_stats(request: WSGIRequest):
 def manual_modules(request: WSGIRequest):
     """Manual tab: module status overview with live checks."""
     cfg = BigBrotherConfig.get_solo()
-    paps_cfg = PapsConfig.get_solo()
+    PapsConfig.get_solo()
     ticket_cfg_error = None
     try:
         ticket_cfg = TicketToolConfig.get_solo()
@@ -80,8 +80,6 @@ def manual_modules(request: WSGIRequest):
         ticket_cfg = None
         ticket_cfg_error = str(exc)
 
-
-    from .tasks_utils import format_task_name
     task_name = format_task_name("BB run regular updates")
     periodic_task = PeriodicTask.objects.filter(name=task_name).first()
 
@@ -114,7 +112,11 @@ def manual_modules(request: WSGIRequest):
         else:
             details = [format_html("{}", _("All requirements satisfied."))] + info
         if not actions:  # Provide default CTA messaging when nothing actionable supplied.
-            actions = [format_html("{}", _("No action needed."))] if not issues else [format_html("{}", _("Review configuration and retry the checks."))]
+            actions = (
+                [format_html("{}", _("No action needed."))]
+                if not issues
+                else [format_html("{}", _("Review configuration and retry the checks."))]
+            )
         return {
             "name": name,
             "summary": summary,
@@ -131,7 +133,9 @@ def manual_modules(request: WSGIRequest):
         core_actions,
         not cfg.is_active,
         format_html("{} reports the plugin as inactive.", code("BigBrotherConfig.is_active")),
-        format_html("Validate the token (check Celery logs) and rerun the updater until {} flips to True.", code("is_active")),
+        format_html(
+            "Validate the token (check Celery logs) and rerun the updater until {} flips to True.", code("is_active")
+        ),
     )
     register_issue(
         core_issues,
@@ -577,5 +581,3 @@ def manual_modules(request: WSGIRequest):
 def manual_faq(request: WSGIRequest):
     """Manual tab: FAQ content."""
     return render(request, "faq/faq.html")
-
-

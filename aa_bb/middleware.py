@@ -1,6 +1,6 @@
 """Middleware to capture request context for admin log attribution."""
 
-from .request_context import set_request_context, clear_request_context
+from .request_context import clear_request_context, set_request_context
 
 
 class AdminLogContextMiddleware:

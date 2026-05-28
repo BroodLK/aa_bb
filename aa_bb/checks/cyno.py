@@ -6,21 +6,26 @@ by combining skill levels, ship ownership and corporation tenure. The
 heavy lifting happens here so templates only need to call render helpers.
 """
 
-from allianceauth.services.hooks import get_extension_logger
-
-
-from .skills import get_user_skill_info, get_char_age, get_multiple_user_skill_info
-from ..app_settings import get_user_characters, get_character_id, corptools_active
+# Django
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
-from .corp_changes import get_current_stint_days_in_corp
+
+# Alliance Auth
+from allianceauth.services.hooks import get_extension_logger
+
+# AA BigBrother
 from aa_bb.models import BigBrotherConfig as bbc
+
+from ..app_settings import corptools_active, get_character_id, get_user_characters
+from .corp_changes import get_current_stint_days_in_corp
+from .skills import get_char_age, get_multiple_user_skill_info
 
 logger = get_extension_logger(__name__)
 
 try:
     if corptools_active():
-        from corptools.models import CharacterAudit, CharacterAsset
+        # Third Party
+        from corptools.models import CharacterAsset, CharacterAudit
     else:
         CharacterAudit = None
         CharacterAsset = None
@@ -29,38 +34,39 @@ except ImportError:
     CharacterAsset = None
 
 skill_ids = {
-    "cyno":     21603,  # Cynosural Field Theory
-    "recon":    22761,  # Recon Ships
-    "hic":      28609,  # Heavy Interdiction Cruisers
-    "blops":    28656,  # Black Ops
-    "covops":   12093,  # Covert Ops
-    "brun":     19719,  # Blockade Runners
-    "sbomb":    12093,  # Stealth Bombers
-    "calscru":  30651,  # Stategic Cruisers
-    "galscru":  30652,  # Stategic Cruisers
-    "minscru":  30653,  # Stategic Cruisers
-    "amascru":  30650,  # Stategic Cruisers
-    "expfrig":  33856,  # Expedition Frigates
+    "cyno": 21603,  # Cynosural Field Theory
+    "recon": 22761,  # Recon Ships
+    "hic": 28609,  # Heavy Interdiction Cruisers
+    "blops": 28656,  # Black Ops
+    "covops": 12093,  # Covert Ops
+    "brun": 19719,  # Blockade Runners
+    "sbomb": 12093,  # Stealth Bombers
+    "calscru": 30651,  # Stategic Cruisers
+    "galscru": 30652,  # Stategic Cruisers
+    "minscru": 30653,  # Stategic Cruisers
+    "amascru": 30650,  # Stategic Cruisers
+    "expfrig": 33856,  # Expedition Frigates
     "acarrier": 24311,
     "ccarrier": 24312,
     "gcarrier": 24313,
     "mcarrier": 24314,
-    "adread":   20525,
-    "cdread":   20530,
-    "gdread":   20531,
-    "mdread":   20532,
-    "tdread":   52997,
-    "atitan":   3347,
-    "ctitan":   3346,
-    "gtitan":   3344,
-    "mtitan":   3345,
-    "ajf":      20524,
-    "cjf":      20526,
-    "gjf":      20527,
-    "mjf":      20528,
-    "jf":       29029,
-    "rorq":     28374,
+    "adread": 20525,
+    "cdread": 20530,
+    "gdread": 20531,
+    "mdread": 20532,
+    "tdread": 52997,
+    "atitan": 3347,
+    "ctitan": 3346,
+    "gtitan": 3344,
+    "mtitan": 3345,
+    "ajf": 20524,
+    "cjf": 20526,
+    "gjf": 20527,
+    "mjf": 20528,
+    "jf": 29029,
+    "rorq": 28374,
 }
+
 
 def get_user_cyno_info(user_id: int, cfg: bbc = None) -> dict:
     """
@@ -75,37 +81,37 @@ def get_user_cyno_info(user_id: int, cfg: bbc = None) -> dict:
         return {}
     # default required levels
     required_levels = {
-        "cyno":      1,  # Cynosural Field Theory
-        "recon":     1,  # Recon Ships
-        "hic":       1,  # Heavy Interdiction Cruisers
-        "blops":     1,  # Black Ops
-        "covops":    1,  # Covert Ops
-        "brun":      1,  # Blockade Runners
-        "sbomb":     1,  # Stealth Bombers
-        "calscru":   1,  # Stategic Cruisers
-        "galscru":   1,  # Stategic Cruisers
-        "minscru":   1,  # Stategic Cruisers
-        "amascru":   1,  # Stategic Cruisers
-        "expfrig":   1,  # Expedition Frigates
-        "acarrier":  1,
-        "ccarrier":  1,
-        "gcarrier":  1,
-        "mcarrier":  1,
-        "adread":    1,
-        "cdread":    1,
-        "gdread":    1,
-        "mdread":    1,
-        "tdread":    1,
-        "atitan":    1,
-        "ctitan":    1,
-        "gtitan":    1,
-        "mtitan":    1,
-        "ajf":       4,
-        "cjf":       4,
-        "gjf":       4,
-        "mjf":       4,
-        "jf":        1,
-        "rorq":      1,
+        "cyno": 1,  # Cynosural Field Theory
+        "recon": 1,  # Recon Ships
+        "hic": 1,  # Heavy Interdiction Cruisers
+        "blops": 1,  # Black Ops
+        "covops": 1,  # Covert Ops
+        "brun": 1,  # Blockade Runners
+        "sbomb": 1,  # Stealth Bombers
+        "calscru": 1,  # Stategic Cruisers
+        "galscru": 1,  # Stategic Cruisers
+        "minscru": 1,  # Stategic Cruisers
+        "amascru": 1,  # Stategic Cruisers
+        "expfrig": 1,  # Expedition Frigates
+        "acarrier": 1,
+        "ccarrier": 1,
+        "gcarrier": 1,
+        "mcarrier": 1,
+        "adread": 1,
+        "cdread": 1,
+        "gdread": 1,
+        "mdread": 1,
+        "tdread": 1,
+        "atitan": 1,
+        "ctitan": 1,
+        "gtitan": 1,
+        "mtitan": 1,
+        "ajf": 4,
+        "cjf": 4,
+        "gjf": 4,
+        "mjf": 4,
+        "jf": 1,
+        "rorq": 1,
     }
 
     # 1) grab all of this user's owned characters
@@ -114,10 +120,7 @@ def get_user_cyno_info(user_id: int, cfg: bbc = None) -> dict:
         return {}
 
     # 2) pre-fetch audits for only those characters
-    audits = (
-        CharacterAudit.objects
-        .filter(character__character_id__in=ownership_map.keys())
-    )
+    audits = CharacterAudit.objects.filter(character__character_id__in=ownership_map.keys())
 
     # 3) fetch all skills once
     all_skill_ids = list(skill_ids.values())
@@ -128,23 +131,19 @@ def get_user_cyno_info(user_id: int, cfg: bbc = None) -> dict:
         skill_data[key] = {}
         for name, char_data in raw_skills.items():
             s_info = char_data.get(sid, {"trained": 0, "active": 0})
-            skill_data[key][name] = {
-                "trained_skill_level": s_info["trained"],
-                "active_skill_level": s_info["active"]
-            }
+            skill_data[key][name] = {"trained_skill_level": s_info["trained"], "active_skill_level": s_info["active"]}
 
     # 4) pre-fetch owned asset groups for all characters
     asset_groups = {}
     if corptools_active() and CharacterAsset is not None:
         qs = (
-            CharacterAsset.objects
-            .filter(character__character__character_id__in=ownership_map.keys())
-            .values('character__character__character_id', 'type_name__group_id')
+            CharacterAsset.objects.filter(character__character__character_id__in=ownership_map.keys())
+            .values("character__character__character_id", "type_name__group_id")
             .distinct()
         )
         for row in qs:
-            cid_val = row['character__character__character_id']
-            gid_val = row['type_name__group_id']
+            cid_val = row["character__character__character_id"]
+            gid_val = row["type_name__group_id"]
             if cid_val not in asset_groups:
                 asset_groups[cid_val] = set()
             asset_groups[cid_val].add(gid_val)
@@ -176,30 +175,30 @@ def get_user_cyno_info(user_id: int, cfg: bbc = None) -> dict:
 
         # initialize all flags to 0
         char_dic = {
-            "s_cyno":    0,
-            "s_cov_cyno":0,
-            "s_recon":   0,
-            "s_hic":     0,
-            "s_blops":   0,
-            "s_covops":  0,
-            "s_brun":    0,
-            "s_sbomb":   0,
-            "s_scru":    0,
+            "s_cyno": 0,
+            "s_cov_cyno": 0,
+            "s_recon": 0,
+            "s_hic": 0,
+            "s_blops": 0,
+            "s_covops": 0,
+            "s_brun": 0,
+            "s_sbomb": 0,
+            "s_scru": 0,
             "s_expfrig": 0,
             "s_carrier": 0,
-            "s_dread":   0,
-            "s_fax":     0,
-            "s_super":   0,
-            "s_titan":   0,
-            "s_jf":      0,
-            "s_rorq":    0,
-            "i_recon":   i_recon,
-            "i_hic":     i_hic,
-            "i_blops":   i_blops,
-            "i_covops":  i_covops,
-            "i_brun":    i_brun,
-            "i_sbomb":   i_sbomb,
-            "i_scru":    i_scru,
+            "s_dread": 0,
+            "s_fax": 0,
+            "s_super": 0,
+            "s_titan": 0,
+            "s_jf": 0,
+            "s_rorq": 0,
+            "i_recon": i_recon,
+            "i_hic": i_hic,
+            "i_blops": i_blops,
+            "i_covops": i_covops,
+            "i_brun": i_brun,
+            "i_sbomb": i_sbomb,
+            "i_scru": i_scru,
             "i_expfrig": i_expfrig,
             "i_carrier": i_carrier,
             "i_dread": i_dread,
@@ -208,7 +207,7 @@ def get_user_cyno_info(user_id: int, cfg: bbc = None) -> dict:
             "i_titan": i_titan,
             "i_jf": i_jf,
             "i_rorq": i_rorq,
-            "age":       age,
+            "age": age,
             "can_light": False,
         }
         jfff = 0
@@ -229,12 +228,19 @@ def get_user_cyno_info(user_id: int, cfg: bbc = None) -> dict:
             if key == "jf":
                 continue
 
-            elif key in ["acarrier", "ccarrier", "gcarrier", "mcarrier"]:  # Any racial carrier skill maps to generic carrier/fax/super flags.
+            elif key in [
+                "acarrier",
+                "ccarrier",
+                "gcarrier",
+                "mcarrier",
+            ]:  # Any racial carrier skill maps to generic carrier/fax/super flags.
                 if info["trained_skill_level"] >= lvl_req:  # Carrier skills also imply Super/FAX hull capabilities.
                     char_dic[f"s_carrier"] = 1
                     char_dic[f"s_super"] = 1
                     char_dic[f"s_fax"] = 1
-                if info["active_skill_level"] >= lvl_req:  # Active level 2 indicates Omega-ready for all related hulls.
+                if (
+                    info["active_skill_level"] >= lvl_req
+                ):  # Active level 2 indicates Omega-ready for all related hulls.
                     char_dic[f"s_carrier"] = 2
                     char_dic[f"s_super"] = 2
                     char_dic[f"s_fax"] = 2
@@ -252,9 +258,13 @@ def get_user_cyno_info(user_id: int, cfg: bbc = None) -> dict:
                     char_dic[f"s_titan"] = 2
 
             elif key in ["ajf", "cjf", "gjf", "mjf"]:  # Racial jump freighter hull skills require base JF.
-                if info["trained_skill_level"] >= lvl_req and jfff >= 1:  # Only mark JF ready when base JF skill is satisfied.
+                if (
+                    info["trained_skill_level"] >= lvl_req and jfff >= 1
+                ):  # Only mark JF ready when base JF skill is satisfied.
                     char_dic[f"s_jf"] = 1
-                    if info["active_skill_level"] >= lvl_req and jfff >= 2:  # Active racial JF skill plus base skill unlocks JF flag.
+                    if (
+                        info["active_skill_level"] >= lvl_req and jfff >= 2
+                    ):  # Active racial JF skill plus base skill unlocks JF flag.
                         char_dic[f"s_jf"] = 2
 
             elif key == "rorq":  # Rorqual specific handling.
@@ -263,7 +273,12 @@ def get_user_cyno_info(user_id: int, cfg: bbc = None) -> dict:
                 if info["active_skill_level"] >= lvl_req:  # Active skill toggles Rorqual omega-ready flag.
                     char_dic[f"s_rorq"] = 2
 
-            elif key in ["calscru", "amascru", "galscru", "minscru"]:  # T3 cruiser subsystems map to generic T3 status.
+            elif key in [
+                "calscru",
+                "amascru",
+                "galscru",
+                "minscru",
+            ]:  # T3 cruiser subsystems map to generic T3 status.
                 if info["trained_skill_level"] >= lvl_req:  # Any T3 subsystem skill enables the general T3 flag.
                     char_dic[f"s_scru"] = 1
                     if info["active_skill_level"] >= lvl_req:  # Active T3 subsystem skill grants omega-ready status.
@@ -285,21 +300,37 @@ def get_user_cyno_info(user_id: int, cfg: bbc = None) -> dict:
                 if info["active_skill_level"] >= lvl_req:  # Active skill yields omega-ready status for generic hulls.
                     char_dic[f"s_{key}"] = 2
 
-        if char_dic[f"s_cyno"] > 0 and char_dic[f"s_recon"] > 0 and char_dic[f"i_recon"] == True:  # Standard cyno + recon hull.
+        if (
+            char_dic[f"s_cyno"] > 0 and char_dic[f"s_recon"] > 0 and char_dic[f"i_recon"] == True
+        ):  # Standard cyno + recon hull.
             char_dic[f"can_light"] = True
-        if char_dic[f"s_cyno"] > 0 and char_dic[f"s_hic"] > 0 and char_dic[f"i_hic"] == True:  # Standard cyno + HIC hull.
+        if (
+            char_dic[f"s_cyno"] > 0 and char_dic[f"s_hic"] > 0 and char_dic[f"i_hic"] == True
+        ):  # Standard cyno + HIC hull.
             char_dic[f"can_light"] = True
-        if char_dic[f"s_cyno"] > 0 and char_dic[f"s_blops"] > 0 and char_dic[f"i_blops"] == True:  # Standard cyno + black ops.
+        if (
+            char_dic[f"s_cyno"] > 0 and char_dic[f"s_blops"] > 0 and char_dic[f"i_blops"] == True
+        ):  # Standard cyno + black ops.
             char_dic[f"can_light"] = True
-        if char_dic[f"s_cov_cyno"] > 0 and char_dic[f"s_covops"] > 0 and char_dic[f"i_covops"] == True:  # Covert cyno + covops hull.
+        if (
+            char_dic[f"s_cov_cyno"] > 0 and char_dic[f"s_covops"] > 0 and char_dic[f"i_covops"] == True
+        ):  # Covert cyno + covops hull.
             char_dic[f"can_light"] = True
-        if char_dic[f"s_cov_cyno"] > 0 and char_dic[f"s_brun"] > 0 and char_dic[f"i_brun"] == True:  # Cov cyno + blockade runner.
+        if (
+            char_dic[f"s_cov_cyno"] > 0 and char_dic[f"s_brun"] > 0 and char_dic[f"i_brun"] == True
+        ):  # Cov cyno + blockade runner.
             char_dic[f"can_light"] = True
-        if char_dic[f"s_cov_cyno"] > 0 and char_dic[f"s_sbomb"] > 0 and char_dic[f"i_sbomb"] == True:  # Cov cyno + bomber.
+        if (
+            char_dic[f"s_cov_cyno"] > 0 and char_dic[f"s_sbomb"] > 0 and char_dic[f"i_sbomb"] == True
+        ):  # Cov cyno + bomber.
             char_dic[f"can_light"] = True
-        if char_dic[f"s_cov_cyno"] > 0 and char_dic[f"s_scru"] > 0 and char_dic[f"i_scru"] == True:  # Cov cyno + T3 cruiser.
+        if (
+            char_dic[f"s_cov_cyno"] > 0 and char_dic[f"s_scru"] > 0 and char_dic[f"i_scru"] == True
+        ):  # Cov cyno + T3 cruiser.
             char_dic[f"can_light"] = True
-        if char_dic[f"s_cov_cyno"] > 0 and char_dic[f"s_expfrig"] > 0 and char_dic[f"i_expfrig"] == True:  # Cov cyno + exploration frig.
+        if (
+            char_dic[f"s_cov_cyno"] > 0 and char_dic[f"s_expfrig"] > 0 and char_dic[f"i_expfrig"] == True
+        ):  # Cov cyno + exploration frig.
             char_dic[f"can_light"] = True
         result[name] = char_dic
 
@@ -313,10 +344,7 @@ def owns_items_in_group(cid, gid):
     """
     if not corptools_active() or CharacterAsset is None:
         return False
-    exists = CharacterAsset.objects.filter(
-        character__character__character_id=cid,
-        type_name__group_id=gid
-    ).exists()
+    exists = CharacterAsset.objects.filter(character__character__character_id=cid, type_name__group_id=gid).exists()
 
     return exists
 
@@ -348,23 +376,23 @@ def render_user_cyno_info_html(user_id: int) -> str:
 
         # loop through each skill
         for key, label in (
-            ("cyno",     "Cynosural Field"),
+            ("cyno", "Cynosural Field"),
             ("cov_cyno", "Cynosural Field 5"),
-            ("recon",    "Recon"),
-            ("hic",      "HIC"),
-            ("blops",    "Black Ops"),
-            ("covops",   "Covert Ops"),
-            ("brun",     "Blockade Runners"),
-            ("sbomb",    "Stealth Bombers"),
-            ("scru",     "Stategic Cruisers"),
-            ("expfrig",  "Exploration Frigates"),
-            ("carrier",  "Carriers"),
-            ("dread",    "Dreads"),
-            ("fax",      "FAXes"),
-            ("super",    "Supers"),
-            ("titan",    "Titans"),
-            ("jf",       "Jump Freighters"),
-            ("rorq",     "Rorquals"),
+            ("recon", "Recon"),
+            ("hic", "HIC"),
+            ("blops", "Black Ops"),
+            ("covops", "Covert Ops"),
+            ("brun", "Blockade Runners"),
+            ("sbomb", "Stealth Bombers"),
+            ("scru", "Stategic Cruisers"),
+            ("expfrig", "Exploration Frigates"),
+            ("carrier", "Carriers"),
+            ("dread", "Dreads"),
+            ("fax", "FAXes"),
+            ("super", "Supers"),
+            ("titan", "Titans"),
+            ("jf", "Jump Freighters"),
+            ("rorq", "Rorquals"),
         ):
             s = info[f"s_{key}"]
             # map trained/active flag to human text
@@ -379,10 +407,7 @@ def render_user_cyno_info_html(user_id: int) -> str:
                 owns = mark_safe(f'<span class="text-danger">{info.get(f"i_{key}", "")}</span>')
             else:
                 owns = f'{info.get(f"i_{key}", "")}'
-            html += format_html(
-                "<tr><td>{}</td><td>{}</td><td>{}</td></tr>",
-                label, s_txt, owns
-            )
+            html += format_html("<tr><td>{}</td><td>{}</td><td>{}</td></tr>", label, s_txt, owns)
 
         # add the “can light?” and age rows
         if info["can_light"] == True:  # Emphasize characters that can currently light cynos.
@@ -393,23 +418,14 @@ def render_user_cyno_info_html(user_id: int) -> str:
             age = mark_safe(f'<span class="text-danger">{info["age"]}</span>')
         else:
             age = f'{info["age"]}'
-        html += format_html(
-            "<tr><td>Can light?</td><td colspan='2'>{}</td></tr>",
-            can_light
-        )
-        html += format_html(
-            "<tr><td>Age</td><td colspan='2'>{}</td></tr>",
-            age
-        )
+        html += format_html("<tr><td>Can light?</td><td colspan='2'>{}</td></tr>", can_light)
+        html += format_html("<tr><td>Age</td><td colspan='2'>{}</td></tr>", age)
         cid = get_character_id(char_name)
         corp_label = f"Time in {bbc.get_solo().main_corporation}"
-        days_in_corp = get_current_stint_days_in_corp(cid,bbc.get_solo().main_corporation_id)
+        days_in_corp = get_current_stint_days_in_corp(cid, bbc.get_solo().main_corporation_id)
         days_html = f"{days_in_corp} days"
 
-        html += format_html(
-            "<tr><td>{}</td><td colspan='2'>{}</td></tr>",
-            corp_label, days_html
-        )
+        html += format_html("<tr><td>{}</td><td colspan='2'>{}</td></tr>", corp_label, days_html)
 
         # table end
         html += "</tbody></table>"

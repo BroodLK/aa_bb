@@ -7,11 +7,13 @@ from django.utils.translation import gettext_lazy as _
 from allianceauth import hooks
 from allianceauth.services.hooks import MenuItemHook, UrlHook
 
+# AA BigBrother
 # AA Example App
-from aa_bb import urls, urls_loa, urls_cb, urls_paps
-from .models import BigBrotherConfig, LeaveRequest
+from aa_bb import urls, urls_cb, urls_loa, urls_paps
 
 from .app_settings import afat_active
+from .models import BigBrotherConfig, LeaveRequest
+
 
 class CorpBrotherMenuItem(MenuItemHook):
     """This class ensures only authorized users will see the menu entry"""
@@ -30,9 +32,9 @@ class CorpBrotherMenuItem(MenuItemHook):
         """Render the menu item"""
 
         try:
-            cfg = BigBrotherConfig.get_solo()
+            BigBrotherConfig.get_solo()
         except BigBrotherConfig.DoesNotExist:
-            cfg = None
+            pass
 
         if request.user.has_perm("aa_bb.basic_access_cb"):  # User has access permission.
             return MenuItemHook.render(self, request)
@@ -124,6 +126,7 @@ def register_bigbrother_urls():
 
 class LoAMenuItem(MenuItemHook):
     """Menu entry for Leave of Absence tools, gated by permissions."""
+
     def __init__(self):
         """Initialize the LoA entry and nav state."""
         super().__init__(
@@ -131,7 +134,8 @@ class LoAMenuItem(MenuItemHook):
             "fas fa-plane",
             "loa:index",
             navactive=["loa:"],
-    )
+        )
+
     def render(self, request):
         """Show LoA entry when permission is active."""
         if request.user.has_perm("aa_bb.can_access_loa"):  # Basic LoA access.
@@ -143,10 +147,12 @@ class LoAMenuItem(MenuItemHook):
             return MenuItemHook.render(self, request)
         return ""
 
+
 @hooks.register("menu_item_hook")
 def register_loa_menu():
     """Register the LOA sidebar entry."""
     return LoAMenuItem()
+
 
 @hooks.register("url_hook")
 def register_loa_urls():
@@ -156,6 +162,7 @@ def register_loa_urls():
 
 class TicketManagerMenuItem(MenuItemHook):
     """Sidebar entry for ticket managers."""
+
     def __init__(self):
         super().__init__(
             _("Compliance Tickets"),
@@ -167,8 +174,9 @@ class TicketManagerMenuItem(MenuItemHook):
     def render(self, request):
         """Show only to ticket managers."""
         if request.user.has_perm("aa_bb.ticket_manager"):
-            from .models import ComplianceTicket
             from .app_settings import afat_active, discordbot_active
+            from .models import ComplianceTicket
+
             # Only count tickets that are open (not resolved and not exception)
             qs = ComplianceTicket.objects.filter(is_resolved=False, is_exception=False)
             if not afat_active():
@@ -190,6 +198,7 @@ def register_ticket_manager_menu():
 
 class PapsMenuItem(MenuItemHook):
     """Menu entry for PAP statistics, only shown when the module is active."""
+
     def __init__(self):
         """Initialize the PAP menu entry and nav state."""
         super().__init__(
@@ -197,7 +206,8 @@ class PapsMenuItem(MenuItemHook):
             "fas fa-chart-bar",
             "paps:history",
             navactive=["paps:"],
-    )
+        )
+
     def render(self, request):
         """Only show when users have permission and AFAT is active."""
         if not afat_active():
@@ -206,23 +216,28 @@ class PapsMenuItem(MenuItemHook):
             return super().render(request)
         return ""
 
+
 if afat_active():
+
     @hooks.register("menu_item_hook")
     def register_paps_menu():
         """Register the PAP stats sidebar entry if AFAT is active."""
         return PapsMenuItem()
 
+
 if afat_active():
+
     @hooks.register("url_hook")
     def register_paps_urls():
         """Wire the PAP URLconf into AllianceAuth."""
         return UrlHook(urls_paps, "paps", r"^paps/")
 
 
-@hooks.register('discord_cogs_hook')
+@hooks.register("discord_cogs_hook")
 def register_cogs():
     """Ensure aa_bb's Discord tasks cog is loaded by the bot runner."""
     from .app_settings import discordbot_active
+
     if discordbot_active():
         return ["aa_bb.tasks_bot"]
     return []

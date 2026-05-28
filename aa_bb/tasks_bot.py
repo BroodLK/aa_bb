@@ -7,27 +7,36 @@ create/rebalance compliance ticket channels.
 
 from __future__ import annotations
 
-import re
+# Standard Library
 import gc
+import re
 from functools import wraps
 
+# Third Party
+from asgiref.sync import sync_to_async as asgi_sync_to_async
+
+# Django
+from django.core.cache import cache
+from django.db import close_old_connections, transaction
+from django.utils import timezone
+
+# Alliance Auth
 from allianceauth.authentication.models import UserProfile
 from allianceauth.services.hooks import get_extension_logger
 
-from django.db import transaction, close_old_connections
-from django.core.cache import cache
-from django.utils import timezone
-from asgiref.sync import sync_to_async as asgi_sync_to_async
 
 def sync_to_async(func, thread_sensitive=True):
     """
     Wrapper for sync_to_async that ensures a fresh database connection.
     """
+
     @wraps(func)
     def wrapper(*args, **kwargs):
         close_old_connections()
         return func(*args, **kwargs)
+
     return asgi_sync_to_async(wrapper, thread_sensitive=thread_sensitive)
+
 
 logger = get_extension_logger(__name__)
 logger.info("✅ [AA-BB] - [Tasks Bot] - Module loading from %s", __file__)
@@ -46,82 +55,131 @@ __all__ = [
 ]
 
 try:
+    # Third Party
     import discord
+
     try:
+        # Third Party
         import discord.abc
     except ImportError:
         pass
     try:
+        # Third Party
         import discord.utils
     except ImportError:
         pass
 except ImportError:
+
     class discord:
-        class Message: pass
+        class Message:
+            pass
+
         class Embed:
             def __init__(self, *args, **kwargs):
                 for k, v in kwargs.items():
                     setattr(self, k, v)
+
         class Color:
             @classmethod
-            def from_rgb(cls, *args): pass
+            def from_rgb(cls, *args):
+                pass
+
             @classmethod
-            def orange(cls): pass
-        class PermissionOverwrite: pass
+            def orange(cls):
+                pass
+
+        class PermissionOverwrite:
+            pass
+
         class ChannelType:
             private_thread = 1
             public_thread = 2
-        class Thread: pass
-        class TextChannel: pass
-        class CategoryChannel: pass
-        class ForumChannel: pass
-        class ApplicationContext: pass
-        class Guild: pass
+
+        class Thread:
+            pass
+
+        class TextChannel:
+            pass
+
+        class CategoryChannel:
+            pass
+
+        class ForumChannel:
+            pass
+
+        class ApplicationContext:
+            pass
+
+        class Guild:
+            pass
+
         class abc:
-            class GuildChannel: pass
+            class GuildChannel:
+                pass
+
         class utils:
             @staticmethod
-            def get(*args, **kwargs): pass
-        class HTTPException(Exception): pass
+            def get(*args, **kwargs):
+                pass
+
+        class HTTPException(Exception):
+            pass
+
     logger.info("discord service not installed; using dummy classes for type hinting.")
 
-from aa_bb.models import TicketToolConfig, ComplianceTicket, ComplianceTicketComment, BigBrotherConfig
+# AA BigBrother
 from aa_bb.app_settings import get_user_model
+from aa_bb.models import BigBrotherConfig, ComplianceTicket, ComplianceTicketComment, TicketToolConfig
 
 try:
+    # Third Party
     from aadiscordbot.cogs.utils.decorators import sender_is_admin
 except ImportError:
+
     def sender_is_admin():
         def wrapper(func):
             return func
+
         return wrapper
+
     logger.info("aadiscordbot not installed; Discord commands will not be registered.")
 
 try:
-    from discord.commands import slash_command
-    from discord.commands import SlashCommandGroup
+    # Third Party
+    from discord.commands import SlashCommandGroup, slash_command
     from discord.ext import commands
 except ImportError:
     # Fallback for environments without discord.py (e.g. during migrations or when not using bot)
     class commands:
         class Cog:
-            def __init__(self, *args, **kwargs): pass
+            def __init__(self, *args, **kwargs):
+                pass
+
             @classmethod
             def listener(cls, *args, **kwargs):
-                def wrapper(func): return func
+                def wrapper(func):
+                    return func
+
                 return wrapper
 
     def slash_command(*args, **kwargs):
-        def wrapper(func): return func
+        def wrapper(func):
+            return func
+
         return wrapper
 
     class SlashCommandGroup:
-        def __init__(self, *args, **kwargs): pass
+        def __init__(self, *args, **kwargs):
+            pass
+
         def command(self, *args, **kwargs):
-            def wrapper(func): return func
+            def wrapper(func):
+                return func
+
             return wrapper
 
     logger.info("discord service not installed; Discord commands will not work.")
+
 
 def get_ticket_roles():
     """Parse the comma-separated list of Discord role IDs from TicketToolConfig."""
@@ -139,7 +197,17 @@ def get_ticket_roles():
                 roles.append(r)
     return roles
 
-async def create_compliance_ticket(bot, user_id, discord_user_id: int, reason: str, message: str, include_user: bool = True, details: str = None, **kwargs):
+
+async def create_compliance_ticket(
+    bot,
+    user_id,
+    discord_user_id: int,
+    reason: str,
+    message: str,
+    include_user: bool = True,
+    details: str = None,
+    **kwargs,
+):
     # Close old connections and clean up
     close_old_connections()
 
@@ -207,7 +275,9 @@ async def create_compliance_ticket(bot, user_id, discord_user_id: int, reason: s
     )
 
     # Use embeds and chunking for the initial message
+    # AA BigBrother
     from aa_bb.app_settings import _chunk_embed_lines
+
     lines = message.split("\n")
     chunks = _chunk_embed_lines(lines)
 
@@ -226,7 +296,7 @@ async def create_compliance_ticket(bot, user_id, discord_user_id: int, reason: s
         embed = discord.Embed(
             title=f"Compliance Ticket - {reason}" if i == 0 else None,
             description="\n".join(chunk),
-            color=discord.Color.from_rgb(241, 196, 15)  # Gold
+            color=discord.Color.from_rgb(241, 196, 15),  # Gold
         )
         if i == 0:
             await channel.send(content=content, embed=embed)
@@ -246,7 +316,18 @@ async def create_compliance_ticket(bot, user_id, discord_user_id: int, reason: s
     close_old_connections()
 
 
-async def create_compliance_thread(bot, user_id, discord_user_id: int, reason: str, message: str, thread_name: str, thread_id: int = None, include_user: bool = True, details: str = None, **kwargs):
+async def create_compliance_thread(
+    bot,
+    user_id,
+    discord_user_id: int,
+    reason: str,
+    message: str,
+    thread_name: str,
+    thread_id: int = None,
+    include_user: bool = True,
+    details: str = None,
+    **kwargs,
+):
     close_old_connections()
     tcfg = await sync_to_async(TicketToolConfig.get_solo)()
     parent_channel_id = tcfg.Forum_Channel_ID
@@ -300,7 +381,9 @@ async def create_compliance_thread(bot, user_id, discord_user_id: int, reason: s
 
         if isinstance(parent_channel, discord.ForumChannel):
             # Forum threads are created with a starting message
+            # AA BigBrother
             from aa_bb.app_settings import _chunk_embed_lines
+
             lines = message.split("\n")
             chunks = _chunk_embed_lines(lines)
 
@@ -308,34 +391,37 @@ async def create_compliance_thread(bot, user_id, discord_user_id: int, reason: s
             embed = discord.Embed(
                 title=f"Compliance Ticket - {reason}",
                 description="\n".join(chunks[0]),
-                color=discord.Color.from_rgb(241, 196, 15)  # Gold
+                color=discord.Color.from_rgb(241, 196, 15),  # Gold
             )
 
             thread_response = await parent_channel.create_thread(
-                name=thread_name,
-                content=content,
-                embed=embed,
-                reason="Compliance ticket creation"
+                name=thread_name, content=content, embed=embed, reason="Compliance ticket creation"
             )
-            thread = getattr(thread_response, 'thread', thread_response)
+            thread = getattr(thread_response, "thread", thread_response)
 
             # Send remaining chunks if any
             if len(chunks) > 1:
                 for chunk in chunks[1:]:
-                    await thread.send(embed=discord.Embed(description="\n".join(chunk), color=discord.Color.from_rgb(241, 196, 15)))
+                    await thread.send(
+                        embed=discord.Embed(description="\n".join(chunk), color=discord.Color.from_rgb(241, 196, 15))
+                    )
         else:
             # TextChannel: Create private or public thread
             # User requested Option 1: Private threads in a channel
-            thread_type = discord.ChannelType.private_thread if tcfg.ticket_type == TicketToolConfig.TICKET_TYPE_PRIVATE_THREAD else discord.ChannelType.public_thread
+            thread_type = (
+                discord.ChannelType.private_thread
+                if tcfg.ticket_type == TicketToolConfig.TICKET_TYPE_PRIVATE_THREAD
+                else discord.ChannelType.public_thread
+            )
 
             thread = await parent_channel.create_thread(
-                name=thread_name,
-                type=thread_type,
-                reason="Compliance ticket creation"
+                name=thread_name, type=thread_type, reason="Compliance ticket creation"
             )
 
             # Initial message
+            # AA BigBrother
             from aa_bb.app_settings import _chunk_embed_lines
+
             lines = message.split("\n")
             chunks = _chunk_embed_lines(lines)
 
@@ -343,7 +429,7 @@ async def create_compliance_thread(bot, user_id, discord_user_id: int, reason: s
                 embed = discord.Embed(
                     title=f"Compliance Ticket - {reason}" if i == 0 else None,
                     description="\n".join(chunk),
-                    color=discord.Color.from_rgb(241, 196, 15)  # Gold
+                    color=discord.Color.from_rgb(241, 196, 15),  # Gold
                 )
                 if i == 0:
                     await thread.send(content=content, embed=embed)
@@ -351,10 +437,11 @@ async def create_compliance_thread(bot, user_id, discord_user_id: int, reason: s
                     await thread.send(embed=embed)
 
         # Save thread mapping
+        # AA BigBrother
         from aa_bb.models import ComplianceThread
+
         await sync_to_async(ComplianceThread.objects.update_or_create)(
-            user=user, reason=reason,
-            defaults={'thread_id': thread.id}
+            user=user, reason=reason, defaults={"thread_id": thread.id}
         )
         thread_id = thread.id
 
@@ -393,8 +480,10 @@ async def create_compliance_thread(bot, user_id, discord_user_id: int, reason: s
             if isinstance(r_val, int):
                 role = guild.get_role(r_val)
                 if not role:
-                    try: role = await guild.fetch_role(r_val)
-                    except: pass
+                    try:
+                        role = await guild.fetch_role(r_val)
+                    except:
+                        pass
             else:
                 role = discord.utils.get(guild.roles, name=r_val)
 
@@ -402,7 +491,9 @@ async def create_compliance_thread(bot, user_id, discord_user_id: int, reason: s
                 # Limit thread additions to avoid hitting rate limits or Discord thread member limits
                 members_to_add = list(role.members)
                 if len(members_to_add) > 50:
-                    logger.warning(f"Role {role.name} has too many members ({len(members_to_add)}), only adding first 50 to thread {thread.id}")
+                    logger.warning(
+                        f"Role {role.name} has too many members ({len(members_to_add)}), only adding first 50 to thread {thread.id}"
+                    )
                     members_to_add = members_to_add[:50]
 
                 for m in members_to_add:
@@ -428,14 +519,16 @@ async def create_compliance_thread(bot, user_id, discord_user_id: int, reason: s
 async def send_ticket_reminder(bot, channel_id: int, user_id: int, message: str, **kwargs):
     close_old_connections()
     channel = bot.get_channel(channel_id)
-    if not channel and hasattr(bot, 'fetch_channel'):
+    if not channel and hasattr(bot, "fetch_channel"):
         try:
             channel = await bot.fetch_channel(channel_id)
         except Exception:
             pass
 
     if channel:
+        # AA BigBrother
         from aa_bb.app_settings import _chunk_embed_lines
+
         lines = message.split("\n")
         chunks = _chunk_embed_lines(lines)
 
@@ -443,19 +536,18 @@ async def send_ticket_reminder(bot, channel_id: int, user_id: int, message: str,
 
         for i, chunk in enumerate(chunks):
             embed = discord.Embed(
-                title="Ticket Comment" if i == 0 else None,
-                description="\n".join(chunk),
-                color=discord.Color.orange()
+                title="Ticket Comment" if i == 0 else None, description="\n".join(chunk), color=discord.Color.orange()
             )
             if i == 0:
                 await channel.send(content=content, embed=embed)
             else:
                 await channel.send(embed=embed)
 
+
 async def close_ticket_channel(bot, channel_id: int, message: str = None, **kwargs):
     close_old_connections()
     channel = bot.get_channel(channel_id)
-    if not channel and hasattr(bot, 'fetch_channel'):
+    if not channel and hasattr(bot, "fetch_channel"):
         try:
             channel = await bot.fetch_channel(channel_id)
         except Exception:
@@ -463,13 +555,11 @@ async def close_ticket_channel(bot, channel_id: int, message: str = None, **kwar
 
     if channel:
         if message:
-            embed = discord.Embed(
-                title="Ticket Comment",
-                description=message,
-                color=discord.Color.orange()
-            )
+            embed = discord.Embed(title="Ticket Comment", description=message, color=discord.Color.orange())
             await channel.send(embed=embed)
+            # Standard Library
             import asyncio
+
             await asyncio.sleep(1)
 
         qs = ComplianceTicket.objects.filter(discord_channel_id=channel_id, is_resolved=False)
@@ -484,10 +574,11 @@ async def close_ticket_channel(bot, channel_id: int, message: str = None, **kwar
         except Exception:
             logger.exception("Failed to close/delete channel %s", channel_id)
 
+
 async def join_thread(bot, thread_id: int, **kwargs):
     close_old_connections()
     channel = bot.get_channel(thread_id)
-    if not channel and hasattr(bot, 'fetch_channel'):
+    if not channel and hasattr(bot, "fetch_channel"):
         try:
             channel = await bot.fetch_channel(thread_id)
         except Exception:
@@ -496,10 +587,11 @@ async def join_thread(bot, thread_id: int, **kwargs):
     if channel and isinstance(channel, discord.Thread):
         await channel.join()
 
+
 async def unarchive_thread(bot, thread_id: int, **kwargs):
     close_old_connections()
     channel = bot.get_channel(thread_id)
-    if not channel and hasattr(bot, 'fetch_channel'):
+    if not channel and hasattr(bot, "fetch_channel"):
         try:
             channel = await bot.fetch_channel(thread_id)
         except Exception:
@@ -522,15 +614,15 @@ async def _report_bot_members(guild: discord.Guild, bot_members: list, source: s
     hook = cfg.user_compliance_webhook or cfg.webhook
     if not hook:
         logger.warning(
-            "Discord bot-member check found %s bot account(s) in guild %s (%s), "
-            "but no webhook is configured.",
+            "Discord bot-member check found %s bot account(s) in guild %s (%s), " "but no webhook is configured.",
             len(bot_members),
             getattr(guild, "id", "unknown"),
             getattr(guild, "name", "unknown"),
         )
         return
 
-    from aa_bb.app_settings import send_status_embed, _chunk_embed_lines
+    # AA BigBrother
+    from aa_bb.app_settings import _chunk_embed_lines, send_status_embed
 
     lines = [
         f"Source: {source}",
@@ -572,6 +664,7 @@ async def audit_existing_guild_bots(bot, **kwargs):
                 getattr(guild, "id", "unknown"),
             )
 
+
 def get_next_ticket_number():
     """
     Returns the next ticket number as a zero-padded string (0000–9999),
@@ -587,8 +680,10 @@ def get_next_ticket_number():
         cfg.save(update_fields=["ticket_counter"])
     return formatted
 
+
 class TicketCommands(commands.Cog):
     """Cog for operators handling compliance tickets via commands or phrases."""
+
     def __init__(self, bot):
         self.bot = bot
 
@@ -619,10 +714,7 @@ class TicketCommands(commands.Cog):
             await self._track_activity(message)
 
         # Check if this is a ticket channel/thread
-        tickets_qs = ComplianceTicket.objects.filter(
-            discord_channel_id=message.channel.id,
-            is_resolved=False
-        )
+        tickets_qs = ComplianceTicket.objects.filter(discord_channel_id=message.channel.id, is_resolved=False)
         tickets = await sync_to_async(list)(tickets_qs)
 
         if not tickets:
@@ -638,10 +730,12 @@ class TicketCommands(commands.Cog):
             return
 
         # Relay message as comment
+        # Alliance Auth
         from allianceauth.services.modules.discord.models import DiscordUser
+
         auth_user = None
         try:
-            du = await sync_to_async(DiscordUser.objects.select_related('user').get)(uid=message.author.id)
+            du = await sync_to_async(DiscordUser.objects.select_related("user").get)(uid=message.author.id)
             auth_user = du.user
         except DiscordUser.DoesNotExist:
             pass
@@ -653,9 +747,7 @@ class TicketCommands(commands.Cog):
 
         for ticket in tickets:
             await sync_to_async(ComplianceTicketComment.objects.create)(
-                ticket=ticket,
-                user=auth_user,
-                comment=relay_content
+                ticket=ticket, user=auth_user, comment=relay_content
             )
 
     async def _track_activity(self, message: discord.Message):
@@ -664,13 +756,16 @@ class TicketCommands(commands.Cog):
         cache_key = f"aa_bb_discord_activity_{uid}"
 
         if not cache.get(cache_key):
+            # Alliance Auth
             from allianceauth.services.modules.discord.models import DiscordUser
+
+            # AA BigBrother
             from aa_bb.models import UserStatus
+
             try:
-                du = await sync_to_async(DiscordUser.objects.select_related('user').get)(uid=uid)
+                du = await sync_to_async(DiscordUser.objects.select_related("user").get)(uid=uid)
                 await sync_to_async(UserStatus.objects.update_or_create)(
-                    user=du.user,
-                    defaults={'last_discord_message_at': timezone.now()}
+                    user=du.user, defaults={"last_discord_message_at": timezone.now()}
                 )
                 # Cache for 1 hour to avoid excessive DB writes
                 cache.set(cache_key, True, 3600)
@@ -681,8 +776,7 @@ class TicketCommands(commands.Cog):
                 logger.exception("Failed to track Discord activity for UID %s", uid)
 
     @slash_command(
-        name="resolve-compliance-ticket",
-        description="Mark this ticket as resolved and close/lock the channel."
+        name="resolve-compliance-ticket", description="Mark this ticket as resolved and close/lock the channel."
     )
     @sender_is_admin()
     async def resolve_ticket_slash(self, ctx: discord.ApplicationContext):
@@ -699,10 +793,12 @@ class TicketCommands(commands.Cog):
         is_staff = author.guild_permissions.administrator or any(role.id in staff_roles for role in author.roles)
 
         # Check AA permissions and resolve auth_user
+        # Alliance Auth
         from allianceauth.services.modules.discord.models import DiscordUser
+
         auth_user = None
         try:
-            du_qs = DiscordUser.objects.select_related('user').filter(uid=author.id)
+            du_qs = DiscordUser.objects.select_related("user").filter(uid=author.id)
             discord_user = await sync_to_async(du_qs.get)()
             auth_user = discord_user.user
 
@@ -738,20 +834,14 @@ class TicketCommands(commands.Cog):
             # Create Auth comment
             comment_text = f"✅ Ticket resolved on Discord by {author}."
             await sync_to_async(ComplianceTicketComment.objects.create)(
-                ticket=ticket,
-                user=auth_user,
-                comment=comment_text
+                ticket=ticket, user=auth_user, comment=comment_text
             )
 
         # If no more active tickets in this channel, close it
         remaining_qs = ComplianceTicket.objects.filter(discord_channel_id=channel.id, is_resolved=False)
         if not await sync_to_async(remaining_qs.exists)():
             msg = f"✅ All issues resolved by <@{author.id}>. Closing channel..."
-            embed = discord.Embed(
-                title="Ticket Comment",
-                description=msg,
-                color=discord.Color.orange()
-            )
+            embed = discord.Embed(title="Ticket Comment", description=msg, color=discord.Color.orange())
             if hasattr(ctx_or_msg, "respond"):
                 await ctx_or_msg.respond(embed=embed)
             else:
@@ -766,11 +856,7 @@ class TicketCommands(commands.Cog):
                 logger.exception("Failed to close/delete channel %s after resolution", channel.id)
         else:
             msg = f"✅ Ticket(s) resolved by <@{author.id}>. (Remaining active tickets exist in this channel)"
-            embed = discord.Embed(
-                title="Ticket Comment",
-                description=msg,
-                color=discord.Color.orange()
-            )
+            embed = discord.Embed(title="Ticket Comment", description=msg, color=discord.Color.orange())
             if hasattr(ctx_or_msg, "respond"):
                 await ctx_or_msg.respond(embed=embed)
             else:
@@ -778,13 +864,13 @@ class TicketCommands(commands.Cog):
 
     @slash_command(
         name="mark-ticket-as-exception",
-        description="Mark this ticket as an exception (won't receive reminders or be recreated)."
+        description="Mark this ticket as an exception (won't receive reminders or be recreated).",
     )
     @sender_is_admin()
     async def mark_ticket_as_exception(
         self,
         ctx: discord.ApplicationContext,
-        reason: discord.Option(str, "Reason for the exception", required=False, default=None) = None
+        reason: discord.Option(str, "Reason for the exception", required=False, default=None) = None,
     ):
         """Mark a ticket as an exception with an optional reason."""
         await ctx.defer(ephemeral=True)
@@ -797,10 +883,12 @@ class TicketCommands(commands.Cog):
         is_staff = author.guild_permissions.administrator or any(role.id in staff_roles for role in author.roles)
 
         # Check AA permissions and resolve auth_user
+        # Alliance Auth
         from allianceauth.services.modules.discord.models import DiscordUser
+
         auth_user = None
         try:
-            du_qs = DiscordUser.objects.select_related('user').filter(uid=author.id)
+            du_qs = DiscordUser.objects.select_related("user").filter(uid=author.id)
             discord_user = await sync_to_async(du_qs.get)()
             auth_user = discord_user.user
 
@@ -837,26 +925,20 @@ class TicketCommands(commands.Cog):
             if reason:
                 comment_text += f"\nReason: {reason}"
             await sync_to_async(ComplianceTicketComment.objects.create)(
-                ticket=ticket,
-                user=auth_user,
-                comment=comment_text
+                ticket=ticket, user=auth_user, comment=comment_text
             )
 
         exception_msg = f"✅ Ticket(s) marked as exception by <@{author.id}>."
         if reason:
             exception_msg += f"\nReason: {reason}"
 
-        embed1 = discord.Embed(
-            title="Ticket Comment",
-            description=exception_msg,
-            color=discord.Color.orange()
-        )
+        embed1 = discord.Embed(title="Ticket Comment", description=exception_msg, color=discord.Color.orange())
         await ctx.respond(embed=embed1)
 
         embed2 = discord.Embed(
             title="Ticket Comment",
             description=f"ℹ️ This ticket has been marked as an exception and will not receive reminders or be recreated.",
-            color=discord.Color.orange()
+            color=discord.Color.orange(),
         )
         await channel.send(embed=embed2)
 
@@ -864,18 +946,14 @@ class TicketCommands(commands.Cog):
     async def on_channel_delete(self, channel: discord.abc.GuildChannel):
         """Mark tickets as resolved when a channel is manually deleted."""
         close_old_connections()
-        tickets_qs = ComplianceTicket.objects.filter(
-            discord_channel_id=channel.id,
-            is_resolved=False
-        )
+        tickets_qs = ComplianceTicket.objects.filter(discord_channel_id=channel.id, is_resolved=False)
         tickets = await sync_to_async(list)(tickets_qs)
 
         for ticket in tickets:
             ticket.is_resolved = True
             await sync_to_async(ticket.save)(update_fields=["is_resolved"])
             await sync_to_async(ComplianceTicketComment.objects.create)(
-                ticket=ticket,
-                comment="✅ Ticket automatically resolved (Discord channel deleted manually)."
+                ticket=ticket, comment="✅ Ticket automatically resolved (Discord channel deleted manually)."
             )
 
         if tickets:
@@ -885,18 +963,14 @@ class TicketCommands(commands.Cog):
     async def on_thread_delete(self, thread: discord.Thread):
         """Mark tickets as resolved when a thread is manually deleted."""
         close_old_connections()
-        tickets_qs = ComplianceTicket.objects.filter(
-            discord_channel_id=thread.id,
-            is_resolved=False
-        )
+        tickets_qs = ComplianceTicket.objects.filter(discord_channel_id=thread.id, is_resolved=False)
         tickets = await sync_to_async(list)(tickets_qs)
 
         for ticket in tickets:
             ticket.is_resolved = True
             await sync_to_async(ticket.save)(update_fields=["is_resolved"])
             await sync_to_async(ComplianceTicketComment.objects.create)(
-                ticket=ticket,
-                comment="✅ Ticket automatically resolved (Discord thread deleted manually)."
+                ticket=ticket, comment="✅ Ticket automatically resolved (Discord thread deleted manually)."
             )
 
         if tickets:
@@ -907,10 +981,7 @@ class TicketCommands(commands.Cog):
         """Handle manual thread archiving/locking by an admin."""
         if (after.archived and not before.archived) or (after.locked and not before.locked):
             close_old_connections()
-            tickets_qs = ComplianceTicket.objects.filter(
-                discord_channel_id=after.id,
-                is_resolved=False
-            )
+            tickets_qs = ComplianceTicket.objects.filter(discord_channel_id=after.id, is_resolved=False)
             tickets = await sync_to_async(list)(tickets_qs)
             if tickets:
                 for ticket in tickets:
@@ -918,16 +989,19 @@ class TicketCommands(commands.Cog):
                     await sync_to_async(ticket.save)(update_fields=["is_resolved"])
                     await sync_to_async(ComplianceTicketComment.objects.create)(
                         ticket=ticket,
-                        comment=f"✅ Ticket automatically resolved (Discord thread {'archived' if after.archived else 'locked'} manually)."
+                        comment=f"✅ Ticket automatically resolved (Discord thread {'archived' if after.archived else 'locked'} manually).",
                     )
                 logger.info(f"Marked {len(tickets)} ticket(s) as resolved due to manual thread closure: {after.id}")
+
 
 def setup(bot):
     bot.add_cog(TicketCommands(bot))
 
+
 # ---- Category overflow helpers ----
 
 CATEGORY_LIMIT = 50  # Discord hard limit per category
+
 
 def _parse_family_suffix(base_name: str, candidate_name: str) -> int | None:
     """
@@ -948,7 +1022,10 @@ def _parse_family_suffix(base_name: str, candidate_name: str) -> int | None:
         pass
     return None
 
-def _get_family_categories(guild: discord.Guild, base_category: discord.CategoryChannel) -> list[tuple[int, discord.CategoryChannel]]:
+
+def _get_family_categories(
+    guild: discord.Guild, base_category: discord.CategoryChannel
+) -> list[tuple[int, discord.CategoryChannel]]:
     """
     Discover all categories that belong to the ticket family: base name and "-N" clones.
     Returns a sorted list of (suffix_number, category) with base as 1.
@@ -961,6 +1038,7 @@ def _get_family_categories(guild: discord.Guild, base_category: discord.Category
             fam.append((suf, cat))
     fam.sort(key=lambda x: x[0])
     return fam
+
 
 async def ensure_ticket_category_with_capacity(guild: discord.Guild, base_category_id: int) -> discord.CategoryChannel:
     """
@@ -999,14 +1077,13 @@ async def ensure_ticket_category_with_capacity(guild: discord.Guild, base_catego
     )
     return new_cat
 
+
 def _is_ticket_channel(ch: discord.abc.GuildChannel) -> bool:
-    return (
-        isinstance(ch, discord.TextChannel)
-        and (
-            (ch.name or "").startswith("ticket-")
-            or (getattr(ch, "topic", None) or "").lower().startswith("compliance ticket")
-        )
+    return isinstance(ch, discord.TextChannel) and (
+        (ch.name or "").startswith("ticket-")
+        or (getattr(ch, "topic", None) or "").lower().startswith("compliance ticket")
     )
+
 
 async def rebalance_ticket_categories(bot, **kwargs):
     """

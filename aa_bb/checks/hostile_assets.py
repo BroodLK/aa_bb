@@ -5,33 +5,33 @@ The routines below are used both for the HTML renderings and faux-alerts
 that can be sent when a user has assets in systems owned by enemies.
 """
 
-from allianceauth.authentication.models import CharacterOwnership
-from allianceauth.services.hooks import get_extension_logger
-from django.contrib.auth.models import User
-from ..app_settings import (
-    get_system_owner,
-    is_nullsec,
-    is_player_structure,
-    get_safe_entities,
-    resolve_location_name,
-    resolve_location_system_id,
-    is_highsec,
-    is_lowsec,
-    corptools_active,
-    is_hostile_unified,
-    is_ship,
-)
+# Standard Library
+from typing import Dict, List, Optional
+
+# Django
 from django.utils import timezone
-from ..models import BigBrotherConfig
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
-from typing import List, Optional, Dict
+
+# Alliance Auth
+from allianceauth.services.hooks import get_extension_logger
+
+from ..app_settings import (
+    corptools_active,
+    get_system_owner,
+    is_hostile_unified,
+    is_ship,
+    resolve_location_name,
+    resolve_location_system_id,
+)
+from ..models import BigBrotherConfig
 
 logger = get_extension_logger(__name__)
 
 try:
     if corptools_active():
-        from corptools.models import CharacterAudit, CharacterAsset, EveLocation
+        # Third Party
+        from corptools.models import CharacterAsset, CharacterAudit, EveLocation
     else:
         CharacterAudit = None
         CharacterAsset = None
@@ -100,9 +100,7 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
             pass
 
         asset_type_name = (
-            getattr(asset.type_name, "name", None)
-            or getattr(asset.type_name, "type_name", None)
-            or str(asset_type_id)
+            getattr(asset.type_name, "name", None) or getattr(asset.type_name, "type_name", None) or str(asset_type_id)
         )
 
         char = char_map.get(asset.character_id)
@@ -169,21 +167,27 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
                 "assets": [],
             }
 
-        system_map[key]["locations"][loc_key]["assets"].append({
-            "char_id": char.character_id,
-            "char_name": char.character_name,
-            "type_id": asset_type_id,
-            "type_name": asset_type_name,
-        })
+        system_map[key]["locations"][loc_key]["assets"].append(
+            {
+                "char_id": char.character_id,
+                "char_name": char.character_name,
+                "type_id": asset_type_id,
+                "type_name": asset_type_name,
+            }
+        )
 
     del processed_combos, _loc_sys_cache, _loc_name_cache, char_map, audit_ids
+    # Standard Library
     import gc
+
     gc.collect()
 
     return system_map
 
 
-def get_hostile_asset_locations(user_id: int, cfg: BigBrotherConfig = None, safe_entities: set = None, entity_info_cache: dict = None) -> Dict[str, dict]:
+def get_hostile_asset_locations(
+    user_id: int, cfg: BigBrotherConfig = None, safe_entities: set = None, entity_info_cache: dict = None
+) -> Dict[str, dict]:
     """
     Returns a mapping of system display name -> structured hostile data
     for systems where the user's characters have assets in space and the
@@ -196,6 +200,7 @@ def get_hostile_asset_locations(user_id: int, cfg: BigBrotherConfig = None, safe
     hostile_map: Dict[str, dict] = {}
     if safe_entities is None:
         from ..app_settings import get_safe_entities
+
         safe_entities = get_safe_entities()
     if cfg is None:
         cfg = BigBrotherConfig.get_solo()
@@ -243,7 +248,7 @@ def get_hostile_asset_locations(user_id: int, cfg: BigBrotherConfig = None, safe
                         when=timezone.now(),
                         safe_entities=safe_entities,
                         entity_info_cache=entity_info_cache,
-                        cfg=cfg
+                        cfg=cfg,
                     )
                     _hostile_memo[memo_key] = is_hostile_at_loc
 
@@ -266,27 +271,20 @@ def get_hostile_asset_locations(user_id: int, cfg: BigBrotherConfig = None, safe
 
             if location_has_hostile:
                 for cname, ships in char_ships_at_loc.items():
-                    records.append({
-                        "char_name": cname,
-                        "location_name": loc_name,
-                        "ships": sorted(list(ships))
-                    })
+                    records.append({"char_name": cname, "location_name": loc_name, "ships": sorted(list(ships))})
 
         if system_has_hostile:
-            hostile_map[display_name] = {
-                "owner": oname,
-                "region": rname,
-                "records": records
-            }
+            hostile_map[display_name] = {"owner": oname, "region": rname, "records": records}
             logger.info(f"Hostile asset system: {display_name} owned by {oname}")
 
     # CRITICAL FIX: Clean up memoization cache
     del _hostile_memo
+    # Standard Library
     import gc
+
     gc.collect()
 
     return hostile_map
-
 
 
 def render_assets(user_id: int) -> Optional[str]:
@@ -301,6 +299,7 @@ def render_assets(user_id: int) -> Optional[str]:
 
         rows: List[Dict] = []
         from ..app_settings import get_safe_entities
+
         safe_entities = get_safe_entities()
         cfg = BigBrotherConfig.get_solo()
         ships_only = cfg.hostile_assets_ships_only
@@ -343,7 +342,7 @@ def render_assets(user_id: int) -> Optional[str]:
                             is_asset=True,
                             asset_type_id=None,
                             when=timezone.now(),
-                            safe_entities=safe_entities
+                            safe_entities=safe_entities,
                         )
                         _hostile_memo[memo_key] = is_hostile_at_loc
 
@@ -358,15 +357,17 @@ def render_assets(user_id: int) -> Optional[str]:
 
                 for char_name, cdata in char_assets.items():
                     ship_str = ", ".join(sorted(cdata["ships"])) if cdata["ships"] else ""
-                    rows.append({
-                        "system": display_name,
-                        "location": loc_name,
-                        "character": char_name,
-                        "owner": oname,
-                        "region": region_name,
-                        "hostile": cdata["is_hostile"],
-                        "ships": ship_str,
-                    })
+                    rows.append(
+                        {
+                            "system": display_name,
+                            "location": loc_name,
+                            "character": char_name,
+                            "owner": oname,
+                            "region": region_name,
+                            "hostile": cdata["is_hostile"],
+                            "ships": ship_str,
+                        }
+                    )
 
         if not rows:
             return '<table class="table stats"><tbody><tr><td class="text-center">No hostile assets found.</td></tr></tbody></table>'
@@ -376,17 +377,17 @@ def render_assets(user_id: int) -> Optional[str]:
 
         html_output = '<table class="table table-striped table-hover stats">'
         html_output += (
-            '<thead>'
-            '  <tr>'
+            "<thead>"
+            "  <tr>"
             '      <th style="width: 15%">System</th>'
             '      <th style="width: 20%">Station</th>'
             '      <th style="width: 15%">Character</th>'
             '      <th style="width: 15%">Owner</th>'
             '      <th style="width: 15%">Region</th>'
             '      <th style="width: 20%">Hostile Asset</th>'
-            '  </tr>'
-            '</thead>'
-            '<tbody>'
+            "  </tr>"
+            "</thead>"
+            "<tbody>"
         )
 
         for row in rows:
@@ -399,14 +400,14 @@ def render_assets(user_id: int) -> Optional[str]:
                 owner_cell = mark_safe(f'<span class="text-danger">{owner_cell}</span>')
 
             html_output += format_html(
-                '   <tr>'
-                '       <td>{}</td>'
-                '       <td>{}</td>'
-                '       <td>{}</td>'
-                '       <td>{}</td>'
-                '       <td>{}</td>'
-                '       <td>{}</td>'
-                '   </tr>',
+                "   <tr>"
+                "       <td>{}</td>"
+                "       <td>{}</td>"
+                "       <td>{}</td>"
+                "       <td>{}</td>"
+                "       <td>{}</td>"
+                "       <td>{}</td>"
+                "   </tr>",
                 system_cell,
                 row["location"],
                 row["character"],
@@ -415,11 +416,13 @@ def render_assets(user_id: int) -> Optional[str]:
                 hostile_ship,
             )
 
-        html_output += '</tbody></table>'
+        html_output += "</tbody></table>"
 
         # CRITICAL FIX: Clean up memoization cache
         del _hostile_memo
+        # Standard Library
         import gc
+
         gc.collect()
 
         return html_output

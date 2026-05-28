@@ -6,19 +6,25 @@ the same logic can be reused both in HTML renderings and in background
 tasks that persist the findings.
 """
 
-from allianceauth.services.hooks import get_extension_logger
-
-
-from aa_bb.models import CharacterAccountState, BigBrotherConfig
-from aa_bb.app_settings import resolve_character_name, get_user_characters
-from django.db import transaction
-from django.utils.html import format_html, mark_safe
-from django.utils import timezone
+# Standard Library
 import json
 import os
-from datetime import timedelta, time
+from datetime import timedelta
+
+# Django
+from django.db import transaction
+from django.utils import timezone
+from django.utils.html import format_html, mark_safe
+
+# Alliance Auth
+from allianceauth.services.hooks import get_extension_logger
+
+# AA BigBrother
+from aa_bb.app_settings import get_user_characters, resolve_character_name
+from aa_bb.models import BigBrotherConfig, CharacterAccountState
 
 try:
+    # Third Party
     from corptools.models import CharacterAudit, Skill
 except Exception:
     CharacterAudit = None
@@ -29,6 +35,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 _fallback_skill_ids_cache = None
+
 
 def _load_fallback_skill_ids():
     """
@@ -60,6 +67,7 @@ def _load_fallback_skill_ids():
     _fallback_skill_ids_cache = sorted(ids)
     return _fallback_skill_ids_cache
 
+
 def in_utc_update_window(now, start_time, end_time):
     utc_time = now.time()
     if start_time < end_time:
@@ -70,6 +78,7 @@ def in_utc_update_window(now, start_time, end_time):
 
 _alpha_skills_cache = None
 _skills_cache = None
+
 
 def _get_alpha_skills():
     global _alpha_skills_cache
@@ -82,6 +91,7 @@ def _get_alpha_skills():
             logger.exception("Failed to load alpha_skills.json")
             return []
     return _alpha_skills_cache
+
 
 def _get_skills():
     global _skills_cache
@@ -115,9 +125,7 @@ def determine_character_state(user_id, save: bool = False, cfg: BigBrotherConfig
     all_char_ids_map = get_user_characters(user_id)  # iterates keys if dict
     char_ids = list(all_char_ids_map.keys())
 
-    char_db_records = {
-        rec.char_id: rec for rec in CharacterAccountState.objects.filter(char_id__in=char_ids)
-    }
+    char_db_records = {rec.char_id: rec for rec in CharacterAccountState.objects.filter(char_id__in=char_ids)}
 
     result = {}
 
@@ -133,8 +141,7 @@ def determine_character_state(user_id, save: bool = False, cfg: BigBrotherConfig
         return result
 
     audits = (
-        CharacterAudit.objects
-        .filter(character__character_id__in=char_ids)
+        CharacterAudit.objects.filter(character__character_id__in=char_ids)
         .select_related("skilltotals")
         .only("id", "character__character_id", "skilltotals__total_sp")
     )
@@ -185,15 +192,13 @@ def determine_character_state(user_id, save: bool = False, cfg: BigBrotherConfig
     fallback_skill_ids = _load_fallback_skill_ids()
     skill_ids_to_fetch = sorted(set(alpha_skill_ids) | extra_skill_ids | set(fallback_skill_ids))
 
-    skill_rows = (
-        Skill.objects
-        .filter(character__character__character_id__in=chars_to_check, skill_id__in=skill_ids_to_fetch)
-        .values(
-            "character__character__character_id",
-            "skill_id",
-            "trained_skill_level",
-            "active_skill_level",
-        )
+    skill_rows = Skill.objects.filter(
+        character__character__character_id__in=chars_to_check, skill_id__in=skill_ids_to_fetch
+    ).values(
+        "character__character__character_id",
+        "skill_id",
+        "trained_skill_level",
+        "active_skill_level",
     )
 
     per_char = {cid: {} for cid in chars_to_check}
