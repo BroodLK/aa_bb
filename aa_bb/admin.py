@@ -378,10 +378,10 @@ class TicketToolConfigAdmin(SingletonModelAdmin):
                 ),
             )
 
-        # Corp Compliance Check - only show compliance_filter if charlink is installed
+        # Corp Compliance Check - only show the persisted compliance filter id if charlink is installed
         corp_check_fields = []
         if charlink_active():
-            corp_check_fields.append("compliance_filter")
+            corp_check_fields.append("compliance_filter_id")
         corp_check_fields.extend(
             [
                 "corp_check_enabled",
@@ -517,16 +517,17 @@ class TicketToolConfigAdmin(SingletonModelAdmin):
         if "role_id" in form.base_fields:
             form.base_fields["role_id"].widget = forms.Textarea(attrs={"rows": 3, "cols": 40})
 
-        if charlink_active():
+        if charlink_active() and "compliance_filter_id" in form.base_fields:
             try:
                 ComplianceFilter = apps.get_model("charlink", "ComplianceFilter")
-                form.base_fields["compliance_filter"] = forms.ModelChoiceField(
+                form.base_fields["compliance_filter_id"] = forms.ModelChoiceField(
                     queryset=ComplianceFilter.objects.all(),
                     required=False,
+                    label="Compliance filter",
                     help_text="Select your compliance filter",
                 )
                 if obj and obj.compliance_filter_id:
-                    form.base_fields["compliance_filter"].initial = ComplianceFilter.objects.filter(
+                    form.base_fields["compliance_filter_id"].initial = ComplianceFilter.objects.filter(
                         pk=obj.compliance_filter_id
                     ).first()
             except LookupError:
@@ -544,9 +545,9 @@ class TicketToolConfigAdmin(SingletonModelAdmin):
         return form
 
     def save_model(self, request, obj, form, change):
-        if charlink_active() and "compliance_filter" in form.cleaned_data:
-            compliance_filter = form.cleaned_data.get("compliance_filter")
-            obj.compliance_filter_id = compliance_filter.pk if compliance_filter else None
+        if charlink_active() and "compliance_filter_id" in form.cleaned_data:
+            compliance_filter = form.cleaned_data.get("compliance_filter_id")
+            obj.compliance_filter_id = getattr(compliance_filter, "pk", compliance_filter) or None
         super().save_model(request, obj, form, change)
 
     def has_add_permission(self, request):
