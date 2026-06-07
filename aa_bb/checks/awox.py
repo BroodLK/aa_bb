@@ -154,6 +154,13 @@ def _parse_cached_kill_date(value):
         return None
 
 
+def _is_same_auth_user_engagement(victim_id, attackers, user_char_ids):
+    if victim_id not in user_char_ids:
+        return False
+
+    return any(attacker.get("character_id") in user_char_ids for attacker in attackers)
+
+
 def _merge_cached_kills(existing_data, new_data, cutoff):
     merged = {}
     for entry in existing_data or []:
@@ -292,6 +299,9 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
                         victim = full_kill.get("victim", {})
                         victim_id = victim.get("character_id")
                         attackers = full_kill.get("attackers", []) or []
+
+                        if _is_same_auth_user_engagement(victim_id, attackers, char_ids):
+                            continue
 
                         # Who from our user is involved?
                         involved_user_char_ids = []
