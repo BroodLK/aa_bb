@@ -39,6 +39,7 @@ from .app_settings import (
     _chunk_embed_lines,
     corptools_active,
     get_character_id,
+    get_profile_main_character_id,
     get_pings,
     get_user_id,
     get_user_profiles,
@@ -872,12 +873,12 @@ def BB_run_regular_loa_updates():
         user = profile.user
         # Determine main_character_id
         try:
-            main_id = profile.main_character.character_id
+            main_id = get_profile_main_character_id(profile)
         except Exception:
             main_id = get_character_id(profile)
 
         # Load main character
-        ec = EveCharacter.objects.filter(character_id=main_id).first()
+        ec = EveCharacter.objects.only("character_id").filter(character_id=main_id).first()
         if not ec:  # Skip mains that cannot be resolved to an EveCharacter.
             continue
 

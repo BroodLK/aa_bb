@@ -546,10 +546,10 @@ def BB_update_single_user(user_id, char_name):
 
                         try:
                             cid = get_character_id(charname)
-                            ev = EveCharacter.objects.get(character_id=cid)
-
-                            corp_id = ev.corporation_id
-                            corp_name = ev.corporation_name
+                            corp_id, corp_name = EveCharacter.objects.values_list(
+                                "corporation_id",
+                                "corporation_name",
+                            ).get(character_id=cid)
 
                             corp_days = get_current_stint_days_in_corp(cid, corp_id)
                             corp_label = f"Time in {corp_name}"
@@ -1149,26 +1149,35 @@ def BB_run_regular_updates():
         User = get_user_model()
         # find a superuser's main to anchor corp/alliance fields
         superusers = User.objects.filter(is_superuser=True)
-        char = None
-        for su in superusers.select_related("profile__main_character"):
-            profile = getattr(su, "profile", None)
-            main_char = getattr(profile, "main_character", None) if profile else None
-            if main_char:
-                char = main_char
-                break
+        char = superusers.filter(profile__main_character__isnull=False).values_list(
+            "profile__main_character__corporation_id",
+            "profile__main_character__corporation_name",
+            "profile__main_character__alliance_id",
+            "profile__main_character__alliance_name",
+        ).first()
 
         if not char:
-            char = EveCharacter.objects.filter(character_ownership__user__in=superusers).first()
+            char = EveCharacter.objects.filter(character_ownership__user__in=superusers).values_list(
+                "corporation_id",
+                "corporation_name",
+                "alliance_id",
+                "alliance_name",
+            ).first()
 
         if not char:  # no superuser alt yet → fall back to first available character
-            char = EveCharacter.objects.all().first()
+            char = EveCharacter.objects.values_list(
+                "corporation_id",
+                "corporation_name",
+                "alliance_id",
+                "alliance_name",
+            ).first()
         update_fields = []
         if char:  # only populate config when a character is available to inspect
-            corp_name = char.corporation_name
-            alliance_id = char.alliance_id or 0
-            alliance_name = char.alliance_name if alliance_id else ""  # unaffiliated corps report None for alliance
+            corp_id, corp_name, alliance_id, alliance_name = char
+            alliance_id = alliance_id or 0
+            alliance_name = alliance_name if alliance_id else ""  # unaffiliated corps report None for alliance
 
-            instance.main_corporation_id = char.corporation_id
+            instance.main_corporation_id = corp_id
             instance.main_corporation = corp_name
             instance.main_alliance_id = alliance_id
             instance.main_alliance = alliance_name

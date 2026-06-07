@@ -1928,13 +1928,46 @@ def get_users():
     return users
 
 
+def get_profile_main_character_id(profile):
+    """Return a profile's EVE character ID without forcing a full EveCharacter row load."""
+    if not profile or not getattr(profile, "main_character_id", None):
+        return None
+    if "main_character" in getattr(profile._state, "fields_cache", {}):
+        main_character = getattr(profile, "main_character", None)
+        return getattr(main_character, "character_id", None) if main_character else None
+    return UserProfile.objects.filter(pk=profile.pk).values_list("main_character__character_id", flat=True).first()
+
+
+def get_profile_main_character_name(profile):
+    """Return a profile's main character name without forcing a full EveCharacter row load."""
+    if not profile or not getattr(profile, "main_character_id", None):
+        return None
+    if "main_character" in getattr(profile._state, "fields_cache", {}):
+        main_character = getattr(profile, "main_character", None)
+        return getattr(main_character, "character_name", None) if main_character else None
+    return UserProfile.objects.filter(pk=profile.pk).values_list("main_character__character_name", flat=True).first()
+
+
 def get_user_profiles():
     """Return queryset of eligible user profiles with main characters eager-loaded."""
     cfg = BigBrotherConfig.get_solo()
     member_states = cfg.bb_member_states.all()
     qs = UserProfile.objects.filter(state__in=member_states).exclude(main_character=None)
 
-    users = qs.select_related("main_character", "user").order_by("main_character__character_name")  # optimization
+    users = (
+        qs.select_related("main_character", "user")
+        .only(
+            "id",
+            "user_id",
+            "main_character_id",
+            "user__id",
+            "user__username",
+            "main_character__character_id",
+            "main_character__character_name",
+            "main_character__corporation_id",
+        )
+        .order_by("main_character__character_name")
+    )
     return users
 
 
@@ -2298,9 +2331,10 @@ def get_owner_name():
     from allianceauth.eveonline.models import EveCharacter
 
     try:
-        char = EveCharacter.objects.filter(character_ownership__user__is_superuser=True).first()
-        if char:  # Prefer the first superuser's main pilot name.
-            return char.character_name
+        return EveCharacter.objects.filter(character_ownership__user__is_superuser=True).values_list(
+            "character_name",
+            flat=True,
+        ).first()
     except Exception:
         pass
     return None  # Fallback

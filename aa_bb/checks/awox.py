@@ -311,7 +311,9 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
                         # Resolve names
                         if victim_id:
                             try:
-                                vic_name = EveCharacter.objects.get(character_id=victim_id).character_name
+                                vic_name = EveCharacter.objects.values_list("character_name", flat=True).get(
+                                    character_id=victim_id
+                                )
                             except (EveCharacter.DoesNotExist, AttributeError):
                                 vic_name = resolve_character_name(victim_id) or "Unknown"
                         else:
@@ -323,7 +325,9 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
                         att_id = fb_attacker.get("character_id")
                         if att_id:
                             try:
-                                att_name = EveCharacter.objects.get(character_id=att_id).character_name
+                                att_name = EveCharacter.objects.values_list("character_name", flat=True).get(
+                                    character_id=att_id
+                                )
                             except (EveCharacter.DoesNotExist, AttributeError):
                                 att_name = resolve_character_name(att_id) or "Unknown"
                         else:

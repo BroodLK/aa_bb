@@ -203,9 +203,7 @@ def get_user_id(character_name):
         return None
     character_name = str(character_name)
     try:
-        ownership = CharacterOwnership.objects.select_related("user__profile__main_character").get(
-            character__character_name=character_name
-        )
+        ownership = CharacterOwnership.objects.select_related("user").get(character__character_name=character_name)
 
         return ownership.user.id
     except CharacterOwnership.DoesNotExist:
@@ -1623,7 +1621,17 @@ def ticket_list(request):
     if not discordbot_active():
         tickets = tickets.exclude(reason="discord_check")
 
-    tickets = tickets.select_related("user__profile__main_character").annotate(comment_count=Count("comments"))
+    tickets = tickets.select_related("user__profile__main_character").only(
+        "ticket_id",
+        "reason",
+        "is_exception",
+        "is_resolved",
+        "created_at",
+        "user__id",
+        "user__username",
+        "user__profile__id",
+        "user__profile__main_character__character_name",
+    ).annotate(comment_count=Count("comments"))
     return render(request, "aa_bb/ticket_list.html", {"tickets": tickets, "current_tab": tab})
 
 
@@ -1632,10 +1640,31 @@ def ticket_list(request):
 @require_active_page("aa_bb/disabled.html", BIG_BROTHER_INACTIVE_MESSAGE)
 def ticket_view(request, pk):
     """View details and comments for a specific ticket."""
-    ticket = get_object_or_404(ComplianceTicket.objects.select_related("user__profile__main_character"), pk=pk)
+    ticket = get_object_or_404(
+        ComplianceTicket.objects.select_related("user__profile__main_character").only(
+            "ticket_id",
+            "reason",
+            "is_exception",
+            "is_resolved",
+            "exception_reason",
+            "created_at",
+            "user__id",
+            "user__username",
+            "user__profile__id",
+            "user__profile__main_character__character_name",
+        ),
+        pk=pk,
+    )
     if ticket.reason == "paps_check" and not afat_active():
         return HttpResponseForbidden("PAP compliance tickets are hidden as afat is not active.")
-    comments = ticket.comments.all().select_related("user__profile__main_character")
+    comments = ticket.comments.all().select_related("user__profile__main_character").only(
+        "comment",
+        "created_at",
+        "user__id",
+        "user__username",
+        "user__profile__id",
+        "user__profile__main_character__character_name",
+    )
     return render(request, "aa_bb/ticket_view.html", {"ticket": ticket, "comments": comments})
 
 

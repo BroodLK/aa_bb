@@ -27,6 +27,7 @@ from .app_settings import (
     corptools_active,
     discordbot_active,
     get_character_id,
+    get_profile_main_character_id,
     get_user_profiles,
     send_message,
     send_status_embed,
@@ -160,12 +161,12 @@ def afk_check(user):
     if not profile:  # Missing profile prevents further evaluation.
         return False
     try:
-        main_id = profile.main_character.character_id
+        main_id = get_profile_main_character_id(profile)
     except Exception:
         main_id = get_character_id(profile)
 
     # Load main character
-    ec = EveCharacter.objects.filter(character_id=main_id).first()
+    ec = EveCharacter.objects.only("character_id").filter(character_id=main_id).first()
     if not ec:  # Cannot determine AFK if the main character record is missing.
         return False
 
@@ -193,7 +194,7 @@ def _get_latest_logoff_cached(char_id):
     if cached is not None:
         return cached
 
-    ec = EveCharacter.objects.filter(character_id=char_id).first()
+    ec = EveCharacter.objects.only("character_id").filter(character_id=char_id).first()
     if not ec:
         # Cache negative result to prevent repeated DB queries
         cache.set(cache_key, None, 600)  # 10 min for missing chars
@@ -337,7 +338,7 @@ def hourly_compliance_check():
     excluded_user_ids = set(t_cfg.excluded_users.all().values_list("id", flat=True))
 
     # 1. Check compliance reasons
-    for profile in profiles_qs.select_related("user", "main_character").iterator():
+    for profile in profiles_qs.iterator():
         user = profile.user
         if user.id in excluded_user_ids:  # Skip users explicitly excluded from checks.
             continue

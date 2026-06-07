@@ -23,6 +23,7 @@ from django.utils import timezone
 from allianceauth.authentication.models import CharacterOwnership, UserProfile
 from allianceauth.services.hooks import get_extension_logger
 
+from .app_settings import get_profile_main_character_name
 from .models import AdminLogEntry, BigBrotherConfig, TicketToolConfig
 from .request_context import get_request_context
 from .tasks_cb import BB_register_message_tasks
@@ -342,11 +343,16 @@ def cache_profile_state(sender, instance, **kwargs):
         instance._bb_prev_main_character_name = None
         return
     try:
-        prev = UserProfile.objects.select_related("state", "main_character").get(pk=instance.pk)
-        instance._bb_prev_state_id = prev.state_id
-        instance._bb_prev_state_name = prev.state.name if prev.state else None
-        instance._bb_prev_main_character_id = prev.main_character_id
-        instance._bb_prev_main_character_name = prev.main_character.character_name if prev.main_character else None
+        prev = UserProfile.objects.select_related("state").values(
+            "state_id",
+            "state__name",
+            "main_character_id",
+            "main_character__character_name",
+        ).get(pk=instance.pk)
+        instance._bb_prev_state_id = prev["state_id"]
+        instance._bb_prev_state_name = prev["state__name"]
+        instance._bb_prev_main_character_id = prev["main_character_id"]
+        instance._bb_prev_main_character_name = prev["main_character__character_name"]
     except UserProfile.DoesNotExist:
         instance._bb_prev_state_id = None
         instance._bb_prev_state_name = None
@@ -377,7 +383,7 @@ def log_profile_changes(sender, instance, created, **kwargs):
     prev_main_id = getattr(instance, "_bb_prev_main_character_id", None)
     if prev_main_id is not None and prev_main_id != instance.main_character_id:
         old_char = getattr(instance, "_bb_prev_main_character_name", None)
-        new_char = instance.main_character.character_name if instance.main_character else None
+        new_char = get_profile_main_character_name(instance)
         log_admin_event(
             category=AdminLogEntry.CATEGORY_AUTH,
             action="main_character_changed",
