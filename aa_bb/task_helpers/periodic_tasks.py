@@ -137,7 +137,7 @@ def sync_periodic_tasks():
     # Django
     from django.apps import apps
 
-    from .models import BigBrotherConfig
+    from ..models import BigBrotherConfig
 
     config = BigBrotherConfig.get_solo()
     config.refresh_from_db()

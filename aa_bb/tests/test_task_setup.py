@@ -1,3 +1,6 @@
+# Standard Library
+from unittest.mock import Mock, patch
+
 # Third Party
 from django_celery_beat.models import IntervalSchedule, PeriodicTask
 
@@ -5,7 +8,7 @@ from django_celery_beat.models import IntervalSchedule, PeriodicTask
 from django.test import TestCase
 
 # AA BigBrother
-from aa_bb.tasks_utils import format_task_name, setup_periodic_task
+from aa_bb.tasks_utils import format_task_name, setup_periodic_task, sync_periodic_tasks
 
 
 class TestTaskSetup(TestCase):
@@ -67,3 +70,50 @@ class TestTaskSetup(TestCase):
         setup_periodic_task(name=task_name, task_path="aa_bb.tasks.some_task", schedule=self.schedule, enabled=True)
         task.refresh_from_db()
         self.assertTrue(task.enabled)
+
+    @patch("aa_bb.task_helpers.periodic_tasks.setup_periodic_task")
+    @patch("aa_bb.task_helpers.periodic_tasks.PeriodicTask.objects.filter")
+    @patch("aa_bb.task_helpers.periodic_tasks.CrontabSchedule.objects.get_or_create")
+    @patch("aa_bb.task_helpers.periodic_tasks.IntervalSchedule.objects.get_or_create")
+    @patch("django.apps.apps.is_installed", return_value=False)
+    @patch("aa_bb.models.BigBrotherConfig.get_solo")
+    def test_sync_periodic_tasks_uses_parent_package_models_import(
+        self,
+        mock_get_solo,
+        _mock_is_installed,
+        mock_interval_get_or_create,
+        mock_crontab_get_or_create,
+        mock_task_filter,
+        mock_setup_periodic_task,
+    ):
+        config = Mock(
+            is_active=True,
+            update_stagger_seconds=3600,
+            is_loa_active=False,
+            is_paps_active=False,
+            are_recurring_stats_active=False,
+            are_daily_messages_active=False,
+            are_opt_messages1_active=False,
+            are_opt_messages2_active=False,
+            are_opt_messages3_active=False,
+            are_opt_messages4_active=False,
+            are_opt_messages5_active=False,
+            stats_schedule=None,
+            dailyschedule=None,
+            optschedule1=None,
+            optschedule2=None,
+            optschedule3=None,
+            optschedule4=None,
+            optschedule5=None,
+        )
+        config.refresh_from_db = Mock()
+        mock_get_solo.return_value = config
+        mock_interval_get_or_create.return_value = (Mock(spec=IntervalSchedule), False)
+        mock_crontab_get_or_create.return_value = (Mock(), False)
+        mock_task_filter.return_value.first.return_value = None
+
+        sync_periodic_tasks()
+
+        mock_get_solo.assert_called_once()
+        config.refresh_from_db.assert_called_once()
+        self.assertTrue(mock_setup_periodic_task.called)
