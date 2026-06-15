@@ -5,15 +5,17 @@ Database-backed bootstrap work is deferred until after migrations so Django 5
 does not warn about database access during app initialization.
 """
 
+# Standard Library
+import logging
+
 # Django
 from django.apps import AppConfig
 from django.db.models.signals import post_migrate
 from django.db.utils import OperationalError, ProgrammingError
 
-# Alliance Auth
-from allianceauth.services.hooks import get_extension_logger
-
-logger = get_extension_logger(__name__)
+# Avoid Alliance Auth service imports at module import time. AppConfig modules
+# are imported before Django finishes populating the app registry.
+logger = logging.getLogger(__name__)
 
 PREDEFINED_MESSAGE_TYPES = [
     "LoA Request",
