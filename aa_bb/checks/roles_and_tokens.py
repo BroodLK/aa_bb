@@ -5,10 +5,15 @@ The views reuse these helpers to highlight characters that are missing
 required scopes or that still have elevated roles without valid tokens.
 """
 
-from allianceauth.authentication.models import CharacterOwnership
-from allianceauth.services.hooks import get_extension_logger
+# Django
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
+
+# Alliance Auth
+from allianceauth.authentication.models import CharacterOwnership
+from allianceauth.services.hooks import get_extension_logger
+
+# AA BigBrother
 from aa_bb.models import BigBrotherConfig
 
 from ..app_settings import corptools_active
@@ -17,13 +22,15 @@ logger = get_extension_logger(__name__)
 
 try:
     if corptools_active():
-        from corptools.models import CharacterRoles, CharacterAudit
+        # Third Party
+        from corptools.models import CharacterAudit, CharacterRoles
     else:
         CharacterRoles = None
         CharacterAudit = None
 except ImportError:
     CharacterRoles = None
     CharacterAudit = None
+
 
 def get_user_roles(user_id):
     """
@@ -64,6 +71,7 @@ def get_user_roles(user_id):
 
     return roles_dict
 
+
 def get_user_tokens(user_id):
     """
     Inspect which ESI scopes the user has granted for each character.
@@ -73,7 +81,8 @@ def get_user_tokens(user_id):
     """
     if not corptools_active() or CharacterAudit is None:
         return {}
-    from esi.models import Token, Scope
+    # Alliance Auth
+    from esi.models import Token
 
     CHARACTER_SCOPES = BigBrotherConfig.get_solo().character_scopes.split(",")
 
@@ -114,6 +123,7 @@ def get_user_tokens(user_id):
         }
 
     return tokens_dict
+
 
 def get_user_roles_and_tokens(user_id):
     """
@@ -177,9 +187,7 @@ def render_user_roles_tokens_html(user_id: int) -> str:
                 has_roles = True
             else:
                 val_txt = "False"
-            html += format_html(
-                "<tr><td>{}</td><td>{}</td></tr>", label, val_txt
-            )
+            html += format_html("<tr><td>{}</td><td>{}</td></tr>", label, val_txt)
 
         # tokens
         for key, label in (
@@ -192,25 +200,23 @@ def render_user_roles_tokens_html(user_id: int) -> str:
                 val_txt = mark_safe('<span class="text-danger">False</span> has no audit record.')
             elif key == "corporation_token" and not val:  # No corp token; severity depends on corp roles.
                 if has_roles:  # Elevated corp roles without corp token is especially risky.
-                    val_txt = mark_safe('<span class="text-danger">False</span> has elevated roles. A corporation token is expected.')
+                    val_txt = mark_safe(
+                        '<span class="text-danger">False</span> has elevated roles. A corporation token is expected.'
+                    )
                 else:
-                    val_txt = mark_safe('False')
+                    val_txt = mark_safe("False")
             else:
                 val_txt = mark_safe('<span class="text-success">True</span>')
-            html += format_html(
-                "<tr><td>{}</td><td>{}</td></tr>", label, val_txt
-            )
+            html += format_html("<tr><td>{}</td><td>{}</td></tr>", label, val_txt)
 
         # scopes
-        for key, label in (
-            ("missing_corporation_scopes", "Missing Corporation Scopes"),
-        ):
+        for key, label in (("missing_corporation_scopes", "Missing Corporation Scopes"),):
             val = info.get(key, "")
             if val:  # only add row if non-empty
                 html += format_html(
                     "<tr><td>{}</td><td colspan='2'>{}</td></tr>",
                     label,
-                    mark_safe(val.replace(",", "<br>"))  # comma-separated string of missing scopes
+                    mark_safe(val.replace(",", "<br>")),  # comma-separated string of missing scopes
                 )
 
         # table end

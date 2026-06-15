@@ -6,11 +6,16 @@ evaluates every character owned by a user and pushes them into the shared
 blacklist when authorized staff request it.
 """
 
-from allianceauth.authentication.models import CharacterOwnership
-from ..app_settings import aablacklist_active, get_pings, send_status_embed
+# Django
 from django.contrib.auth.models import User
-from django.urls import reverse
 from django.middleware.csrf import get_token
+from django.urls import reverse
+
+# Alliance Auth
+from allianceauth.authentication.models import CharacterOwnership
+
+from ..app_settings import aablacklist_active, get_pings, send_status_embed
+
 
 def check_add_to_blacklist(user_id):
     """
@@ -27,6 +32,7 @@ def check_add_to_blacklist(user_id):
         status_map[co.character.character_name] = check_char_add_to_bl(cid)
     return status_map
 
+
 def check_char_add_to_bl(cid):
     """
     Lightweight helper used by multiple checks to see if a character id
@@ -35,18 +41,16 @@ def check_char_add_to_bl(cid):
     if not aablacklist_active():  # Optional plugin absent → treat as not blacklisted.
         return False
     else:
+        # Third Party
         from blacklist.models import EveNote
-        blacklisted_ids = EveNote.objects.filter(
-            blacklisted=True,
-            eve_catagory='character'
-        ).values_list('eve_id', flat=True)
+
+        blacklisted_ids = EveNote.objects.filter(blacklisted=True, eve_catagory="character").values_list(
+            "eve_id", flat=True
+        )
         return cid in blacklisted_ids
 
-def get_add_to_blacklist_html(
-    request,
-    issuer_user_id: int,
-    target_user_id: int
-) -> str:
+
+def get_add_to_blacklist_html(request, issuer_user_id: int, target_user_id: int) -> str:
     """
     Render a simple HTML summary (one line per four characters) along with
     a POST form that lets moderators enqueue a blacklist request.
@@ -73,10 +77,7 @@ def get_add_to_blacklist_html(
     # render 4 chars per <li>
     for i in range(0, len(items), 4):
         chunk = items[i : i + 4]
-        line = ", ".join(
-            ( "🚩 " + n if bl else "✅ " + n )
-            for n, bl in chunk
-        )
+        line = ", ".join(("🚩 " + n if bl else "✅ " + n) for n, bl in chunk)
         html.append(f"    <li>{line}</li>")
 
     html.append("  </ul>")
@@ -96,14 +97,13 @@ def get_add_to_blacklist_html(
     return "\n".join(html)
 
 
-from django.utils import timezone
+# Django
 from django.core.exceptions import ObjectDoesNotExist
+from django.utils import timezone
+
 
 def add_user_characters_to_blacklist(
-    issuer_user_id: int,
-    target_user_id: int,
-    reason: str,
-    max_reason_length: int = 4000
+    issuer_user_id: int, target_user_id: int, reason: str, max_reason_length: int = 4000
 ) -> list[str]:
     """
     Blacklist every character owned by `target_user_id` with attribution.
@@ -114,6 +114,7 @@ def add_user_characters_to_blacklist(
     if not aablacklist_active():  # No-op when blacklist plugin is missing.
         return None
 
+    # Third Party
     from blacklist.models import EveNote
 
     # 1. Load issuer and determine their “main” character
@@ -141,14 +142,10 @@ def add_user_characters_to_blacklist(
     if target_main_char is None:  # Fallback to first character if no profile/main set.
         co_first_t = CharacterOwnership.objects.filter(user=target_user).first()
         target_main_char = co_first_t.character if co_first_t else None
-    target_main_name = (
-        target_main_char.character_name
-        if target_main_char
-        else target_user.get_username()
-    )
+    target_main_name = target_main_char.character_name if target_main_char else target_user.get_username()
 
     # 4. Build the final reason string
-    timestamp = timezone.now().strftime('%Y-%m-%d %H:%M:%S')
+    timestamp = timezone.now().strftime("%Y-%m-%d %H:%M:%S")
     final_reason = (
         f"Time Stamp: {timestamp}\n"
         f"Main Character: {target_main_name}\n"
@@ -160,18 +157,14 @@ def add_user_characters_to_blacklist(
     newly_blacklisted = []
     for co in CharacterOwnership.objects.filter(user__id=target_user_id):
         char = co.character
-        exists = EveNote.objects.filter(
-            eve_id=char.character_id,
-            eve_catagory='character',
-            blacklisted=True
-        ).exists()
+        exists = EveNote.objects.filter(eve_id=char.character_id, eve_catagory="character", blacklisted=True).exists()
         if exists:  # Skip characters already blacklisted.
             continue
 
         EveNote.objects.create(
             eve_id=char.character_id,
             eve_name=char.character_name,
-            eve_catagory='character',
+            eve_catagory="character",
             blacklisted=True,
             reason=final_reason,
             added_by=added_by,
@@ -183,7 +176,9 @@ def add_user_characters_to_blacklist(
         newly_blacklisted.append(char.character_name)
         send_status_embed(
             subject="New Blacklist Entry",
-            lines=[f"{get_pings('New Blacklist Entry')}{target_main_name}'s character {char.character_name} added to blacklist by {added_by}"],
+            lines=[
+                f"{get_pings('New Blacklist Entry')}{target_main_name}'s character {char.character_name} added to blacklist by {added_by}"
+            ],
             color=0xFF0000,
         )
 

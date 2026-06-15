@@ -3,43 +3,46 @@ Wallet transaction hygiene checks. These helpers normalize journal rows,
 flag suspicious counterparties, and keep deduplicated notes for alerts.
 """
 
+# Standard Library
 import html
 import re
-import requests
+from datetime import datetime
 from typing import Dict, Optional
-from datetime import datetime, timedelta
-from django.apps import apps
-from django.utils import timezone
 
+# Django
+from django.apps import apps
+
+# Alliance Auth
 from allianceauth.services.hooks import get_extension_logger
 
 logger = get_extension_logger(__name__)
 
 from ..app_settings import (
-    get_user_characters,
-    get_entity_info,
-    get_safe_entities,
     aablacklist_active,
+    corptools_active,
+    get_entity_info,
+    get_hostile_state,
+    get_system_owner,
+    get_user_characters,
+    is_hostile_unified,
+    is_location_hostile,
     resolve_location_name,
     resolve_location_system_id,
-    is_location_hostile,
-    get_system_owner,
-    get_hostile_state,
-    is_highsec,
-    is_lowsec,
-    corptools_active,
-    is_hostile_unified,
 )
 
 if aablacklist_active():
-    from .add_to_blacklist import check_char_add_to_bl
+    pass
 else:
+
     def check_char_corp_bl(_cid: int) -> bool:
         return False
 
+
 try:
     if corptools_active():
+        # Third Party
         from corptools.models import CharacterWalletJournalEntry as WalletJournalEntry
+
         logger.info(f"Successfully imported WalletJournalEntry: {WalletJournalEntry}")
     else:
         logger.warning("corptools_active() returned False at import time")
@@ -48,8 +51,10 @@ except ImportError as e:
     logger.error(f"Failed to import corptools models: {e}")
     WalletJournalEntry = None
 
+# Django
 from django.db.models import Q
-from ..models import BigBrotherConfig, ProcessedTransaction, SusTransactionNote, EveItemPrice, EntityInfoCache
+
+from ..models import BigBrotherConfig, EntityInfoCache, ProcessedTransaction, SusTransactionNote
 
 SUS_TYPES = ("player_trading", "corporation_account_withdrawal", "player_donation")
 MARKET_REASON_RE = re.compile(
@@ -181,10 +186,7 @@ def get_user_transactions(qs) -> Dict[int, Dict]:
     cache_entries = EntityInfoCache.objects.filter(entity_id__in=eids, as_of__in=hours)
 
     # Map them by (entity_id, as_of)
-    info_map = {
-        (ce.entity_id, ce.as_of): ce.data
-        for ce in cache_entries
-    }
+    info_map = {(ce.entity_id, ce.as_of): ce.data for ce in cache_entries}
 
     def _get_info(eid: int, when: datetime) -> dict:
         if not eid:
@@ -271,13 +273,19 @@ def get_user_transactions(qs) -> Dict[int, Dict]:
             "info_cache": {
                 first_party_id: iinfo,
                 second_party_id: ainfo,
-            }
+            },
         }
 
     return result
 
 
-def is_transaction_hostile(tx: dict, user_ids: set = None, safe_entities: set = None, entity_info_cache: dict = None, cfg: BigBrotherConfig = None) -> bool:
+def is_transaction_hostile(
+    tx: dict,
+    user_ids: set = None,
+    safe_entities: set = None,
+    entity_info_cache: dict = None,
+    cfg: BigBrotherConfig = None,
+) -> bool:
     """
     Checks if a wallet transaction is considered hostile using the unified processor.
     """
@@ -299,11 +307,13 @@ def is_transaction_hostile(tx: dict, user_ids: set = None, safe_entities: set = 
         system_id=tx.get("system_id"),
         is_market=is_market,
         market_item_id=tx.get("type_id"),
-        market_unit_price=abs(tx.get("raw_amount")) / (tx.get("quantity") or 1) if tx.get("raw_amount") is not None else None,
+        market_unit_price=(
+            abs(tx.get("raw_amount")) / (tx.get("quantity") or 1) if tx.get("raw_amount") is not None else None
+        ),
         when=tx.get("date"),
         safe_entities=safe_entities,
         entity_info_cache=entity_info_cache or tx.get("info_cache"),
-        cfg=cfg
+        cfg=cfg,
     )
 
 
@@ -318,10 +328,11 @@ def render_transactions(user_id: int) -> str:
     user_ids = set(user_chars.keys())
 
     from ..app_settings import get_safe_entities
+
     safe_entities = get_safe_entities()
 
     # sort by date desc
-    all_list = sorted(txs.values(), key=lambda x: x['date'], reverse=True)
+    all_list = sorted(txs.values(), key=lambda x: x["date"], reverse=True)
     hostile = [t for t in all_list if is_transaction_hostile(t, user_ids, safe_entities=safe_entities)]
     if not hostile:  # No transactions require attention.
         return '<table class="table stats"><tbody><tr><td class="text-center">No hostile transactions found.</td></tr></tbody></table>'
@@ -332,65 +343,74 @@ def render_transactions(user_id: int) -> str:
 
     # define headers to show
     first = display[0]
-    HIDDEN = {'first_party_id','second_party_id','first_party_corporation_id','second_party_corporation_id',
-              'first_party_alliance_id','second_party_alliance_id','entry_id'}
+    HIDDEN = {
+        "first_party_id",
+        "second_party_id",
+        "first_party_corporation_id",
+        "second_party_corporation_id",
+        "first_party_alliance_id",
+        "second_party_alliance_id",
+        "entry_id",
+    }
     headers = [k for k in first.keys() if k not in HIDDEN]
 
-    parts = ['<table class="table table-striped table-hover stats">','<thead>','<tr>']
+    parts = ['<table class="table table-striped table-hover stats">', "<thead>", "<tr>"]
     for h in headers:
         parts.append(f'<th>{html.escape(h.replace("_"," ").title())}</th>')
-    parts.extend(['</tr>','</thead>','<tbody>'])
+    parts.extend(["</tr>", "</thead>", "<tbody>"])
 
     cfg = BigBrotherConfig.get_solo()
-    hostile_corps = {s.strip() for s in (cfg.hostile_corporations or "").split(",") if s.strip()}
-    hostile_allis = {s.strip() for s in (cfg.hostile_alliances or "").split(",") if s.strip()}
+    {s.strip() for s in (cfg.hostile_corporations or "").split(",") if s.strip()}
+    {s.strip() for s in (cfg.hostile_alliances or "").split(",") if s.strip()}
     safe_entities = get_safe_entities()
 
     for t in display:  # Render each hostile transaction row with contextual styling.
-        parts.append('<tr>')
+        parts.append("<tr>")
         for col in headers:
             val = html.escape(str(t.get(col)))
-            style = ''
+            style = ""
             # reuse contract style logic by mapping to transaction
-            if col == 'type':
+            if col == "type":
                 for key in SUS_TYPES:
-                    if key in t['type']:  # Highlight suspicious ref types inline.
-                        style = 'color: red;'
+                    if key in t["type"]:  # Highlight suspicious ref types inline.
+                        style = "color: red;"
                 if cfg.show_market_transactions:
-                    if "market_escrow" in t['type'] or "market_transaction" in t['type']:
-                        style = 'color: red;'
-            if col in ('first_party_name', 'second_party_name'):
-                pid = t.get(col + '_id')
-                if get_hostile_state(pid, 'character'):
-                    style = 'color: red;'
-            if col.endswith('corporation'):
-                cid = t.get(col + '_id')
-                if get_hostile_state(cid, 'corporation'):
-                    style = 'color: red;'
-            if col.endswith('alliance'):
-                aid = t.get(col + '_id')
-                if get_hostile_state(aid, 'alliance'):
-                    style = 'color: red;'
+                    if "market_escrow" in t["type"] or "market_transaction" in t["type"]:
+                        style = "color: red;"
+            if col in ("first_party_name", "second_party_name"):
+                pid = t.get(col + "_id")
+                if get_hostile_state(pid, "character"):
+                    style = "color: red;"
+            if col.endswith("corporation"):
+                cid = t.get(col + "_id")
+                if get_hostile_state(cid, "corporation"):
+                    style = "color: red;"
+            if col.endswith("alliance"):
+                aid = t.get(col + "_id")
+                if get_hostile_state(aid, "alliance"):
+                    style = "color: red;"
+
             def make_td(val, style=""):
                 """Render a TD with optional inline style for hostile cues."""
                 style_attr = f' style="{style}" class="text-danger"' if style else ""
                 return f"<td{style_attr}>{val}</td>"
+
             parts.append(make_td(val, style))
-        parts.append('</tr>')
+        parts.append("</tr>")
 
-    parts.extend(['</tbody>','</table>'])
+    parts.extend(["</tbody>", "</table>"])
     if skipped:  # Let the reviewer know older hostile rows are omitted.
-        parts.append(f'<p>Showing {limit} of {len(hostile)} hostile transactions; skipped {skipped} older ones.</p>')
-    return '\n'.join(parts)
+        parts.append(f"<p>Showing {limit} of {len(hostile)} hostile transactions; skipped {skipped} older ones.</p>")
+    return "\n".join(parts)
 
 
-def get_user_hostile_transactions(user_id: int, cfg: BigBrotherConfig = None, safe_entities: set = None, entity_info_cache: dict = None) -> Dict[int, str]:
+def get_user_hostile_transactions(
+    user_id: int, cfg: BigBrotherConfig = None, safe_entities: set = None, entity_info_cache: dict = None
+) -> Dict[int, str]:
     qs_all = gather_user_transactions(user_id)
     all_ids = list(qs_all.values_list("entry_id", flat=True))
 
-    seen = set(
-        ProcessedTransaction.objects.filter(entry_id__in=all_ids).values_list("entry_id", flat=True)
-    )
+    seen = set(ProcessedTransaction.objects.filter(entry_id__in=all_ids).values_list("entry_id", flat=True))
 
     notes: Dict[int, str] = {}
     new = [eid for eid in all_ids if eid not in seen]
@@ -410,15 +430,19 @@ def get_user_hostile_transactions(user_id: int, cfg: BigBrotherConfig = None, sa
 
         if safe_entities is None:
             from ..app_settings import get_safe_entities
+
             safe_entities = get_safe_entities()
 
-        hostile_rows: dict[int, dict] = {eid: tx for eid, tx in rows.items() if is_transaction_hostile(tx, user_ids, safe_entities=safe_entities, entity_info_cache=entity_info_cache, cfg=cfg)}
+        hostile_rows: dict[int, dict] = {
+            eid: tx
+            for eid, tx in rows.items()
+            if is_transaction_hostile(
+                tx, user_ids, safe_entities=safe_entities, entity_info_cache=entity_info_cache, cfg=cfg
+            )
+        }
         pts: dict[int, ProcessedTransaction] = {}
         if hostile_rows:
-            pts = {
-                pt.entry_id: pt
-                for pt in ProcessedTransaction.objects.filter(entry_id__in=hostile_rows.keys())
-            }
+            pts = {pt.entry_id: pt for pt in ProcessedTransaction.objects.filter(entry_id__in=hostile_rows.keys())}
 
             if cfg is None:
                 cfg = BigBrotherConfig.get_solo()
@@ -440,15 +464,25 @@ def get_user_hostile_transactions(user_id: int, cfg: BigBrotherConfig = None, sa
                         flags.append(f"Transaction type is **{ttype}**")
 
                 fpid = tx.get("first_party_id")
-                if get_hostile_state(fpid, 'character', safe_entities=safe_entities, entity_info_cache=entity_info_cache, cfg=cfg):
+                if get_hostile_state(
+                    fpid, "character", safe_entities=safe_entities, entity_info_cache=entity_info_cache, cfg=cfg
+                ):
                     flags.append(f"first_party **{tx['first_party_name']}** is hostile/blacklisted")
 
                 spid = tx.get("second_party_id")
-                if get_hostile_state(spid, 'character', safe_entities=safe_entities, entity_info_cache=entity_info_cache, cfg=cfg):
+                if get_hostile_state(
+                    spid, "character", safe_entities=safe_entities, entity_info_cache=entity_info_cache, cfg=cfg
+                ):
                     flags.append(f"second_party **{tx['second_party_name']}** is hostile/blacklisted")
 
                 loc_id = tx.get("location_id") or tx.get("system_id")
-                if loc_id and is_location_hostile(tx.get("location_id"), tx.get("system_id"), safe_entities=safe_entities, entity_info_cache=entity_info_cache, cfg=cfg):
+                if loc_id and is_location_hostile(
+                    tx.get("location_id"),
+                    tx.get("system_id"),
+                    safe_entities=safe_entities,
+                    entity_info_cache=entity_info_cache,
+                    cfg=cfg,
+                ):
                     loc_name = resolve_location_name(loc_id) or f"ID {loc_id}"
                     owner_info = get_system_owner({"id": loc_id})
                     oname = owner_info.get("owner_name")

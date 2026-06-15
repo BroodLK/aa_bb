@@ -39,9 +39,9 @@ dynamic = [
 ]
 dependencies = [
     "matplotlib>=3.7.2",
-    "allianceauth>=4.13.1",
-    "allianceauth-corptools>=3.0.0b13",
-    "django-esi>=8.3.1",
+    "allianceauth>=5",
+    "allianceauth-corptools>=3",
+    "django-esi>=9",
     "django-eveonline-sde >= 0.0.1b2",
 ]
 urls.Changelog = "https://github.com/BroodLK/aa_bb/blob/main/CHANGELOG.md"

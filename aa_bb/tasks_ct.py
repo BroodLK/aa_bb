@@ -5,50 +5,54 @@ These helpers mirror the upstream corptools modules but add BigBrother-specific
 logging, throttling, and message notifications.
 """
 
+# Standard Library
 import datetime
 from dataclasses import dataclass
-from typing import Callable, Iterable, List, Optional, Sequence
-from celery import shared_task, chain
 from random import random
+from typing import Callable, Iterable, List, Optional, Sequence
 
-from django.utils import timezone
-from django.db.models import Q
+# Third Party
+from celery import chain, shared_task
 from celery_once.tasks import AlreadyQueued
 
+# Django
+from django.db.models import Q
+from django.utils import timezone
+
+# Alliance Auth
 from allianceauth.services.hooks import get_extension_logger
-from esi.errors import TokenExpiredError, TokenError, TokenInvalidError
+from esi.errors import TokenExpiredError, TokenInvalidError
 from esi.models import Token
 
-from .app_settings import send_message, send_status_embed, _chunk_embed_lines, corptools_active
+from .app_settings import _chunk_embed_lines, corptools_active, send_status_embed
 from .models import BigBrotherConfig
 
 logger = get_extension_logger(__name__)
 
 try:
     if corptools_active():
-        from corptools.models import EveCharacter
+        # Third Party
         from corptools import app_settings
-        from corptools.models import CharacterAudit, CorptoolsConfiguration
-
+        from corptools.models import CharacterAudit, CorptoolsConfiguration, EveCharacter
         from corptools.tasks.character import (
             update_char_assets,
-            update_char_contacts,
-            update_char_notifications,
-            update_char_roles,
-            update_char_titles,
-            update_char_mining_ledger,
-            update_char_wallet,
-            update_char_transactions,
-            update_char_orders,
-            update_char_order_history,
-            update_char_contracts,
-            update_char_skill_list,
-            update_char_skill_queue,
             update_char_clones,
-            update_char_mail,
-            update_char_loyaltypoints,
+            update_char_contacts,
+            update_char_contracts,
             update_char_industry_jobs,
             update_char_location,
+            update_char_loyaltypoints,
+            update_char_mail,
+            update_char_mining_ledger,
+            update_char_notifications,
+            update_char_order_history,
+            update_char_orders,
+            update_char_roles,
+            update_char_skill_list,
+            update_char_skill_queue,
+            update_char_titles,
+            update_char_transactions,
+            update_char_wallet,
         )
     else:
         CharacterAudit = None
@@ -71,7 +75,9 @@ class ModuleRule:
 
 def _safe_identity_refresh(char_id: int):
     """Ensure the EveCharacter identity cache is refreshed without exploding. Cached per session."""
+    # Django
     from django.core.cache import cache
+
     cache_key = f"aa_bb_identity_refresh_{char_id}"
 
     # Check if we've already refreshed this character recently (cache for 1 hour)
@@ -82,7 +88,9 @@ def _safe_identity_refresh(char_id: int):
         EveCharacter.objects.update_character(char_id)
         cache.set(cache_key, True, 3600)  # Cache for 1 hour
     except Exception as e:
-        logger.warning(f"✅  [AA-BB] - [_safe_identity_refresh] - Identity refresh failed for {char_id}: {e}", exc_info=True)
+        logger.warning(
+            f"✅  [AA-BB] - [_safe_identity_refresh] - Identity refresh failed for {char_id}: {e}", exc_info=True
+        )
 
 
 def _is_enabled(flag_name: Optional[str]) -> bool:
@@ -127,12 +135,16 @@ def _has_valid_token_with_scopes(char_id: int, scopes: Sequence[str]) -> bool:
     try:
         return bool(token.valid_access_token())
     except (TokenExpiredError, TokenInvalidError) as e:
-        logger.info(f"✅  [AA-BB] - [_has_valid_token_with_scopes] - Skipping char {char_id}: unusable token for scopes {scopes} ({e.__class__.__name__})")
+        logger.info(
+            f"✅  [AA-BB] - [_has_valid_token_with_scopes] - Skipping char {char_id}: unusable token for scopes {scopes} ({e.__class__.__name__})"
+        )
         return False
     except Exception as e:
-        logger.warning(f"✅  [AA-BB] - [_has_valid_token_with_scopes] - Unexpected token error for char {char_id} (scopes {scopes}): {e}", exc_info=True)
+        logger.warning(
+            f"✅  [AA-BB] - [_has_valid_token_with_scopes] - Unexpected token error for char {char_id} (scopes {scopes}): {e}",
+            exc_info=True,
+        )
         return False
-
 
 
 RULES: List[ModuleRule] = [
@@ -270,7 +282,9 @@ def kickstart_stale_ct_modules(days_stale: int = 2, limit: Optional[int] = None,
         Summary string announcing what was queued (and optionally posted to chat).
     """
     if not corptools_active() or CharacterAudit is None:
-        logger.error("✅  [AA-BB] - [kickstart_stale_ct_modules] - Corptools not installed or models missing, skipping.")
+        logger.error(
+            "✅  [AA-BB] - [kickstart_stale_ct_modules] - Corptools not installed or models missing, skipping."
+        )
         return "Corptools not installed or models missing"
     instance = BigBrotherConfig.get_solo()
     instance.refresh_from_db()
@@ -280,9 +294,7 @@ def kickstart_stale_ct_modules(days_stale: int = 2, limit: Optional[int] = None,
     cutoff = timezone.now() - datetime.timedelta(days=days_stale)
     cutoff_really_stale = timezone.now() - datetime.timedelta(days=days_stale, hours=6)
 
-    qs = CharacterAudit.objects.filter(
-        character__character_ownership__isnull=False
-    ).select_related("character")
+    qs = CharacterAudit.objects.filter(character__character_ownership__isnull=False).select_related("character")
 
     member_corps = {int(x) for x in (instance.member_corporations or "").split(",") if x.strip().isdigit()}
     member_allis = {int(x) for x in (instance.member_alliances or "").split(",") if x.strip().isdigit()}
@@ -317,12 +329,14 @@ def kickstart_stale_ct_modules(days_stale: int = 2, limit: Optional[int] = None,
             if not _any_available_field_stale(audit, rule.last_update_fields, cutoff):  # Fresh data needs no action.
                 continue
 
-            if not kickedcharactermodel and really_stale and not dry_run:  # Refresh identity once for badly stale chars.
+            if (
+                not kickedcharactermodel and really_stale and not dry_run
+            ):  # Refresh identity once for badly stale chars.
                 _safe_identity_refresh(char_id)
                 kickedcharactermodel = True
 
             for task in rule.tasks:
-                sig = task.si(char_id, force_refresh=True).set(once={'graceful': True})
+                sig = task.si(char_id, force_refresh=True).set(once={"graceful": True})
                 que.append(sig)
                 total_tasks += 1
 
@@ -347,8 +361,12 @@ def kickstart_stale_ct_modules(days_stale: int = 2, limit: Optional[int] = None,
                         int(delay),
                     )
                 except AlreadyQueued as e:
-                    logger.info("✅  [AA-BB] - [kickstart_stale_ct_modules] - Skipped chain for %s (%s): first task already queued (ttl≈%s)",
-                                audit.character.character_name, char_id, getattr(e, 'args', [None])[0])
+                    logger.info(
+                        "✅  [AA-BB] - [kickstart_stale_ct_modules] - Skipped chain for %s (%s): first task already queued (ttl≈%s)",
+                        audit.character.character_name,
+                        char_id,
+                        getattr(e, "args", [None])[0],
+                    )
 
     # Build summary + optional message
     if updated_names:  # Send a digest if something was queued so staff gets visibility.
@@ -374,7 +392,7 @@ def kickstart_stale_ct_modules(days_stale: int = 2, limit: Optional[int] = None,
             send_status_embed(
                 subject="CT Audit Update",
                 lines=chunk,
-                color=0x9b59b6,  # Purple
+                color=0x9B59B6,  # Purple
             )
 
     return summary

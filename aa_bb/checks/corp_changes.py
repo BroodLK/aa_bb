@@ -6,20 +6,26 @@ helpers that other sections (e.g. cyno readiness) use to determine how
 long a member has been in corp.
 """
 
+# Standard Library
 from datetime import timedelta
+
+# Django
 from django.utils.html import format_html
 from django.utils.timezone import now, timezone
+
+# Alliance Auth
 from allianceauth.authentication.models import CharacterOwnership
 from allianceauth.services.hooks import get_extension_logger
-from ..models import BigBrotherConfig, FrequentCorpChangesCache, CurrentStintCache
+
 from ..app_settings import (
     ensure_datetime,
-    is_npc_corporation,
     get_alliance_history_for_corp,
     get_alliance_name,
-    get_corporation_info,
     get_character_employment,
+    get_corporation_info,
+    is_npc_corporation,
 )
+from ..models import BigBrotherConfig, CurrentStintCache, FrequentCorpChangesCache
 
 logger = get_extension_logger(__name__)
 TTL_SHORT = timedelta(hours=4)
@@ -28,9 +34,9 @@ TTL_SHORT = timedelta(hours=4)
 ZKILL_ICON = "https://zkillboard.com/favicon.ico"
 EVEWHO_ICON = "https://evewho.com/favicon.ico"
 DOTLAN_ICON = "https://evemaps.dotlan.net/favicon.ico"
-EVE411_ICON     = "https://www.eve411.com/favicon.ico"
-FORUMS_ICON     = "https://eve-offline.net/favicon.ico"
-EVESEARCH_ICON  = "https://eve-search.com/favicon.ico"
+EVE411_ICON = "https://www.eve411.com/favicon.ico"
+FORUMS_ICON = "https://eve-offline.net/favicon.ico"
+EVESEARCH_ICON = "https://eve-search.com/favicon.ico"
 
 
 def get_frequent_corp_changes(user_id, cfg: BigBrotherConfig = None):
@@ -56,6 +62,7 @@ def get_frequent_corp_changes(user_id, cfg: BigBrotherConfig = None):
     if cfg is None:
         cfg = BigBrotherConfig.get_solo()
     from ..app_settings import _parse_config_ids
+
     hostile_corps = _parse_config_ids(cfg.hostile_corporations)
     hostile_alliances = _parse_config_ids(cfg.hostile_alliances)
 
@@ -64,7 +71,7 @@ def get_frequent_corp_changes(user_id, cfg: BigBrotherConfig = None):
 
     for char in characters:
         char_name = str(char.character)
-        char_id   = char.character.character_id
+        char_id = char.character.character_id
         try:
             history = get_character_employment(char_id)
         except Exception:
@@ -95,22 +102,26 @@ def get_frequent_corp_changes(user_id, cfg: BigBrotherConfig = None):
         rows = []
 
         for idx, membership in enumerate(history):
-            corp_id = membership['corporation_id']
+            corp_id = membership["corporation_id"]
             if is_npc_corporation(corp_id):  # Skip meaningless entries (NPC corps clutter the table).
                 continue
 
             # Membership window
-            start = ensure_datetime(membership['start_date'])
-            end = ensure_datetime(history[idx+1]['start_date']) if idx+1 < len(history) else now()  # End date = next start or now.
+            start = ensure_datetime(membership["start_date"])
+            end = (
+                ensure_datetime(history[idx + 1]["start_date"]) if idx + 1 < len(history) else now()
+            )  # End date = next start or now.
             total_days = (end - start).days
 
-            corp_name = get_corporation_info(corp_id)['name']
+            corp_name = get_corporation_info(corp_id)["name"]
             membership_range = f"{start.date()} - {end.date()}"
 
             # Corp cell with external site favicons (fetched live)
-            corp_color = ' class="text-danger"' if (hostile_corps and corp_id in hostile_corps) else ''  # Highlight hostile corps.
+            corp_color = (
+                ' class="text-danger"' if (hostile_corps and corp_id in hostile_corps) else ""
+            )  # Highlight hostile corps.
             corp_cell = (
-                f'<span{corp_color}>{corp_name}</span>'
+                f"<span{corp_color}>{corp_name}</span>"
                 f'<a href="https://zkillboard.com/corporation/{corp_id}/" target="_blank">'
                 f'<img src="{ZKILL_ICON}" width="16" height="16" style="margin-left:4px;vertical-align:middle;"/></a> '
                 f'<a href="https://evewho.com/corporation/{corp_id}" target="_blank">'
@@ -124,18 +135,20 @@ def get_frequent_corp_changes(user_id, cfg: BigBrotherConfig = None):
             periods_html = []
             alliance_history = get_alliance_history_for_corp(corp_id)
             for j, ent in enumerate(alliance_history):
-                a_start = ent['start_date']
-                a_end = alliance_history[j+1]['start_date'] if j+1 < len(alliance_history) else None
+                a_start = ent["start_date"]
+                a_end = alliance_history[j + 1]["start_date"] if j + 1 < len(alliance_history) else None
                 seg_start = max(start, a_start)
                 seg_end = min(end, a_end) if a_end else end
                 if seg_start < seg_end:  # Only render overlapping time periods (ignore non-overlaps).
-                    aid = ent['alliance_id']
+                    aid = ent["alliance_id"]
                     aname = get_alliance_name(aid)
                     period = f"{seg_start.date()} - {seg_end.date()}"
 
                     if aid:  # Only render alliance rows when the corp was in an alliance.
-                        alliance_color = ' class="text-danger"' if (hostile_alliances and aid in hostile_alliances) else ''  # Flag hostile alliances.
-                        name_cell = f'<span{alliance_color}>{aname}</span>'
+                        alliance_color = (
+                            ' class="text-danger"' if (hostile_alliances and aid in hostile_alliances) else ""
+                        )  # Flag hostile alliances.
+                        name_cell = f"<span{alliance_color}>{aname}</span>"
                         icons = (
                             f'<a href="https://zkillboard.com/alliance/{aid}/" target="_blank">'
                             f'<img src="{ZKILL_ICON}" width="16" height="16" style="margin-left:4px;vertical-align:middle;"/></a> '
@@ -145,42 +158,46 @@ def get_frequent_corp_changes(user_id, cfg: BigBrotherConfig = None):
                             f'<img src="{DOTLAN_ICON}" width="16" height="16" style="margin-left:2px;vertical-align:middle;"/></a> '
                         )
                     else:
-                        name_cell = '-'
-                        icons = ''
+                        name_cell = "-"
+                        icons = ""
                     alliances_html.append(name_cell + icons)
                     periods_html.append(period)
 
             if not alliances_html:  # When no alliance data, fallback to corp membership range.
-                alliances_html = ['-']
+                alliances_html = ["-"]
                 periods_html = [membership_range]
 
             # Duration cell coloring only
-            dur_color = ' class="text-danger"' if total_days < 10 else (' class="text-warning"' if total_days < 30 else '')  # Quick visual for recent corps.
+            dur_color = (
+                ' class="text-danger"' if total_days < 10 else (' class="text-warning"' if total_days < 30 else "")
+            )  # Quick visual for recent corps.
 
-            rows.append({
-                'corp_cell': corp_cell,
-                'membership_range': membership_range,
-                'alliances_html': '<br>'.join(alliances_html),
-                'periods_html': '<br>'.join(periods_html),
-                'total_days': total_days,
-                'dur_color': dur_color,
-            })
+            rows.append(
+                {
+                    "corp_cell": corp_cell,
+                    "membership_range": membership_range,
+                    "alliances_html": "<br>".join(alliances_html),
+                    "periods_html": "<br>".join(periods_html),
+                    "total_days": total_days,
+                    "dur_color": dur_color,
+                }
+            )
 
         html += format_html("<h3>{} {}</h3>", char_name, format_html(char_links))
         html += '<table class="table table-striped table-hover stats">'
-        html += '<thead><tr><th>Corporation</th><th>Membership</th><th>Alliance(s)</th><th>Alliance Dates</th><th>Time in Corp</th></tr></thead><tbody>'
+        html += "<thead><tr><th>Corporation</th><th>Membership</th><th>Alliance(s)</th><th>Alliance Dates</th><th>Time in Corp</th></tr></thead><tbody>"
         for r in rows:
             row_html = (
-                '<tr>'
+                "<tr>"
                 f'<td>{r["corp_cell"]}</td>'
                 f'<td>{r["membership_range"]}</td>'
                 f'<td>{r["alliances_html"]}</td>'
                 f'<td>{r["periods_html"]}</td>'
                 f'<td{r["dur_color"]}>{r["total_days"]} days</td>'
-                '</tr>'
+                "</tr>"
             )
             html += format_html(row_html)
-        html += '</tbody></table>'
+        html += "</tbody></table>"
 
     # Save cache
     try:
@@ -190,6 +207,7 @@ def get_frequent_corp_changes(user_id, cfg: BigBrotherConfig = None):
     except Exception:
         pass
     return format_html(html)
+
 
 def time_in_corp(user_id, cfg: BigBrotherConfig = None):
     """
@@ -201,11 +219,12 @@ def time_in_corp(user_id, cfg: BigBrotherConfig = None):
     days = 0
     characters = CharacterOwnership.objects.filter(user__id=user_id)
     for char in characters:
-        char_id   = char.character.character_id
+        char_id = char.character.character_id
         c_days = get_current_stint_days_in_corp(char_id, cfg.main_corporation_id)
         if c_days > days:  # Track the maximum stint across all characters.
             days = c_days
     return days
+
 
 def get_current_stint_days_in_corp(char_id: int, corp_id: int) -> int:
     """
@@ -254,8 +273,5 @@ def get_current_stint_days_in_corp(char_id: int, corp_id: int) -> int:
         return days
 
     except Exception as e:
-        logger.exception(
-            "Failed to compute current stint days for char %s in corp %s: %s",
-            char_id, corp_id, e
-        )
+        logger.exception("Failed to compute current stint days for char %s in corp %s: %s", char_id, corp_id, e)
         return 0

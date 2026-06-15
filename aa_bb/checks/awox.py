@@ -6,6 +6,7 @@ cache management, and rendering helpers so the calling views do not have to
 care about throttling or HTML generation.
 """
 
+# Standard Library
 import html
 import time
 from collections import deque
@@ -13,13 +14,19 @@ from datetime import timedelta
 from functools import lru_cache
 from threading import Lock
 
+# Third Party
 import requests
-from allianceauth.authentication.models import CharacterOwnership
+from requests.adapters import HTTPAdapter
+
+# Django
 from django.core.cache import cache
 from django.utils import timezone
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
-from requests.adapters import HTTPAdapter
+
+# Alliance Auth
+from allianceauth.authentication.models import CharacterOwnership
+from allianceauth.services.hooks import get_extension_logger
 
 from ..app_settings import (
     DATASOURCE,
@@ -33,11 +40,9 @@ from ..app_settings import (
     resolve_corporation_name,
     send_status_embed,
 )
-
-from ..esi_client import ESIHandler
 from ..models import AwoxKillsCache, BigBrotherConfig
+from ..providers import ESIHandler
 
-from allianceauth.services.hooks import get_extension_logger
 logger = get_extension_logger(__name__)
 
 USER_AGENT = f"{get_site_url()} Maintainer: {get_owner_name()} {get_contact_email()}"
@@ -92,7 +97,7 @@ def _notify_zkill_down_once(preview: str, status: int | None, content_type: str 
     lines = [
         "zKillboard appears unavailable and awox checks will not work (non-JSON response).",
         f"status={status} content_type='{content_type}'",
-        f"body preview: ```{preview}```"
+        f"body preview: ```{preview}```",
     ]
     try:
         awox_notify = BigBrotherConfig.get_solo().awox_notify
@@ -141,10 +146,19 @@ def _parse_cached_kill_date(value):
     if not value:
         return None
     try:
+        # Django
         from django.utils.dateparse import parse_datetime
+
         return parse_datetime(value)
     except Exception:
         return None
+
+
+def _is_same_auth_user_engagement(victim_id, attackers, user_char_ids):
+    if victim_id not in user_char_ids:
+        return False
+
+    return any(attacker.get("character_id") in user_char_ids for attacker in attackers)
 
 
 def _merge_cached_kills(existing_data, new_data, cutoff):
@@ -188,6 +202,7 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
     Fetch AWOX kills from zKillboard for all characters owned by the user
     within the past 24 hours.
     """
+    # Alliance Auth
     from allianceauth.eveonline.models import EveCharacter
 
     now = timezone.now()
@@ -206,7 +221,9 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
                 if not hasattr(dt, "strftime"):
                     # likely a string from JSON cache
                     try:
+                        # Django
                         from django.utils.dateparse import parse_datetime
+
                         dt = parse_datetime(dt)
                     except Exception:
                         continue
@@ -219,8 +236,7 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
 
     characters = CharacterOwnership.objects.filter(user__id=user_id).select_related("character")
     char_id_to_name = {
-        c.character.character_id: c.character.character_name
-        for c in characters if getattr(c, "character", None)
+        c.character.character_id: c.character.character_name for c in characters if getattr(c, "character", None)
     }
     char_ids = set(char_id_to_name.keys())
 
@@ -228,7 +244,7 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
         return []
 
     session = _get_requests_session()
-    processed_kills = {} # kill_id -> data
+    processed_kills = {}  # kill_id -> data
     skipped_char_ids = []
 
     try:
@@ -284,6 +300,9 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
                         victim_id = victim.get("character_id")
                         attackers = full_kill.get("attackers", []) or []
 
+                        if _is_same_auth_user_engagement(victim_id, attackers, char_ids):
+                            continue
+
                         # Who from our user is involved?
                         involved_user_char_ids = []
                         if victim_id in char_ids:
@@ -295,24 +314,30 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
                                 involved_user_char_ids.append(aid)
 
                         if not involved_user_char_ids:
-                            continue # Should not happen if zKill filter worked correctly for this char
+                            continue  # Should not happen if zKill filter worked correctly for this char
 
                         is_attacker = any(a.get("character_id") in char_ids for a in attackers)
 
                         # Resolve names
                         if victim_id:
                             try:
-                                vic_name = EveCharacter.objects.get(character_id=victim_id).character_name
+                                vic_name = EveCharacter.objects.values_list("character_name", flat=True).get(
+                                    character_id=victim_id
+                                )
                             except (EveCharacter.DoesNotExist, AttributeError):
                                 vic_name = resolve_character_name(victim_id) or "Unknown"
                         else:
                             vic_name = "Unknown"
 
-                        fb_attacker = next((a for a in attackers if a.get("final_blow")), attackers[0] if attackers else {})
+                        fb_attacker = next(
+                            (a for a in attackers if a.get("final_blow")), attackers[0] if attackers else {}
+                        )
                         att_id = fb_attacker.get("character_id")
                         if att_id:
                             try:
-                                att_name = EveCharacter.objects.get(character_id=att_id).character_name
+                                att_name = EveCharacter.objects.values_list("character_name", flat=True).get(
+                                    character_id=att_id
+                                )
                             except (EveCharacter.DoesNotExist, AttributeError):
                                 att_name = resolve_character_name(att_id) or "Unknown"
                         else:
@@ -341,10 +366,7 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
 
         # Final result list
         cutoff = now - timedelta(days=365)
-        new_data = [
-            kill for kill in processed_kills.values()
-            if kill["date"] >= cutoff
-        ]
+        new_data = [kill for kill in processed_kills.values() if kill["date"] >= cutoff]
         if skipped_char_ids:
             logger.info(
                 "[AWOX] Skipped %d character(s) for user %s due to zKill rate limit; will retry next cycle.",
@@ -357,11 +379,7 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
 
         # Update cache
         AwoxKillsCache.objects.update_or_create(
-            user_id=user_id,
-            defaults={
-                "data": _serialize_datetime(new_data),
-                "last_accessed": now
-            }
+            user_id=user_id, defaults={"data": _serialize_datetime(new_data), "last_accessed": now}
         )
         return new_data
 
@@ -370,6 +388,7 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
         return existing_data
     finally:
         session.close()
+
 
 def render_awox_kills_html(userID):
     """
@@ -382,7 +401,7 @@ def render_awox_kills_html(userID):
         return '<table class="table stats"><tbody><tr><td class="text-center">No recent AWOX kills found.</td></tr></tbody></table>'
 
     html_output = '<table class="table table-striped table-hover stats">'
-    html_output += '<thead><tr><th>Date</th><th>Character(s)</th><th>Attacker</th><th>Victim</th><th>Value</th><th>Link</th></tr></thead><tbody>'
+    html_output += "<thead><tr><th>Date</th><th>Character(s)</th><th>Attacker</th><th>Victim</th><th>Value</th><th>Link</th></tr></thead><tbody>"
 
     for kill in kills:
         chars_list = sorted(kill.get("chars", []))
@@ -411,10 +430,13 @@ def render_awox_kills_html(userID):
 
         if kill.get("is_attacker", False):
             row_html = '<tr class="text-danger"><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{} ISK</td><td><a href="{}" target="_blank">View</a></td></tr>'
-            html_output += format_html(row_html, date_str, chars, mark_safe(att_html), mark_safe(vic_html), value, link)
+            html_output += format_html(
+                row_html, date_str, chars, mark_safe(att_html), mark_safe(vic_html), value, link
+            )
 
-    html_output += '</tbody></table>'
+    html_output += "</tbody></table>"
     return html_output
+
 
 def get_awox_kill_links(user_id, force_refresh=False):
     """
@@ -436,11 +458,13 @@ def get_awox_kill_links(user_id, force_refresh=False):
         else:
             date_str = str(date_val).replace("T", " ").replace("Z", "")
 
-        results.append({
-            "link": kill["link"],
-            "date": date_str,
-            "value": "{:,}".format(kill.get("value", 0)),
-            "is_attacker": kill.get("is_attacker", False)
-        })
+        results.append(
+            {
+                "link": kill["link"],
+                "date": date_str,
+                "value": "{:,}".format(kill.get("value", 0)),
+                "is_attacker": kill.get("is_attacker", False),
+            }
+        )
 
     return results

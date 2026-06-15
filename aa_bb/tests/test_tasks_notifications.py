@@ -1,8 +1,14 @@
-from django.test import TestCase
+# Standard Library
+from unittest.mock import patch
+
+# Django
 from django.contrib.auth.models import User
-from unittest.mock import patch, MagicMock
-from aa_bb.models import UserStatus, BigBrotherConfig
+from django.test import TestCase
+
+# AA BigBrother
+from aa_bb.models import BigBrotherConfig, UserStatus
 from aa_bb.tasks import BB_update_single_user
+
 
 class TestTasksNotifications(TestCase):
     def setUp(self):
@@ -41,7 +47,7 @@ class TestTasksNotifications(TestCase):
         mock_get_awox_kill_links,
         mock_determine_character_state,
         mock_get_multiple_user_skill_info,
-        mock_get_user_cyno_info
+        mock_get_user_cyno_info,
     ):
         # Setup mocks to return some "suspicious" data to trigger changes
         mock_get_user_cyno_info.return_value = {}

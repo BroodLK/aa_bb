@@ -1,28 +1,36 @@
-from allianceauth.services.hooks import get_extension_logger
-
-import os
-import matplotlib.pyplot as plt
+# Standard Library
 import calendar
+import os
+
+# Third Party
+import matplotlib.pyplot as plt
+
+# Alliance Auth
+from allianceauth.services.hooks import get_extension_logger
 
 logger = get_extension_logger(__name__)
 
-from django.shortcuts import render, redirect
-from django.contrib.auth.decorators import login_required, permission_required
-from django.views.decorators.http import require_POST
+# Django
 from django.conf import settings
-from django.utils.timezone import now
+from django.contrib.auth.decorators import login_required, permission_required
+from django.shortcuts import redirect, render
 from django.urls import reverse
+from django.utils.timezone import now
+from django.views.decorators.http import require_POST
 
-from .models import BigBrotherConfig, PapsConfig, PapCompliance, TicketToolConfig, LeaveRequest
-from .app_settings import get_user_profiles, get_user_characters, afat_active
+from .app_settings import afat_active, get_user_characters, get_user_profiles
+from .models import BigBrotherConfig, LeaveRequest, PapCompliance, PapsConfig, TicketToolConfig
 
 AFAT_INSTALLED = False
 if afat_active():
     try:
+        # Third Party
         from afat.models import Fat
+
         AFAT_INSTALLED = True
     except ImportError:
         pass
+
 
 @login_required
 @permission_required("aa_bb.can_generate_paps")
@@ -35,7 +43,7 @@ def index(request):
         return render(request, "paps/disabled.html")
 
     today = now()
-    month = int(request.GET.get("month", today.month-1))
+    month = int(request.GET.get("month", today.month - 1))
     year = int(request.GET.get("year", today.year))
 
     users_data = []
@@ -56,7 +64,7 @@ def index(request):
             player_name = " ".join(parts[:-2])
             try:
                 alliance = int(parts[-2])
-                coalition  = int(parts[-1])
+                coalition = int(parts[-1])
             except ValueError:
                 error_messages.append(player_name)
                 continue
@@ -112,7 +120,7 @@ def index(request):
 
         if cfg.capital_groups_get_paps:  # Optional extra PAP points for capital pilots.
 
-            cap_name   = _group_name(cfg.cap_group)
+            cap_name = _group_name(cfg.cap_group)
             super_name = _group_name(cfg.super_group)
             titan_name = _group_name(cfg.titan_group)
 
@@ -126,7 +134,6 @@ def index(request):
 
             if paps_to_add:
                 corp_paps += paps_to_add
-
 
         if AFAT_INSTALLED:  # Count Alliance FATs per character for corp PAP totals.
             for char in characters:
@@ -143,12 +150,14 @@ def index(request):
             alliance_paps = int(request.POST.get(f"alliance_paps_{user_id}", alliance_paps))
             coalition_paps = int(request.POST.get(f"coalition_paps_{user_id}", coalition_paps))
 
-        users_data.append({
-            "user": profile,
-            "corp_paps": corp_paps,
-            "alliance_paps": alliance_paps,
-            "coalition_paps": coalition_paps,
-        })
+        users_data.append(
+            {
+                "user": profile,
+                "corp_paps": corp_paps,
+                "alliance_paps": alliance_paps,
+                "coalition_paps": coalition_paps,
+            }
+        )
 
     return render(
         request,
@@ -174,7 +183,7 @@ def history(request):
         return render(request, "paps/disabled.html")
 
     today = now()
-    month = int(request.GET.get("month", today.month-1))
+    month = int(request.GET.get("month", today.month - 1))
     year = int(request.GET.get("year", today.year))
 
     # Runtime chart folder
@@ -186,12 +195,16 @@ def history(request):
     # URL to serve in template
     chart_url = f"{settings.MEDIA_URL}paps/{filename}"
 
-    return render(request, "paps/history.html", {
-        "month": month,
-        "year": year,
-        "chart_exists": chart_exists,
-        "chart_url": chart_url,
-    })
+    return render(
+        request,
+        "paps/history.html",
+        {
+            "month": month,
+            "year": year,
+            "chart_exists": chart_exists,
+            "chart_url": chart_url,
+        },
+    )
 
 
 @require_POST
@@ -215,9 +228,9 @@ def generate_pap_chart(request):
         if profile.user in excluded_users:  # Skip excluded pilots entirely.
             continue
         lr_qs = LeaveRequest.objects.filter(
-                user=profile.user,
-                status="in_progress",
-            ).exists()
+            user=profile.user,
+            status="in_progress",
+        ).exists()
         if lr_qs:  # Ignore LoA members still on leave.
             continue
         user_id = profile.user.id
@@ -228,13 +241,15 @@ def generate_pap_chart(request):
         corp_ab = corp_raw - conf.max_corp_paps
         if corp_ab < 0:
             corp_ab = 0
-        users_data.append({
-            "name": profile.main_character.character_name,
-            "corp": corp_paps,
-            "corp_ab": corp_ab,
-            "alliance": alliance_paps,
-            "coalition": coalition_paps,
-        })
+        users_data.append(
+            {
+                "name": profile.main_character.character_name,
+                "corp": corp_paps,
+                "corp_ab": corp_ab,
+                "alliance": alliance_paps,
+                "coalition": coalition_paps,
+            }
+        )
         # ✅ Update PapCompliance
         if max_compliance != 0:  # Update PAP compliance meter when feature enabled.
             pc, _ = PapCompliance.objects.get_or_create(
@@ -248,7 +263,6 @@ def generate_pap_chart(request):
                 pc.pap_compliant = max(pc.pap_compliant - 1, 0)  # keep it non-negative
             pc.save(update_fields=["pap_compliant"])
 
-
     # Chart save path
     app_static_dir = os.path.join(settings.MEDIA_ROOT, "paps")
     os.makedirs(app_static_dir, exist_ok=True)
@@ -257,23 +271,20 @@ def generate_pap_chart(request):
 
     # Generate stacked chart
     fig, ax = plt.subplots(figsize=(12, 6))  # Build stacked bar chart in neutral dark theme.
-    fig.patch.set_facecolor('#4B4B4B')  # Dark grey background
-    ax.set_facecolor('#4B4B4B')
+    fig.patch.set_facecolor("#4B4B4B")  # Dark grey background
+    ax.set_facecolor("#4B4B4B")
 
     names = [u["name"] for u in users_data]
     corp = [u["corp"] for u in users_data]
     corp_abo = [u["corp_ab"] for u in users_data]
     alliance = [u["alliance"] for u in users_data]
-    coalition  = [u["coalition"] for u in users_data]
+    coalition = [u["coalition"] for u in users_data]
 
     x = range(len(names))
     corp_m = conf.corp_modifier
     corp_max = conf.max_corp_paps
     alliance_m = conf.alliance_modifier
     coalition_m = conf.coalition_modifier
-
-
-
 
     # Bottom: Alliance
     ax.bar(x, alliance, label=f"Alliance Paps(x{alliance_m})", color="#58D68D")
@@ -290,41 +301,41 @@ def generate_pap_chart(request):
     ax.bar(x, corp_abo, bottom=corp_stack, label=f"Corp Paps above {corp_max}(x{corp_m})", color="#9EC5DF")
 
     # Horizontal red dashed line at y=6
-    ax.axhline(y=conf.required_paps, color='red', linestyle='--', linewidth=2, label='PAP Requirement')
+    ax.axhline(y=conf.required_paps, color="red", linestyle="--", linewidth=2, label="PAP Requirement")
 
     # Labels and style
     ax.set_xticks(x)
-    ax.set_xticklabels(names, rotation=45, ha="right", color='white')
-    ax.set_ylabel("Total Paps", color='white')
+    ax.set_xticklabels(names, rotation=45, ha="right", color="white")
+    ax.set_ylabel("Total Paps", color="white")
     month_name = calendar.month_name[month]
     main_corporation = BigBrotherConfig.get_solo().main_corporation
-    ax.set_title(f"{main_corporation} Fleet Breakdown for {month_name} {year}", color='white', fontweight='bold')
+    ax.set_title(f"{main_corporation} Fleet Breakdown for {month_name} {year}", color="white", fontweight="bold")
 
     # All spines and ticks in white
-    ax.spines['bottom'].set_color('black')
-    ax.spines['top'].set_color('black')
-    ax.spines['left'].set_color('black')
-    ax.spines['right'].set_color('black')
-    ax.tick_params(axis='x', colors='white')
-    ax.tick_params(axis='y', colors='white')
+    ax.spines["bottom"].set_color("black")
+    ax.spines["top"].set_color("black")
+    ax.spines["left"].set_color("black")
+    ax.spines["right"].set_color("black")
+    ax.tick_params(axis="x", colors="white")
+    ax.tick_params(axis="y", colors="white")
 
     # Legend in top-right
-    ax.legend(loc='upper right', facecolor='#4B4B4B', edgecolor='white', labelcolor='white')
+    ax.legend(loc="upper right", facecolor="#4B4B4B", edgecolor="white", labelcolor="white")
 
     # Add labels above the stacked bars
     for i, (l, im, c) in enumerate(zip(alliance, coalition, corp)):  # Label capped totals in contrasting color.
         total = l + im + c
-        coll = 'red'
+        coll = "red"
         if total >= conf.required_paps:
-            coll = 'white'
-        ax.text(i, total, str(total), ha='center', va='bottom', color=coll, fontsize=10)
+            coll = "white"
+        ax.text(i, total, str(total), ha="center", va="bottom", color=coll, fontsize=10)
 
     for i, (l, im, c, ca) in enumerate(zip(alliance, coalition, corp, corp_abo)):  # Label above-cap contributions.
         total = l + im + c
         total_c = total + ca
-        coll = 'white'
+        coll = "white"
         if total != total_c:
-            ax.text(i, total_c, str(total_c), ha='center', va='bottom', color=coll, fontsize=10)
+            ax.text(i, total_c, str(total_c), ha="center", va="bottom", color=coll, fontsize=10)
 
     # Determine the max total height of stacked bars
     max_total = max([l + im + c + ca for l, im, c, ca in zip(alliance, coalition, corp, corp_abo)])
@@ -332,7 +343,7 @@ def generate_pap_chart(request):
         max_total = conf.required_paps
 
     # Add some padding (like 10% extra)
-    ax.set_ylim(0, max_total *  1.1)
+    ax.set_ylim(0, max_total * 1.1)
 
     plt.tight_layout()
     plt.savefig(filepath, dpi=150, facecolor=fig.get_facecolor())  # save with background

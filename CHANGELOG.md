@@ -1,3 +1,16 @@
+## [3.3.5] - 2026-06-15
+
+> [!CAUTION]
+> This release ends all Alliance Auth 4 compatibility.
+> `aa_bb` 3.3.5 requires Alliance Auth 5.1.4 and newer.
+
+### Changed
+- Updated Eve Online model usage to be compliant with Alliance Auth 5.1.4.
+
+### Fixed
+- AWOX detection no longer triggers when the attacker and victim belong to the same auth user, including self-kills and alt-on-alt kills.
+- Fixed the Ticket Tool Config admin page crashing with a 500 error by wiring the compliance filter admin field to the persisted `compliance_filter_id` field.
+
 ## [3.3.1] - 2026-03-24
 
 ### Changed

@@ -1,15 +1,20 @@
+# Standard Library
 import time
-import json
-import os
-from unittest.mock import patch, MagicMock
-from django.test import TestCase
+from unittest.mock import MagicMock, patch
+
+# Django
 from django.contrib.auth.models import User
+from django.test import TestCase
 from django.utils import timezone
-from allianceauth.eveonline.models import EveCharacter, EveCorporationInfo
+
+# Alliance Auth
 from allianceauth.authentication.models import CharacterOwnership
-from aa_bb.models import BigBrotherConfig, UserStatus, EveItemPrice
+from allianceauth.eveonline.models import EveCharacter
+
+# AA BigBrother
 from aa_bb.checks.clone_state import determine_character_state
 from aa_bb.checks.sus_trans import get_user_hostile_transactions
+
 
 class PerformanceTest(TestCase):
     @classmethod
@@ -27,10 +32,12 @@ class PerformanceTest(TestCase):
     def test_clone_state_performance(self):
         """Test performance of determine_character_state with simulated skills."""
         # Setup mocks for corptools models and config
-        with patch('aa_bb.checks.clone_state.CharacterAudit') as mock_audit, \
-             patch('aa_bb.checks.clone_state.Skill') as mock_skill, \
-             patch('aa_bb.checks.clone_state.get_user_characters') as mock_get_chars, \
-             patch('aa_bb.checks.clone_state.BigBrotherConfig.get_solo') as mock_get_solo:
+        with (
+            patch("aa_bb.checks.clone_state.CharacterAudit") as mock_audit,
+            patch("aa_bb.checks.clone_state.Skill") as mock_skill,
+            patch("aa_bb.checks.clone_state.get_user_characters") as mock_get_chars,
+            patch("aa_bb.checks.clone_state.BigBrotherConfig.get_solo") as mock_get_solo,
+        ):
 
             mock_config = MagicMock()
             mock_config.update_cache_ttl_hours = 24
@@ -47,13 +54,14 @@ class PerformanceTest(TestCase):
                     "skill_id": 3400 + i,
                     "trained_skill_level": 5,
                     "active_skill_level": 5,
-                } for i in range(50)
+                }
+                for i in range(50)
             ]
 
             mock_audit.objects.filter.return_value.select_related.return_value.only.return_value = []
 
             start_time = time.time()
-            for _ in range(100): # Run 100 times to get a better average
+            for _ in range(100):  # Run 100 times to get a better average
                 determine_character_state(self.user.id)
             end_time = time.time()
 
@@ -67,10 +75,10 @@ class PerformanceTest(TestCase):
         for i in range(100):
             mock_txs[i] = {
                 "entry_id": i,
-                "type_id": 34, # Tritanium
+                "type_id": 34,  # Tritanium
                 "raw_amount": 1000000.0,
                 "quantity": 100000,
-                "system_id": 30000142, # Jita
+                "system_id": 30000142,  # Jita
                 "first_party_id": 1001,
                 "second_party_id": 9001,
                 "first_party_corporation_id": 2001,
@@ -78,11 +86,13 @@ class PerformanceTest(TestCase):
                 "type": "player_trading",
             }
 
-        with patch('aa_bb.checks.sus_trans.get_user_characters') as mock_get_chars, \
-             patch('aa_bb.checks.sus_trans.get_user_transactions') as mock_get_txs, \
-             patch('aa_bb.checks.sus_trans.is_transaction_hostile') as mock_hostile, \
-             patch('aa_bb.app_settings.is_above_market_threshold') as mock_threshold, \
-             patch('aa_bb.checks.sus_trans.BigBrotherConfig.get_solo') as mock_get_solo:
+        with (
+            patch("aa_bb.checks.sus_trans.get_user_characters") as mock_get_chars,
+            patch("aa_bb.checks.sus_trans.get_user_transactions") as mock_get_txs,
+            patch("aa_bb.checks.sus_trans.is_transaction_hostile") as mock_hostile,
+            patch("aa_bb.app_settings.is_above_market_threshold") as mock_threshold,
+            patch("aa_bb.checks.sus_trans.BigBrotherConfig.get_solo") as mock_get_solo,
+        ):
 
             mock_config = MagicMock()
             mock_config.show_market_transactions = True
@@ -94,7 +104,7 @@ class PerformanceTest(TestCase):
             mock_threshold.return_value = True
 
             start_time = time.time()
-            for _ in range(10): # Run 10 times
+            for _ in range(10):  # Run 10 times
                 get_user_hostile_transactions(self.user.id)
             end_time = time.time()
 
@@ -103,17 +113,20 @@ class PerformanceTest(TestCase):
 
     def test_is_above_threshold_logic_performance(self):
         """Test the performance of the price threshold logic itself."""
+        # AA BigBrother
         from aa_bb.app_settings import is_above_market_threshold
 
         tx = {
             "type_id": 34,
-            "raw_amount": 5.0, # Way above market
+            "raw_amount": 5.0,  # Way above market
             "quantity": 1,
         }
 
         # Mocking external price fetches
-        with patch('aa_bb.app_settings.EVE_SDE_INSTALLED', False), \
-             patch('aa_bb.app_settings.get_or_create_prices') as mock_prices:
+        with (
+            patch("aa_bb.app_settings.EVE_SDE_INSTALLED", False),
+            patch("aa_bb.app_settings.get_or_create_prices") as mock_prices,
+        ):
 
             mock_price_obj = MagicMock()
             mock_price_obj.buy = 1.0

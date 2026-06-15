@@ -5,42 +5,45 @@ The functions in this module normalize Contract ORM rows, highlight hostile
 counterparties, and persist short notes for reuse in notifications.
 """
 
-from allianceauth.services.hooks import get_extension_logger
-
-
-from typing import Dict, Optional, List
+# Standard Library
 from datetime import datetime
+from typing import Dict, List, Optional
 
-from ..app_settings import (
-    get_user_characters,
-    get_entity_info,
-    get_safe_entities,
-    aablacklist_active,
-    resolve_location_name,
-    resolve_location_system_id,
-    is_location_hostile,
-    get_system_owner,
-    get_hostile_state,
-    is_highsec,
-    is_lowsec,
-    corptools_active,
-    is_hostile_unified,
-)
+# Django
 from django.utils import timezone
 
+# Alliance Auth
+from allianceauth.services.hooks import get_extension_logger
+
+from ..app_settings import (
+    aablacklist_active,
+    corptools_active,
+    get_entity_info,
+    get_hostile_state,
+    get_system_owner,
+    get_user_characters,
+    is_hostile_unified,
+    is_location_hostile,
+    resolve_location_name,
+)
+
 if aablacklist_active():
-    from .add_to_blacklist import check_char_add_to_bl
+    pass
 else:
+
     def check_char_corp_bl(_cid: int) -> bool:
         return False
 
-from django.db.models import Q
-from ..models import BigBrotherConfig, ProcessedContract, SusContractNote, EntityInfoCache
+
+# Django
+
+from ..models import BigBrotherConfig, EntityInfoCache, ProcessedContract, SusContractNote
 
 logger = get_extension_logger(__name__)
 
 try:
     if corptools_active():
+        # Third Party
         from corptools.models import Contract
     else:
         Contract = None
@@ -71,9 +74,9 @@ def gather_user_contracts(user_id: int):
         return []
     user_chars = get_user_characters(user_id)
     user_ids = set(user_chars.keys())
-    return Contract.objects.filter(
-        character__character__character_id__in=user_ids
-    ).select_related("character__character")
+    return Contract.objects.filter(character__character__character_id__in=user_ids).select_related(
+        "character__character"
+    )
 
 
 def get_user_contracts(qs) -> Dict[int, Dict]:
@@ -108,10 +111,7 @@ def get_user_contracts(qs) -> Dict[int, Dict]:
     cache_entries = EntityInfoCache.objects.filter(entity_id__in=eids, as_of__in=hours)
 
     # Map them by (entity_id, as_of)
-    info_map = {
-        (ce.entity_id, ce.as_of): ce.data
-        for ce in cache_entries
-    }
+    info_map = {(ce.entity_id, ce.as_of): ce.data for ce in cache_entries}
 
     def _get_info(eid: int, when: datetime) -> dict:
         if not eid:
@@ -160,10 +160,7 @@ def get_user_contracts(qs) -> Dict[int, Dict]:
             "start_location": resolve_location_name(getattr(c, "start_location_id", None)) or "Unknown Location",
             "end_location_id": getattr(c, "end_location_id", None),
             "end_location": resolve_location_name(getattr(c, "end_location_id", None)) or "Unknown Location",
-            "info_cache": {
-                issuer_id: iinfo,
-                assignee_id: ainfo
-            }
+            "info_cache": {issuer_id: iinfo, assignee_id: ainfo},
         }
 
     logger.debug("Hydrated %d contract rows", len(result))
@@ -175,34 +172,34 @@ def get_cell_style_for_contract_row(column: str, row: dict) -> str:
     info_cache = row.get("info_cache")
     if column == "issuer_name":
         iid = row.get("issuer_id")
-        if get_hostile_state(iid, 'character', when=when, entity_info_cache=info_cache):
+        if get_hostile_state(iid, "character", when=when, entity_info_cache=info_cache):
             return "color: red;"
     if column == "assignee_name":
         aid = row.get("assignee_id")
-        if get_hostile_state(aid, 'character', when=when, entity_info_cache=info_cache):
+        if get_hostile_state(aid, "character", when=when, entity_info_cache=info_cache):
             return "color: red;"
 
     if column == "issuer_corporation":
         cid = row.get("issuer_corporation_id")
-        if get_hostile_state(cid, 'corporation', when=when, entity_info_cache=info_cache):
+        if get_hostile_state(cid, "corporation", when=when, entity_info_cache=info_cache):
             return "color: red;"
         return ""
 
     if column == "issuer_alliance":
         aid = row.get("issuer_alliance_id")
-        if get_hostile_state(aid, 'alliance', when=when, entity_info_cache=info_cache):
+        if get_hostile_state(aid, "alliance", when=when, entity_info_cache=info_cache):
             return "color: red;"
         return ""
 
     if column == "assignee_corporation":
         cid = row.get("assignee_corporation_id")
-        if get_hostile_state(cid, 'corporation', when=when, entity_info_cache=info_cache):
+        if get_hostile_state(cid, "corporation", when=when, entity_info_cache=info_cache):
             return "color: red;"
         return ""
 
     if column == "assignee_alliance":
         aid = row.get("assignee_alliance_id")
-        if get_hostile_state(aid, 'alliance', when=when, entity_info_cache=info_cache):
+        if get_hostile_state(aid, "alliance", when=when, entity_info_cache=info_cache):
             return "color: red;"
         return ""
 
@@ -223,29 +220,44 @@ def is_contract_row_hostile(row: dict, safe_entities: set = None, cfg: BigBrothe
 
     # Unified check handles Rule 1 (Safe entities), location rules, and entity rules.
     # Check start location
-    if is_hostile_unified(involved_ids=[issuer_id, assignee_id], location_id=start_loc, when=when, safe_entities=safe_entities, entity_info_cache=info_cache, cfg=cfg):
+    if is_hostile_unified(
+        involved_ids=[issuer_id, assignee_id],
+        location_id=start_loc,
+        when=when,
+        safe_entities=safe_entities,
+        entity_info_cache=info_cache,
+        cfg=cfg,
+    ):
         return True
 
     # Check end location
-    if is_hostile_unified(involved_ids=[issuer_id, assignee_id], location_id=end_loc, when=when, safe_entities=safe_entities, entity_info_cache=info_cache, cfg=cfg):
+    if is_hostile_unified(
+        involved_ids=[issuer_id, assignee_id],
+        location_id=end_loc,
+        when=when,
+        safe_entities=safe_entities,
+        entity_info_cache=info_cache,
+        cfg=cfg,
+    ):
         return True
 
     return False
 
 
-def get_user_hostile_contracts(user_id: int, cfg: BigBrotherConfig = None, safe_entities: set = None, entity_info_cache: dict = None) -> Dict[int, str]:
+def get_user_hostile_contracts(
+    user_id: int, cfg: BigBrotherConfig = None, safe_entities: set = None, entity_info_cache: dict = None
+) -> Dict[int, str]:
     if cfg is None:
         cfg = BigBrotherConfig.get_solo()
     if safe_entities is None:
         from ..app_settings import get_safe_entities
+
         safe_entities = get_safe_entities()
 
     all_qs = gather_user_contracts(user_id)
     all_ids = list(all_qs.values_list("contract_id", flat=True))
 
-    seen_ids = set(
-        ProcessedContract.objects.filter(contract_id__in=all_ids).values_list("contract_id", flat=True)
-    )
+    seen_ids = set(ProcessedContract.objects.filter(contract_id__in=all_ids).values_list("contract_id", flat=True))
 
     notes: Dict[int, str] = {}
     new_ids = [cid for cid in all_ids if cid not in seen_ids]
@@ -274,10 +286,14 @@ def get_user_hostile_contracts(user_id: int, cfg: BigBrotherConfig = None, safe_
         hostile_rows: dict[int, dict] = {}
         for cid, c in new_rows.items():
             # Check if this is a courier contract with hauling corp (if exclusion enabled)
-            if (cfg.exclude_hauling_corps_from_courier and
-                c.get("contract_type") == "courier" and
-                (c.get("issuer_corporation_id") in hauling_corps or
-                 c.get("assignee_corporation_id") in hauling_corps)):
+            if (
+                cfg.exclude_hauling_corps_from_courier
+                and c.get("contract_type") == "courier"
+                and (
+                    c.get("issuer_corporation_id") in hauling_corps
+                    or c.get("assignee_corporation_id") in hauling_corps
+                )
+            ):
                 # Skip this courier contract
                 continue
 
@@ -285,10 +301,7 @@ def get_user_hostile_contracts(user_id: int, cfg: BigBrotherConfig = None, safe_
             if is_contract_row_hostile(c, safe_entities=safe_entities, cfg=cfg):
                 hostile_rows[cid] = c
         if hostile_rows:
-            pcs = {
-                pc.contract_id: pc
-                for pc in ProcessedContract.objects.filter(contract_id__in=hostile_rows.keys())
-            }
+            pcs = {pc.contract_id: pc for pc in ProcessedContract.objects.filter(contract_id__in=hostile_rows.keys())}
 
             for cid, c in hostile_rows.items():
                 pc = pcs.get(cid)
@@ -297,11 +310,23 @@ def get_user_hostile_contracts(user_id: int, cfg: BigBrotherConfig = None, safe_
 
                 flags: List[str] = []
                 # issuer
-                if get_hostile_state(c["issuer_id"], "character", safe_entities=safe_entities, entity_info_cache=entity_info_cache, cfg=cfg):
+                if get_hostile_state(
+                    c["issuer_id"],
+                    "character",
+                    safe_entities=safe_entities,
+                    entity_info_cache=entity_info_cache,
+                    cfg=cfg,
+                ):
                     flags.append(f"Issuer **{c['issuer_name']}** is hostile/blacklisted")
 
                 # assignee
-                if get_hostile_state(c["assignee_id"], "character", safe_entities=safe_entities, entity_info_cache=entity_info_cache, cfg=cfg):
+                if get_hostile_state(
+                    c["assignee_id"],
+                    "character",
+                    safe_entities=safe_entities,
+                    entity_info_cache=entity_info_cache,
+                    cfg=cfg,
+                ):
                     flags.append(f"Assignee **{c['assignee_name']}** is hostile/blacklisted")
 
                 if is_location_hostile(c.get("start_location_id"), safe_entities=safe_entities, cfg=cfg):
@@ -336,8 +361,8 @@ def get_user_hostile_contracts(user_id: int, cfg: BigBrotherConfig = None, safe_
 
                 flags_text = "\n    - ".join(flags) if flags else "(no flags)"
 
-                if c['contract_type'] == "item_exchange" or c['start_location'] == c['end_location']:
-                    loc_text = c['start_location']
+                if c["contract_type"] == "item_exchange" or c["start_location"] == c["end_location"]:
+                    loc_text = c["start_location"]
                 else:
                     loc_text = f"{c['start_location']} → {c['end_location']}"
 

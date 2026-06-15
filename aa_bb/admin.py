@@ -6,36 +6,39 @@ ensure their admin entries only appear when the relevant feature is enabled
 and prevent accidental multi-row creation of what should be one-off configs.
 """
 
+# Third Party
 from solo.admin import SingletonModelAdmin
 
-from django.contrib import admin
+# Django
 from django.apps import apps
-from .app_settings import afat_active, discordbot_active, charlink_active
+from django.contrib import admin
 from django.contrib.admin.sites import NotRegistered
 from django.utils.html import format_html_join
 from django.utils.safestring import mark_safe
 
+from .app_settings import afat_active, charlink_active, discordbot_active
 from .models import (
+    AA_CONTACTS_INSTALLED,
+    AdminLogEntry,
     BigBrotherConfig,
+    ComplianceThread,
+    ComplianceTicket,
+    EveItemPrice,
+    LeaveRequest,
     Messages,
     OptMessages1,
     OptMessages2,
     OptMessages3,
     OptMessages4,
     OptMessages5,
-    UserStatus,
-    WarmProgress,
+    PapCompliance,
     PapsConfig,
     RecurringStatsConfig,
-    AA_CONTACTS_INSTALLED,
     TicketToolConfig,
-    PapCompliance,
-    LeaveRequest,
-    ComplianceTicket,
-    ComplianceThread,
-    EveItemPrice,
-    AdminLogEntry,
+    UserStatus,
+    WarmProgress,
 )
+
 
 @admin.register(BigBrotherConfig)
 class BB_ConfigAdmin(SingletonModelAdmin):
@@ -86,7 +89,7 @@ class BB_ConfigAdmin(SingletonModelAdmin):
                     "market_transactions_show_secondary_hubs",
                     "market_transactions_threshold_alert",
                     "market_transactions_price_instant",
-                )
+                ),
             },
         ),
         (
@@ -101,7 +104,7 @@ class BB_ConfigAdmin(SingletonModelAdmin):
                     "market_transactions_janice_api_key",
                     "market_transactions_fuzzwork_station_id",
                     "market_transactions_price_max_age",
-                )
+                ),
             },
         ),
         (
@@ -121,7 +124,7 @@ class BB_ConfigAdmin(SingletonModelAdmin):
                     "custom_hauling_corps",
                     "alliance_blacklist_url",
                     "external_blacklist_url",
-                )
+                ),
             },
         ),
         (
@@ -149,7 +152,7 @@ class BB_ConfigAdmin(SingletonModelAdmin):
                         if AA_CONTACTS_INSTALLED
                         else ()
                     ),
-                )
+                ),
             },
         ),
         (
@@ -160,7 +163,7 @@ class BB_ConfigAdmin(SingletonModelAdmin):
                     "bb_guest_states",
                     "bb_member_states",
                     "hide_unaudited_users",
-                )
+                ),
             },
         ),
         (
@@ -180,7 +183,7 @@ class BB_ConfigAdmin(SingletonModelAdmin):
                     "optwebhook3",
                     "optwebhook4",
                     "optwebhook5",
-                )
+                ),
             },
         ),
         (
@@ -194,7 +197,7 @@ class BB_ConfigAdmin(SingletonModelAdmin):
                     "pingrole2_messages",
                     "here_messages",
                     "everyone_messages",
-                )
+                ),
             },
         ),
         (
@@ -298,11 +301,7 @@ class BB_ConfigAdmin(SingletonModelAdmin):
         "bb_guest_states",
         "bb_member_states",
         # aa-contacts M2M (only if installed)
-        *(
-            ("contacts_source_alliances", "contacts_source_corporations")
-            if AA_CONTACTS_INSTALLED
-            else ()
-        ),
+        *(("contacts_source_alliances", "contacts_source_corporations") if AA_CONTACTS_INSTALLED else ()),
     )
 
     class Media:
@@ -322,6 +321,7 @@ class BB_ConfigAdmin(SingletonModelAdmin):
 @admin.register(PapsConfig)
 class PapsConfigAdmin(SingletonModelAdmin):
     """Controls PAP multipliers/thresholds; singleton per installation."""
+
     filter_horizontal = (
         "group_paps",
         "excluded_groups",
@@ -343,85 +343,164 @@ class PapsConfigAdmin(SingletonModelAdmin):
 @admin.register(TicketToolConfig)
 class TicketToolConfigAdmin(SingletonModelAdmin):
     """Ticket automation thresholds + templates."""
+
     readonly_fields = ("ticket_counter",)
-    filter_horizontal = (
-        "excluded_users",
-    )
+    filter_horizontal = ("excluded_users",)
 
     def get_fieldsets(self, request, obj=None):
         fieldsets = [
-            ("Ticket System Configuration", {
-                'description': 'Configure how tickets are created and managed',
-                'fields': ('ticket_type', 'role_id', 'hr_forum_webhook', 'Forum_Channel_ID', 'ticket_counter', 'excluded_users')
-            }),
+            (
+                "Ticket System Configuration",
+                {
+                    "description": "Configure how tickets are created and managed",
+                    "fields": (
+                        "ticket_type",
+                        "role_id",
+                        "hr_forum_webhook",
+                        "Forum_Channel_ID",
+                        "ticket_counter",
+                        "excluded_users",
+                    ),
+                },
+            ),
         ]
 
         if discordbot_active():
-            fieldsets.insert(1, ('Private Channel Settings (Bot)', {
-                'classes': ('private-channel-fieldset',),
-                'description': 'Category ID for private ticket channels (only for private_channel ticket type)',
-                'fields': ('Category_ID',)
-            }))
+            fieldsets.insert(
+                1,
+                (
+                    "Private Channel Settings (Bot)",
+                    {
+                        "classes": ("private-channel-fieldset",),
+                        "description": "Category ID for private ticket channels (only for private_channel ticket type)",
+                        "fields": ("Category_ID",),
+                    },
+                ),
+            )
 
-        # Corp Compliance Check - only show compliance_filter if charlink is installed
+        # Corp Compliance Check - only show the persisted compliance filter id if charlink is installed
         corp_check_fields = []
         if charlink_active():
-            corp_check_fields.append('compliance_filter')
-        corp_check_fields.extend(['corp_check_enabled', 'corp_check_include_user', 'corp_check', 'corp_check_frequency', 'corp_check_reason', 'corp_check_reminder'])
+            corp_check_fields.append("compliance_filter_id")
+        corp_check_fields.extend(
+            [
+                "corp_check_enabled",
+                "corp_check_include_user",
+                "corp_check",
+                "corp_check_frequency",
+                "corp_check_reason",
+                "corp_check_reminder",
+            ]
+        )
 
-        fieldsets.append(('Corp Compliance Check', {
-            'classes': ('compliance-check-fieldset',),
-            'description': 'Verify users meet corp/alliance requirements',
-            'fields': tuple(corp_check_fields)
-        }))
+        fieldsets.append(
+            (
+                "Corp Compliance Check",
+                {
+                    "classes": ("compliance-check-fieldset",),
+                    "description": "Verify users meet corp/alliance requirements",
+                    "fields": tuple(corp_check_fields),
+                },
+            )
+        )
 
-        fieldsets.extend([
-            ('Inactivity Check', {
-                'classes': ('compliance-check-fieldset',),
-                'description': 'Monitor user activity and last login time',
-                'fields': ('afk_check_enabled', 'afk_check_include_user', 'Max_Afk_Days', 'afk_check', 'afk_check_frequency', 'afk_check_reason', 'afk_check_reminder')
-            }),
-            ('Character Removal Check', {
-                'classes': ('compliance-check-fieldset',),
-                'description': 'Alert when characters are removed from authentication',
-                'fields': ('char_removed_enabled', 'char_removed_include_user', 'char_removed_reason')
-            }),
-            ('AWOX Kill Monitor', {
-                'classes': ('compliance-check-fieldset',),
-                'description': 'Track and alert on friendly fire incidents',
-                'fields': ('awox_monitor_enabled', 'awox_kill_include_user', 'awox_kill_reason')
-            }),
-        ])
+        fieldsets.extend(
+            [
+                (
+                    "Inactivity Check",
+                    {
+                        "classes": ("compliance-check-fieldset",),
+                        "description": "Monitor user activity and last login time",
+                        "fields": (
+                            "afk_check_enabled",
+                            "afk_check_include_user",
+                            "Max_Afk_Days",
+                            "afk_check",
+                            "afk_check_frequency",
+                            "afk_check_reason",
+                            "afk_check_reminder",
+                        ),
+                    },
+                ),
+                (
+                    "Character Removal Check",
+                    {
+                        "classes": ("compliance-check-fieldset",),
+                        "description": "Alert when characters are removed from authentication",
+                        "fields": ("char_removed_enabled", "char_removed_include_user", "char_removed_reason"),
+                    },
+                ),
+                (
+                    "AWOX Kill Monitor",
+                    {
+                        "classes": ("compliance-check-fieldset",),
+                        "description": "Track and alert on friendly fire incidents",
+                        "fields": ("awox_monitor_enabled", "awox_kill_include_user", "awox_kill_reason"),
+                    },
+                ),
+            ]
+        )
 
         if discordbot_active():
             # Insert Discord checks together
             discord_fieldsets = [
-                ('Discord Link Check', {
-                    'classes': ('compliance-check-fieldset',),
-                    'description': 'Verify users have linked their Discord account',
-                    'fields': ('discord_check_enabled', 'discord_check', 'discord_check_frequency', 'discord_check_reason', 'discord_check_reminder')
-                }),
-                ('Discord Inactivity Check', {
-                    'classes': ('compliance-check-fieldset',),
-                    'description': 'Monitor Discord activity and message participation',
-                    'fields': ('discord_inactivity_enabled', 'discord_inactivity_include_user', 'discord_inactivity_days', 'discord_inactivity_reason')
-                }),
+                (
+                    "Discord Link Check",
+                    {
+                        "classes": ("compliance-check-fieldset",),
+                        "description": "Verify users have linked their Discord account",
+                        "fields": (
+                            "discord_check_enabled",
+                            "discord_check",
+                            "discord_check_frequency",
+                            "discord_check_reason",
+                            "discord_check_reminder",
+                        ),
+                    },
+                ),
+                (
+                    "Discord Inactivity Check",
+                    {
+                        "classes": ("compliance-check-fieldset",),
+                        "description": "Monitor Discord activity and message participation",
+                        "fields": (
+                            "discord_inactivity_enabled",
+                            "discord_inactivity_include_user",
+                            "discord_inactivity_days",
+                            "discord_inactivity_reason",
+                        ),
+                    },
+                ),
             ]
             # Find position after Inactivity Check
             idx = 0
             for i, (name, _) in enumerate(fieldsets):
-                if 'Inactivity Check' in name:
+                if "Inactivity Check" in name:
                     idx = i + 1
                     break
             for fs in reversed(discord_fieldsets):
                 fieldsets.insert(idx, fs)
 
         if afat_active():
-            fieldsets.append(('PAP Compliance Check', {
-                'classes': ('compliance-check-fieldset',),
-                'description': 'Monitor fleet participation (PAPs) requirements',
-                'fields': ('paps_check_enabled', 'paps_check_include_user', 'max_months_without_pap_compliance', 'starting_pap_compliance', 'paps_check', 'paps_check_frequency', 'paps_check_reason', 'paps_check_reminder')
-            }))
+            fieldsets.append(
+                (
+                    "PAP Compliance Check",
+                    {
+                        "classes": ("compliance-check-fieldset",),
+                        "description": "Monitor fleet participation (PAPs) requirements",
+                        "fields": (
+                            "paps_check_enabled",
+                            "paps_check_include_user",
+                            "max_months_without_pap_compliance",
+                            "starting_pap_compliance",
+                            "paps_check",
+                            "paps_check_frequency",
+                            "paps_check_reason",
+                            "paps_check_reminder",
+                        ),
+                    },
+                )
+            )
 
         return fieldsets
 
@@ -429,42 +508,46 @@ class TicketToolConfigAdmin(SingletonModelAdmin):
         js = ("aa_bb/js/admin_ticket_config.js",)
 
     def get_form(self, request, obj=None, **kwargs):
+        # Django
         from django import forms
+
         form = super().get_form(request, obj, **kwargs)
 
         # Make role_id a textarea
-        if 'role_id' in form.base_fields:
-            form.base_fields['role_id'].widget = forms.Textarea(attrs={'rows': 3, 'cols': 40})
+        if "role_id" in form.base_fields:
+            form.base_fields["role_id"].widget = forms.Textarea(attrs={"rows": 3, "cols": 40})
 
-        if charlink_active():
+        if charlink_active() and "compliance_filter_id" in form.base_fields:
             try:
                 ComplianceFilter = apps.get_model("charlink", "ComplianceFilter")
-                form.base_fields["compliance_filter"] = forms.ModelChoiceField(
+                form.base_fields["compliance_filter_id"] = forms.ModelChoiceField(
                     queryset=ComplianceFilter.objects.all(),
                     required=False,
+                    label="Compliance filter",
                     help_text="Select your compliance filter",
                 )
                 if obj and obj.compliance_filter_id:
-                    form.base_fields["compliance_filter"].initial = (
-                        ComplianceFilter.objects.filter(pk=obj.compliance_filter_id).first()
-                    )
+                    form.base_fields["compliance_filter_id"].initial = ComplianceFilter.objects.filter(
+                        pk=obj.compliance_filter_id
+                    ).first()
             except LookupError:
                 pass
 
         if not discordbot_active():
             from .models import TicketToolConfig
+
             # Restrict choices if bot is not active
             allowed_choices = [
-                (TicketToolConfig.TICKET_TYPE_FORUM_THREAD, 'Public Forum Threads (Webhook)'),
-                (TicketToolConfig.TICKET_TYPE_AUTH_ONLY, 'Auth Only (No Discord)'),
+                (TicketToolConfig.TICKET_TYPE_FORUM_THREAD, "Public Forum Threads (Webhook)"),
+                (TicketToolConfig.TICKET_TYPE_AUTH_ONLY, "Auth Only (No Discord)"),
             ]
-            form.base_fields['ticket_type'].choices = allowed_choices
+            form.base_fields["ticket_type"].choices = allowed_choices
         return form
 
     def save_model(self, request, obj, form, change):
-        if charlink_active() and "compliance_filter" in form.cleaned_data:
-            compliance_filter = form.cleaned_data.get("compliance_filter")
-            obj.compliance_filter_id = compliance_filter.pk if compliance_filter else None
+        if charlink_active() and "compliance_filter_id" in form.cleaned_data:
+            compliance_filter = form.cleaned_data.get("compliance_filter_id")
+            obj.compliance_filter_id = getattr(compliance_filter, "pk", compliance_filter) or None
         super().save_model(request, obj, form, change)
 
     def has_add_permission(self, request):
@@ -478,8 +561,6 @@ class TicketToolConfigAdmin(SingletonModelAdmin):
         return True
 
 
-
-
 @admin.register(EveItemPrice)
 class EveItemPriceAdmin(admin.ModelAdmin):
     list_display = ("eve_type_id", "buy", "sell", "updated")
@@ -489,6 +570,7 @@ class EveItemPriceAdmin(admin.ModelAdmin):
 @admin.register(Messages)
 class DailyMessageConfig(admin.ModelAdmin):
     """Standard daily webhook messages rotated each cycle."""
+
     search_fields = ["text"]
     list_display = ["text", "sent_in_cycle"]
 
@@ -496,6 +578,7 @@ class DailyMessageConfig(admin.ModelAdmin):
 @admin.register(OptMessages1)
 class OptMessage1Config(admin.ModelAdmin):
     """Optional webhook stream #1."""
+
     search_fields = ["text"]
     list_display = ["text", "sent_in_cycle"]
 
@@ -503,6 +586,7 @@ class OptMessage1Config(admin.ModelAdmin):
 @admin.register(OptMessages2)
 class OptMessage2Config(admin.ModelAdmin):
     """Optional webhook stream #2."""
+
     search_fields = ["text"]
     list_display = ["text", "sent_in_cycle"]
 
@@ -510,6 +594,7 @@ class OptMessage2Config(admin.ModelAdmin):
 @admin.register(OptMessages3)
 class OptMessage3Config(admin.ModelAdmin):
     """Optional webhook stream #3."""
+
     search_fields = ["text"]
     list_display = ["text", "sent_in_cycle"]
 
@@ -517,6 +602,7 @@ class OptMessage3Config(admin.ModelAdmin):
 @admin.register(OptMessages4)
 class OptMessage4Config(admin.ModelAdmin):
     """Optional webhook stream #4."""
+
     search_fields = ["text"]
     list_display = ["text", "sent_in_cycle"]
 
@@ -524,6 +610,7 @@ class OptMessage4Config(admin.ModelAdmin):
 @admin.register(OptMessages5)
 class OptMessage5Config(admin.ModelAdmin):
     """Optional webhook stream #5."""
+
     search_fields = ["text"]
     list_display = ["text", "sent_in_cycle"]
 
@@ -531,22 +618,45 @@ class OptMessage5Config(admin.ModelAdmin):
 @admin.register(WarmProgress)
 class WarmProgressConfig(admin.ModelAdmin):
     """Shows which users the cache warmer has processed recently."""
+
     list_display = ["user_main", "updated"]
 
 
 @admin.register(UserStatus)
 class UserStatusConfig(admin.ModelAdmin):
     """Simple heartbeat for per-user card status."""
+
     list_display = ["user", "updated"]
 
 
 @admin.register(AdminLogEntry)
 class AdminLogEntryAdmin(admin.ModelAdmin):
     """Read-only audit log for auth/admin events."""
+
     date_hierarchy = "created_at"
-    list_display = ["created_at", "category", "action", "summary", "reason", "source", "task_name", "actor", "target_user", "target_label"]
+    list_display = [
+        "created_at",
+        "category",
+        "action",
+        "summary",
+        "reason",
+        "source",
+        "task_name",
+        "actor",
+        "target_user",
+        "target_label",
+    ]
     list_filter = ["category", "action", "source", "task_name"]
-    search_fields = ["reason", "message", "action", "source", "task_name", "target_label", "actor__username", "target_user__username"]
+    search_fields = [
+        "reason",
+        "message",
+        "action",
+        "source",
+        "task_name",
+        "target_label",
+        "actor__username",
+        "target_user__username",
+    ]
     list_select_related = ["actor", "target_user"]
     list_per_page = 100
     ordering = ["-created_at"]
@@ -648,11 +758,12 @@ class AdminLogEntryAdmin(admin.ModelAdmin):
 
 
 class ReasonFilter(admin.SimpleListFilter):
-    title = 'reason'
-    parameter_name = 'reason'
+    title = "reason"
+    parameter_name = "reason"
 
     def lookups(self, request, model_admin):
         from .models import ComplianceTicket
+
         reasons = list(ComplianceTicket.REASONS)
         if not afat_active():
             reasons = [r for r in reasons if r[0] != "paps_check"]
@@ -669,6 +780,7 @@ class ReasonFilter(admin.SimpleListFilter):
 @admin.register(ComplianceTicket)
 class ComplianceTicketConfig(admin.ModelAdmin):
     """History of tickets issued by the automation layer."""
+
     list_display = ["user", "ticket_id", "reason", "is_resolved", "is_exception"]
     list_filter = ["is_resolved", "is_exception", ReasonFilter]
     readonly_fields = ["created_at"]
@@ -679,24 +791,28 @@ class ComplianceTicketConfig(admin.ModelAdmin):
         """Mark selected tickets as exceptions."""
         count = queryset.update(is_exception=True, exception_reason=f"Marked as exception by {request.user.username}")
         self.message_user(request, f"{count} ticket(s) marked as exception.")
+
     mark_as_exception.short_description = "Mark selected tickets as exception"
 
     def clear_exception(self, request, queryset):
         """Clear exception status from selected tickets."""
         count = queryset.update(is_exception=False, exception_reason=None)
         self.message_user(request, f"{count} ticket(s) exception status cleared.")
+
     clear_exception.short_description = "Clear exception status"
 
     def mark_as_resolved(self, request, queryset):
         """Mark selected tickets as resolved."""
         count = queryset.update(is_resolved=True)
         self.message_user(request, f"{count} ticket(s) marked as resolved.")
+
     mark_as_resolved.short_description = "Mark selected tickets as resolved"
 
     def mark_as_open(self, request, queryset):
         """Mark selected tickets as open."""
         count = queryset.update(is_resolved=False, is_exception=False)
         self.message_user(request, f"{count} ticket(s) marked as open.")
+
     mark_as_open.short_description = "Mark selected tickets as open"
 
     def get_queryset(self, request):
@@ -711,6 +827,7 @@ class ComplianceTicketConfig(admin.ModelAdmin):
 @admin.register(ComplianceThread)
 class ComplianceThreadAdmin(admin.ModelAdmin):
     """Mapping of user/reason to Discord thread IDs."""
+
     list_display = ["user", "reason", "thread_id"]
     list_filter = [ReasonFilter]
 
@@ -726,12 +843,14 @@ class ComplianceThreadAdmin(admin.ModelAdmin):
 @admin.register(LeaveRequest)
 class LeaveRequestConfig(admin.ModelAdmin):
     """Expose LeaveRequest records to staff when LoA is enabled."""
+
     list_display = ["main_character", "start_date", "end_date", "reason", "status"]
 
 
 @admin.register(PapCompliance)
 class PapComplianceConfig(admin.ModelAdmin):
     """Shows the most recent PAP compliance calculation per user."""
+
     search_fields = ["user_profile"]
     list_display = ["user_profile", "pap_compliant"]
 
@@ -781,6 +900,7 @@ class RecurringStatsConfigAdmin(SingletonModelAdmin):
     filter_horizontal = ("states",)
     readonly_fields = ("last_run_at", "last_snapshot")
 
+
 if not afat_active():
     for _m in (PapsConfig, PapCompliance):
         try:
@@ -812,13 +932,9 @@ def _filtered_get_app_list(request, app_label=None):
         if label == "aa_bb":
             models = app.get("models", [])
             if not is_afat:
-                models = [
-                    m for m in models if m.get("object_name") not in _PAP_OBJECT_NAMES
-                ]
+                models = [m for m in models if m.get("object_name") not in _PAP_OBJECT_NAMES]
             if not show_market:
-                models = [
-                    m for m in models if m.get("object_name") not in _MARKET_OBJECT_NAMES
-                ]
+                models = [m for m in models if m.get("object_name") not in _MARKET_OBJECT_NAMES]
             app = {**app, "models": models}
 
         # Drop empty app groups
