@@ -13,6 +13,7 @@ from solo.admin import SingletonModelAdmin
 from django.apps import apps
 from django.contrib import admin
 from django.contrib.admin.sites import NotRegistered
+from django import forms
 from django.utils.html import format_html_join
 from django.utils.safestring import mark_safe
 
@@ -38,6 +39,21 @@ from .models import (
     UserStatus,
     WarmProgress,
 )
+
+
+class ComplianceFilterChoiceField(forms.ModelChoiceField):
+    """Render a ComplianceFilter choice while returning its database id.
+
+    TicketToolConfig stores this value in a BigIntegerField rather than a
+    ForeignKey because charlink is optional.  A normal ModelChoiceField
+    returns the related object, which Django's model validation then tries to
+    validate as an integer before ModelAdmin.save_model() gets a chance to
+    convert it.
+    """
+
+    def clean(self, value):
+        compliance_filter = super().clean(value)
+        return getattr(compliance_filter, "pk", None)
 
 
 @admin.register(BigBrotherConfig)
@@ -520,7 +536,7 @@ class TicketToolConfigAdmin(SingletonModelAdmin):
         if charlink_active() and "compliance_filter_id" in form.base_fields:
             try:
                 ComplianceFilter = apps.get_model("charlink", "ComplianceFilter")
-                form.base_fields["compliance_filter_id"] = forms.ModelChoiceField(
+                form.base_fields["compliance_filter_id"] = ComplianceFilterChoiceField(
                     queryset=ComplianceFilter.objects.all(),
                     required=False,
                     label="Compliance filter",
