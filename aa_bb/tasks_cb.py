@@ -57,10 +57,8 @@ from .models import (
     OptMessages4,
     OptMessages5,
     PapCompliance,
-    ProcessedContract,
     ProcessedMail,
     ProcessedTransaction,
-    SusContractNote,
     SusMailNote,
     SusTransactionNote,
 )
@@ -71,23 +69,17 @@ try:
         from corptools.api.helpers import get_alts_queryset
         from corptools.models import (
             CharacterWalletJournalEntry,
-            Contract,
-            CorporateContract,
             CorporationWalletJournalEntry,
             MailMessage,
         )
     else:
         get_alts_queryset = None
-        Contract = None
         MailMessage = None
-        CorporateContract = None
         CharacterWalletJournalEntry = None
         CorporationWalletJournalEntry = None
 except ImportError:
     get_alts_queryset = None
-    Contract = None
     MailMessage = None
-    CorporateContract = None
     CharacterWalletJournalEntry = None
     CorporationWalletJournalEntry = None
 
@@ -955,8 +947,9 @@ def BB_daily_DB_cleanup():
     """
     Periodic cleanup of cached tables and orphaned processed records.
 
-    Deletes stale name caches, employment caches, processed mail/contract/transaction
+    Deletes stale name caches, employment caches, processed mail/transaction
     entries that no longer have backing data, and non-member PAP compliance rows.
+    Hostile contact, asset, and contract history is retained for deduplication.
     """
     close_old_connections()
     if not BigBrotherConfig.get_solo().is_active:
@@ -976,7 +969,6 @@ def BB_daily_DB_cleanup():
         EntityInfoCache,
         FrequentCorpChangesCache,
         SovereigntyMapCache,
-        UserStatus,
         id_types,
     )
 
@@ -1017,12 +1009,17 @@ def BB_daily_DB_cleanup():
     except Exception as e:
         logger.error(f"Failed to cleanup EntityInfoCache: {e}")
 
-    # Delete other old model entries using ORM
+    # Delete other old model entries using ORM.
+    #
+    # UserStatus is intentionally not included here.  It is not merely a
+    # cache: its hostile contacts/assets/contracts snapshots are the history
+    # used to distinguish a newly reported finding from one seen previously.
+    # Removing an inactive user's row causes old hostile findings to be
+    # announced again when that user is next checked.
     models_to_cleanup = [
         (Alliance_names, "alliance"),
         (Character_names, "character"),
         (Corporation_names, "corporation"),
-        (UserStatus, "User Status"),
         (CorporationInfoCache, "Corporation Info Cache"),
         (AllianceHistoryCache, "Alliance History Cache"),
         (SovereigntyMapCache, "Sovereignty Map Cache"),
@@ -1065,22 +1062,9 @@ def BB_daily_DB_cleanup():
     # Django
     from django.db.models import Exists, OuterRef
 
-    # Find ProcessedContracts with no matching source record (memory-efficient)
-    orphaned_processed_contracts = ProcessedContract.objects.filter(
-        ~Exists(CorporateContract.objects.filter(contract_id=OuterRef("contract_id")))
-        & ~Exists(Contract.objects.filter(contract_id=OuterRef("contract_id")))
-    )
-
-    # Get count before deletion for reporting
-    count_proc = orphaned_processed_contracts.count()
-
-    if count_proc > 0:
-        # Delete related SusContractNotes and ProcessedContracts
-        with transaction.atomic():
-            count_sus = SusContractNote.objects.filter(contract__in=orphaned_processed_contracts).delete()[0]
-            orphaned_processed_contracts.delete()
-
-        flags.append(f"- Deleted {count_proc} old ProcessedContract and {count_sus} SusContractNote records.")
+    # ProcessedContract and SusContractNote are retained permanently.  The
+    # corptools contract snapshot may expire or be refreshed, but the
+    # processed ID is the deduplication history for hostile-contract alerts.
 
     # -- MAILS --
     # Use database-side subquery to avoid loading all mail IDs into memory
