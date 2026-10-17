@@ -23,6 +23,7 @@ from ..app_settings import (
     is_ship,
     resolve_location_name,
     resolve_location_system_id,
+    resolve_solar_system_id_by_name,
 )
 from ..models import BigBrotherConfig
 
@@ -40,6 +41,49 @@ except ImportError:
     CharacterAudit = None
     CharacterAsset = None
     EveLocation = None
+
+
+def check_asset_audits_complete(user_id: int) -> bool:
+    """
+    Check if all linked character audits for a user have valid tokens
+    and have completed at least one asset synchronization.
+    Returns False if any character audit is incomplete, in-flight, or has broken tokens.
+    """
+    if not corptools_active() or CharacterAudit is None:
+        return True
+
+    audits = CharacterAudit.objects.filter(character__character_ownership__user_id=user_id).select_related("character")
+    if not audits.exists():
+        return True
+
+    # Alliance Auth
+    from esi.errors import TokenExpiredError, TokenInvalidError
+    from esi.models import Token
+
+    req_scopes = ["esi-assets.read_assets.v1"]
+
+    for audit in audits:
+        char_id = audit.character.character_id
+        token = Token.get_token(char_id, req_scopes)
+        if not token:
+            return False
+        try:
+            if not token.valid_access_token():
+                return False
+        except (TokenExpiredError, TokenInvalidError, Exception):
+            return False
+
+        has_timestamp = False
+        if hasattr(audit, "last_update_assets") and audit.last_update_assets:
+            has_timestamp = True
+        elif hasattr(audit, "update_timestamps") and isinstance(audit.update_timestamps, dict):
+            if audit.update_timestamps.get("assets"):
+                has_timestamp = True
+
+        if not has_timestamp:
+            return False
+
+    return True
 
 
 def _parse_id_list(value: Optional[str]) -> set[int]:
@@ -69,7 +113,8 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
     assets = (
         CharacterAsset.objects.filter(character_id__in=audit_ids)
         .select_related("location_name__system", "type_name")
-        .exclude(location_flag__iexact="solar_system")[:5000]  # Limit to prevent memory explosion
+        .exclude(location_flag__iexact="solar_system")
+        .order_by("pk")
     )
 
     system_map: Dict[int, dict] = {}
@@ -141,6 +186,15 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
                     sys_name = _loc_name_cache[key]
                 else:
                     sys_name = resolve_location_name(key)
+                    _loc_name_cache[key] = sys_name
+
+        if not key and loc and getattr(loc, "location_name", None):
+            parts = loc.location_name.split(" - ", 1)
+            if len(parts) >= 2:
+                key = resolve_solar_system_id_by_name(parts[0])
+                if key:
+                    _loc_sys_cache[location_id] = key
+                    sys_name = parts[0]
                     _loc_name_cache[key] = sys_name
 
         if not key:

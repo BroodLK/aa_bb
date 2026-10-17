@@ -20,7 +20,7 @@ from aa_bb.checks.awox import get_awox_kill_links
 from aa_bb.checks.clone_state import determine_character_state
 from aa_bb.checks.corp_changes import time_in_corp
 from aa_bb.checks.cyno import get_current_stint_days_in_corp, get_user_cyno_info
-from aa_bb.checks.hostile_assets import get_hostile_asset_locations
+from aa_bb.checks.hostile_assets import check_asset_audits_complete, get_hostile_asset_locations
 from aa_bb.checks.hostile_clones import get_hostile_clone_locations
 from aa_bb.checks.skills import get_char_age, get_multiple_user_skill_info, skill_ids
 from aa_bb.checks.sus_contacts import get_user_hostile_notifications
@@ -706,6 +706,16 @@ def BB_update_single_user(user_id, char_name):
 
                 status.skills = new_skills
                 status_changed = True
+
+            # Prevent hostile asset alert flapping when audit scans are incomplete/unverified
+            if status.has_hostile_assets and not has_hostile_assets:
+                if not check_asset_audits_complete(user_id):
+                    logger.warning(
+                        f"ℹ️  [AA-BB] - [BB_update_single_user] - {char_name} asset scan returned empty but character audits are incomplete/unverified. Retaining previous hostile asset state to prevent alert flapping."
+                    )
+                    has_hostile_assets = status.has_hostile_assets
+                    hostile_assets_result = status.hostile_assets or {}
+
             if status.has_hostile_assets != has_hostile_assets or set(hostile_assets_result) != set(
                 status.hostile_assets or []
             ):

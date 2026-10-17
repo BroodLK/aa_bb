@@ -2126,6 +2126,35 @@ def resolve_location_name(location_id: int) -> Optional[str]:
     return name
 
 
+def resolve_solar_system_id_by_name(system_name: str) -> Optional[int]:
+    """Resolve a system name (e.g. 'LXQ2-T') to its solar system ID using SDE."""
+    if not system_name:
+        return None
+    system_name = system_name.strip()
+    cache_key = f"aa_bb_sys_name_to_id_{system_name}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    SolarSystem = _get_sde_model("SolarSystem", "MapSystem")
+    if SolarSystem:
+        try:
+            name_field = _get_model_field(SolarSystem, "name", "solar_system_name", "system_name")
+            id_field = _get_model_field(SolarSystem, "id", "solar_system_id", "system_id")
+            if name_field and id_field:
+                obj = SolarSystem.objects.filter(**{name_field: system_name}).first()
+                if obj:
+                    res_id = getattr(obj, id_field)
+                    if res_id:
+                        res_id_int = int(res_id)
+                        cache.set(cache_key, res_id_int, 86400 * 7)
+                        return res_id_int
+        except Exception:
+            pass
+
+    return None
+
+
 def resolve_location_system_id(location_id: int) -> Optional[int]:
     """
     Attempts to resolve a location_id to its parent solar system ID.
@@ -2163,13 +2192,17 @@ def resolve_location_system_id(location_id: int) -> Optional[int]:
             from corptools.models import EveLocation, Structure
 
             struct = Structure.objects.filter(structure_id=location_id).first()
-            if struct:
+            if struct and struct.system_id:
                 sys_id = struct.system_id
             else:
                 # Fallback to EveLocation for non-owned structures
                 loc = EveLocation.objects.filter(location_id=location_id).first()
                 if loc and loc.system_id:
                     sys_id = loc.system_id
+                elif loc and loc.location_name:
+                    parts = loc.location_name.split(" - ", 1)
+                    if len(parts) >= 2:
+                        sys_id = resolve_solar_system_id_by_name(parts[0])
         except Exception:
             pass
 
