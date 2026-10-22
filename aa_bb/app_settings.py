@@ -9,23 +9,32 @@ messages without duplicating all the plumbing.
 # Standard Library
 import logging
 import re
+import time
 from collections import deque
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from functools import lru_cache
 
 # Third Party
 import requests
+from dateutil.parser import parse as parse_datetime
+from httpx import RequestError
 
 # Django
 from django.apps import apps
+from django.conf import settings
+from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from django.db import IntegrityError, OperationalError, transaction
 from django.db.utils import ProgrammingError
 from django.utils import timezone
 
 # Alliance Auth
 from allianceauth.authentication.models import CharacterOwnership, UserProfile
+from allianceauth.framework.api.user import get_main_character_name_from_user
 from allianceauth.services.hooks import get_extension_logger
+from esi.exceptions import HTTPClientError, HTTPServerError
 
+from .esi_cache import expiry_cache_key, get_cached_expiry, set_cached_expiry
 from .models import (
     Alliance_names,
     AllianceHistoryCache,
@@ -39,30 +48,11 @@ from .models import (
     SovereigntyMapCache,
     id_types,
 )
+from .providers import ESIHandler
 
 MAJOR_HUBS = {30000142, 30002187, 30002659, 30002510, 30002053}
 SECONDARY_HUBS = {30002661, 30003733, 30001389, 30000144}
 EVE_SDE_INSTALLED = apps.is_installed("eve_sde")
-
-# Standard Library
-import time
-from functools import lru_cache
-
-# Third Party
-from dateutil.parser import parse as parse_datetime
-from httpx import RequestError
-
-# Django
-from django.conf import settings
-from django.contrib.auth import get_user_model
-from django.core.cache import cache
-
-# Alliance Auth
-from allianceauth.framework.api.user import get_main_character_name_from_user
-from esi.exceptions import HTTPClientError, HTTPServerError
-
-from .esi_cache import expiry_cache_key, get_cached_expiry, set_cached_expiry
-from .providers import ESIHandler
 
 
 def _get_sde_model(*names: str):
@@ -122,7 +112,9 @@ def _get_sde_region_info_from_system(system_id: int):
     sys_obj = _get_sde_solar_system(system_id)
     if not sys_obj:
         return None, None
-    constellation = _get_attr(sys_obj, "constellation", "eve_constellation", "map_constellation")
+    constellation = _get_attr(
+        sys_obj, "constellation", "eve_constellation", "map_constellation"
+    )
     region = _get_attr(constellation, "region", "eve_region", "map_region")
     if not region:
         region = _get_attr(sys_obj, "region", "eve_region", "map_region")
@@ -165,11 +157,15 @@ def _resolve_names_via_esi(ids: list[int]) -> dict[int, str]:
             operation_kwargs=esi_tenant_kwargs(DATASOURCE),
             use_etag=False,
         )
-    return {int(row.get("id")): row.get("name") for row in (rows or []) if row.get("id") is not None}
+    return {
+        int(row.get("id")): row.get("name")
+        for row in (rows or [])
+        if row.get("id") is not None
+    }
 
 
 # Owner-name cache (7d TTL)
-_owner_name_cache: Dict[int, Tuple[str, datetime]] = {}
+_owner_name_cache: dict[int, tuple[str, datetime]] = {}
 
 
 def get_pings(message_type: str) -> str:
@@ -202,7 +198,7 @@ def get_pings(message_type: str) -> str:
     return ping
 
 
-def _find_employment_at(employment: List[dict], date: datetime) -> Optional[dict]:
+def _find_employment_at(employment: list[dict], date: datetime) -> dict | None:
     """Return the employment record active at the provided datetime."""
     for rec in employment:
         start = rec.get("start_date")
@@ -224,7 +220,7 @@ def get_main_character_name(user_id):
         return None
 
 
-def _find_alliance_at(history: List[dict], date: datetime) -> Optional[int]:
+def _find_alliance_at(history: list[dict], date: datetime) -> int | None:
     """Return the alliance id active for the corp at the given time."""
     for i, rec in enumerate(history):
         start = rec.get("start_date")
@@ -270,7 +266,8 @@ def get_eve_entity_type_int(eve_id: int, datasource: str | None = None) -> str |
             return None
         except (RequestError, requests.exceptions.RequestException) as exc:
             logger.warning(
-                "Transient ESI connection issue while resolving %s " "(attempt %s/%s): %s",
+                "Transient ESI connection issue while resolving %s "
+                "(attempt %s/%s): %s",
                 eve_id,
                 attempt,
                 max_retries,
@@ -285,7 +282,7 @@ def get_eve_entity_type_int(eve_id: int, datasource: str | None = None) -> str |
     return results[0].get("category")
 
 
-def get_eve_entity_type(eve_id: int, datasource: str | None = None) -> Optional[str]:
+def get_eve_entity_type(eve_id: int, datasource: str | None = None) -> str | None:
     """
     Resolve an EVE Online ID to its entity type, caching results in the `id_types` table.
     """
@@ -370,7 +367,9 @@ def get_character_id(name: str) -> int | None:
     except (HTTPClientError, HTTPServerError) as e:
         logger.error(f"ESI error resolving character name '{name}': {e}")
         # Fallback to most recent local record if present
-        fallback = Character_names.objects.filter(name=name).order_by("-updated").first()
+        fallback = (
+            Character_names.objects.filter(name=name).order_by("-updated").first()
+        )
         if fallback:  # Cached name available when ESI fails; reuse stored entry.
             fallback.updated = timezone.now()
             fallback.save()
@@ -385,8 +384,12 @@ def get_character_id(name: str) -> int | None:
 
     # Ensure canonical mapping exists
     with transaction.atomic():
-        obj, created = Character_names.objects.get_or_create(id=char_id, defaults={"name": name})
-        if not created and obj.name != name:  # Update stale entries when ESI says the canonical name changed.
+        obj, created = Character_names.objects.get_or_create(
+            id=char_id, defaults={"name": name}
+        )
+        if (
+            not created and obj.name != name
+        ):  # Update stale entries when ESI says the canonical name changed.
             obj.name = name
             obj.updated = timezone.now()
             obj.save()
@@ -416,7 +419,9 @@ def get_character_id(name: str) -> int | None:
 
             for stale in stale_qs:
                 correct_name = name_rows.get(int(stale.id)) or stale.name
-                if correct_name != stale.name:  # Rename rows resolved to a different canonical name.
+                if (
+                    correct_name != stale.name
+                ):  # Rename rows resolved to a different canonical name.
                     stale.name = correct_name
                     stale.updated = timezone.now()
                     stale.save()
@@ -429,17 +434,17 @@ def get_character_id(name: str) -> int | None:
 _EXPIRY = timedelta(days=7)
 
 
-def get_entity_info(entity_id: int, as_of: timezone.datetime) -> Dict:
+def get_entity_info(entity_id: int, as_of: timezone.datetime) -> dict:
     """
     Returns a dict:
-      {
-        'name': str,
-        'type': 'character'|'corporation'|'alliance'|None,
-        'corp_id': Optional[int],
-        'corp_name': str,
-        'alli_id': Optional[int],
-        'alli_name': str,
-      }
+        {
+            'name': str,
+            'type': 'character'|'corporation'|'alliance'|None,
+            'corp_id': Optional[int],
+            'corp_name': str,
+            'alli_id': Optional[int],
+            'alli_name': str,
+        }
     Caches the result in the DB for 7 days.
     """
     # Normalize timestamp to the hour to maximize cache hits and minimize DB bloat.
@@ -517,7 +522,9 @@ def get_entity_info(entity_id: int, as_of: timezone.datetime) -> Dict:
     for attempt in range(MAX_RETRIES):
         try:
             with transaction.atomic():
-                EntityInfoCache.objects.update_or_create(entity_id=entity_id, as_of=as_of, defaults={"data": info})
+                EntityInfoCache.objects.update_or_create(
+                    entity_id=entity_id, as_of=as_of, defaults={"data": info}
+                )
             break  # Success, exit loop
         except OperationalError as e:
             if (
@@ -574,7 +581,10 @@ def _ser_employment(rows: list[dict]) -> list[dict]:
                 "start_date": _ser_dt(r.get("start_date")),
                 "end_date": _ser_dt(r.get("end_date")),
                 "alliance_history": [
-                    {"alliance_id": ah.get("alliance_id"), "start_date": _ser_dt(ah.get("start_date"))}
+                    {
+                        "alliance_id": ah.get("alliance_id"),
+                        "start_date": _ser_dt(ah.get("start_date")),
+                    }
                     for ah in (r.get("alliance_history") or [])
                 ],
             }
@@ -593,7 +603,10 @@ def _deser_employment(rows: list[dict]) -> list[dict]:
                 "start_date": _deser_dt(r.get("start_date")),
                 "end_date": _deser_dt(r.get("end_date")),
                 "alliance_history": [
-                    {"alliance_id": ah.get("alliance_id"), "start_date": _deser_dt(ah.get("start_date"))}
+                    {
+                        "alliance_id": ah.get("alliance_id"),
+                        "start_date": _deser_dt(ah.get("start_date")),
+                    }
                     for ah in (r.get("alliance_history") or [])
                 ],
             }
@@ -605,16 +618,16 @@ def get_character_employment(character_or_id) -> list[dict]:
     """
     Fetch and format the permanent employment history for a character.
     Accepts either:
-      - an int: the EVE character_id
-      - an object with .character_id attribute
+        - an int: the EVE character_id
+        - an object with .character_id attribute
     Returns a list of dicts:
-      {
-        'corporation_id': int,
-        'corporation_name': str,
-        'start_date': datetime,
-        'end_date': datetime|None,
-        'alliance_history': [ {'alliance_id': int, 'start_date': datetime}, ... ]
-      }
+        {
+            'corporation_id': int,
+            'corporation_name': str,
+            'start_date': datetime,
+            'end_date': datetime|None,
+            'alliance_history': [ {'alliance_id': int, 'start_date': datetime}, ... ]
+        }
     On ESI failure, logs and returns [].
     """
     # 1. Normalize to integer character_id
@@ -624,7 +637,9 @@ def get_character_employment(character_or_id) -> list[dict]:
         try:
             char_id = int(character_or_id.character_id)
         except (AttributeError, TypeError, ValueError):
-            raise ValueError("get_character_employment() requires an int or an object with .character_id")
+            raise ValueError(
+                "get_character_employment() requires an int or an object with .character_id"
+            )
 
     # 2. Cache: try DB (4h TTL)
     expiry_key = expiry_cache_key("char_emp", char_id)
@@ -638,7 +653,9 @@ def get_character_employment(character_or_id) -> list[dict]:
         now_ts = timezone.now()
         if expiry_hint and expiry_hint > now_ts:  # Cache still valid per redis hint.
             return cached_rows
-        if expiry_hint is None and now_ts - ce.updated < TTL_SHORT:  # Fall back to DB timestamp TTL.
+        if (
+            expiry_hint is None and now_ts - ce.updated < TTL_SHORT
+        ):  # Fall back to DB timestamp TTL.
             try:
                 ce.last_accessed = timezone.now()
                 ce.save(update_fields=["last_accessed"])
@@ -650,9 +667,11 @@ def get_character_employment(character_or_id) -> list[dict]:
 
     # 3. Fetch the corp history from ESI
     try:
-        response, new_expiry = ESIHandler.get_characters_corporation_history_with_expiry(
-            char_id,
-            allow_not_modified=True,
+        response, new_expiry = (
+            ESIHandler.get_characters_corporation_history_with_expiry(
+                char_id,
+                allow_not_modified=True,
+            )
         )
         if new_expiry:
             set_cached_expiry(expiry_key, new_expiry)
@@ -666,9 +685,11 @@ def get_character_employment(character_or_id) -> list[dict]:
                     cache_entry.save()
                 return cached_rows or _deser_employment(cache_entry.data)
             logger.debug("ESI returned 304 for char %s but no cache available", char_id)
-            response, new_expiry = ESIHandler.get_characters_corporation_history_with_expiry(
-                char_id,
-                use_etag=False,
+            response, new_expiry = (
+                ESIHandler.get_characters_corporation_history_with_expiry(
+                    char_id,
+                    use_etag=False,
+                )
             )
             if new_expiry:
                 set_cached_expiry(expiry_key, new_expiry)
@@ -708,7 +729,8 @@ def get_character_employment(character_or_id) -> list[dict]:
         # Persist the corporation name for future lookups
         with transaction.atomic():
             Corporation_names.objects.update_or_create(
-                pk=corp_id, defaults={"name": corp_info.get("name", f"Unknown ({corp_id})")}
+                pk=corp_id,
+                defaults={"name": corp_info.get("name", f"Unknown ({corp_id})")},
             )
 
     # Save to cache
@@ -759,7 +781,9 @@ def get_corporation_info(corp_id):
         entry = CorporationInfoCache.objects.get(pk=corp_id)
         cached_entry = entry
         now_ts = timezone.now()
-        if expiry_hint and expiry_hint > now_ts:  # Cached corp info still valid according to redis.
+        if (
+            expiry_hint and expiry_hint > now_ts
+        ):  # Cached corp info still valid according to redis.
             return {"name": entry.name, "member_count": entry.member_count}
         if (
             expiry_hint is None and now_ts - entry.updated < CORP_TTL
@@ -780,7 +804,10 @@ def get_corporation_info(corp_id):
             if cached_entry:  # Serve stale entry if ESI returned 304.
                 cached_entry.updated = timezone.now()
                 cached_entry.save(update_fields=["updated"])
-                return {"name": cached_entry.name, "member_count": cached_entry.member_count}
+                return {
+                    "name": cached_entry.name,
+                    "member_count": cached_entry.member_count,
+                }
             logger.debug("ESI returned 304 for corp %s but no cache exists", corp_id)
             result, expires_at = ESIHandler.get_corporations_corporation_id_with_expiry(
                 corp_id,
@@ -879,9 +906,13 @@ def get_alliance_history_for_corp(corp_id):
             for h in entry.history
         ]
         now_ts = timezone.now()
-        if expiry_hint and expiry_hint > now_ts:  # Cache still valid according to redis hint.
+        if (
+            expiry_hint and expiry_hint > now_ts
+        ):  # Cache still valid according to redis hint.
             return cached_history
-        if expiry_hint is None and entry.is_fresh:  # DB entry recently refreshed; reuse.
+        if (
+            expiry_hint is None and entry.is_fresh
+        ):  # DB entry recently refreshed; reuse.
             return cached_history
         entry.delete()
     except AllianceHistoryCache.DoesNotExist:
@@ -909,7 +940,9 @@ def get_alliance_history_for_corp(corp_id):
 
     # 3) Store in DB (serialize datetimes as strings)
     serialized_history = _serialize_datetime(history)
-    AllianceHistoryCache.objects.update_or_create(corp_id=corp_id, defaults={"history": serialized_history})
+    AllianceHistoryCache.objects.update_or_create(
+        corp_id=corp_id, defaults={"history": serialized_history}
+    )
 
     return history
 
@@ -948,7 +981,7 @@ def _get_sov_map() -> list:
 
 
 @lru_cache(maxsize=1)
-def _get_sov_dict() -> Dict[int, Dict]:
+def _get_sov_dict() -> dict[int, dict]:
     """Helper to convert the sov map into a dictionary for O(1) lookups."""
     data = _get_sov_map()
     return {s.get("system_id"): s for s in data if s.get("system_id")}
@@ -981,7 +1014,9 @@ def resolve_alliance_name(owner_id: int) -> str:
 
         # 3. Save or update the DB record
         with transaction.atomic():
-            Alliance_names.objects.update_or_create(pk=owner_id, defaults={"name": owner_name})
+            Alliance_names.objects.update_or_create(
+                pk=owner_id, defaults={"name": owner_name}
+            )
 
         return owner_name
 
@@ -1026,7 +1061,9 @@ def resolve_corporation_name(corp_id: int) -> str:
 
         # 3. Save or update the DB record
         with transaction.atomic():
-            Corporation_names.objects.update_or_create(pk=corp_id, defaults={"name": corp_name})
+            Corporation_names.objects.update_or_create(
+                pk=corp_id, defaults={"name": corp_name}
+            )
 
         return corp_name
 
@@ -1071,7 +1108,9 @@ def resolve_character_name(char_id: int) -> str:
 
         # 3. Save or update the DB record
         with transaction.atomic():
-            Character_names.objects.update_or_create(pk=char_id, defaults={"name": char_name})
+            Character_names.objects.update_or_create(
+                pk=char_id, defaults={"name": char_name}
+            )
 
         return char_name
 
@@ -1089,7 +1128,7 @@ def resolve_character_name(char_id: int) -> str:
         return f"Unresolvable eve map{e_short}{e_detail}"
 
 
-def get_system_owner(system: Dict) -> Dict[str, str]:
+def get_system_owner(system: dict) -> dict[str, str]:
     """
     Get sovereignty owner of an EVE system by name.
     Always returns a dict with keys: owner_id, owner_name, owner_type, region_id, region_name.
@@ -1144,7 +1183,9 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
                     )
                     if struct and struct.corporation and struct.corporation.corporation:
                         res = {
-                            "owner_id": str(struct.corporation.corporation.corporation_id),
+                            "owner_id": str(
+                                struct.corporation.corporation.corporation_id
+                            ),
                             "owner_name": struct.corporation.corporation.corporation_name,
                             "owner_type": "corporation",
                             "region_id": region_id,
@@ -1159,10 +1200,16 @@ def get_system_owner(system: Dict) -> Dict[str, str]:
                     # Third Party
                     from corptools.models import Poco
 
-                    poco = Poco.objects.filter(office_id=system_id).select_related("corporation__corporation").first()
+                    poco = (
+                        Poco.objects.filter(office_id=system_id)
+                        .select_related("corporation__corporation")
+                        .first()
+                    )
                     if poco and poco.corporation and poco.corporation.corporation:
                         res = {
-                            "owner_id": str(poco.corporation.corporation.corporation_id),
+                            "owner_id": str(
+                                poco.corporation.corporation.corporation_id
+                            ),
                             "owner_name": poco.corporation.corporation.corporation_name,
                             "owner_type": "corporation",
                             "region_id": region_id,
@@ -1367,7 +1414,9 @@ def get_or_create_prices(item_id, force_refresh=True):
                             sell = float(data["immediatePrices"]["sellPrice5DayMedian"])
                         else:
                             buy = float(data["top5AveragePrices"]["buyPrice5DayMedian"])
-                            sell = float(data["top5AveragePrices"]["sellPrice5DayMedian"])
+                            sell = float(
+                                data["top5AveragePrices"]["sellPrice5DayMedian"]
+                            )
                         break
             except Exception as e:
                 logger.error(f"Janice price fetch failed for {item_id}: {e}")
@@ -1400,7 +1449,9 @@ def get_or_create_prices(item_id, force_refresh=True):
     if buy is not None and sell is not None:
         if not price_obj:
             try:
-                return EveItemPrice.objects.create(eve_type_id=item_id, buy=buy, sell=sell)
+                return EveItemPrice.objects.create(
+                    eve_type_id=item_id, buy=buy, sell=sell
+                )
             except IntegrityError:
                 logger.warning(
                     "IntegrityError while creating price cache for %s, fetching existing row.",
@@ -1430,7 +1481,9 @@ def is_above_market_threshold(type_id, unit_price, threshold_percent):
         cfg = BigBrotherConfig.get_solo()
         try:
             PriceModel = _get_sde_model("MarketPrice", "ItemMarketPrice")
-            type_field = _get_model_field(PriceModel, "eve_type_id", "type_id", "item_type_id")
+            type_field = _get_model_field(
+                PriceModel, "eve_type_id", "type_id", "item_type_id"
+            )
             if PriceModel and type_field:
                 price_obj = PriceModel.objects.filter(**{type_field: type_id}).first()
                 avg_price_val = _get_attr(price_obj, "average_price", "avg_price")
@@ -1489,7 +1542,7 @@ def _parse_config_ids(config_str: str) -> set[int]:
 
 
 def is_hostile_unified(
-    involved_ids: List[int] = None,
+    involved_ids: list[int] = None,
     location_id: int = None,
     system_id: int = None,
     is_asset: bool = False,
@@ -1500,7 +1553,7 @@ def is_hostile_unified(
     entity_type: str = None,
     when: datetime = None,
     safe_entities: set[int] = None,
-    entity_info_cache: Dict[int, Dict] = None,
+    entity_info_cache: dict[int, dict] = None,
     cfg: BigBrotherConfig = None,
 ) -> bool:
     """
@@ -1513,7 +1566,9 @@ def is_hostile_unified(
         safe_entities = get_safe_entities()
 
     # Location resolution for Rules 1-8, 10-12, 15-18
-    actual_system_id = system_id or (resolve_location_system_id(location_id) if location_id else None)
+    actual_system_id = system_id or (
+        resolve_location_system_id(location_id) if location_id else None
+    )
     now_ts = when or timezone.now()
 
     # Resolve location owner for Rules 1-4
@@ -1542,7 +1597,9 @@ def is_hostile_unified(
 
     # Determine if this is a player-controlled structure (Upwell, POS, or POCO)
     # If we found a corporation owner and it's not a known NPC station, treat it as a player structure.
-    is_player_struct = is_player_structure(location_id) or (l_otype == "corporation" and not is_station)
+    is_player_struct = is_player_structure(location_id) or (
+        l_otype == "corporation" and not is_station
+    )
 
     # 1. Is it taking place between (everyone involved) entities on the members, ignored, or whitelists?
     # For assets/clones, we also consider the location/system owners in the safety check.
@@ -1566,7 +1623,10 @@ def is_hostile_unified(
                 continue
             # Check context (corp/alliance membership)
             info = (entity_info_cache or {}).get(eid) or get_entity_info(eid, now_ts)
-            if info and (info.get("corp_id") in safe_entities or info.get("alli_id") in safe_entities):
+            if info and (
+                info.get("corp_id") in safe_entities
+                or info.get("alli_id") in safe_entities
+            ):
                 continue
             all_safe = False
             break
@@ -1579,7 +1639,10 @@ def is_hostile_unified(
             return False
         # Check parent corp/alliance context
         l_info = (entity_info_cache or {}).get(l_oid) or get_entity_info(l_oid, now_ts)
-        if l_info and (l_info.get("corp_id") in safe_entities or l_info.get("alli_id") in safe_entities):
+        if l_info and (
+            l_info.get("corp_id") in safe_entities
+            or l_info.get("alli_id") in safe_entities
+        ):
             return False
 
     # 3. NPC Station owned by safe entity (e.g. Faction stations)
@@ -1588,7 +1651,10 @@ def is_hostile_unified(
             return False
         # Check parent corp/alliance context
         l_info = (entity_info_cache or {}).get(l_oid) or get_entity_info(l_oid, now_ts)
-        if l_info and (l_info.get("corp_id") in safe_entities or l_info.get("alli_id") in safe_entities):
+        if l_info and (
+            l_info.get("corp_id") in safe_entities
+            or l_info.get("alli_id") in safe_entities
+        ):
             return False
 
     # 4. System owned by safe entity
@@ -1602,8 +1668,13 @@ def is_hostile_unified(
                     if s_oid in safe_entities:
                         return False
                     # Check parent corp/alliance context
-                    s_info = (entity_info_cache or {}).get(s_oid) or get_entity_info(s_oid, now_ts)
-                    if s_info and (s_info.get("corp_id") in safe_entities or s_info.get("alli_id") in safe_entities):
+                    s_info = (entity_info_cache or {}).get(s_oid) or get_entity_info(
+                        s_oid, now_ts
+                    )
+                    if s_info and (
+                        s_info.get("corp_id") in safe_entities
+                        or s_info.get("alli_id") in safe_entities
+                    ):
                         return False
             except (ValueError, TypeError):
                 pass
@@ -1648,11 +1719,17 @@ def is_hostile_unified(
             return False
 
         # 10. Major hubs
-        if not cfg.market_transactions_show_major_hubs and actual_system_id in MAJOR_HUBS:
+        if (
+            not cfg.market_transactions_show_major_hubs
+            and actual_system_id in MAJOR_HUBS
+        ):
             return False
 
         # 11. Secondary hubs
-        if not cfg.market_transactions_show_secondary_hubs and actual_system_id in SECONDARY_HUBS:
+        if (
+            not cfg.market_transactions_show_secondary_hubs
+            and actual_system_id in SECONDARY_HUBS
+        ):
             return False
 
         # 12. Excluded systems
@@ -1665,7 +1742,9 @@ def is_hostile_unified(
         if cfg.show_market_transactions and cfg.market_transactions_threshold_alert:
             if market_item_id and market_unit_price is not None:
                 res = is_above_market_threshold(
-                    market_item_id, market_unit_price, cfg.market_transactions_threshold_percent
+                    market_item_id,
+                    market_unit_price,
+                    cfg.market_transactions_threshold_percent,
                 )
                 if res is True:
                     return True  # HOSTILE (Rule 14 yes)
@@ -1674,7 +1753,12 @@ def is_hostile_unified(
                 # If None (Unknown), CONTINUE to Rule 15 (Rule 13 "continue checks")
 
     # 15. Consider citadels/structures hostile
-    if location_id and is_player_struct and cfg.consider_all_structures_hostile and l_oname != "Unresolvable":
+    if (
+        location_id
+        and is_player_struct
+        and cfg.consider_all_structures_hostile
+        and l_oname != "Unresolvable"
+    ):
         return True
 
     # 16. Consider NPC stations hostile
@@ -1688,7 +1772,11 @@ def is_hostile_unified(
 
     # 17. Consider null sec hostile
     # Gated: don't trigger if already handled by structure/station rules above
-    if actual_system_id and cfg.consider_nullsec_hostile and is_nullsec(actual_system_id):
+    if (
+        actual_system_id
+        and cfg.consider_nullsec_hostile
+        and is_nullsec(actual_system_id)
+    ):
         if (not is_player_struct and not is_station) or l_oname == "Unresolvable":
             return True
 
@@ -1729,9 +1817,14 @@ def is_hostile_unified(
             # 20. Explicit hostile list (direct ID or historical context)
             if eid in hostile_corps or eid in hostile_allis:
                 return True
-            info = (entity_info_cache or {}).get(eid) or get_entity_info(eid, when or timezone.now())
+            info = (entity_info_cache or {}).get(eid) or get_entity_info(
+                eid, when or timezone.now()
+            )
             if info:
-                if info.get("corp_id") in hostile_corps or info.get("alli_id") in hostile_allis:
+                if (
+                    info.get("corp_id") in hostile_corps
+                    or info.get("alli_id") in hostile_allis
+                ):
                     return True
 
     # 21. NPC Safe
@@ -1744,7 +1837,9 @@ def is_hostile_unified(
     if cfg.hostile_everyone_else:
         # If the only reason for check is an unresolvable location,
         # and all involved parties are safe (or there are none), treat as safe.
-        if location_id and (l_oname == "Unresolvable" or l_oname.startswith("Unresolvable")):
+        if location_id and (
+            l_oname == "Unresolvable" or l_oname.startswith("Unresolvable")
+        ):
             all_involved_safe = True
             if involved_ids:
                 for eid in involved_ids:
@@ -1755,7 +1850,13 @@ def is_hostile_unified(
                         continue
                     # Check context (corp/alliance membership)
                     info = get_entity_info(eid, now_ts)
-                    if not (info and (info.get("corp_id") in safe_entities or info.get("alli_id") in safe_entities)):
+                    if not (
+                        info
+                        and (
+                            info.get("corp_id") in safe_entities
+                            or info.get("alli_id") in safe_entities
+                        )
+                    ):
                         all_involved_safe = False
                         break
             if all_involved_safe:
@@ -1767,7 +1868,10 @@ def is_hostile_unified(
 
 
 def get_id_hostile_state(
-    entity_id: int, when: datetime = None, safe_entities: set = None, entity_info_cache: Dict[int, Dict] = None
+    entity_id: int,
+    when: datetime = None,
+    safe_entities: set = None,
+    entity_info_cache: dict[int, dict] = None,
 ) -> bool:
     """
     Mega-helper function to determine if an ID is considered hostile.
@@ -1783,9 +1887,16 @@ def get_id_hostile_state(
         return False
 
     # 1. Quick check for known location ID ranges
-    if (30000000 <= entity_id < 40000000) or (60000000 <= entity_id < 64000000) or is_player_structure(entity_id):
+    if (
+        (30000000 <= entity_id < 40000000)
+        or (60000000 <= entity_id < 64000000)
+        or is_player_structure(entity_id)
+    ):
         return is_hostile_unified(
-            location_id=entity_id, when=when, safe_entities=safe_entities, entity_info_cache=entity_info_cache
+            location_id=entity_id,
+            when=when,
+            safe_entities=safe_entities,
+            entity_info_cache=entity_info_cache,
         )
 
     # 2. Resolve entity type via ESI/Cache
@@ -1794,7 +1905,10 @@ def get_id_hostile_state(
     # 3. Handle based on resolved type
     if entity_type in ("solar_system", "station", "structure"):
         return is_hostile_unified(
-            location_id=entity_id, when=when, safe_entities=safe_entities, entity_info_cache=entity_info_cache
+            location_id=entity_id,
+            when=when,
+            safe_entities=safe_entities,
+            entity_info_cache=entity_info_cache,
         )
 
     # 4. Default to entity hostility (Character, Corp, Alliance, Faction)
@@ -1813,7 +1927,7 @@ def get_hostile_state(
     system_id: int = None,
     when: datetime = None,
     safe_entities: set = None,
-    entity_info_cache: Dict[int, Dict] = None,
+    entity_info_cache: dict[int, dict] = None,
     cfg: BigBrotherConfig = None,
 ) -> bool:
     """
@@ -1860,7 +1974,7 @@ def is_entity_hostile(
     entity_type: str = None,
     when: datetime = None,
     safe_entities: set = None,
-    entity_info_cache: Dict[int, Dict] = None,
+    entity_info_cache: dict[int, dict] = None,
     cfg: BigBrotherConfig = None,
 ) -> bool:
     """
@@ -1880,7 +1994,7 @@ def is_location_hostile(
     location_id: int,
     system_id: int = None,
     safe_entities: set = None,
-    entity_info_cache: Dict[int, Dict] = None,
+    entity_info_cache: dict[int, dict] = None,
     cfg: BigBrotherConfig = None,
 ) -> bool:
     """
@@ -1897,7 +2011,10 @@ def is_location_hostile(
 
 
 def is_safe_entity(
-    entity_id: int, when: datetime = None, safe_entities: set = None, entity_info_cache: Dict[int, Dict] = None
+    entity_id: int,
+    when: datetime = None,
+    safe_entities: set = None,
+    entity_info_cache: dict[int, dict] = None,
 ) -> bool:
     """
     Checks if an entity (Character, Corp, or Alliance) is considered safe.
@@ -1911,7 +2028,9 @@ def is_safe_entity(
         return True
     # Check parent corp/alliance context
     now_ts = when or timezone.now()
-    info = (entity_info_cache or {}).get(entity_id) or get_entity_info(entity_id, now_ts)
+    info = (entity_info_cache or {}).get(entity_id) or get_entity_info(
+        entity_id, now_ts
+    )
     if info:
         if info.get("corp_id") in safe_entities or info.get("alli_id") in safe_entities:
             return True
@@ -1922,9 +2041,13 @@ def get_users():
     """List the (user_id, character_name) tuples of every member-state user with a main set."""
     cfg = BigBrotherConfig.get_solo()
     member_states = cfg.bb_member_states.all()
-    qs = UserProfile.objects.filter(state__in=member_states).exclude(main_character=None)
+    qs = UserProfile.objects.filter(state__in=member_states).exclude(
+        main_character=None
+    )
 
-    users = qs.values_list("user_id", "main_character__character_name").order_by("main_character__character_name")
+    users = qs.values_list("user_id", "main_character__character_name").order_by(
+        "main_character__character_name"
+    )
     return users
 
 
@@ -1935,7 +2058,11 @@ def get_profile_main_character_id(profile):
     if "main_character" in getattr(profile._state, "fields_cache", {}):
         main_character = getattr(profile, "main_character", None)
         return getattr(main_character, "character_id", None) if main_character else None
-    return UserProfile.objects.filter(pk=profile.pk).values_list("main_character__character_id", flat=True).first()
+    return (
+        UserProfile.objects.filter(pk=profile.pk)
+        .values_list("main_character__character_id", flat=True)
+        .first()
+    )
 
 
 def get_profile_main_character_name(profile):
@@ -1944,15 +2071,23 @@ def get_profile_main_character_name(profile):
         return None
     if "main_character" in getattr(profile._state, "fields_cache", {}):
         main_character = getattr(profile, "main_character", None)
-        return getattr(main_character, "character_name", None) if main_character else None
-    return UserProfile.objects.filter(pk=profile.pk).values_list("main_character__character_name", flat=True).first()
+        return (
+            getattr(main_character, "character_name", None) if main_character else None
+        )
+    return (
+        UserProfile.objects.filter(pk=profile.pk)
+        .values_list("main_character__character_name", flat=True)
+        .first()
+    )
 
 
 def get_user_profiles():
     """Return queryset of eligible user profiles with main characters eager-loaded."""
     cfg = BigBrotherConfig.get_solo()
     member_states = cfg.bb_member_states.all()
-    qs = UserProfile.objects.filter(state__in=member_states).exclude(main_character=None)
+    qs = UserProfile.objects.filter(state__in=member_states).exclude(
+        main_character=None
+    )
 
     users = (
         qs.select_related("main_character", "user")
@@ -1977,7 +2112,9 @@ def get_user_id(character_name):
         return None
     character_name = str(character_name)
     try:
-        ownership = CharacterOwnership.objects.select_related("user").get(character__character_name=character_name)
+        ownership = CharacterOwnership.objects.select_related("user").get(
+            character__character_name=character_name
+        )
         return ownership.user.id
     except CharacterOwnership.DoesNotExist:
         return None
@@ -2025,7 +2162,7 @@ def is_player_structure(location_id):
         return False
 
 
-def resolve_location_name(location_id: int) -> Optional[str]:
+def resolve_location_name(location_id: int) -> str | None:
     """
     Attempts to resolve a location_id to a human-readable name.
     1) Solar System (30M-34M)
@@ -2126,7 +2263,40 @@ def resolve_location_name(location_id: int) -> Optional[str]:
     return name
 
 
-def resolve_location_system_id(location_id: int) -> Optional[int]:
+def resolve_solar_system_id_by_name(system_name: str) -> int | None:
+    """Resolve a system name (e.g. 'LXQ2-T') to its solar system ID using SDE."""
+    if not system_name:
+        return None
+    system_name = system_name.strip()
+    cache_key = f"aa_bb_sys_name_to_id_{system_name}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    SolarSystem = _get_sde_model("SolarSystem", "MapSystem")
+    if SolarSystem:
+        try:
+            name_field = _get_model_field(
+                SolarSystem, "name", "solar_system_name", "system_name"
+            )
+            id_field = _get_model_field(
+                SolarSystem, "id", "solar_system_id", "system_id"
+            )
+            if name_field and id_field:
+                obj = SolarSystem.objects.filter(**{name_field: system_name}).first()
+                if obj:
+                    res_id = getattr(obj, id_field)
+                    if res_id:
+                        res_id_int = int(res_id)
+                        cache.set(cache_key, res_id_int, 86400 * 7)
+                        return res_id_int
+        except Exception:
+            pass
+
+    return None
+
+
+def resolve_location_system_id(location_id: int) -> int | None:
     """
     Attempts to resolve a location_id to its parent solar system ID.
     """
@@ -2152,7 +2322,9 @@ def resolve_location_system_id(location_id: int) -> Optional[int]:
     if not sys_id and 60000000 <= location_id <= 64000000:
         try:
             station = _get_sde_station(location_id)
-            sys_id = _get_attr(station, "solar_system_id", "system_id", "eve_solar_system_id")
+            sys_id = _get_attr(
+                station, "solar_system_id", "system_id", "eve_solar_system_id"
+            )
         except Exception:
             pass
 
@@ -2163,13 +2335,17 @@ def resolve_location_system_id(location_id: int) -> Optional[int]:
             from corptools.models import EveLocation, Structure
 
             struct = Structure.objects.filter(structure_id=location_id).first()
-            if struct:
+            if struct and struct.system_id:
                 sys_id = struct.system_id
             else:
                 # Fallback to EveLocation for non-owned structures
                 loc = EveLocation.objects.filter(location_id=location_id).first()
                 if loc and loc.system_id:
                     sys_id = loc.system_id
+                elif loc and loc.location_name:
+                    parts = loc.location_name.split(" - ", 1)
+                    if len(parts) >= 2:
+                        sys_id = resolve_solar_system_id_by_name(parts[0])
         except Exception:
             pass
 
@@ -2202,7 +2378,7 @@ def resolve_location_system_id(location_id: int) -> Optional[int]:
     return sys_id
 
 
-def get_location_owner(location_id: int) -> Optional[Dict[str, str]]:
+def get_location_owner(location_id: int) -> dict[str, str] | None:
     """
     Returns owner info for a location (citadel/structure) if it's a player structure.
     Returns None for NPC stations, solar systems, or if owner can't be resolved.
@@ -2225,7 +2401,11 @@ def get_location_owner(location_id: int) -> Optional[Dict[str, str]]:
         # Third Party
         from corptools.models import Structure
 
-        struct = Structure.objects.filter(structure_id=location_id).select_related("corporation__corporation").first()
+        struct = (
+            Structure.objects.filter(structure_id=location_id)
+            .select_related("corporation__corporation")
+            .first()
+        )
         if struct and struct.corporation and struct.corporation.corporation:
             return {
                 "owner_id": str(struct.corporation.corporation.corporation_id),
@@ -2268,7 +2448,9 @@ def is_ship(type_id):
             if ItemType:
                 it = ItemType.objects.get(pk=type_id)
                 group = _get_attr(it, "item_group", "group", "inv_group", "eve_group")
-                category = _get_attr(group, "item_category", "category", "inv_category", "eve_category")
+                category = _get_attr(
+                    group, "item_category", "category", "inv_category", "eve_category"
+                )
                 if _get_attr(category, "name", "category_name") == "Ship":
                     is_ship_bool = True
     except Exception:
@@ -2331,10 +2513,14 @@ def get_owner_name():
     from allianceauth.eveonline.models import EveCharacter
 
     try:
-        return EveCharacter.objects.filter(character_ownership__user__is_superuser=True).values_list(
-            "character_name",
-            flat=True,
-        ).first()
+        return (
+            EveCharacter.objects.filter(character_ownership__user__is_superuser=True)
+            .values_list(
+                "character_name",
+                flat=True,
+            )
+            .first()
+        )
     except Exception:
         pass
     return None  # Fallback
@@ -2356,7 +2542,9 @@ def get_alliance_name(alliance_id):
         now_ts = timezone.now()
         if expiry_hint and expiry_hint > now_ts:  # Redis TTL still valid.
             return rec.name
-        if expiry_hint is None and now_ts - rec.updated < TTL_SHORT:  # DB TTL still valid.
+        if (
+            expiry_hint is None and now_ts - rec.updated < TTL_SHORT
+        ):  # DB TTL still valid.
             return rec.name
 
     cached_name = rec.name if rec else None
@@ -2372,15 +2560,19 @@ def get_alliance_name(alliance_id):
                 name = cached_name
             else:
                 try:
-                    result, expires_at = ESIHandler.get_alliances_alliance_id_with_expiry(
-                        alliance_id,
-                        use_etag=False,
+                    result, expires_at = (
+                        ESIHandler.get_alliances_alliance_id_with_expiry(
+                            alliance_id,
+                            use_etag=False,
+                        )
                     )
                     if expires_at:
                         set_cached_expiry(expiry_key, expires_at)
                     name = result.get("name", f"Unknown ({alliance_id})")
                 except Exception as e:
-                    logger.warning(f"Error fetching alliance {alliance_id} after 304: {e}")
+                    logger.warning(
+                        f"Error fetching alliance {alliance_id} after 304: {e}"
+                    )
                     name = f"Unknown ({alliance_id})"
         else:
             name = result.get("name", f"Unknown ({alliance_id})")
@@ -2450,8 +2642,8 @@ def send_message(message, hook: str = None):
     Sends `message` via Discord webhook with rate limiting.
 
     `message` may be:
-      - str  -> sent as {"content": message}, with chunking.
-      - dict -> sent directly as JSON, for embeds etc.
+        - str  -> sent as {"content": message}, with chunking.
+        - dict -> sent directly as JSON, for embeds etc.
     """
     cfg = None
     if hook:
@@ -2653,11 +2845,11 @@ def send_message(message, hook: str = None):
 
 def send_status_embed(
     subject: str,
-    lines: List[str],
+    lines: list[str],
     *,
-    override_title: Optional[str] = None,
+    override_title: str | None = None,
     color: int = 0xED4245,  # Discord red
-    hook: Optional[str] = None,
+    hook: str | None = None,
 ) -> None:
     """
     Send a Discord embed via the existing send_message() webhook.
@@ -2792,7 +2984,9 @@ def _chunk_embed_lines(lines, max_chars=1900):
     for seg in segments:
         # Estimate length if we add this segment (with newlines)
         seg_text = "\n".join(seg)
-        seg_len = len(seg_text) + (1 if current_chunk else 0)  # +1 for newline before segment
+        seg_len = len(seg_text) + (
+            1 if current_chunk else 0
+        )  # +1 for newline before segment
 
         if seg_len > max_chars:
             # Segment itself is huge; fall back to splitting inside it line-by-line
@@ -2817,7 +3011,11 @@ def _chunk_embed_lines(lines, max_chars=1900):
             if current_chunk:
                 # Add a blank line between segments, unless the next segment is a
                 # list item or we already have a spacer to avoid extra gaps.
-                if current_chunk[-1] != "" and seg[0] != "" and not seg[0].startswith(("- ", "* ", "  - ", "  * ")):
+                if (
+                    current_chunk[-1] != ""
+                    and seg[0] != ""
+                    and not seg[0].startswith(("- ", "* ", "  - ", "  * "))
+                ):
                     current_chunk.append("")
                     current_len += 1
             current_chunk.extend(seg)

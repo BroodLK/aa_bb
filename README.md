@@ -5,11 +5,11 @@
 ![django versions](https://img.shields.io/badge/django-5.2-blue?style=for-the-badge)
 ![license](https://img.shields.io/badge/license-GPLv3-green?style=for-the-badge)
 
-
 > [!CAUTION]
 > Because this repository is public, anyone can read the detection logic for skills, cyno activity, injected SP, suspicious transactions, hostile assets and clones, and other monitored behaviors. Hostile groups may use this information to avoid detection. Operate with discretion.
 
 # BigBrother
+
 BigBrother is an Alliance Auth plugin, **_originally written by Andrew Xadi_**, that performs continuous pilot auditing, compliance monitoring, intelligence gathering, and behavioral analysis. It monitors activity such as skills, cyno capabilities, SP injections, corporation movement, assets, clones, and more, then delivers structured leadership-focused reports.
 
 All while invisible to the general membership unless you choose to expose it to them. No "adding chars" to it, it pulls relevant information from CorpTools.
@@ -30,20 +30,25 @@ All while invisible to the general membership unless you choose to expose it to 
 - [Permissions](#permissions)
 
 ## Core Requirements
+
 ### The following AllianceAuth plugins are **_required_**:
 
 ```md
-allianceauth >= 4.13.1
+allianceauth >= 5.5.0
 allianceauth-corptools >= 3.0.0b13
-django-esi >= 8.3.1
+django-esi >= 10.0.0
 django-eveonline-sde >= 0.0.1b2
 ```
+
 ### Recommended plugins
+
 ```md
 allianceauth-discordbot >= 4.1.0   # Required for Discord notifications and ticket system
 aa-charlink >= 1.11.1              # Required for corp compliance filter checks
 ```
+
 ### Optional plugins
+
 ```md
 allianceauth-afat >= 4.1.1         # Required for PAP/Fleet participation compliance
 allianceauth-blacklist >= 0.1.1    # Add / check for blacklisted characters
@@ -51,6 +56,7 @@ aa-contacts >= 0.10.2              # Automatic hostile/friendly contact syncing
 ```
 
 ### SDE Setup (required for static data)
+
 > [!CAUTION]
 >
 > This MUST be installed if moving to 3.3.0+.
@@ -66,7 +72,9 @@ INSTALLED_APPS = [
     # ...
 ]
 
-INSTALLED_APPS = ["modeltranslation",] + INSTALLED_APPS
+INSTALLED_APPS = [
+    "modeltranslation",
+] + INSTALLED_APPS
 
 if "eve_sde" in INSTALLED_APPS:
     # Run at 12:00 UTC each day
@@ -77,30 +85,40 @@ if "eve_sde" in INSTALLED_APPS:
 ```
 
 And run:
+
 ```
 auth esde_load_sde
 ```
 
 ## Install Instructions
+
 After making sure to add the above prerequisite applications.
+
 ```bash
 source /home/allianceserver/venv/auth/bin/activate && cd /home/allianceserver/myauth/
 ```
+
 ```bash
 pip install aa-bb
 ```
+
 ```bash
 vi myauth/settings/local.py
 ```
+
 Add `aa_bb` to your `INSTALLED_APPS`. Ensure that the prerequisite applications listed above are also present in `INSTALLED_APPS`.
+
 ```bash
 python manage.py migrate && python manage.py collectstatic --noinput
 ```
+
 restart the things
 exit your venv
+
 ```bash
 sudo supervisorctl restart myauth:
 ```
+
 > [!IMPORTANT]
 >
 > [Bare Metal Only]
@@ -108,7 +126,8 @@ sudo supervisorctl restart myauth:
 > It is recommended to use a threaded worker setup with memmon for this application. Also note that threaded workers are provided by default with allianceauth, this serves as a reminder that these values can be adjusted to suit your needs. The following is an example
 
 In your supervisor.conf (baremetal only, skip if docker)
-```bash
+
+```ini
 [program:worker]
 command=/home/allianceserver/venv/auth/bin/celery -A myauth worker -P threads -c 10 -l INFO -n %(program_name)s_%(process_num)02d
 directory=/home/allianceserver/myauth
@@ -135,7 +154,8 @@ stderr_logfile=/home/allianceserver/myauth/log/memmon.log
 It is also recommended to disable gunicorn timeout, an example can be seen here: (both docker and baremetal)
 
 - For baremetal
-```bash
+
+```ini
 [program:gunicorn]
 user = allianceserver
 directory=/home/allianceserver/myauth
@@ -148,7 +168,8 @@ stopsignal=INT
 ```
 
 - For docker
-```bash
+
+```yaml
 allianceauth_gunicorn:
   ports:
     - 8000:8000
@@ -166,6 +187,7 @@ allianceauth_gunicorn:
 ```
 
 then reload supervisor and restart auth
+
 ```bash
 sudo supervisorctl reload
 sudo supervisorctl restart myauth:
@@ -175,6 +197,7 @@ sudo supervisorctl restart myauth:
 > Failure to follow the next steps before running the initial tasks can cause an undesired result
 
 In your AA Admin navigate to AA_BB
+
 - Navigate to Big Brother Config
   - Under **_Core Activation_**
     - Make sure Warmer Is Active is enabled
@@ -195,8 +218,8 @@ In your AA Admin navigate to AA_BB
     - Select any @here conditions
     - Select any @everyone conditions
   - Under Webhooks
-  - >Don't forget you can send it to a thread by using `https://discordapp.com/api/webhooks/<url>/<url>?thread_id=<threadid>`\
-    The thread must be in the same channel that the webhook is configured to.
+  - > Don't forget you can send it to a thread by using `https://discordapp.com/api/webhooks/<url>/<url>?thread_id=<threadid>`\
+    > The thread must be in the same channel that the webhook is configured to.
     - **The main "Webhook" This is used to send notifications of user and corp changes to Discord**
     - LOA Webhook
     - Daily Webhook
@@ -229,92 +252,108 @@ Okay, but now you want it to actually do the things, go to `Periodic Tasks` and 
 
 Once the task has run for the first time, it will post in the discord webhook when it has completed (about an hour) and will inform you to go back and enable the tasks, you must enable `BB run regular updates` but the other tasks are based on your needs.
 
-
 # Features
 
 ## Dashboard
+
 ![Screenshot of Dashboard](https://i.imgur.com/ZmsVjgK.gif)
 ![Screenshot of Dashboard2](https://i.imgur.com/4ltbaaq.png)
 
 ### The BigBrother dashboard provides a unified view of any pilot in your organization.
+
 Selecting a user displays a set of analytical cards that summarize compliance, risk factors, and suspicious activity signals.
 
 Tracked metrics include:
 
 - **Blacklist Status**
-  - Whether the pilot or any linked character appears on the blacklist, and you can add the user to blacklist.
-![Screenshot of Add BL](https://i.imgur.com/M5x5H1N.png)
-![Screenshot of Check BL](https://i.imgur.com/7L0bTzz.png)
 
+  - Whether the pilot or any linked character appears on the blacklist, and you can add the user to blacklist.
+    ![Screenshot of Add BL](https://i.imgur.com/M5x5H1N.png)
+    ![Screenshot of Check BL](https://i.imgur.com/7L0bTzz.png)
 
 - **Audit Completion**
-  - Whether all characters and corporations associated with the user have been fully audited.
-![Screenshot of Audit](https://i.imgur.com/V728lB2.png)
 
+  - Whether all characters and corporations associated with the user have been fully audited.
+    ![Screenshot of Audit](https://i.imgur.com/V728lB2.png)
 
 - **Corporation Stability**
+
   - Detection of short or erratic corporation history (“corp hopping”) that may indicate instability or intent to evade tracking.
-![Screenshot of Corp History](https://i.imgur.com/x6lY2JC.png)
+    ![Screenshot of Corp History](https://i.imgur.com/x6lY2JC.png)
 
 - **AWOX Activity**
+
   - Identification of kills against friendly entities that may indicate internal security risks.
-![Screenshot of AWOX](https://i.imgur.com/5a4Po8F.png)
+    ![Screenshot of AWOX](https://i.imgur.com/5a4Po8F.png)
 
 - **Account State**
+
   - Whether individual characters are Omega or Alpha, useful for evaluating cyno capability, skill progression, and account investment.
-![Screenshot of Account State](https://i.imgur.com/txFEqnp.png)
+    ![Screenshot of Account State](https://i.imgur.com/txFEqnp.png)
 
 - **Hostile Jump Clone Placement**
+
   - Detection of jump clones located in regions or structures considered hostile.
-![Screenshot of Clones](https://i.imgur.com/z0pkQJW.png)
+    ![Screenshot of Clones](https://i.imgur.com/z0pkQJW.png)
 
 - **Hostile Asset Placement**
+
   - Identification of assets located in hostile regions, including breakdown by character and location.
-![Screenshot of Assets](https://i.imgur.com/zvwFXBY.png)
+    ![Screenshot of Assets](https://i.imgur.com/zvwFXBY.png)
 
 - **Hostile Contacts**
+
   - Checks for contacts marked as hostile, which may indicate ties to enemy groups.
-![Screenshot of Contacts](https://i.imgur.com/pIu0RVd.png)
+    ![Screenshot of Contacts](https://i.imgur.com/pIu0RVd.png)
 
 - **Hostile Contracts**
+
   - Detection of contracts sent to or received from hostile entities, helping highlight supply-chain leaks or suspicious ISK movement.
-![Screenshot of Contracts](https://i.imgur.com/srkTRPM.png)
+    ![Screenshot of Contracts](https://i.imgur.com/srkTRPM.png)
 
 - **Suspicious Mails**
+
   - Detection of in-game mail to or from entities that are considered hostile.
-![Screenshot of Mails](https://i.imgur.com/JjZPw3b.png)
+    ![Screenshot of Mails](https://i.imgur.com/JjZPw3b.png)
 
 - **Suspicious Transactions**
+
   - Checks for transactions, such as player donations and trades, that may be related to hostile entity activity.
-![Screenshot of Transactions](https://i.imgur.com/D3AJQy4.png)
+    ![Screenshot of Transactions](https://i.imgur.com/D3AJQy4.png)
 
 - **Cyno Check**
+
   - Provides a breakdown of what each character belonging to the user is capable of when it comes to cynos.
   - > This includes owning and being able to fly potentially interesting ships
-![Screenshot of Cyno](https://i.imgur.com/kaH8LzQ.png)
+    > ![Screenshot of Cyno](https://i.imgur.com/kaH8LzQ.png)
 
 - **Skill Check**
   A breakdown of potentially interesting skills
-![Screenshot of Skills](https://i.imgur.com/uVxrkSd.png)
+  ![Screenshot of Skills](https://i.imgur.com/uVxrkSd.png)
 
 ## Corp Dashboard
+
 > [!WARNING]
 > Corp Dashboard has not yet received much love
 
 - **Suspicious Transactions**
+
   - Checks for transactions, such as corporation donations, that may be related to hostile entity activity.
 
 - **Hostile Contracts**
+
   - Detection of contracts sent to or received from hostile entities, helping highlight supply-chain leaks or suspicious ISK movement.
 
 - **Hostile Asset Placement**
+
   - Identification of assets located in hostile regions or structures.
 
-
 ## Discord Notifications
+
 ### All outbound Discord notifications are serialized through a dedicated task to ensure messages never overlap and always arrive in chronological order.
+
 - Get instant notifications about any corp or user changes that have been listed above under their respective categories, each part of a user's discord notification is adjustable in the settings.
-![Screenshot of Asset Discord Notification](https://i.imgur.com/GzGdMsy.png)
+  ![Screenshot of Asset Discord Notification](https://i.imgur.com/GzGdMsy.png)
 
 ![Screenshot of Skills Discord Notification](https://i.imgur.com/QMLnjPE.png)
 
@@ -325,6 +364,7 @@ Tracked metrics include:
 ![Screenshot of Hostile Clone Discord Notification](https://i.imgur.com/EwAs06t.png)
 
 ## Ticket System
+
 ### BigBrother can automatically generate tickets to notify leadership when pilots violate compliance or operational rules.
 
 - **Triggers include**:
@@ -342,18 +382,22 @@ Tracked metrics include:
     - Flags users who go AFK without registering an LOA in Auth.
   - Missing Discord Link
     - Generates a ticket when a user has not connected their Discord account to Auth.
+
 ### Non Specific Ticket Configuration
-  - Ping Targets
-    - Choose which roles to notify when a ticket is created.
-  - Ticket Category
-    - Tickets are created as new channels inside a category, deleting the channel will close the ticket
-  - Exemptions
-    - Users can be marked as exempt from specific checks to avoid ticket spam where it is unnecessary.
+
+- Ping Targets
+  - Choose which roles to notify when a ticket is created.
+- Ticket Category
+  - Tickets are created as new channels inside a category, deleting the channel will close the ticket
+- Exemptions
+  - Users can be marked as exempt from specific checks to avoid ticket spam where it is unnecessary.
 
 ## Automated Discord Messages
+
 - Configure an unlimited number of messages to be sent to up to five different discord webhooks, each with their own individual schedules.
 
 ## Recurring stats
+
 - Send stats to a webhook that covers interesting statistics from AA
 
 ![Screenshot of recurring stats](https://i.imgur.com/REGczjZ.png)
@@ -363,6 +407,7 @@ Tracked metrics include:
 BigBrother integrates directly with **aa-contacts** to provide continuous hostile contact monitoring.
 
 ### What it does
+
 - Periodically syncs contact data from **aa-contacts**
   - Contacts below 0 status are added to hostile
     - Both Corp and Alliances
@@ -375,15 +420,16 @@ BigBrother integrates directly with **aa-contacts** to provide continuous hostil
       - Add them to hostile list.
 
 ### What it does NOT do
+
 - It does **not** delete or create contacts in game
 - It does **not** overwrite manually-added BigBrother contacts
 
-
 # Permissions
+
 Below is the full list of permissions exposed by the application:
 
 | Permission                   | Description                                                            |
-|------------------------------|------------------------------------------------------------------------|
+| ---------------------------- | ---------------------------------------------------------------------- |
 | **basic_access**             | Can access Big Brother                                                 |
 | **full_access**              | Can view all main characters in Big Brother                            |
 | **recruiter_access**         | Can view main characters in *Guest* state only in Big Brother          |
@@ -403,7 +449,9 @@ Below is the full list of permissions exposed by the application:
 To correct the above, see instructions [here](#fix-duplicated-tasks-error)
 
 ### Fix Duplicated Tasks error
+
 Find the duplicate
+
 ```sql
 SELECT
   minute,
@@ -423,7 +471,9 @@ GROUP BY
   timezone
 HAVING COUNT(*) > 1;
 ```
+
 Get the ID, replace the cron with the duplicate values
+
 ```sql
 SELECT
   id,
@@ -442,19 +492,25 @@ WHERE
   AND month_of_year = '*'
   AND timezone = 'UTC';
 ```
+
 Find out if any tasks are using the schedules, replace the numbers with the proper IDs
+
 ```sql
 SELECT id, name, crontab_id
 FROM django_celery_beat_periodictask
 WHERE crontab_id IN (5, 12);
 ```
+
 If some tasks are using both, reassign one of them
+
 ```sql
 UPDATE django_celery_beat_periodictask
 SET crontab_id = 5
 WHERE crontab_id = 12;
 ```
+
 Finally delete the duplicate
+
 ```sql
 DELETE FROM django_celery_beat_crontabschedule
 WHERE id IN (12);

@@ -20,12 +20,18 @@ class TestDashboardViews(TestCase):
     @classmethod
     def setUpTestData(cls):
         # Create states with unique names and likely unique priorities
-        cls.member_state, _ = State.objects.get_or_create(name="BB_Member", defaults={"priority": 10001})
-        cls.guest_state, _ = State.objects.get_or_create(name="BB_Guest", defaults={"priority": 10002})
+        cls.member_state, _ = State.objects.get_or_create(
+            name="BB_Member", defaults={"priority": 10001}
+        )
+        cls.guest_state, _ = State.objects.get_or_create(
+            name="BB_Guest", defaults={"priority": 10002}
+        )
 
         # Create users with passwords
         cls.admin_user = User.objects.create_user(username="admin", password="password")
-        cls.recruiter_user = User.objects.create_user(username="recruiter", password="password")
+        cls.recruiter_user = User.objects.create_user(
+            username="recruiter", password="password"
+        )
         cls.basic_user = User.objects.create_user(username="basic", password="password")
         cls.super_user = User.objects.create_superuser(
             username="superuser", password="password", email="admin@example.com"
@@ -61,61 +67,107 @@ class TestDashboardViews(TestCase):
         # Create characters and ownership
         # We give the "viewer" users the Member state so they don't show up in Guest lists
         cls.char_admin = EveCharacter.objects.create(
-            character_id=100, character_name="Admin Char", corporation_id=1, corporation_name="Admin Corp"
+            character_id=100,
+            character_name="Admin Char",
+            corporation_id=1,
+            corporation_name="Admin Corp",
         )
-        CharacterOwnership.objects.create(character=cls.char_admin, user=cls.admin_user, owner_hash="h0")
+        CharacterOwnership.objects.create(
+            character=cls.char_admin, user=cls.admin_user, owner_hash="h0"
+        )
         cls.admin_user.profile.main_character = cls.char_admin
         cls.admin_user.profile.state = cls.member_state
         cls.admin_user.profile.save()
-        UserProfile.objects.filter(pk=cls.admin_user.profile.pk).update(state=cls.member_state)
+        UserProfile.objects.filter(pk=cls.admin_user.profile.pk).update(
+            state=cls.member_state
+        )
 
         cls.char_recruiter = EveCharacter.objects.create(
-            character_id=101, character_name="Recruiter Char", corporation_id=1, corporation_name="Member Corp"
+            character_id=101,
+            character_name="Recruiter Char",
+            corporation_id=1,
+            corporation_name="Member Corp",
         )
-        CharacterOwnership.objects.create(character=cls.char_recruiter, user=cls.recruiter_user, owner_hash="h11")
+        CharacterOwnership.objects.create(
+            character=cls.char_recruiter, user=cls.recruiter_user, owner_hash="h11"
+        )
         cls.recruiter_user.profile.main_character = cls.char_recruiter
         cls.recruiter_user.profile.state = cls.member_state
         cls.recruiter_user.profile.save()
-        UserProfile.objects.filter(pk=cls.recruiter_user.profile.pk).update(state=cls.member_state)
+        UserProfile.objects.filter(pk=cls.recruiter_user.profile.pk).update(
+            state=cls.member_state
+        )
 
         cls.char_basic = EveCharacter.objects.create(
-            character_id=102, character_name="Basic Char", corporation_id=1, corporation_name="Member Corp"
+            character_id=102,
+            character_name="Basic Char",
+            corporation_id=1,
+            corporation_name="Member Corp",
         )
-        CharacterOwnership.objects.create(character=cls.char_basic, user=cls.basic_user, owner_hash="h12")
+        CharacterOwnership.objects.create(
+            character=cls.char_basic, user=cls.basic_user, owner_hash="h12"
+        )
         cls.basic_user.profile.main_character = cls.char_basic
         cls.basic_user.profile.state = cls.member_state
         cls.basic_user.profile.save()
-        UserProfile.objects.filter(pk=cls.basic_user.profile.pk).update(state=cls.member_state)
+        UserProfile.objects.filter(pk=cls.basic_user.profile.pk).update(
+            state=cls.member_state
+        )
 
         cls.char_member = EveCharacter.objects.create(
-            character_id=103, character_name="Member Char", corporation_id=1, corporation_name="Member Corp"
+            character_id=103,
+            character_name="Member Char",
+            corporation_id=1,
+            corporation_name="Member Corp",
         )
-        cls.user_member = User.objects.create_user(username="member_user", password="password")
-        CharacterOwnership.objects.create(character=cls.char_member, user=cls.user_member, owner_hash="h1")
+        cls.user_member = User.objects.create_user(
+            username="member_user", password="password"
+        )
+        CharacterOwnership.objects.create(
+            character=cls.char_member, user=cls.user_member, owner_hash="h1"
+        )
         cls.user_member.profile.state = cls.member_state
         cls.user_member.profile.main_character = cls.char_member
         cls.user_member.profile.save()
-        UserProfile.objects.filter(pk=cls.user_member.profile.pk).update(state=cls.member_state)
+        UserProfile.objects.filter(pk=cls.user_member.profile.pk).update(
+            state=cls.member_state
+        )
 
         cls.char_guest = EveCharacter.objects.create(
-            character_id=104, character_name="Guest Char", corporation_id=2, corporation_name="Guest Corp"
+            character_id=104,
+            character_name="Guest Char",
+            corporation_id=2,
+            corporation_name="Guest Corp",
         )
-        cls.user_guest = User.objects.create_user(username="guest_user", password="password")
-        CharacterOwnership.objects.create(character=cls.char_guest, user=cls.user_guest, owner_hash="h2")
+        cls.user_guest = User.objects.create_user(
+            username="guest_user", password="password"
+        )
+        CharacterOwnership.objects.create(
+            character=cls.char_guest, user=cls.user_guest, owner_hash="h2"
+        )
         cls.user_guest.profile.state = cls.guest_state
         cls.user_guest.profile.main_character = cls.char_guest
         cls.user_guest.profile.save()
-        UserProfile.objects.filter(pk=cls.user_guest.profile.pk).update(state=cls.guest_state)
+        UserProfile.objects.filter(pk=cls.user_guest.profile.pk).update(
+            state=cls.guest_state
+        )
 
         # Superuser also needs a profile/main character to avoid redirects
         cls.char_super = EveCharacter.objects.create(
-            character_id=105, character_name="Super Char", corporation_id=1, corporation_name="Admin Corp"
+            character_id=105,
+            character_name="Super Char",
+            corporation_id=1,
+            corporation_name="Admin Corp",
         )
-        CharacterOwnership.objects.create(character=cls.char_super, user=cls.super_user, owner_hash="h99")
+        CharacterOwnership.objects.create(
+            character=cls.char_super, user=cls.super_user, owner_hash="h99"
+        )
         cls.super_user.profile.main_character = cls.char_super
         cls.super_user.profile.state = cls.member_state
         cls.super_user.profile.save()
-        UserProfile.objects.filter(pk=cls.super_user.profile.pk).update(state=cls.member_state)
+        UserProfile.objects.filter(pk=cls.super_user.profile.pk).update(
+            state=cls.member_state
+        )
 
     def setUp(self):
         self.client = Client()
@@ -174,7 +226,10 @@ class TestDashboardViews(TestCase):
         response = self.client.get(reverse("aa_bb:load_card"))
 
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.json(), {"error": "Big Brother is currently inactive.", "inactive": True})
+        self.assertEqual(
+            response.json(),
+            {"error": "Big Brother is currently inactive.", "inactive": True},
+        )
         self.assertFalse(BigBrotherConfig.get_solo().is_active)
 
     def test_corpbrother_index_disabled_when_inactive(self):

@@ -58,7 +58,12 @@ class TestAwoxDetector(TestCase):
         attacker = self._create_owned_character(900002, "Attacker Alt")
 
         mock_get_requests_session.return_value = self._build_session(
-            [{"killmail_id": 12345, "zkb": {"hash": "hash-12345", "totalValue": 2500000}}]
+            [
+                {
+                    "killmail_id": 12345,
+                    "zkb": {"hash": "hash-12345", "totalValue": 2500000},
+                }
+            ]
         )
         mock_get_killmail.return_value = {
             "killmail_time": timezone.now(),
@@ -93,7 +98,12 @@ class TestAwoxDetector(TestCase):
         character = self._create_owned_character(900003, "Self Killer")
 
         mock_get_requests_session.return_value = self._build_session(
-            [{"killmail_id": 22345, "zkb": {"hash": "hash-22345", "totalValue": 1250000}}]
+            [
+                {
+                    "killmail_id": 22345,
+                    "zkb": {"hash": "hash-22345", "totalValue": 1250000},
+                }
+            ]
         )
         mock_get_killmail.return_value = {
             "killmail_time": timezone.now(),
@@ -134,7 +144,12 @@ class TestAwoxDetector(TestCase):
         )
 
         mock_get_requests_session.return_value = self._build_session(
-            [{"killmail_id": 32345, "zkb": {"hash": "hash-32345", "totalValue": 9500000}}]
+            [
+                {
+                    "killmail_id": 32345,
+                    "zkb": {"hash": "hash-32345", "totalValue": 9500000},
+                }
+            ]
         )
         mock_get_killmail.return_value = {
             "killmail_time": timezone.now(),

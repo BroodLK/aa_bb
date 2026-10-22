@@ -34,14 +34,22 @@ def manual_cards(request: WSGIRequest):
 @permission_required("aa_bb.basic_access")
 def manual_settings(request: WSGIRequest):
     """Manual tab: BigBrotherConfig settings."""
-    return render(request, "faq/settings_bigbrother.html", {"is_afat": afat_active(), "is_bot": discordbot_active()})
+    return render(
+        request,
+        "faq/settings_bigbrother.html",
+        {"is_afat": afat_active(), "is_bot": discordbot_active()},
+    )
 
 
 @login_required
 @permission_required("aa_bb.basic_access")
 def manual_settings_bb(request: WSGIRequest):
     """Alias for BigBrotherConfig settings."""
-    return render(request, "faq/settings_bigbrother.html", {"is_afat": afat_active(), "is_bot": discordbot_active()})
+    return render(
+        request,
+        "faq/settings_bigbrother.html",
+        {"is_afat": afat_active(), "is_bot": discordbot_active()},
+    )
 
 
 @login_required
@@ -49,22 +57,36 @@ def manual_settings_bb(request: WSGIRequest):
 def manual_settings_paps(request: WSGIRequest):
     """Manual tab: PapsConfig settings."""
     if not afat_active():
-        return HttpResponseForbidden("PAP compliance manual is hidden as afat is not active.")
-    return render(request, "faq/settings_paps.html", {"is_afat": afat_active(), "is_bot": discordbot_active()})
+        return HttpResponseForbidden(
+            "PAP compliance manual is hidden as afat is not active."
+        )
+    return render(
+        request,
+        "faq/settings_paps.html",
+        {"is_afat": afat_active(), "is_bot": discordbot_active()},
+    )
 
 
 @login_required
 @permission_required("aa_bb.basic_access")
 def manual_settings_tickets(request: WSGIRequest):
     """Manual tab: TicketToolConfig settings."""
-    return render(request, "faq/settings_tickets.html", {"is_afat": afat_active(), "is_bot": discordbot_active()})
+    return render(
+        request,
+        "faq/settings_tickets.html",
+        {"is_afat": afat_active(), "is_bot": discordbot_active()},
+    )
 
 
 @login_required
 @permission_required("aa_bb.basic_access")
 def manual_settings_stats(request: WSGIRequest):
     """Manual tab: RecurringStatsConfig settings."""
-    return render(request, "faq/settings_stats.html", {"is_afat": afat_active(), "is_bot": discordbot_active()})
+    return render(
+        request,
+        "faq/settings_stats.html",
+        {"is_afat": afat_active(), "is_bot": discordbot_active()},
+    )
 
 
 @login_required
@@ -94,14 +116,20 @@ def manual_modules(request: WSGIRequest):
         """Wrap a label/value in <code> for easier reading."""
         return format_html("<code>{}</code>", name)
 
-    def register_issue(issues: list, actions: list, condition: bool, issue_text, action_text=None):
+    def register_issue(
+        issues: list, actions: list, condition: bool, issue_text, action_text=None
+    ):
         """Append issue/action entries when the guard condition is met."""
         if condition:  # Only record when the configuration check failed.
             issues.append(issue_text)
-            if action_text and action_text not in actions:  # Actions deduped to avoid noise.
+            if (
+                action_text and action_text not in actions
+            ):  # Actions deduped to avoid noise.
                 actions.append(action_text)
 
-    def make_module(name, summary, issues, actions, info=None, active_override=None, cta=None):
+    def make_module(
+        name, summary, issues, actions, info=None, active_override=None, cta=None
+    ):
         """Build a dict consumed by the FAQ template."""
         info = info or []
         issues = list(dict.fromkeys(issues))
@@ -111,11 +139,15 @@ def manual_modules(request: WSGIRequest):
             details = issues + info
         else:
             details = [format_html("{}", _("All requirements satisfied."))] + info
-        if not actions:  # Provide default CTA messaging when nothing actionable supplied.
+        if (
+            not actions
+        ):  # Provide default CTA messaging when nothing actionable supplied.
             actions = (
                 [format_html("{}", _("No action needed."))]
                 if not issues
-                else [format_html("{}", _("Review configuration and retry the checks."))]
+                else [
+                    format_html("{}", _("Review configuration and retry the checks."))
+                ]
             )
         return {
             "name": name,
@@ -132,9 +164,12 @@ def manual_modules(request: WSGIRequest):
         core_issues,
         core_actions,
         not cfg.is_active,
-        format_html("{} reports the plugin as inactive.", code("BigBrotherConfig.is_active")),
         format_html(
-            "Validate the token (check Celery logs) and rerun the updater until {} flips to True.", code("is_active")
+            "{} reports the plugin as inactive.", code("BigBrotherConfig.is_active")
+        ),
+        format_html(
+            "Validate the token (check Celery logs) and rerun the updater until {} flips to True.",
+            code("is_active"),
         ),
     )
     register_issue(
@@ -142,21 +177,31 @@ def manual_modules(request: WSGIRequest):
         core_actions,
         periodic_task is None,
         format_html("Celery periodic task {} is missing.", code(task_name)),
-        format_html("Create the periodic task in Django admin → Periodic tasks and restart Celery workers."),
+        format_html(
+            "Create the periodic task in Django admin → Periodic tasks and restart Celery workers."
+        ),
     )
-    if periodic_task is not None:  # Provide status info only when the scheduled task exists.
+    if (
+        periodic_task is not None
+    ):  # Provide status info only when the scheduled task exists.
         register_issue(
             core_issues,
             core_actions,
             not periodic_task.enabled,
-            format_html("Celery periodic task {} exists but is disabled.", code(task_name)),
-            format_html("Enable the task in Django admin → Periodic tasks and restart Celery workers."),
+            format_html(
+                "Celery periodic task {} exists but is disabled.", code(task_name)
+            ),
+            format_html(
+                "Enable the task in Django admin → Periodic tasks and restart Celery workers."
+            ),
         )
         if periodic_task.last_run_at:  # Surface last successful execution timestamp.
             core_info.append(
                 format_html(
                     "Last successful update: {} UTC.",
-                    timezone.localtime(periodic_task.last_run_at).strftime("%Y-%m-%d %H:%M"),
+                    timezone.localtime(periodic_task.last_run_at).strftime(
+                        "%Y-%m-%d %H:%M"
+                    ),
                 )
             )
     modules.append(
@@ -176,7 +221,10 @@ def manual_modules(request: WSGIRequest):
         corp_issues,
         corp_actions,
         not cfg.is_active,
-        format_html("{} must be True for CorpBrother to load.", code("BigBrotherConfig.is_active")),
+        format_html(
+            "{} must be True for CorpBrother to load.",
+            code("BigBrotherConfig.is_active"),
+        ),
         format_html(
             "Validate the token (check Celery logs) and rerun the updater until {} flips to True.",
             code("is_active"),
@@ -237,8 +285,13 @@ def manual_modules(request: WSGIRequest):
             loa_issues,
             loa_actions,
             True,
-            format_html("{} app is not installed; Discord notifications will fail.", code("aadiscordbot")),
-            format_html("Install and configure aadiscordbot for ticket and LoA notifications."),
+            format_html(
+                "{} app is not installed; Discord notifications will fail.",
+                code("aadiscordbot"),
+            ),
+            format_html(
+                "Install and configure aadiscordbot for ticket and LoA notifications."
+            ),
         )
     if cfg.loawebhook:
         loa_info.append(format_html("LoA webhook configured: {}", cfg.loawebhook))
@@ -291,8 +344,12 @@ def manual_modules(request: WSGIRequest):
         stats_issues,
         stats_actions,
         not cfg.are_recurring_stats_active,
-        format_html("{} is disabled.", code("BigBrotherConfig.are_recurring_stats_active")),
-        format_html("Enable recurring stats in BigBrotherConfig and restart Celery workers."),
+        format_html(
+            "{} is disabled.", code("BigBrotherConfig.are_recurring_stats_active")
+        ),
+        format_html(
+            "Enable recurring stats in BigBrotherConfig and restart Celery workers."
+        ),
     )
     register_issue(
         stats_issues,
@@ -305,8 +362,13 @@ def manual_modules(request: WSGIRequest):
         stats_issues,
         stats_actions,
         cfg.stats_schedule is None,
-        format_html("{} is not linked to a schedule.", code("BigBrotherConfig.stats_schedule")),
-        format_html("Create a crontab/interval schedule and assign it to {}.", code("stats_schedule")),
+        format_html(
+            "{} is not linked to a schedule.", code("BigBrotherConfig.stats_schedule")
+        ),
+        format_html(
+            "Create a crontab/interval schedule and assign it to {}.",
+            code("stats_schedule"),
+        ),
     )
     if cfg.stats_schedule:
         stats_info.append(format_html("Schedule: {}", cfg.stats_schedule))
@@ -328,12 +390,16 @@ def manual_modules(request: WSGIRequest):
         warmer_actions,
         not cfg.is_warmer_active,
         format_html("{} is disabled.", code("BigBrotherConfig.is_warmer_active")),
-        format_html("Enable the cache warmer or increase your gunicorn timeout to avoid stream resets."),
+        format_html(
+            "Enable the cache warmer or increase your gunicorn timeout to avoid stream resets."
+        ),
     )
     modules.append(
         make_module(
             _("Cache Warmer"),
-            _("Background task that preloads contracts, mails and transactions before streaming cards."),
+            _(
+                "Background task that preloads contracts, mails and transactions before streaming cards."
+            ),
             warmer_issues,
             warmer_actions,
         )
@@ -345,7 +411,9 @@ def manual_modules(request: WSGIRequest):
         clone_issues,
         clone_actions,
         cfg.clone_state_always_recheck,
-        format_html("{} is enabled.", code("BigBrotherConfig.clone_state_always_recheck")),
+        format_html(
+            "{} is enabled.", code("BigBrotherConfig.clone_state_always_recheck")
+        ),
         format_html("Consider disabling this if background tasks are running slow."),
     )
     modules.append(
@@ -364,8 +432,12 @@ def manual_modules(request: WSGIRequest):
         daily_issues,
         daily_actions,
         not cfg.are_daily_messages_active,
-        format_html("{} is disabled.", code("BigBrotherConfig.are_daily_messages_active")),
-        format_html("Enable daily messages in BigBrotherConfig and restart Celery workers."),
+        format_html(
+            "{} is disabled.", code("BigBrotherConfig.are_daily_messages_active")
+        ),
+        format_html(
+            "Enable daily messages in BigBrotherConfig and restart Celery workers."
+        ),
     )
     register_issue(
         daily_issues,
@@ -378,15 +450,23 @@ def manual_modules(request: WSGIRequest):
         daily_issues,
         daily_actions,
         cfg.dailyschedule is None,
-        format_html("{} is not linked to a schedule.", code("BigBrotherConfig.dailyschedule")),
-        format_html("Create a crontab/interval schedule and assign it to {}.", code("dailyschedule")),
+        format_html(
+            "{} is not linked to a schedule.", code("BigBrotherConfig.dailyschedule")
+        ),
+        format_html(
+            "Create a crontab/interval schedule and assign it to {}.",
+            code("dailyschedule"),
+        ),
     )
     if not discordbot_installed:
         register_issue(
             daily_issues,
             daily_actions,
             True,
-            format_html("{} app is not installed; daily Discord posts will fail.", code("aadiscordbot")),
+            format_html(
+                "{} app is not installed; daily Discord posts will fail.",
+                code("aadiscordbot"),
+            ),
             format_html("Install and configure aadiscordbot."),
         )
     if cfg.dailyschedule:
@@ -405,7 +485,9 @@ def manual_modules(request: WSGIRequest):
     # Optional notification streams
     for idx in range(1, 6):
         stream_name = _("Optional Notification Stream %(number)s") % {"number": idx}
-        summary = _("Additional Discord webhook stream number %(number)s.") % {"number": idx}
+        summary = _("Additional Discord webhook stream number %(number)s.") % {
+            "number": idx
+        }
         issues, actions, info = [], [], []
 
         flag = getattr(cfg, f"are_opt_messages{idx}_active")
@@ -418,22 +500,32 @@ def manual_modules(request: WSGIRequest):
                 actions,
                 True,
                 format_html("{} is empty.", code(f"optwebhook{idx}")),
-                format_html("Set a Discord webhook URL in {}.", code(f"optwebhook{idx}")),
+                format_html(
+                    "Set a Discord webhook URL in {}.", code(f"optwebhook{idx}")
+                ),
             )
         if flag and schedule is None:
             register_issue(
                 issues,
                 actions,
                 True,
-                format_html("{} is not linked to a schedule.", code(f"optschedule{idx}")),
-                format_html("Assign a crontab/interval schedule to {}.", code(f"optschedule{idx}")),
+                format_html(
+                    "{} is not linked to a schedule.", code(f"optschedule{idx}")
+                ),
+                format_html(
+                    "Assign a crontab/interval schedule to {}.",
+                    code(f"optschedule{idx}"),
+                ),
             )
         if flag and not discordbot_installed:
             register_issue(
                 issues,
                 actions,
                 True,
-                format_html("{} app is not installed; Discord posts will fail.", code("aadiscordbot")),
+                format_html(
+                    "{} app is not installed; Discord posts will fail.",
+                    code("aadiscordbot"),
+                ),
                 format_html("Install and configure aadiscordbot."),
             )
         if schedule:
@@ -473,7 +565,10 @@ def manual_modules(request: WSGIRequest):
                 "TicketToolConfig could not be loaded ({}).",
                 ticket_cfg_error or _("database schema mismatch"),
             ),
-            format_html("Run {} to apply pending migrations.", format_html("<code>manage.py migrate aa_bb</code>")),
+            format_html(
+                "Run {} to apply pending migrations.",
+                format_html("<code>manage.py migrate aa_bb</code>"),
+            ),
         )
     else:
         register_issue(
@@ -487,7 +582,9 @@ def manual_modules(request: WSGIRequest):
     modules.append(
         make_module(
             _("LoA inactivity alerts"),
-            _("Automatic AFK ticketing that warns when users stop logging in without an LoA."),
+            _(
+                "Automatic AFK ticketing that warns when users stop logging in without an LoA."
+            ),
             afk_issues,
             afk_actions,
             info=afk_info,
@@ -506,7 +603,10 @@ def manual_modules(request: WSGIRequest):
                 "TicketToolConfig could not be loaded ({}).",
                 ticket_cfg_error or _("database schema mismatch"),
             ),
-            format_html("Run {} to apply pending migrations.", format_html("<code>manage.py migrate aa_bb</code>")),
+            format_html(
+                "Run {} to apply pending migrations.",
+                format_html("<code>manage.py migrate aa_bb</code>"),
+            ),
         )
     else:
         register_issue(
@@ -521,7 +621,9 @@ def manual_modules(request: WSGIRequest):
             ticket_actions,
             ticket_cfg.Category_ID in (None, 0),
             format_html("{} is not set.", code("TicketToolConfig.Category_ID")),
-            format_html("Provide the Discord category ID where tickets should be created."),
+            format_html(
+                "Provide the Discord category ID where tickets should be created."
+            ),
         )
         if ticket_cfg.role_id:
             ticket_info.append(format_html("Role IDs: {}", ticket_cfg.role_id))
@@ -534,14 +636,19 @@ def manual_modules(request: WSGIRequest):
                     "{} has not been defined; only the bot will see tickets.",
                     code("TicketToolConfig.role_id"),
                 ),
-                format_html("Configure role_id in TicketToolConfig so staff roles see tickets."),
+                format_html(
+                    "Configure role_id in TicketToolConfig so staff roles see tickets."
+                ),
             )
         if not charlink_installed:
             register_issue(
                 ticket_issues,
                 ticket_actions,
                 True,
-                format_html("{} is not installed; char → user mapping may be limited.", code("charlink")),
+                format_html(
+                    "{} is not installed; char → user mapping may be limited.",
+                    code("charlink"),
+                ),
                 format_html("Install allianceauth-charlink to improve ticket context."),
             )
 
@@ -561,13 +668,20 @@ def manual_modules(request: WSGIRequest):
         blacklist_issues,
         blacklist_actions,
         not blacklist_installed,
-        format_html("{} app is not installed; Corp Blacklist features will be unavailable.", code("blacklist")),
-        format_html("Install allianceauth-blacklist and add it to {}.", code("INSTALLED_APPS")),
+        format_html(
+            "{} app is not installed; Corp Blacklist features will be unavailable.",
+            code("blacklist"),
+        ),
+        format_html(
+            "Install allianceauth-blacklist and add it to {}.", code("INSTALLED_APPS")
+        ),
     )
     modules.append(
         make_module(
             _("Blacklist integration"),
-            _("Allows BigBrother to add characters to AllianceAuth Blacklist directly from the dashboard."),
+            _(
+                "Allows BigBrother to add characters to AllianceAuth Blacklist directly from the dashboard."
+            ),
             blacklist_issues,
             blacklist_actions,
         )

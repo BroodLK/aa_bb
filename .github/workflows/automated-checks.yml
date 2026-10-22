@@ -1,0 +1,259 @@
+name: Automated Checks and Release
+
+env:
+  COVERAGE_DATABASE_VERSION: mariadb:10.11
+  COVERAGE_PYTHON_VERSION: 3.12
+  NODE_VERSION: 26 # [LTS] End of Life: 30 Apr 2029 (https://endoflife.date/nodejs)
+  REDIS_VERSION: latest
+
+on:
+  push:
+    branches:
+      - '**'
+
+    tags-ignore:
+      - '**'
+
+  pull_request:
+    branches:
+      - '**'
+
+    tags-ignore:
+      - '**'
+
+jobs:
+  # Run pre-commit Checks
+  pre-commit:
+    name: Pre Commit Checks
+    runs-on: ubuntu-latest
+
+    steps:
+      # Checkout the repository
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # Set up Python
+#      - name: Set up Python
+#        uses: actions/setup-python@v7
+#        with:
+#          python-version-file: 'pyproject.toml' # Read the Python version from the pyproject.toml file
+
+      # Set up Node.js
+#      - name: Setup Node.js
+#        uses: actions/setup-node@v6
+#        with:
+#          # https://endoflife.date/nodejs
+#          node-version: ${{ env.NODE_VERSION }}
+#          cache: 'npm'
+#          cache-dependency-path: 'package-lock.json'
+#      - run: npm install
+
+      - name: Run Pre Commit Checks
+        uses: pre-commit/action@v3.0.1
+
+  # Run Test Coverage for Laatest Release
+  test-coverage:
+    needs: [ pre-commit ]
+    name: AA Latest (Python ${{ matrix.python-version }} with ${{ matrix.database }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      # Set Python versions to test against
+      matrix:
+        python-version:
+          # https://endoflife.date/python
+          - '3.11'  # [EOL] End of Life: 31 Dec 2027
+          - '3.12'  # [EOL] End of Life: 31 Dec 2028
+          - '3.13'  # [EOL] End of Life: 31 Oct 2029
+          - '3.14'  # [EOL] End of Life: 31 Oct 2030
+#        # MySQL versions to test against
+#        database:
+#          # https://endoflife.date/mysql
+#          - mysql:8.4     # [LTS] Maintained until: 30 Apr 2032
+#          - mysql:9.7     # [LTS] Maintained until: 21 Apr 2034
+#          # https://endoflife.date/mariadb and https://mariadb.com/kb/en/mariadb-server-release-dates/
+#          - mariadb:10.11 # [LTS] Maintained until: 16 Feb 2028
+#          - mariadb:11.4  # [LTS] Maintained until: 29 May 2029
+#          - mariadb:11.8  # [LTS] Maintained until: 04 Jun 2028
+#          - mariadb:12.3  # [LTS] Maintained until: 30 Jun 2029
+#
+##    continue-on-error: ${{ matrix.python-version == '3.14' }}
+#
+#    # Set up services
+#    services:
+#      database:
+#        image: ${{ matrix.database }}
+#        env:
+#          MYSQL_ROOT_PASSWORD: temp_password_aa_tox_tests
+#          MYSQL_DATABASE: tox_allianceauth
+#        ports:
+#          - 3306:3306
+#        options: --tmpfs /var/lib/mysql
+
+    steps:
+      # Checkout the repository
+      - name: Checkout
+        uses: actions/checkout@v7
+
+        # Install redis
+      - name: Install redis
+        uses: shogo82148/actions-setup-redis@v1.57.0
+        with:
+          redis-version: ${{ env.REDIS_VERSION }}
+
+      # Verify that redis is up
+      - name: Verify that redis is up
+        run: redis-cli ping
+
+      # Set up Python
+      - name: Setup Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # Install Tox and any other packages
+      - name: Install Tox and any other packages
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade tox tox-gh-actions
+
+      # Run Tox with the specified environment
+      - name: Run Tox
+#        env:
+#          TOX_ENV: allianceauth-latest
+#          DB_HOST: 127.0.0.1
+#          DB_USER: root
+#          DB_PASSWORD: temp_password_aa_tox_tests
+#        run: tox -v -e ${{ env.TOX_ENV }}
+        run: tox -v
+
+      # Upload coverage to Codecov
+#      - name: Upload Coverage
+#        if: ${{
+#              (
+#                github.event_name == 'pull_request'
+#                || (
+#                  github.event_name == 'push'
+#                  && github.ref == 'refs/heads/master'
+#                )
+#              )
+#              && (
+#                matrix.python-version == env.COVERAGE_PYTHON_VERSION
+#                && matrix.database == env.COVERAGE_DATABASE_VERSION
+#              )
+#            }}
+#        uses: codecov/codecov-action@v5
+#        with:
+##          token: ${{ secrets.CODECOV_TOKEN }}
+#          files: coverage.xml # optional
+##          flags: unittests # optional
+##          name: codecov-umbrella # optional
+##          fail_ci_if_error: true # optional (default = false)
+#          verbose: true # optional (default = false)
+#        env:
+#          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  # Release & Publish Job
+  release:
+    needs: [ test-coverage ]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/test' || github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
+    name: Release & Publish
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi-release
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      # Checkout the repository
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # Set up Python
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: 'pyproject.toml'
+
+      # Check if version is bumped / new
+      - name: Check Package Version
+        id: check_version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(python -c "import aa_bb; print(aa_bb.__version__)" 2>/dev/null || python -c "import re; print(re.search(r'__version__\s*=\s*[\"\'\']([^\"\'\']+)[\"\'\']', open('aa_bb/__init__.py').read()).group(1))")
+          echo "Current package version is $VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+          TAG_NAME="v$VERSION"
+          IS_NEW=true
+
+          # Check if GitHub Release or Tag exists
+          if gh release view "$TAG_NAME" > /dev/null 2>&1; then
+            echo "GitHub release $TAG_NAME already exists."
+            IS_NEW=false
+          elif gh release view "$VERSION" > /dev/null 2>&1; then
+            echo "GitHub release $VERSION already exists."
+            IS_NEW=false
+          elif git rev-parse "$TAG_NAME" > /dev/null 2>&1 || git rev-parse "refs/tags/$TAG_NAME" > /dev/null 2>&1; then
+            echo "Git tag $TAG_NAME already exists."
+            IS_NEW=false
+          fi
+
+          # Check if version exists on PyPI
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://pypi.org/pypi/aa_bb/$VERSION/json")
+          if [ "$HTTP_STATUS" -eq 200 ]; then
+            echo "Version $VERSION already exists on PyPI."
+            IS_NEW=false
+          fi
+
+          if [ "$IS_NEW" = "true" ]; then
+            echo "New version $VERSION detected. Proceeding with merge, build, PyPI publishing, and GitHub release."
+            echo "is_new_version=true" >> $GITHUB_OUTPUT
+          else
+            echo "Version $VERSION is not a new version (already released on GitHub or PyPI). Skipping release."
+            echo "is_new_version=false" >> $GITHUB_OUTPUT
+          fi
+
+      # Merge test branch into main (verifying merge happens without errors)
+      - name: Merge test into main
+        if: steps.check_version.outputs.is_new_version == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git fetch origin test
+          git checkout main
+          if ! git merge origin/test --no-edit -m "Merge test into main for release ${{ steps.check_version.outputs.version }} [skip ci]"; then
+            echo "::error::Merge failed due to conflicts or errors"
+            exit 1
+          fi
+          git push origin main
+
+      # Test PyPI Build
+      - name: Test PyPI Build
+        if: steps.check_version.outputs.is_new_version == 'true'
+        run: |
+          python -m pip install --upgrade pip build
+          python -m pip install --upgrade setuptools wheel
+          python -m build
+
+      # Publish to PyPI using Trusted Publishing
+      - name: Publish to PyPI
+        if: steps.check_version.outputs.is_new_version == 'true'
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+      # Create GitHub Release with dist artifacts
+      - name: Create GitHub Release
+        if: steps.check_version.outputs.is_new_version == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_NAME="v${{ steps.check_version.outputs.version }}"
+          echo "Creating GitHub Release $TAG_NAME"
+          gh release create "$TAG_NAME" dist/* \
+            --title "$TAG_NAME" \
+            --generate-notes

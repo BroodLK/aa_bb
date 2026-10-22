@@ -211,7 +211,10 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
 
     try:
         cache_obj = AwoxKillsCache.objects.get(user_id=user_id)
-        if not force_refresh and (now - cache_obj.updated).total_seconds() < AWOX_CACHE_TTL_SECONDS:
+        if (
+            not force_refresh
+            and (now - cache_obj.updated).total_seconds() < AWOX_CACHE_TTL_SECONDS
+        ):
             # Filter cached data by date before returning
             filtered_cached = []
             for kill in cache_obj.data:
@@ -234,9 +237,13 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
     except AwoxKillsCache.DoesNotExist:
         pass
 
-    characters = CharacterOwnership.objects.filter(user__id=user_id).select_related("character")
+    characters = CharacterOwnership.objects.filter(user__id=user_id).select_related(
+        "character"
+    )
     char_id_to_name = {
-        c.character.character_id: c.character.character_name for c in characters if getattr(c, "character", None)
+        c.character.character_id: c.character.character_name
+        for c in characters
+        if getattr(c, "character", None)
     }
     char_ids = set(char_id_to_name.keys())
 
@@ -260,7 +267,9 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
 
                 content_type = response.headers.get("Content-Type", "")
                 if not content_type.startswith("application/json"):
-                    _notify_zkill_down_once(response.text[:200], response.status_code, content_type)
+                    _notify_zkill_down_once(
+                        response.text[:200], response.status_code, content_type
+                    )
                     continue
 
                 data = response.json()
@@ -286,12 +295,14 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
                             swallow_errors=True,
                         )
                         if full_kill is None:
-                            full_kill = ESIHandler.get_killmails_killmail_id_killmail_hash(
-                                killmail_id=kill_id,
-                                killmail_hash=hash_,
-                                operation_kwargs=esi_tenant_kwargs(DATASOURCE),
-                                use_etag=False,
-                                swallow_errors=True,
+                            full_kill = (
+                                ESIHandler.get_killmails_killmail_id_killmail_hash(
+                                    killmail_id=kill_id,
+                                    killmail_hash=hash_,
+                                    operation_kwargs=esi_tenant_kwargs(DATASOURCE),
+                                    use_etag=False,
+                                    swallow_errors=True,
+                                )
                             )
                         if not full_kill:
                             continue
@@ -300,7 +311,9 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
                         victim_id = victim.get("character_id")
                         attackers = full_kill.get("attackers", []) or []
 
-                        if _is_same_auth_user_engagement(victim_id, attackers, char_ids):
+                        if _is_same_auth_user_engagement(
+                            victim_id, attackers, char_ids
+                        ):
                             continue
 
                         # Who from our user is involved?
@@ -316,28 +329,33 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
                         if not involved_user_char_ids:
                             continue  # Should not happen if zKill filter worked correctly for this char
 
-                        is_attacker = any(a.get("character_id") in char_ids for a in attackers)
+                        is_attacker = any(
+                            a.get("character_id") in char_ids for a in attackers
+                        )
 
                         # Resolve names
                         if victim_id:
                             try:
-                                vic_name = EveCharacter.objects.values_list("character_name", flat=True).get(
-                                    character_id=victim_id
-                                )
+                                vic_name = EveCharacter.objects.values_list(
+                                    "character_name", flat=True
+                                ).get(character_id=victim_id)
                             except (EveCharacter.DoesNotExist, AttributeError):
-                                vic_name = resolve_character_name(victim_id) or "Unknown"
+                                vic_name = (
+                                    resolve_character_name(victim_id) or "Unknown"
+                                )
                         else:
                             vic_name = "Unknown"
 
                         fb_attacker = next(
-                            (a for a in attackers if a.get("final_blow")), attackers[0] if attackers else {}
+                            (a for a in attackers if a.get("final_blow")),
+                            attackers[0] if attackers else {},
                         )
                         att_id = fb_attacker.get("character_id")
                         if att_id:
                             try:
-                                att_name = EveCharacter.objects.values_list("character_name", flat=True).get(
-                                    character_id=att_id
-                                )
+                                att_name = EveCharacter.objects.values_list(
+                                    "character_name", flat=True
+                                ).get(character_id=att_id)
                             except (EveCharacter.DoesNotExist, AttributeError):
                                 att_name = resolve_character_name(att_id) or "Unknown"
                         else:
@@ -346,11 +364,17 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
                         processed_kills[kill_id] = {
                             "value": int(k.get("zkb", {}).get("totalValue", 0)),
                             "link": f"https://zkillboard.com/kill/{kill_id}/",
-                            "chars": [char_id_to_name[cid] for cid in involved_user_char_ids],
+                            "chars": [
+                                char_id_to_name[cid] for cid in involved_user_char_ids
+                            ],
                             "is_attacker": is_attacker,
                             "att_name": att_name,
-                            "att_corp": _get_corp_name(fb_attacker.get("corporation_id")),
-                            "att_alli": _get_alliance_name(fb_attacker.get("alliance_id")),
+                            "att_corp": _get_corp_name(
+                                fb_attacker.get("corporation_id")
+                            ),
+                            "att_alli": _get_alliance_name(
+                                fb_attacker.get("alliance_id")
+                            ),
                             "vic_name": vic_name,
                             "vic_corp": _get_corp_name(victim.get("corporation_id")),
                             "vic_alli": _get_alliance_name(victim.get("alliance_id")),
@@ -379,7 +403,8 @@ def fetch_awox_kills(user_id, delay=0.2, force_refresh=False):
 
         # Update cache
         AwoxKillsCache.objects.update_or_create(
-            user_id=user_id, defaults={"data": _serialize_datetime(new_data), "last_accessed": now}
+            user_id=user_id,
+            defaults={"data": _serialize_datetime(new_data), "last_accessed": now},
         )
         return new_data
 
@@ -406,7 +431,9 @@ def render_awox_kills_html(userID):
     for kill in kills:
         chars_list = sorted(kill.get("chars", []))
         if kill.get("is_attacker", False):
-            chars = mark_safe(f'<span class="text-danger">{html.escape(", ".join(chars_list))}</span>')
+            chars = mark_safe(
+                f'<span class="text-danger">{html.escape(", ".join(chars_list))}</span>'
+            )
         else:
             chars = ", ".join(chars_list)
         value = "{:,}".format(kill.get("value", 0))
@@ -431,7 +458,13 @@ def render_awox_kills_html(userID):
         if kill.get("is_attacker", False):
             row_html = '<tr class="text-danger"><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{} ISK</td><td><a href="{}" target="_blank">View</a></td></tr>'
             html_output += format_html(
-                row_html, date_str, chars, mark_safe(att_html), mark_safe(vic_html), value, link
+                row_html,
+                date_str,
+                chars,
+                mark_safe(att_html),
+                mark_safe(vic_html),
+                value,
+                link,
             )
 
     html_output += "</tbody></table>"

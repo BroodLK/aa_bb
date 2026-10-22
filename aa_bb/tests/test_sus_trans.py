@@ -8,7 +8,9 @@ from django.utils import timezone
 # AA BigBrother
 from aa_bb.checks.sus_trans import get_user_transactions, is_transaction_hostile
 from aa_bb.checks_cb.sus_trans import get_user_transactions as get_user_transactions_cb
-from aa_bb.checks_cb.sus_trans import is_transaction_hostile as is_transaction_hostile_cb
+from aa_bb.checks_cb.sus_trans import (
+    is_transaction_hostile as is_transaction_hostile_cb,
+)
 from aa_bb.models import BigBrotherConfig
 
 
@@ -34,7 +36,8 @@ class TestSusTrans(TestCase):
         self.cfg.save()
 
         self.assertFalse(
-            is_transaction_hostile(tx), "Transaction in major hub should be filtered out when major hubs are disabled"
+            is_transaction_hostile(tx),
+            "Transaction in major hub should be filtered out when major hubs are disabled",
         )
 
     def test_major_hub_hostile_corp_show_market_enabled(self):
@@ -97,7 +100,8 @@ class TestSusTrans(TestCase):
 
         # This currently fails because "30000142" in {30000142, ...} is False
         self.assertFalse(
-            is_transaction_hostile(tx), "String system_id should still be filtered out by major hub filter"
+            is_transaction_hostile(tx),
+            "String system_id should still be filtered out by major hub filter",
         )
 
     def test_major_hub_hostile_corp_show_market_disabled_cb(self):
@@ -153,15 +157,22 @@ class TestSusTrans(TestCase):
 
         mock_is_hostile.return_value = True
         self.assertTrue(
-            is_transaction_hostile(tx), "Transaction in hostile location should be hostile if it's a suspicious type"
+            is_transaction_hostile(tx),
+            "Transaction in hostile location should be hostile if it's a suspicious type",
         )
 
         mock_is_hostile.return_value = False
-        self.assertFalse(is_transaction_hostile(tx), "player_trading should NOT be hostile if parties are neutral")
+        self.assertFalse(
+            is_transaction_hostile(tx),
+            "player_trading should NOT be hostile if parties are neutral",
+        )
 
         # Test with a hostile party
         mock_is_hostile.return_value = True
-        self.assertTrue(is_transaction_hostile(tx), "Transaction with hostile party should be hostile")
+        self.assertTrue(
+            is_transaction_hostile(tx),
+            "Transaction with hostile party should be hostile",
+        )
 
         # Test a normal transaction that is ONLY hostile due to location (should be False now)
         mock_is_hostile.return_value = True
@@ -175,7 +186,9 @@ class TestSusTrans(TestCase):
     @patch("aa_bb.checks.sus_trans.resolve_location_name")
     @patch("aa_bb.checks.sus_trans.resolve_location_system_id")
     @patch("aa_bb.checks.sus_trans.get_entity_info")
-    def test_structure_id_resolution(self, mock_get_entity_info, mock_resolve_system, mock_resolve_name):
+    def test_structure_id_resolution(
+        self, mock_get_entity_info, mock_resolve_system, mock_resolve_name
+    ):
         # Setup mock for get_entity_info
         mock_get_entity_info.return_value = {
             "name": "Test Character",
@@ -213,7 +226,9 @@ class TestSusTrans(TestCase):
 
     @patch("aa_bb.checks.sus_trans._resolve_market_type_id")
     @patch("aa_bb.checks.sus_trans.get_entity_info")
-    def test_market_transaction_reason_fallback(self, mock_get_entity_info, mock_resolve_type_id):
+    def test_market_transaction_reason_fallback(
+        self, mock_get_entity_info, mock_resolve_type_id
+    ):
         mock_get_entity_info.return_value = {
             "name": "Test Character",
             "corp_id": 123,
@@ -247,9 +262,11 @@ class TestSusTrans(TestCase):
     @patch("aa_bb.checks_cb.sus_trans.resolve_location_name")
     @patch("aa_bb.checks_cb.sus_trans.resolve_location_system_id")
     @patch("aa_bb.checks_cb.sus_trans.get_entity_info")
-    @patch("aa_bb.checks_cb.sus_trans.get_eve_entity_type")
     def test_structure_id_resolution_cb(
-        self, mock_get_type, mock_get_entity_info, mock_resolve_system, mock_resolve_name
+        self,
+        mock_get_entity_info,
+        mock_resolve_system,
+        mock_resolve_name,
     ):
         # Setup mock for get_entity_info
         mock_get_entity_info.return_value = {
@@ -259,7 +276,6 @@ class TestSusTrans(TestCase):
             "alli_id": 456,
             "alli_name": "Test Alliance",
         }
-        mock_get_type.return_value = "character"
 
         # Setup mock for location resolution
         mock_resolve_name.return_value = "Test Structure CB"
@@ -289,7 +305,9 @@ class TestSusTrans(TestCase):
 
     @patch("aa_bb.checks_cb.sus_trans._resolve_market_type_id")
     @patch("aa_bb.checks_cb.sus_trans.get_entity_info")
-    def test_market_transaction_reason_fallback_cb(self, mock_get_entity_info, mock_resolve_type_id):
+    def test_market_transaction_reason_fallback_cb(
+        self, mock_get_entity_info, mock_resolve_type_id
+    ):
         mock_get_entity_info.return_value = {
             "name": "Test Character",
             "corp_id": 123,

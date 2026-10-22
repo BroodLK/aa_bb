@@ -17,7 +17,9 @@ class TestSusContacts(TestCase):
 
     @patch("aa_bb.checks.sus_contacts.get_user_contacts")
     @patch("aa_bb.checks.sus_contacts.get_hostile_state")
-    def test_hostile_notification_with_positive_standing(self, mock_hostile_state, mock_get_user_contacts):
+    def test_hostile_notification_with_positive_standing(
+        self, mock_hostile_state, mock_get_user_contacts
+    ):
         # Setup: Positive standing with a hostile contact
         mock_get_user_contacts.return_value = {
             123: {
@@ -40,7 +42,9 @@ class TestSusContacts(TestCase):
 
     @patch("aa_bb.checks.sus_contacts.get_user_contacts")
     @patch("aa_bb.checks.sus_contacts.get_hostile_state")
-    def test_no_hostile_notification_with_negative_standing(self, mock_hostile_state, mock_get_user_contacts):
+    def test_no_hostile_notification_with_negative_standing(
+        self, mock_hostile_state, mock_get_user_contacts
+    ):
         # Setup: Negative standing with a hostile contact
         mock_get_user_contacts.return_value = {
             123: {
@@ -60,12 +64,16 @@ class TestSusContacts(TestCase):
 
         # Currently this will FAIL because it alerts regardless of standing
         self.assertEqual(
-            len(notifications), 0, "Should not alert on negative standing with a hostile entity as it is redundant"
+            len(notifications),
+            0,
+            "Should not alert on negative standing with a hostile entity as it is redundant",
         )
 
     @patch("aa_bb.checks.sus_contacts.get_user_contacts")
     @patch("aa_bb.checks.sus_contacts.get_hostile_state")
-    def test_hostile_notification_with_neutral_standing(self, mock_hostile_state, mock_get_user_contacts):
+    def test_hostile_notification_with_neutral_standing(
+        self, mock_hostile_state, mock_get_user_contacts
+    ):
         # Setup: Neutral standing (0) with a hostile contact
         mock_get_user_contacts.return_value = {
             123: {

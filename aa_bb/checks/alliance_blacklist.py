@@ -18,5 +18,6 @@ def get_alliance_blacklist_link():
     if not url:
         return "Alliance Blacklist URL not configured."
     return format_html(
-        '<a href="{}" target="_blank" class="btn btn-primary btn-block">Go to Alliance Blacklist</a>', url
+        '<a href="{}" target="_blank" class="btn btn-primary btn-block">Go to Alliance Blacklist</a>',
+        url,
     )

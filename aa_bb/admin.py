@@ -10,6 +10,7 @@ and prevent accidental multi-row creation of what should be one-off configs.
 from solo.admin import SingletonModelAdmin
 
 # Django
+from django import forms
 from django.apps import apps
 from django.contrib import admin
 from django.contrib.admin.sites import NotRegistered
@@ -38,6 +39,21 @@ from .models import (
     UserStatus,
     WarmProgress,
 )
+
+
+class ComplianceFilterChoiceField(forms.ModelChoiceField):
+    """Render a ComplianceFilter choice while returning its database id.
+
+    TicketToolConfig stores this value in a BigIntegerField rather than a
+    ForeignKey because charlink is optional.  A normal ModelChoiceField
+    returns the related object, which Django's model validation then tries to
+    validate as an integer before ModelAdmin.save_model() gets a chance to
+    convert it.
+    """
+
+    def clean(self, value):
+        compliance_filter = super().clean(value)
+        return getattr(compliance_filter, "pk", None)
 
 
 @admin.register(BigBrotherConfig)
@@ -301,7 +317,11 @@ class BB_ConfigAdmin(SingletonModelAdmin):
         "bb_guest_states",
         "bb_member_states",
         # aa-contacts M2M (only if installed)
-        *(("contacts_source_alliances", "contacts_source_corporations") if AA_CONTACTS_INSTALLED else ()),
+        *(
+            ("contacts_source_alliances", "contacts_source_corporations")
+            if AA_CONTACTS_INSTALLED
+            else ()
+        ),
     )
 
     class Media:
@@ -427,7 +447,11 @@ class TicketToolConfigAdmin(SingletonModelAdmin):
                     {
                         "classes": ("compliance-check-fieldset",),
                         "description": "Alert when characters are removed from authentication",
-                        "fields": ("char_removed_enabled", "char_removed_include_user", "char_removed_reason"),
+                        "fields": (
+                            "char_removed_enabled",
+                            "char_removed_include_user",
+                            "char_removed_reason",
+                        ),
                     },
                 ),
                 (
@@ -435,7 +459,11 @@ class TicketToolConfigAdmin(SingletonModelAdmin):
                     {
                         "classes": ("compliance-check-fieldset",),
                         "description": "Track and alert on friendly fire incidents",
-                        "fields": ("awox_monitor_enabled", "awox_kill_include_user", "awox_kill_reason"),
+                        "fields": (
+                            "awox_monitor_enabled",
+                            "awox_kill_include_user",
+                            "awox_kill_reason",
+                        ),
                     },
                 ),
             ]
@@ -515,21 +543,25 @@ class TicketToolConfigAdmin(SingletonModelAdmin):
 
         # Make role_id a textarea
         if "role_id" in form.base_fields:
-            form.base_fields["role_id"].widget = forms.Textarea(attrs={"rows": 3, "cols": 40})
+            form.base_fields["role_id"].widget = forms.Textarea(
+                attrs={"rows": 3, "cols": 40}
+            )
 
         if charlink_active() and "compliance_filter_id" in form.base_fields:
             try:
                 ComplianceFilter = apps.get_model("charlink", "ComplianceFilter")
-                form.base_fields["compliance_filter_id"] = forms.ModelChoiceField(
+                form.base_fields["compliance_filter_id"] = ComplianceFilterChoiceField(
                     queryset=ComplianceFilter.objects.all(),
                     required=False,
                     label="Compliance filter",
                     help_text="Select your compliance filter",
                 )
                 if obj and obj.compliance_filter_id:
-                    form.base_fields["compliance_filter_id"].initial = ComplianceFilter.objects.filter(
-                        pk=obj.compliance_filter_id
-                    ).first()
+                    form.base_fields["compliance_filter_id"].initial = (
+                        ComplianceFilter.objects.filter(
+                            pk=obj.compliance_filter_id
+                        ).first()
+                    )
             except LookupError:
                 pass
 
@@ -538,7 +570,10 @@ class TicketToolConfigAdmin(SingletonModelAdmin):
 
             # Restrict choices if bot is not active
             allowed_choices = [
-                (TicketToolConfig.TICKET_TYPE_FORUM_THREAD, "Public Forum Threads (Webhook)"),
+                (
+                    TicketToolConfig.TICKET_TYPE_FORUM_THREAD,
+                    "Public Forum Threads (Webhook)",
+                ),
                 (TicketToolConfig.TICKET_TYPE_AUTH_ONLY, "Auth Only (No Discord)"),
             ]
             form.base_fields["ticket_type"].choices = allowed_choices
@@ -547,7 +582,9 @@ class TicketToolConfigAdmin(SingletonModelAdmin):
     def save_model(self, request, obj, form, change):
         if charlink_active() and "compliance_filter_id" in form.cleaned_data:
             compliance_filter = form.cleaned_data.get("compliance_filter_id")
-            obj.compliance_filter_id = getattr(compliance_filter, "pk", compliance_filter) or None
+            obj.compliance_filter_id = (
+                getattr(compliance_filter, "pk", compliance_filter) or None
+            )
         super().save_model(request, obj, form, change)
 
     def has_add_permission(self, request):
@@ -689,6 +726,7 @@ class AdminLogEntryAdmin(admin.ModelAdmin):
         actions.pop("delete_selected", None)
         return actions
 
+    @admin.display(description="Summary")
     def summary(self, obj):
         meta = obj.metadata or {}
         if obj.action == "state_changed":
@@ -706,8 +744,7 @@ class AdminLogEntryAdmin(admin.ModelAdmin):
             return obj.target_label or ""
         return ""
 
-    summary.short_description = "Summary"
-
+    @admin.display(description="Details")
     def details(self, obj):
         """Human-friendly summary for token and request metadata."""
         meta = obj.metadata or {}
@@ -743,7 +780,9 @@ class AdminLogEntryAdmin(admin.ModelAdmin):
         path = request_meta.get("path") or meta.get("request_path")
         ip_addr = request_meta.get("ip") or meta.get("request_ip")
         if method or path:
-            lines.append(f"Request: {(method or '').strip()} {(path or '').strip()}".strip())
+            lines.append(
+                f"Request: {(method or '').strip()} {(path or '').strip()}".strip()
+            )
         if ip_addr:
             lines.append(f"IP: {ip_addr}")
         user_agent = request_meta.get("user_agent")
@@ -753,8 +792,6 @@ class AdminLogEntryAdmin(admin.ModelAdmin):
         if not lines:
             return "-"
         return format_html_join(mark_safe("<br>"), "{}", ((line,) for line in lines))
-
-    details.short_description = "Details"
 
 
 class ReasonFilter(admin.SimpleListFilter):
@@ -785,35 +822,39 @@ class ComplianceTicketConfig(admin.ModelAdmin):
     list_filter = ["is_resolved", "is_exception", ReasonFilter]
     readonly_fields = ["created_at"]
 
-    actions = ["mark_as_exception", "clear_exception", "mark_as_resolved", "mark_as_open"]
+    actions = [
+        "mark_as_exception",
+        "clear_exception",
+        "mark_as_resolved",
+        "mark_as_open",
+    ]
 
+    @admin.action(description="Mark selected tickets as exception")
     def mark_as_exception(self, request, queryset):
         """Mark selected tickets as exceptions."""
-        count = queryset.update(is_exception=True, exception_reason=f"Marked as exception by {request.user.username}")
+        count = queryset.update(
+            is_exception=True,
+            exception_reason=f"Marked as exception by {request.user.username}",
+        )
         self.message_user(request, f"{count} ticket(s) marked as exception.")
 
-    mark_as_exception.short_description = "Mark selected tickets as exception"
-
+    @admin.action(description="Clear exception status")
     def clear_exception(self, request, queryset):
         """Clear exception status from selected tickets."""
         count = queryset.update(is_exception=False, exception_reason=None)
         self.message_user(request, f"{count} ticket(s) exception status cleared.")
 
-    clear_exception.short_description = "Clear exception status"
-
+    @admin.action(description="Mark selected tickets as resolved")
     def mark_as_resolved(self, request, queryset):
         """Mark selected tickets as resolved."""
         count = queryset.update(is_resolved=True)
         self.message_user(request, f"{count} ticket(s) marked as resolved.")
 
-    mark_as_resolved.short_description = "Mark selected tickets as resolved"
-
+    @admin.action(description="Mark selected tickets as open")
     def mark_as_open(self, request, queryset):
         """Mark selected tickets as open."""
         count = queryset.update(is_resolved=False, is_exception=False)
         self.message_user(request, f"{count} ticket(s) marked as open.")
-
-    mark_as_open.short_description = "Mark selected tickets as open"
 
     def get_queryset(self, request):
         qs = super().get_queryset(request)
@@ -932,9 +973,15 @@ def _filtered_get_app_list(request, app_label=None):
         if label == "aa_bb":
             models = app.get("models", [])
             if not is_afat:
-                models = [m for m in models if m.get("object_name") not in _PAP_OBJECT_NAMES]
+                models = [
+                    m for m in models if m.get("object_name") not in _PAP_OBJECT_NAMES
+                ]
             if not show_market:
-                models = [m for m in models if m.get("object_name") not in _MARKET_OBJECT_NAMES]
+                models = [
+                    m
+                    for m in models
+                    if m.get("object_name") not in _MARKET_OBJECT_NAMES
+                ]
             app = {**app, "models": models}
 
         # Drop empty app groups

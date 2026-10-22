@@ -6,12 +6,14 @@ from django_celery_beat.models import CrontabSchedule
 from solo.models import SingletonModel
 
 # Django
+from django.apps import apps
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
 from django.db import models
 from django.db.models import JSONField
 from django.utils import timezone
+from django.utils.translation import gettext_lazy as _
 
 # Alliance Auth
 from allianceauth.authentication.models import State, UserProfile
@@ -20,10 +22,6 @@ from allianceauth.groupmanagement.models import AuthGroup
 from allianceauth.services.hooks import get_extension_logger
 
 logger = get_extension_logger(__name__)
-
-# Django
-from django.apps import apps
-from django.utils.translation import gettext_lazy as _
 
 AA_CONTACTS_INSTALLED = apps.is_installed("aa_contacts")
 
@@ -98,7 +96,10 @@ class General(models.Model):
         permissions = (
             ("basic_access", _("Can access Big Brother")),
             ("full_access", _("Can view all main characters in Big Brother")),
-            ("recruiter_access", _("Can view main characters in Guest state only in Big Brother")),
+            (
+                "recruiter_access",
+                _("Can view main characters in Guest state only in Big Brother"),
+            ),
             ("basic_access_cb", _("Can access Corp Brother")),
             ("full_access_cb", _("Can view all corps in Corp Brother")),
             ("recruiter_access_cb", _("Can view guest's corps only in Corp Brother")),
@@ -162,8 +163,12 @@ class AdminLogEntry(models.Model):
         verbose_name_plural = "Admin Log Entries"
         ordering = ["-created_at"]
         indexes = [
-            models.Index(fields=["category", "action"], name="aa_bb_adminlog_cat_action_idx"),
-            models.Index(fields=["source", "task_name"], name="aa_bb_adminlog_source_task_idx"),
+            models.Index(
+                fields=["category", "action"], name="aa_bb_adminlog_cat_action_idx"
+            ),
+            models.Index(
+                fields=["source", "task_name"], name="aa_bb_adminlog_source_task_idx"
+            ),
             models.Index(fields=["actor"], name="aa_bb_adminlog_actor_idx"),
             models.Index(fields=["target_user"], name="aa_bb_adminlog_target_idx"),
             models.Index(fields=["created_at"], name="aa_bb_adminlog_created_idx"),
@@ -171,7 +176,11 @@ class AdminLogEntry(models.Model):
 
     def __str__(self):
         actor_name = self.actor.username if self.actor else "System"
-        target_name = self.target_user.username if self.target_user else self.target_label or "n/a"
+        target_name = (
+            self.target_user.username
+            if self.target_user
+            else self.target_label or "n/a"
+        )
         return f"{self.created_at} {self.category}:{self.action} {actor_name} -> {target_name}"
 
 
@@ -371,7 +380,7 @@ class PapsConfig(SingletonModel):
     - excluded_groups / excluded_groups_get_paps: groups that block other awards and whether they still grant a single bonus.
     - excluded_users / excluded_users_paps: user-specific overrides that disable all PAPs or only group-derived ones.
     - capital_groups_get_paps, cap_group/cap_group_paps, super_group/super_group_paps, titan_group/titan_group_paps:
-      toggles and per-capital-group bonuses for members flagged as capital, super, or titan pilots.
+        toggles and per-capital-group bonuses for members flagged as capital, super, or titan pilots.
     """
 
     required_paps = models.PositiveIntegerField(
@@ -381,15 +390,21 @@ class PapsConfig(SingletonModel):
     )
 
     corp_modifier = models.PositiveIntegerField(
-        default=1, help_text="How many PAPs/AFAT is a corp PAP worth?", verbose_name="Corp PAPs/AFAT Modifier"
+        default=1,
+        help_text="How many PAPs/AFAT is a corp PAP worth?",
+        verbose_name="Corp PAPs/AFAT Modifier",
     )
 
     max_corp_paps = models.PositiveIntegerField(
-        default=1, help_text="How many Corp PAPs/AFAT will count?", verbose_name="Corp PAPs/AFAT Maximum"
+        default=1,
+        help_text="How many Corp PAPs/AFAT will count?",
+        verbose_name="Corp PAPs/AFAT Maximum",
     )
 
     alliance_modifier = models.PositiveIntegerField(
-        default=1, help_text="How many PAPs/AFAT is an alliance PAP worth?", verbose_name="Alliance PAPs/AFAT Modifier"
+        default=1,
+        help_text="How many PAPs/AFAT is an alliance PAP worth?",
+        verbose_name="Alliance PAPs/AFAT Modifier",
     )
 
     coalition_modifier = models.PositiveIntegerField(
@@ -438,7 +453,9 @@ class PapsConfig(SingletonModel):
     )
 
     group_paps_modifier = models.PositiveIntegerField(
-        default=1, help_text="How many PAPs/AFAT to add per group", verbose_name="Group PAPs/AFAT Modifier"
+        default=1,
+        help_text="How many PAPs/AFAT to add per group",
+        verbose_name="Group PAPs/AFAT Modifier",
     )
 
     capital_groups_get_paps = models.BooleanField(
@@ -521,7 +538,7 @@ class BigBrotherConfig(SingletonModel):
 
     Key field groups:
     - pingroleID / pingroleID2 and pingrole1_messages / pingrole2_messages /
-      here_messages / everyone_messages: map message types to Discord roles or the default @here/@everyone.
+        here_messages / everyone_messages: map message types to Discord roles or the default @here/@everyone.
     - bb_guest_states / bb_member_states: AllianceAuth states that define who is treated as a guest vs. member.
     - hostile_alliances / hostile_corporations and whitelist_* fields: comma-separated IDs that colour cards red or bypass checks.
     - ignored_corporations / member_corporations / member_alliances: corp/alliance overrides for CorpBrother membership.
@@ -529,7 +546,7 @@ class BigBrotherConfig(SingletonModel):
     - webhook / loawebhook / dailywebhook / optwebhook1-5: Discord destinations for alerts, LoA notices, daily digests, and optional feeds.
     - dailyschedule / optschedule1-5: celery-beat schedules for those webhooks; paired with `optwebhook*`.
     - is_loa_active / is_paps_active / is_warmer_active / are_daily_messages_active / are_opt_messages*_active:
-      feature toggles that gate LoA, PAPs, the cache warmer, and message streams.
+        feature toggles that gate LoA, PAPs, the cache warmer, and message streams.
     - main_corporation / main_alliance IDs + names are auto-populated by the updater, or derived from a manual override.
     - bigbrother_tokens, bb_install_token, update timing fields, and reddit/daily message pointers track upstream licensing and version checks.
     """
@@ -565,19 +582,25 @@ class BigBrotherConfig(SingletonModel):
 
     sp_inject_ratio_delta = models.FloatField(
         default=0.0,
-        help_text=_("Minimum SP/age ratio delta required to flag a skill injection alert"),
+        help_text=_(
+            "Minimum SP/age ratio delta required to flag a skill injection alert"
+        ),
         verbose_name=_("Skill Injection Ratio Delta"),
     )
 
     clone_notify = models.BooleanField(
         default=True,
-        help_text=_("Whether to send Hostile Jump Clone Location Change notifications to discord"),
+        help_text=_(
+            "Whether to send Hostile Jump Clone Location Change notifications to discord"
+        ),
         verbose_name=_("Hostile Jump Clone Location Change Discord Notifications"),
     )
 
     clone_state_notify = models.BooleanField(
         default=True,
-        help_text=_("Whether to send Alpha/Omega Clone State Change notifications to discord"),
+        help_text=_(
+            "Whether to send Alpha/Omega Clone State Change notifications to discord"
+        ),
         verbose_name=_("Clone State Change Discord Notifications"),
     )
 
@@ -651,7 +674,9 @@ class BigBrotherConfig(SingletonModel):
 
     discord_message_tracking = models.BooleanField(
         default=True,
-        help_text=_("Whether to track discord message activity (last_discord_message_at) for users"),
+        help_text=_(
+            "Whether to track discord message activity (last_discord_message_at) for users"
+        ),
         verbose_name=_("Discord Message Activity Tracking"),
     )
 
@@ -665,13 +690,17 @@ class BigBrotherConfig(SingletonModel):
 
     show_market_transactions = models.BooleanField(
         default=False,
-        help_text=_("Show transactions with a reference type of market_escrow and market_transaction"),
+        help_text=_(
+            "Show transactions with a reference type of market_escrow and market_transaction"
+        ),
         verbose_name=_("Show Market Transactions"),
     )
 
     market_transactions_show_major_hubs = models.BooleanField(
         default=False,
-        help_text=_("Show Transactions that take place in the major market hubs (Jita, Amarr, Dodixie, Rens, Hek)"),
+        help_text=_(
+            "Show Transactions that take place in the major market hubs (Jita, Amarr, Dodixie, Rens, Hek)"
+        ),
         verbose_name=_("Show Major Hub Transactions"),
     )
 
@@ -685,7 +714,9 @@ class BigBrotherConfig(SingletonModel):
 
     market_transactions_excluded_systems = models.TextField(
         blank=True,
-        help_text=_("System IDs separated by commas to be excluded from market transactions"),
+        help_text=_(
+            "System IDs separated by commas to be excluded from market transactions"
+        ),
         verbose_name=_("Excluded Market Systems"),
     )
 
@@ -699,7 +730,9 @@ class BigBrotherConfig(SingletonModel):
 
     market_transactions_threshold_percent = models.FloatField(
         default=0,
-        help_text=_("Custom percentage for market transaction alerts (e.g., 10.5 for 10.5%)"),
+        help_text=_(
+            "Custom percentage for market transaction alerts (e.g., 10.5 for 10.5%)"
+        ),
         verbose_name=_("Market Price Threshold Percentage"),
     )
 
@@ -710,10 +743,14 @@ class BigBrotherConfig(SingletonModel):
         verbose_name=_("Primary Price Method"),
     )
 
-    market_transactions_janice_api_key = models.TextField(blank=True, null=True, verbose_name=_("Janice API Key"))
+    market_transactions_janice_api_key = models.TextField(
+        blank=True, null=True, verbose_name=_("Janice API Key")
+    )
 
     market_transactions_fuzzwork_station_id = models.IntegerField(
-        default=60003760, verbose_name=_("Fuzzwork Station ID"), help_text=_("Default is 60003760 (Jita IV-4)")
+        default=60003760,
+        verbose_name=_("Fuzzwork Station ID"),
+        help_text=_("Default is 60003760 (Jita IV-4)"),
     )
 
     market_transactions_price_instant = models.BooleanField(
@@ -750,13 +787,17 @@ class BigBrotherConfig(SingletonModel):
     update_cache_ttl_hours = models.IntegerField(
         default=24,
         verbose_name=_("Update Cache TTL (hours)"),
-        help_text=_("How long certain check results are cached before being refreshed. Such as Clone States"),
+        help_text=_(
+            "How long certain check results are cached before being refreshed. Such as Clone States"
+        ),
     )
 
     update_maintenance_window_start = models.TimeField(
         default=time(6, 0),
         verbose_name=_("Maintenance Window Start (UTC)"),
-        help_text=_("Start time for the maintenance window where updating cached data is preferred."),
+        help_text=_(
+            "Start time for the maintenance window where updating cached data is preferred."
+        ),
     )
 
     update_maintenance_window_end = models.TimeField(
@@ -784,7 +825,9 @@ class BigBrotherConfig(SingletonModel):
     update_backlog_threshold = models.PositiveIntegerField(
         default=10,
         verbose_name=_("Update Backlog Threshold (%)"),
-        help_text=_("Alert if more than this percentage of tasks from the previous run are still active."),
+        help_text=_(
+            "Alert if more than this percentage of tasks from the previous run are still active."
+        ),
     )
 
     update_backlog_notify = models.BooleanField(
@@ -793,17 +836,23 @@ class BigBrotherConfig(SingletonModel):
         help_text=_("Whether to send an alert when a task backlog is detected."),
     )
 
-    update_last_dispatch_count = models.IntegerField(default=0, editable=False, verbose_name=_("Last Dispatch Count"))
+    update_last_dispatch_count = models.IntegerField(
+        default=0, editable=False, verbose_name=_("Last Dispatch Count")
+    )
 
     ticket_notify_man = models.BooleanField(
         default=True,
-        help_text=_("Whether to send ticket resolution notifications when manually closed to discord"),
+        help_text=_(
+            "Whether to send ticket resolution notifications when manually closed to discord"
+        ),
         verbose_name=_("Ticket Closed Manually Discord Notification"),
     )
 
     ticket_notify_auto = models.BooleanField(
         default=True,
-        help_text=_("Whether to send ticket resolution notifications when automatically closed to discord"),
+        help_text=_(
+            "Whether to send ticket resolution notifications when automatically closed to discord"
+        ),
         verbose_name=_("Ticket Closed Automatically Discord Notification"),
     )
 
@@ -812,7 +861,9 @@ class BigBrotherConfig(SingletonModel):
         null=True,
         blank=False,
         default=0,
-        help_text=_("Input the role ID you want pinged when people need to investigate"),
+        help_text=_(
+            "Input the role ID you want pinged when people need to investigate"
+        ),
         verbose_name=_("Pinged Role ID #1"),
     )
 
@@ -821,7 +872,9 @@ class BigBrotherConfig(SingletonModel):
         null=True,
         blank=False,
         default=0,
-        help_text=_("Input the 2nd role ID you want pinged when people need to investigate"),
+        help_text=_(
+            "Input the 2nd role ID you want pinged when people need to investigate"
+        ),
         verbose_name=_("Pinged Role ID #2"),
     )
 
@@ -973,39 +1026,51 @@ class BigBrotherConfig(SingletonModel):
 
     consider_npc_stations_hostile = models.BooleanField(
         default=False,
-        help_text=_("Consider assets in any non-player owned (NPC) station as hostile?"),
+        help_text=_(
+            "Consider assets in any non-player owned (NPC) station as hostile?"
+        ),
         verbose_name=_("Consider NPC Stations as Hostile"),
     )
 
     excluded_systems = models.TextField(
         blank=True,
         null=True,
-        help_text=_("List of system IDs excluded from hostile checks, separated by ','"),
+        help_text=_(
+            "List of system IDs excluded from hostile checks, separated by ','"
+        ),
         verbose_name=_("Excluded Systems"),
     )
 
     excluded_stations = models.TextField(
         blank=True,
         null=True,
-        help_text=_("List of station/structure IDs excluded from hostile checks, separated by ','"),
+        help_text=_(
+            "List of station/structure IDs excluded from hostile checks, separated by ','"
+        ),
         verbose_name=_("Excluded Stations"),
     )
 
     exclude_high_sec = models.BooleanField(
         default=False,
-        help_text=_("If enabled, activities in High-Sec (security 0.5 to 1.0) will be ignored."),
+        help_text=_(
+            "If enabled, activities in High-Sec (security 0.5 to 1.0) will be ignored."
+        ),
         verbose_name=_("Exclude High-Sec"),
     )
 
     exclude_low_sec = models.BooleanField(
         default=False,
-        help_text=_("If enabled, activities in Low-Sec (security 0.01 to 0.49) will be ignored."),
+        help_text=_(
+            "If enabled, activities in Low-Sec (security 0.01 to 0.49) will be ignored."
+        ),
         verbose_name=_("Exclude Low-Sec"),
     )
 
     hostile_assets_ships_only = models.BooleanField(
         default=False,
-        help_text=_("Only consider ship assets when checking and rendering hostile asset locations?"),
+        help_text=_(
+            "Only consider ship assets when checking and rendering hostile asset locations?"
+        ),
         verbose_name=_("Only Consider Ships as Hostile Assets"),
     )
 
@@ -1025,7 +1090,10 @@ class BigBrotherConfig(SingletonModel):
     )
 
     alliance_blacklist_url = models.URLField(
-        blank=True, null=True, help_text=_("URL for the Alliance Blacklist"), verbose_name=_("Alliance Blacklist URL")
+        blank=True,
+        null=True,
+        help_text=_("URL for the Alliance Blacklist"),
+        verbose_name=_("Alliance Blacklist URL"),
     )
 
     external_blacklist_url = models.URLField(
@@ -1047,7 +1115,9 @@ class BigBrotherConfig(SingletonModel):
     member_corporations = models.TextField(
         blank=True,
         null=True,
-        help_text=_("List of corporation IDs to be considered members, separated by ','"),
+        help_text=_(
+            "List of corporation IDs to be considered members, separated by ','"
+        ),
         verbose_name=_("Member Corporations"),
     )
 
@@ -1235,24 +1305,38 @@ class BigBrotherConfig(SingletonModel):
     manual_main_corporation_id = models.BigIntegerField(
         default=0,
         blank=True,
-        help_text=_("Corporation ID to use as the primary/main corporation when manual override is enabled."),
+        help_text=_(
+            "Corporation ID to use as the primary/main corporation when manual override is enabled."
+        ),
         verbose_name=_("Manual Main Corporation ID"),
     )
 
     main_corporation_id = models.BigIntegerField(
-        default=0, editable=False, help_text=_("Your Corporation Id"), verbose_name=_("Main Corporation ID")
+        default=0,
+        editable=False,
+        help_text=_("Your Corporation Id"),
+        verbose_name=_("Main Corporation ID"),
     )
 
     main_corporation = models.TextField(
-        default=0, editable=False, help_text=_("Your Corporation"), verbose_name=_("Main Corporation")
+        default=0,
+        editable=False,
+        help_text=_("Your Corporation"),
+        verbose_name=_("Main Corporation"),
     )
 
     main_alliance_id = models.PositiveIntegerField(
-        default=0, editable=False, help_text=_("Your Alliance ID"), verbose_name=_("Main Alliance ID")
+        default=0,
+        editable=False,
+        help_text=_("Your Alliance ID"),
+        verbose_name=_("Main Alliance ID"),
     )
 
     main_alliance = models.TextField(
-        default="", editable=False, help_text=_("Your Alliance"), verbose_name=_("Main Alliance")
+        default="",
+        editable=False,
+        help_text=_("Your Alliance"),
+        verbose_name=_("Main Alliance"),
     )
 
     is_active = models.BooleanField(
@@ -1291,7 +1375,9 @@ class BigBrotherConfig(SingletonModel):
 
     loa_max_logoff_days = models.IntegerField(
         default=30,
-        help_text=_("How many days can a user not login w/o a loa request before notifications"),
+        help_text=_(
+            "How many days can a user not login w/o a loa request before notifications"
+        ),
         verbose_name=_("Max Days before needing LOA"),
     )
 
@@ -1349,9 +1435,16 @@ class BigBrotherConfig(SingletonModel):
 
     def clean(self):
         super().clean()
-        if self.manual_main_corporation_override and not self.manual_main_corporation_id:
+        if (
+            self.manual_main_corporation_override
+            and not self.manual_main_corporation_id
+        ):
             raise ValidationError(
-                {"manual_main_corporation_id": _("Set a corporation ID when manual override is enabled.")}
+                {
+                    "manual_main_corporation_id": _(
+                        "Set a corporation ID when manual override is enabled."
+                    )
+                }
             )
 
     def _apply_manual_main_corporation_override(self):
@@ -1382,7 +1475,11 @@ class BigBrotherConfig(SingletonModel):
         if self.manual_main_corporation_override:
             if not self.manual_main_corporation_id:
                 raise ValidationError(
-                    {"manual_main_corporation_id": _("Set a corporation ID when manual override is enabled.")}
+                    {
+                        "manual_main_corporation_id": _(
+                            "Set a corporation ID when manual override is enabled."
+                        )
+                    }
                 )
             self._apply_manual_main_corporation_override()
             if kwargs.get("update_fields") is not None:
@@ -1409,8 +1506,12 @@ class Corporation_names(models.Model):
 
     id = models.BigIntegerField(primary_key=True, help_text="EVE Corporation ID")
     name = models.CharField(max_length=255, help_text="Resolved corporation name")
-    created = models.DateTimeField(auto_now_add=True, help_text="When this record was first saved")
-    updated = models.DateTimeField(auto_now=True, help_text="When this record was last refreshed")
+    created = models.DateTimeField(
+        auto_now_add=True, help_text="When this record was first saved"
+    )
+    updated = models.DateTimeField(
+        auto_now=True, help_text="When this record was last refreshed"
+    )
 
     class Meta:
         verbose_name = "Corporation Name"
@@ -1425,10 +1526,16 @@ class Alliance_names(models.Model):
     Permanent store of alliance/faction names resolved via ESI.
     """
 
-    id = models.BigIntegerField(primary_key=True, help_text="EVE Alliance or Faction ID")
+    id = models.BigIntegerField(
+        primary_key=True, help_text="EVE Alliance or Faction ID"
+    )
     name = models.CharField(max_length=255, help_text="Resolved alliance/faction name")
-    created = models.DateTimeField(auto_now_add=True, help_text="When this record was first saved")
-    updated = models.DateTimeField(auto_now=True, help_text="When this record was last refreshed")
+    created = models.DateTimeField(
+        auto_now_add=True, help_text="When this record was first saved"
+    )
+    updated = models.DateTimeField(
+        auto_now=True, help_text="When this record was last refreshed"
+    )
 
     class Meta:
         verbose_name = "Alliance Name"
@@ -1445,8 +1552,12 @@ class Character_names(models.Model):
 
     id = models.BigIntegerField(primary_key=True, help_text="EVE Character ID")
     name = models.CharField(max_length=255, help_text="Resolved Character name")
-    created = models.DateTimeField(auto_now_add=True, help_text="When this record was first saved")
-    updated = models.DateTimeField(auto_now=True, help_text="When this record was last refreshed")
+    created = models.DateTimeField(
+        auto_now_add=True, help_text="When this record was first saved"
+    )
+    updated = models.DateTimeField(
+        auto_now=True, help_text="When this record was last refreshed"
+    )
 
     class Meta:
         verbose_name = "Character Name"
@@ -1463,9 +1574,15 @@ class id_types(models.Model):
 
     id = models.BigIntegerField(primary_key=True, help_text="EVE ID")
     name = models.CharField(max_length=255, help_text="Resolved ID Type")
-    created = models.DateTimeField(auto_now_add=True, help_text="When this record was first saved")
-    updated = models.DateTimeField(auto_now=True, help_text="When this record was last refreshed")
-    last_accessed = models.DateTimeField(default=timezone.now, help_text="When this record was last looked up")
+    created = models.DateTimeField(
+        auto_now_add=True, help_text="When this record was first saved"
+    )
+    updated = models.DateTimeField(
+        auto_now=True, help_text="When this record was last refreshed"
+    )
+    last_accessed = models.DateTimeField(
+        default=timezone.now, help_text="When this record was last looked up"
+    )
 
     class Meta:
         verbose_name = "ID Type"
@@ -1480,8 +1597,12 @@ class ProcessedMail(models.Model):
     Tracks MailMessage IDs that already have generated notes.
     """
 
-    mail_id = models.BigIntegerField(primary_key=True, help_text="The MailMessage.id_key that has been processed")
-    processed_at = models.DateTimeField(auto_now_add=True, help_text="When this mail was first processed")
+    mail_id = models.BigIntegerField(
+        primary_key=True, help_text="The MailMessage.id_key that has been processed"
+    )
+    processed_at = models.DateTimeField(
+        auto_now_add=True, help_text="When this mail was first processed"
+    )
 
     class Meta:
         verbose_name = "Processed Mail"
@@ -1496,11 +1617,21 @@ class SusMailNote(models.Model):
     Stores the summary line (flags) generated for each hostile mail.
     """
 
-    mail = models.OneToOneField(ProcessedMail, on_delete=models.CASCADE, help_text="The mail this note refers to")
-    user_id = models.BigIntegerField(help_text="The AllianceAuth user ID who owns these characters")
+    mail = models.OneToOneField(
+        ProcessedMail,
+        on_delete=models.CASCADE,
+        help_text="The mail this note refers to",
+    )
+    user_id = models.BigIntegerField(
+        help_text="The AllianceAuth user ID who owns these characters"
+    )
     note = models.TextField(help_text="The summary string of flags for this mail")
-    created = models.DateTimeField(auto_now_add=True, help_text="When this note was created")
-    updated = models.DateTimeField(auto_now=True, help_text="When this note was last updated")
+    created = models.DateTimeField(
+        auto_now_add=True, help_text="When this note was created"
+    )
+    updated = models.DateTimeField(
+        auto_now=True, help_text="When this note was last updated"
+    )
 
     class Meta:
         verbose_name = "Suspicious Mail Note"
@@ -1518,7 +1649,9 @@ class ProcessedContract(models.Model):
     contract_id = models.BigIntegerField(
         primary_key=True, help_text="The Contract.contract_id that has been processed"
     )
-    processed_at = models.DateTimeField(auto_now_add=True, help_text="When this contract was first processed")
+    processed_at = models.DateTimeField(
+        auto_now_add=True, help_text="When this contract was first processed"
+    )
 
     class Meta:
         verbose_name = "Processed Contract"
@@ -1534,12 +1667,20 @@ class SusContractNote(models.Model):
     """
 
     contract = models.OneToOneField(
-        ProcessedContract, on_delete=models.CASCADE, help_text="The contract this note refers to"
+        ProcessedContract,
+        on_delete=models.CASCADE,
+        help_text="The contract this note refers to",
     )
-    user_id = models.BigIntegerField(help_text="The AllianceAuth user ID who owns these characters")
+    user_id = models.BigIntegerField(
+        help_text="The AllianceAuth user ID who owns these characters"
+    )
     note = models.TextField(help_text="The summary string of flags for this contract")
-    created = models.DateTimeField(auto_now_add=True, help_text="When this note was created")
-    updated = models.DateTimeField(auto_now=True, help_text="When this note was last updated")
+    created = models.DateTimeField(
+        auto_now_add=True, help_text="When this note was created"
+    )
+    updated = models.DateTimeField(
+        auto_now=True, help_text="When this note was last updated"
+    )
 
     class Meta:
         verbose_name = "Suspicious Contract Note"
@@ -1555,9 +1696,12 @@ class ProcessedTransaction(models.Model):
     """
 
     entry_id = models.BigIntegerField(
-        primary_key=True, help_text="The WalletJournalEntry.entry_id that has been processed"
+        primary_key=True,
+        help_text="The WalletJournalEntry.entry_id that has been processed",
     )
-    processed_at = models.DateTimeField(auto_now_add=True, help_text="When this transaction was first processed")
+    processed_at = models.DateTimeField(
+        auto_now_add=True, help_text="When this transaction was first processed"
+    )
 
     class Meta:
         verbose_name = "Processed Transaction"
@@ -1573,12 +1717,22 @@ class SusTransactionNote(models.Model):
     """
 
     transaction = models.OneToOneField(
-        ProcessedTransaction, on_delete=models.CASCADE, help_text="The transaction this note refers to"
+        ProcessedTransaction,
+        on_delete=models.CASCADE,
+        help_text="The transaction this note refers to",
     )
-    user_id = models.BigIntegerField(help_text="The AllianceAuth user ID who owns these characters")
-    note = models.TextField(help_text="The summary string of flags for this transaction")
-    created = models.DateTimeField(auto_now_add=True, help_text="When this note was created")
-    updated = models.DateTimeField(auto_now=True, help_text="When this note was last updated")
+    user_id = models.BigIntegerField(
+        help_text="The AllianceAuth user ID who owns these characters"
+    )
+    note = models.TextField(
+        help_text="The summary string of flags for this transaction"
+    )
+    created = models.DateTimeField(
+        auto_now_add=True, help_text="When this note was created"
+    )
+    updated = models.DateTimeField(
+        auto_now=True, help_text="When this note was last updated"
+    )
 
     class Meta:
         verbose_name = "Suspicious Transaction Note"
@@ -1629,10 +1783,14 @@ class RecurringStatsConfig(SingletonModel):
     - Holds the previous snapshot so we can calculate deltas
     """
 
-    enabled = models.BooleanField(default=True, help_text="Master toggle for recurring stats generation.")
+    enabled = models.BooleanField(
+        default=True, help_text="Master toggle for recurring stats generation."
+    )
 
     states = models.ManyToManyField(
-        State, blank=True, help_text="States to break out in the recurring stats (e.g. Member, Blue, Alumni)."
+        State,
+        blank=True,
+        help_text="States to break out in the recurring stats (e.g. Member, Blue, Alumni).",
     )
 
     # Toggles for which blocks are included
@@ -1644,27 +1802,44 @@ class RecurringStatsConfig(SingletonModel):
         help_text="Include Discord users totals and per-state breakdown (if Discord service is installed).",
     )
     include_mumble_users = models.BooleanField(
-        default=True, help_text="Include Mumble users totals and per-state breakdown (if Mumble service is installed)."
+        default=True,
+        help_text="Include Mumble users totals and per-state breakdown (if Mumble service is installed).",
     )
 
-    include_characters = models.BooleanField(default=True, help_text="Include total number of known characters.")
-    include_corporations = models.BooleanField(default=True, help_text="Include total number of known corporations.")
-    include_alliances = models.BooleanField(default=True, help_text="Include total number of known alliances.")
+    include_characters = models.BooleanField(
+        default=True, help_text="Include total number of known characters."
+    )
+    include_corporations = models.BooleanField(
+        default=True, help_text="Include total number of known corporations."
+    )
+    include_alliances = models.BooleanField(
+        default=True, help_text="Include total number of known alliances."
+    )
 
-    include_tokens = models.BooleanField(default=True, help_text="Include total number of ESI tokens.")
-    include_unique_tokens = models.BooleanField(default=True, help_text="Include number of unique token owners.")
+    include_tokens = models.BooleanField(
+        default=True, help_text="Include total number of ESI tokens."
+    )
+    include_unique_tokens = models.BooleanField(
+        default=True, help_text="Include number of unique token owners."
+    )
 
     include_character_audits = models.BooleanField(
-        default=True, help_text="Include total number of Character Audits (from corptools)."
+        default=True,
+        help_text="Include total number of Character Audits (from corptools).",
     )
     include_corporation_audits = models.BooleanField(
-        default=True, help_text="Include total number of Corporation Audits (from corptools)."
+        default=True,
+        help_text="Include total number of Corporation Audits (from corptools).",
     )
 
     # Snapshot + timestamp for delta calculations
-    last_run_at = models.DateTimeField(blank=True, null=True, help_text="When recurring stats were last posted.")
+    last_run_at = models.DateTimeField(
+        blank=True, null=True, help_text="When recurring stats were last posted."
+    )
     last_snapshot = models.JSONField(
-        default=dict, blank=True, help_text="Previous stats snapshot for delta calculations."
+        default=dict,
+        blank=True,
+        help_text="Previous stats snapshot for delta calculations.",
     )
 
     def __str__(self) -> str:
@@ -1688,7 +1863,9 @@ class PapCompliance(models.Model):
         related_name="pap_compliances",
         help_text="The UserProfile this PAP compliance record belongs to",
     )
-    pap_compliant = models.IntegerField(default=0, help_text="Integer flag or score indicating PAP compliance status")
+    pap_compliant = models.IntegerField(
+        default=0, help_text="Integer flag or score indicating PAP compliance status"
+    )
 
     class Meta:
         verbose_name = "PAP Compliance Score"
@@ -1703,12 +1880,12 @@ class TicketToolConfig(SingletonModel):
     - compliance_filter_id: optional charlink filter id to scope the population.
     - ticket_counter: sequential number used for naming ticket channels.
     - *_check_enabled, *_check, *_check_frequency, *_reason, *_reminder:
-      toggles and thresholds for the corp token compliance, PAP compliance,
-      AFK monitoring, and Discord link checks.
+        toggles and thresholds for the corp token compliance, PAP compliance,
+        AFK monitoring, and Discord link checks.
     - Max_Afk_Days / afk_check: trailing max and post-ticket grace period.
     - discord_check fields: mirror the AFK logic but for Discord link status.
     - Category_ID / role_id: Discord metadata controlling which
-      category hosts the ticket, which roles gain access, and which role is pinged.
+        category hosts the ticket, which roles gain access, and which role is pinged.
     - excluded_users: AllianceAuth users that should never receive automated tickets.
     """
 
@@ -1722,15 +1899,19 @@ class TicketToolConfig(SingletonModel):
     )
 
     starting_pap_compliance = models.PositiveIntegerField(
-        default=1, help_text="How many buffer months does a new user get? (starter value of the above)"
+        default=1,
+        help_text="How many buffer months does a new user get? (starter value of the above)",
     )
 
     char_removed_enabled = models.BooleanField(
-        default=False, editable=True, help_text="Do you want to check for removed characters?"
+        default=False,
+        editable=True,
+        help_text="Do you want to check for removed characters?",
     )
 
     char_removed_include_user = models.BooleanField(
-        default=True, help_text=_("Include the user in the ticket (Discord channel/thread).")
+        default=True,
+        help_text=_("Include the user in the ticket (Discord channel/thread)."),
     )
 
     char_removed_reason = models.TextField(
@@ -1745,7 +1926,8 @@ class TicketToolConfig(SingletonModel):
     )
 
     awox_kill_include_user = models.BooleanField(
-        default=True, help_text=_("Include the user in the ticket (Discord channel/thread).")
+        default=True,
+        help_text=_("Include the user in the ticket (Discord channel/thread)."),
     )
 
     awox_kill_reason = models.TextField(
@@ -1764,7 +1946,8 @@ class TicketToolConfig(SingletonModel):
     )
 
     corp_check_include_user = models.BooleanField(
-        default=True, help_text=_("Include the user in the ticket (Discord channel/thread).")
+        default=True,
+        help_text=_("Include the user in the ticket (Discord channel/thread)."),
     )
 
     compliance_filter_id = models.BigIntegerField(
@@ -1772,7 +1955,8 @@ class TicketToolConfig(SingletonModel):
     )
 
     corp_check = models.PositiveIntegerField(
-        default=30, help_text="How many days can a user be non compliant on Corp Auth before he should get kicked?"
+        default=30,
+        help_text="How many days can a user be non compliant on Corp Auth before he should get kicked?",
     )
 
     corp_check_frequency = models.PositiveIntegerField(
@@ -1802,11 +1986,13 @@ class TicketToolConfig(SingletonModel):
     )
 
     paps_check_include_user = models.BooleanField(
-        default=True, help_text=_("Include the user in the ticket (Discord channel/thread).")
+        default=True,
+        help_text=_("Include the user in the ticket (Discord channel/thread)."),
     )
 
     paps_check = models.PositiveIntegerField(
-        default=45, help_text="How many days can a user not meet the PAP requirements before he should get kicked?"
+        default=45,
+        help_text="How many days can a user not meet the PAP requirements before he should get kicked?",
     )
 
     paps_check_frequency = models.PositiveIntegerField(
@@ -1836,11 +2022,13 @@ class TicketToolConfig(SingletonModel):
     )
 
     afk_check_include_user = models.BooleanField(
-        default=True, help_text=_("Include the user in the ticket (Discord channel/thread).")
+        default=True,
+        help_text=_("Include the user in the ticket (Discord channel/thread)."),
     )
 
     Max_Afk_Days = models.PositiveIntegerField(
-        default=7, help_text="How many days can a user not login to game before he should get a ticket?"
+        default=7,
+        help_text="How many days can a user not login to game before he should get a ticket?",
     )
 
     afk_check = models.PositiveIntegerField(
@@ -1869,15 +2057,19 @@ class TicketToolConfig(SingletonModel):
     discord_check_enabled = models.BooleanField(
         default=False,
         editable=True,
-        help_text=_("If enabled, checks if the user has a Discord account linked to their Alliance Auth profile."),
+        help_text=_(
+            "If enabled, checks if the user has a Discord account linked to their Alliance Auth profile."
+        ),
     )
 
     discord_check_include_user = models.BooleanField(
-        default=True, help_text=_("Include the user in the ticket (Discord channel/thread).")
+        default=True,
+        help_text=_("Include the user in the ticket (Discord channel/thread)."),
     )
 
     discord_check = models.PositiveIntegerField(
-        default=2, help_text="How many days can a user not be on corp discord before he should get kicked?"
+        default=2,
+        help_text="How many days can a user not be on corp discord before he should get kicked?",
     )
 
     discord_check_frequency = models.PositiveIntegerField(
@@ -1899,7 +2091,10 @@ class TicketToolConfig(SingletonModel):
     )
 
     Category_ID = models.PositiveBigIntegerField(
-        default=0, null=True, blank=True, help_text="Category ID to create the tickets in"
+        default=0,
+        null=True,
+        blank=True,
+        help_text="Category ID to create the tickets in",
     )
 
     Forum_Channel_ID = models.PositiveBigIntegerField(
@@ -1911,7 +2106,8 @@ class TicketToolConfig(SingletonModel):
     )
 
     role_id = models.TextField(
-        blank=True, help_text="Comma-separated list of role IDs to add to ticket channels/threads"
+        blank=True,
+        help_text="Comma-separated list of role IDs to add to ticket channels/threads",
     )
 
     excluded_users = models.ManyToManyField(
@@ -1946,7 +2142,9 @@ class TicketToolConfig(SingletonModel):
         max_length=20,
         choices=TICKET_TYPE_CHOICES,
         default=TICKET_TYPE_PRIVATE_CHANNEL,
-        help_text=_("Choose how compliance tickets are created. 'Private Threads' requires aadiscordbot."),
+        help_text=_(
+            "Choose how compliance tickets are created. 'Private Threads' requires aadiscordbot."
+        ),
         verbose_name=_("Ticket Type"),
     )
 
@@ -1958,11 +2156,13 @@ class TicketToolConfig(SingletonModel):
     )
 
     discord_inactivity_include_user = models.BooleanField(
-        default=True, help_text=_("Include the user in the ticket (Discord channel/thread).")
+        default=True,
+        help_text=_("Include the user in the ticket (Discord channel/thread)."),
     )
 
     discord_inactivity_days = models.PositiveIntegerField(
-        default=30, help_text=_("Number of days of Discord inactivity before a ticket is created.")
+        default=30,
+        help_text=_("Number of days of Discord inactivity before a ticket is created."),
     )
 
     discord_inactivity_reason = models.TextField(
@@ -2098,9 +2298,13 @@ class LeaveRequest(models.Model):
         ("denied", "Denied"),
     ]
 
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="leave_requests")
+    user = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="leave_requests"
+    )
     main_character = models.CharField(
-        max_length=100, blank=True, help_text="The user's primary character when they made the request"
+        max_length=100,
+        blank=True,
+        help_text="The user's primary character when they made the request",
     )
     start_date = models.DateField()
     end_date = models.DateField()
@@ -2114,7 +2318,9 @@ class LeaveRequest(models.Model):
         ordering = ["-created_at"]
 
     def __str__(self):
-        return f"{self.user.username}: {self.start_date} → {self.end_date} ({self.status})"
+        return (
+            f"{self.user.username}: {self.start_date} → {self.end_date} ({self.status})"
+        )
 
 
 class CorporationInfoCache(models.Model):
@@ -2223,7 +2429,9 @@ class CharacterAccountState(models.Model):
 
 
 class ComplianceThread(models.Model):
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="compliance_threads")
+    user = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="compliance_threads"
+    )
     reason = models.CharField(max_length=20)
     thread_id = models.BigIntegerField()
 
@@ -2271,10 +2479,13 @@ class ComplianceTicket(models.Model):
     is_resolved = models.BooleanField(default=False)
     details = models.TextField(blank=True, null=True)
     is_exception = models.BooleanField(
-        default=False, help_text="Ticket is marked as an exception and won't receive reminders or be recreated"
+        default=False,
+        help_text="Ticket is marked as an exception and won't receive reminders or be recreated",
     )
     exception_reason = models.TextField(
-        blank=True, null=True, help_text="Reason why this ticket was marked as an exception"
+        blank=True,
+        null=True,
+        help_text="Reason why this ticket was marked as an exception",
     )
 
     class Meta:
@@ -2287,7 +2498,9 @@ class ComplianceTicket(models.Model):
 
 
 class ComplianceTicketComment(models.Model):
-    ticket = models.ForeignKey(ComplianceTicket, on_delete=models.CASCADE, related_name="comments")
+    ticket = models.ForeignKey(
+        ComplianceTicket, on_delete=models.CASCADE, related_name="comments"
+    )
     user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
     comment = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)

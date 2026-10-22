@@ -5,9 +5,6 @@ The routines below are used both for the HTML renderings and faux-alerts
 that can be sent when a user has assets in systems owned by enemies.
 """
 
-# Standard Library
-from typing import Dict, List, Optional
-
 # Django
 from django.utils import timezone
 from django.utils.html import format_html
@@ -23,6 +20,7 @@ from ..app_settings import (
     is_ship,
     resolve_location_name,
     resolve_location_system_id,
+    resolve_solar_system_id_by_name,
 )
 from ..models import BigBrotherConfig
 
@@ -42,13 +40,60 @@ except ImportError:
     EveLocation = None
 
 
-def _parse_id_list(value: Optional[str]) -> set[int]:
+def check_asset_audits_complete(user_id: int) -> bool:
+    """
+    Check if all linked character audits for a user have valid tokens
+    and have completed at least one asset synchronization.
+    Returns False if any character audit is incomplete, in-flight, or has broken tokens.
+    """
+    if not corptools_active() or CharacterAudit is None:
+        return True
+
+    audits = CharacterAudit.objects.filter(
+        character__character_ownership__user_id=user_id
+    ).select_related("character")
+    if not audits.exists():
+        return True
+
+    # Alliance Auth
+    from esi.errors import TokenExpiredError, TokenInvalidError
+    from esi.models import Token
+
+    req_scopes = ["esi-assets.read_assets.v1"]
+
+    for audit in audits:
+        char_id = audit.character.character_id
+        token = Token.get_token(char_id, req_scopes)
+        if not token:
+            return False
+        try:
+            if not token.valid_access_token():
+                return False
+        except (TokenExpiredError, TokenInvalidError, Exception):
+            return False
+
+        has_timestamp = False
+        if hasattr(audit, "last_update_assets") and audit.last_update_assets:
+            has_timestamp = True
+        elif hasattr(audit, "update_timestamps") and isinstance(
+            audit.update_timestamps, dict
+        ):
+            if audit.update_timestamps.get("assets"):
+                has_timestamp = True
+
+        if not has_timestamp:
+            return False
+
+    return True
+
+
+def _parse_id_list(value: str | None) -> set[int]:
     if not value:
         return set()
     return {int(x) for x in value.split(",") if x.strip().isdigit()}
 
 
-def get_asset_locations(user_id: int) -> Dict[int, dict]:
+def get_asset_locations(user_id: int) -> dict[int, dict]:
     """
     Return a dict mapping system IDs to a dict containing their name and a list of locations
     (stations/structures) where any of the given user's characters has one or more assets.
@@ -59,7 +104,9 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
         return {}
 
     # Optimized fetching of all assets for all user characters in one go
-    audits = CharacterAudit.objects.filter(character__character_ownership__user_id=user_id).select_related("character")
+    audits = CharacterAudit.objects.filter(
+        character__character_ownership__user_id=user_id
+    ).select_related("character")
     audit_ids = [a.pk for a in audits]
     char_map = {a.pk: a.character for a in audits}
 
@@ -69,10 +116,11 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
     assets = (
         CharacterAsset.objects.filter(character_id__in=audit_ids)
         .select_related("location_name__system", "type_name")
-        .exclude(location_flag__iexact="solar_system")[:5000]  # Limit to prevent memory explosion
+        .exclude(location_flag__iexact="solar_system")
+        .order_by("pk")
     )
 
-    system_map: Dict[int, dict] = {}
+    system_map: dict[int, dict] = {}
     _loc_sys_cache = {}
     _loc_name_cache = {}
     processed_combos = set()
@@ -100,7 +148,9 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
             pass
 
         asset_type_name = (
-            getattr(asset.type_name, "name", None) or getattr(asset.type_name, "type_name", None) or str(asset_type_id)
+            getattr(asset.type_name, "name", None)
+            or getattr(asset.type_name, "type_name", None)
+            or str(asset_type_id)
         )
 
         char = char_map.get(asset.character_id)
@@ -114,7 +164,9 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
             continue
 
         if len(processed_combos) >= max_combos:
-            logger.warning(f"[hostile_assets] User {user_id} hit {max_combos} asset combo limit, stopping processing")
+            logger.warning(
+                f"[hostile_assets] User {user_id} hit {max_combos} asset combo limit, stopping processing"
+            )
             break
 
         processed_combos.add(combo)
@@ -143,6 +195,15 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
                     sys_name = resolve_location_name(key)
                     _loc_name_cache[key] = sys_name
 
+        if not key and loc and getattr(loc, "location_name", None):
+            parts = loc.location_name.split(" - ", 1)
+            if len(parts) >= 2:
+                key = resolve_solar_system_id_by_name(parts[0])
+                if key:
+                    _loc_sys_cache[location_id] = key
+                    sys_name = parts[0]
+                    _loc_name_cache[key] = sys_name
+
         if not key:
             continue
 
@@ -159,7 +220,9 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
                 if loc_key in _loc_name_cache:
                     loc_name = _loc_name_cache[loc_key]
                 else:
-                    loc_name = resolve_location_name(loc_key) or f"Unknown Location {loc_key}"
+                    loc_name = (
+                        resolve_location_name(loc_key) or f"Unknown Location {loc_key}"
+                    )
                     _loc_name_cache[loc_key] = loc_name
 
             system_map[key]["locations"][loc_key] = {
@@ -186,8 +249,11 @@ def get_asset_locations(user_id: int) -> Dict[int, dict]:
 
 
 def get_hostile_asset_locations(
-    user_id: int, cfg: BigBrotherConfig = None, safe_entities: set = None, entity_info_cache: dict = None
-) -> Dict[str, dict]:
+    user_id: int,
+    cfg: BigBrotherConfig = None,
+    safe_entities: set = None,
+    entity_info_cache: dict = None,
+) -> dict[str, dict]:
     """
     Returns a mapping of system display name -> structured hostile data
     for systems where the user's characters have assets in space and the
@@ -197,7 +263,7 @@ def get_hostile_asset_locations(
     if not systems:
         return {}
 
-    hostile_map: Dict[str, dict] = {}
+    hostile_map: dict[str, dict] = {}
     if safe_entities is None:
         from ..app_settings import get_safe_entities
 
@@ -213,8 +279,16 @@ def get_hostile_asset_locations(
 
         # We need the system owner info for the summary
         owner_info = get_system_owner({"id": system_id, "name": display_name})
-        oname = owner_info.get("owner_name", "Unresolvable") if owner_info else "Unresolvable"
-        rname = owner_info.get("region_name", "Unknown Region") if owner_info else "Unknown Region"
+        oname = (
+            owner_info.get("owner_name", "Unresolvable")
+            if owner_info
+            else "Unresolvable"
+        )
+        rname = (
+            owner_info.get("region_name", "Unknown Region")
+            if owner_info
+            else "Unknown Region"
+        )
 
         system_has_hostile = False
         # structured data: list of records
@@ -258,7 +332,9 @@ def get_hostile_asset_locations(
                         is_hostile_asset = True
 
                     if is_ship(type_id):
-                        char_ships_at_loc.setdefault(char_name, set()).add(asset["type_name"])
+                        char_ships_at_loc.setdefault(char_name, set()).add(
+                            asset["type_name"]
+                        )
                         if ships_only:
                             is_hostile_asset = True
                     else:
@@ -271,10 +347,20 @@ def get_hostile_asset_locations(
 
             if location_has_hostile:
                 for cname, ships in char_ships_at_loc.items():
-                    records.append({"char_name": cname, "location_name": loc_name, "ships": sorted(list(ships))})
+                    records.append(
+                        {
+                            "char_name": cname,
+                            "location_name": loc_name,
+                            "ships": sorted(list(ships)),
+                        }
+                    )
 
         if system_has_hostile:
-            hostile_map[display_name] = {"owner": oname, "region": rname, "records": records}
+            hostile_map[display_name] = {
+                "owner": oname,
+                "region": rname,
+                "records": records,
+            }
             logger.info(f"Hostile asset system: {display_name} owned by {oname}")
 
     # CRITICAL FIX: Clean up memoization cache
@@ -287,7 +373,7 @@ def get_hostile_asset_locations(
     return hostile_map
 
 
-def render_assets(user_id: int) -> Optional[str]:
+def render_assets(user_id: int) -> str | None:
     """
     Returns an HTML table listing each system where the user's characters have assets,
     the system's sovereign owner, and highlights in red any asset considered hostile.
@@ -297,7 +383,7 @@ def render_assets(user_id: int) -> Optional[str]:
         if not systems:
             return None
 
-        rows: List[Dict] = []
+        rows: list[dict] = []
         from ..app_settings import get_safe_entities
 
         safe_entities = get_safe_entities()
@@ -311,8 +397,16 @@ def render_assets(user_id: int) -> Optional[str]:
 
             # Base system owner info for the table
             owner_info = get_system_owner({"id": system_id, "name": display_name})
-            oname = owner_info.get("owner_name", "Unresolvable") if owner_info else "Unresolvable"
-            region_name = owner_info.get("region_name", "Unknown Region") if owner_info else "Unknown Region"
+            oname = (
+                owner_info.get("owner_name", "Unresolvable")
+                if owner_info
+                else "Unresolvable"
+            )
+            region_name = (
+                owner_info.get("region_name", "Unknown Region")
+                if owner_info
+                else "Unknown Region"
+            )
 
             # Iterate locations inside system
             for loc_id, loc_data in data.get("locations", {}).items():
@@ -327,7 +421,11 @@ def render_assets(user_id: int) -> Optional[str]:
                     type_id = asset["type_id"]
 
                     if char_name not in char_assets:
-                        char_assets[char_name] = {"ships": [], "is_hostile": False, "char_id": char_id}
+                        char_assets[char_name] = {
+                            "ships": [],
+                            "is_hostile": False,
+                            "char_id": char_id,
+                        }
 
                     # Memoize check results for character+location (ignoring type for base check)
                     memo_key = (char_id, loc_id, system_id)
@@ -356,7 +454,9 @@ def render_assets(user_id: int) -> Optional[str]:
                                 char_assets[char_name]["is_hostile"] = True
 
                 for char_name, cdata in char_assets.items():
-                    ship_str = ", ".join(sorted(cdata["ships"])) if cdata["ships"] else ""
+                    ship_str = (
+                        ", ".join(sorted(cdata["ships"])) if cdata["ships"] else ""
+                    )
                     rows.append(
                         {
                             "system": display_name,
@@ -373,7 +473,9 @@ def render_assets(user_id: int) -> Optional[str]:
             return '<table class="table stats"><tbody><tr><td class="text-center">No hostile assets found.</td></tr></tbody></table>'
 
         # Sort rows: hostile first, then by system, location, character
-        rows.sort(key=lambda x: (not x["hostile"], x["system"], x["location"], x["character"]))
+        rows.sort(
+            key=lambda x: (not x["hostile"], x["system"], x["location"], x["character"])
+        )
 
         html_output = '<table class="table table-striped table-hover stats">'
         html_output += (

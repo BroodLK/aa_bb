@@ -18,9 +18,15 @@ class TestTasksRecurringStats(TestCase):
     @classmethod
     def setUpTestData(cls):
         # Create states
-        cls.state_member, _ = State.objects.get_or_create(name="Member", defaults={"priority": 10})
-        cls.state_guest, _ = State.objects.get_or_create(name="Guest", defaults={"priority": 5})
-        cls.state_alumni, _ = State.objects.get_or_create(name="Alumni", defaults={"priority": 3})
+        cls.state_member, _ = State.objects.get_or_create(
+            name="Member", defaults={"priority": 10}
+        )
+        cls.state_guest, _ = State.objects.get_or_create(
+            name="Guest", defaults={"priority": 5}
+        )
+        cls.state_alumni, _ = State.objects.get_or_create(
+            name="Alumni", defaults={"priority": 3}
+        )
 
         # Create users and profiles
         cls.user_member = User.objects.create_user(username="member_user")
@@ -36,7 +42,9 @@ class TestTasksRecurringStats(TestCase):
         )
         cls.profile_member.main_character = cls.char_member
         cls.profile_member.save()
-        UserProfile.objects.filter(pk=cls.profile_member.pk).update(state=cls.state_member)
+        UserProfile.objects.filter(pk=cls.profile_member.pk).update(
+            state=cls.state_member
+        )
 
         cls.user_guest = User.objects.create_user(username="guest_user")
         cls.profile_guest = cls.user_guest.profile
@@ -51,7 +59,9 @@ class TestTasksRecurringStats(TestCase):
         )
         cls.profile_guest.main_character = cls.char_guest
         cls.profile_guest.save()
-        UserProfile.objects.filter(pk=cls.profile_guest.pk).update(state=cls.state_guest)
+        UserProfile.objects.filter(pk=cls.profile_guest.pk).update(
+            state=cls.state_guest
+        )
 
         # Setup configs
         cls.bb_config = BigBrotherConfig.get_solo()

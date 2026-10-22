@@ -14,8 +14,10 @@ class AdminLogContextMiddleware:
         if user is not None and not getattr(user, "is_authenticated", False):
             user = None
 
-        forwarded = request.META.get("HTTP_X_FORWARDED_FOR", "")
-        ip_addr = (forwarded.split(",")[0].strip() if forwarded else "") or request.META.get("REMOTE_ADDR", "")
+        forwarded = request.headers.get("x-forwarded-for", "")
+        ip_addr = (
+            forwarded.split(",")[0].strip() if forwarded else ""
+        ) or request.META.get("REMOTE_ADDR", "")
         meta = {
             "path": getattr(request, "path", ""),
             "method": getattr(request, "method", ""),
@@ -26,7 +28,7 @@ class AdminLogContextMiddleware:
             meta["actor_username"] = getattr(user, "get_username", lambda: None)()
             meta["actor_is_staff"] = getattr(user, "is_staff", False)
             meta["actor_is_superuser"] = getattr(user, "is_superuser", False)
-        user_agent = request.META.get("HTTP_USER_AGENT", "")
+        user_agent = request.headers.get("user-agent", "")
         if user_agent:
             meta["user_agent"] = user_agent[:512]
 

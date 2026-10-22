@@ -47,7 +47,7 @@ def _load_fallback_skill_ids():
 
     skills_json_file = os.path.join(BASE_DIR, "skills.json")
     try:
-        with open(skills_json_file, "r") as f:
+        with open(skills_json_file) as f:
             skills_by_cat = json.load(f)
     except Exception:
         logger.exception("Failed to load skills.json fallback list.")
@@ -85,7 +85,7 @@ def _get_alpha_skills():
     if _alpha_skills_cache is None:
         alpha_skills_file = os.path.join(BASE_DIR, "alpha_skills.json")
         try:
-            with open(alpha_skills_file, "r") as f:
+            with open(alpha_skills_file) as f:
                 _alpha_skills_cache = json.load(f)
         except Exception:
             logger.exception("Failed to load alpha_skills.json")
@@ -98,7 +98,7 @@ def _get_skills():
     if _skills_cache is None:
         skills_json_file = os.path.join(BASE_DIR, "skills.json")
         try:
-            with open(skills_json_file, "r") as f:
+            with open(skills_json_file) as f:
                 _skills_cache = json.load(f)
         except Exception:
             logger.exception("Failed to load skills.json")
@@ -106,7 +106,9 @@ def _get_skills():
     return _skills_cache
 
 
-def determine_character_state(user_id, save: bool = False, cfg: BigBrotherConfig = None):
+def determine_character_state(
+    user_id, save: bool = False, cfg: BigBrotherConfig = None
+):
     """
     Inspect every owned character's skill levels and infer Alpha/Omega status.
     """
@@ -125,7 +127,10 @@ def determine_character_state(user_id, save: bool = False, cfg: BigBrotherConfig
     all_char_ids_map = get_user_characters(user_id)  # iterates keys if dict
     char_ids = list(all_char_ids_map.keys())
 
-    char_db_records = {rec.char_id: rec for rec in CharacterAccountState.objects.filter(char_id__in=char_ids)}
+    char_db_records = {
+        rec.char_id: rec
+        for rec in CharacterAccountState.objects.filter(char_id__in=char_ids)
+    }
 
     result = {}
 
@@ -190,10 +195,13 @@ def determine_character_state(user_id, save: bool = False, cfg: BigBrotherConfig
             extra_skill_ids.add(int(db_record.skill_used))
 
     fallback_skill_ids = _load_fallback_skill_ids()
-    skill_ids_to_fetch = sorted(set(alpha_skill_ids) | extra_skill_ids | set(fallback_skill_ids))
+    skill_ids_to_fetch = sorted(
+        set(alpha_skill_ids) | extra_skill_ids | set(fallback_skill_ids)
+    )
 
     skill_rows = Skill.objects.filter(
-        character__character__character_id__in=chars_to_check, skill_id__in=skill_ids_to_fetch
+        character__character__character_id__in=chars_to_check,
+        skill_id__in=skill_ids_to_fetch,
     ).values(
         "character__character__character_id",
         "skill_id",
@@ -297,20 +305,20 @@ def determine_character_state(user_id, save: bool = False, cfg: BigBrotherConfig
 def render_character_states_html(user_id: int) -> str:
     """
     Returns an HTML snippet showing, for each of the user's characters:
-      - the current state (alpha/omega/unknown)
+        - the current state (alpha/omega/unknown)
     as a single table with columns Character | State
     """
     data = determine_character_state(user_id)
 
     html = """
     <table class="table table-striped table-hover stats">
-      <thead>
-        <tr>
-          <th>Character</th>
-          <th>State</th>
-        </tr>
-      </thead>
-      <tbody>
+        <thead>
+            <tr>
+                <th>Character</th>
+                <th>State</th>
+            </tr>
+        </thead>
+        <tbody>
     """
 
     for char_id, info in data.items():
@@ -324,7 +332,9 @@ def render_character_states_html(user_id: int) -> str:
         else:
             state_val_html = "Unknown"
 
-        html += format_html("<tr><td>{}</td><td>{}</td></tr>", char_name, state_val_html)
+        html += format_html(
+            "<tr><td>{}</td><td>{}</td></tr>", char_name, state_val_html
+        )
 
     html += "</tbody></table>"
     return format_html(html)

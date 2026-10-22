@@ -5,19 +5,19 @@ requires = [
 ]
 
 [project]
-name = "aa_bb"
+name = "aa-bb"
 description = "BigBrother"
 readme = "README.md"
 keywords = [
-    "allianceauth",
     "aa_bb",
+    "allianceauth",
 ]
 license = { file = "LICENSE" }
 authors = [
-    { name = "BioBrute", email = "broodlk@gmail.com"},
+    { name = "BioBrute", email = "broodlk@gmail.com" },
     { name = "Andrew Xadi", email = "andrewxadi@gmail.com" },
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 classifiers = [
     "Environment :: Web Environment",
     "Framework :: Django",
@@ -27,10 +27,10 @@ classifiers = [
     "Operating System :: OS Independent",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Internet :: WWW/HTTP",
     "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
 ]
@@ -38,11 +38,11 @@ dynamic = [
     "version",
 ]
 dependencies = [
-    "matplotlib>=3.7.2",
-    "allianceauth>=5",
+    "allianceauth>=5.5",
     "allianceauth-corptools>=3",
     "django-esi>=9",
-    "django-eveonline-sde >= 0.0.1b2",
+    "django-eveonline-sde>=0.0.1b2",
+    "matplotlib>=3.7.2",
 ]
 urls.Changelog = "https://github.com/BroodLK/aa_bb/blob/main/CHANGELOG.md"
 urls."Issue / Bug Reports" = "https://github.com/BroodLK/aa_bb/issues"
@@ -52,5 +52,5 @@ path = "aa_bb/__init__.py"
 
 [tool.hatch.build]
 include = [
-    "aa_bb/**"
+    "aa_bb/**",
 ]

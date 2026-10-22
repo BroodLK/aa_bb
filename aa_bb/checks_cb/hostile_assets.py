@@ -5,9 +5,6 @@ These helpers inspect corp audits to find the systems where corp assets
 live and highlight systems owned by alliances on the hostile list.
 """
 
-# Standard Library
-from typing import Dict, Optional
-
 # Django
 from django.utils.html import format_html
 
@@ -39,7 +36,7 @@ except ImportError:
     EveLocation = None
 
 
-def get_asset_locations(corp_id: int) -> Dict[int, dict]:
+def get_asset_locations(corp_id: int) -> dict[int, dict]:
     """
     Return a dict mapping system IDs to structured data:
     {
@@ -62,7 +59,7 @@ def get_asset_locations(corp_id: int) -> Dict[int, dict]:
     except (CorporationAudit.DoesNotExist, EveCorporationInfo.DoesNotExist):
         return {}
 
-    system_map: Dict[int, dict] = {}
+    system_map: dict[int, dict] = {}
     _loc_sys_cache = {}
     _loc_name_cache = {}
 
@@ -114,7 +111,7 @@ def get_asset_locations(corp_id: int) -> Dict[int, dict]:
     return system_map
 
 
-def get_corp_hostile_asset_locations(corp_id: int) -> Dict[str, dict]:
+def get_corp_hostile_asset_locations(corp_id: int) -> dict[str, dict]:
     """
     Return {system name -> structured hostile data} for hostile corp asset locations.
     Uses the unified processor logic.
@@ -123,7 +120,7 @@ def get_corp_hostile_asset_locations(corp_id: int) -> Dict[str, dict]:
     if not systems:
         return {}
 
-    hostile_map: Dict[str, dict] = {}
+    hostile_map: dict[str, dict] = {}
     from ..app_settings import get_safe_entities
 
     safe_entities = get_safe_entities()
@@ -156,13 +153,17 @@ def get_corp_hostile_asset_locations(corp_id: int) -> Dict[str, dict]:
             oname = owner_info.get("owner_name") or "Unresolvable"
             rname = owner_info.get("region_name") or "Unknown Region"
 
-            hostile_map[display_name] = {"owner": oname, "region": rname, "records": records}
+            hostile_map[display_name] = {
+                "owner": oname,
+                "region": rname,
+                "records": records,
+            }
             logger.info(f"Hostile corp asset system: {display_name} owned by {oname}")
 
     return hostile_map
 
 
-def render_assets(corp_id: int) -> Optional[str]:
+def render_assets(corp_id: int) -> str | None:
     """
     Render an HTML table of systems where the corporation owns assets in space.
     Highlights hostile sovereignty holders in red using the unified processor.
@@ -198,9 +199,7 @@ def render_assets(corp_id: int) -> Optional[str]:
             )
 
             if hostile:
-                row_tpl = (
-                    '<tr><td>{}</td><td>{}</td><td style="color: red;" class="text-danger">{}</td><td>{}</td></tr>'
-                )
+                row_tpl = '<tr><td>{}</td><td>{}</td><td style="color: red;" class="text-danger">{}</td><td>{}</td></tr>'
             else:
                 row_tpl = "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>"
 

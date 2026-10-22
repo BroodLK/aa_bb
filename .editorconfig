@@ -13,6 +13,12 @@ insert_final_newline = true
 [*.{yaml,yml}]
 indent_size = 2
 
+[*.{html,htm}]
+indent_size = 2
+
+[*.json]
+indent_size = 2
+
 [*.md]
 indent_size = 2
 

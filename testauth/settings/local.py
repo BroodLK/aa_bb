@@ -70,7 +70,6 @@ NOTIFICATIONS_MAX_PER_USER = 50
 INSTALLED_APPS += [
     "eve_sde",
     "corptools",
-    "charlink",
     "allianceauth.services.modules.discord",
     PACKAGE,
 ]

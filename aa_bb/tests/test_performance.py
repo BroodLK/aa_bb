@@ -27,7 +27,9 @@ class PerformanceTest(TestCase):
             corporation_name="Test Corp",
         )
         # Mock ownership
-        CharacterOwnership.objects.create(character=cls.main_char, user=cls.user, owner_hash="abc")
+        CharacterOwnership.objects.create(
+            character=cls.main_char, user=cls.user, owner_hash="abc"
+        )
 
     def test_clone_state_performance(self):
         """Test performance of determine_character_state with simulated skills."""
@@ -36,13 +38,17 @@ class PerformanceTest(TestCase):
             patch("aa_bb.checks.clone_state.CharacterAudit") as mock_audit,
             patch("aa_bb.checks.clone_state.Skill") as mock_skill,
             patch("aa_bb.checks.clone_state.get_user_characters") as mock_get_chars,
-            patch("aa_bb.checks.clone_state.BigBrotherConfig.get_solo") as mock_get_solo,
+            patch(
+                "aa_bb.checks.clone_state.BigBrotherConfig.get_solo"
+            ) as mock_get_solo,
         ):
 
             mock_config = MagicMock()
             mock_config.update_cache_ttl_hours = 24
             mock_config.update_maintenance_window_start = timezone.now().time()
-            mock_config.update_maintenance_window_end = (timezone.now() + timezone.timedelta(hours=1)).time()
+            mock_config.update_maintenance_window_end = (
+                timezone.now() + timezone.timedelta(hours=1)
+            ).time()
             mock_get_solo.return_value = mock_config
 
             mock_get_chars.return_value = {1001: "Main Character"}
@@ -58,7 +64,9 @@ class PerformanceTest(TestCase):
                 for i in range(50)
             ]
 
-            mock_audit.objects.filter.return_value.select_related.return_value.only.return_value = []
+            mock_audit.objects.filter.return_value.select_related.return_value.only.return_value = (
+                []
+            )
 
             start_time = time.time()
             for _ in range(100):  # Run 100 times to get a better average
@@ -66,7 +74,9 @@ class PerformanceTest(TestCase):
             end_time = time.time()
 
             avg_time = (end_time - start_time) / 100
-            print(f"\n[PERFORMANCE] determine_character_state avg time: {avg_time:.6f}s")
+            print(
+                f"\n[PERFORMANCE] determine_character_state avg time: {avg_time:.6f}s"
+            )
 
     def test_transaction_threshold_performance(self):
         """Test performance of transaction filtering and threshold checking."""
@@ -109,7 +119,9 @@ class PerformanceTest(TestCase):
             end_time = time.time()
 
             avg_time = (end_time - start_time) / 10
-            print(f"[PERFORMANCE] get_user_hostile_transactions (100 tx) avg time: {avg_time:.6f}s")
+            print(
+                f"[PERFORMANCE] get_user_hostile_transactions (100 tx) avg time: {avg_time:.6f}s"
+            )
 
     def test_is_above_threshold_logic_performance(self):
         """Test the performance of the price threshold logic itself."""

@@ -19,16 +19,31 @@ class TestTaskSetup(TestCase):
         )
 
     def test_format_task_name(self):
-        self.assertEqual(format_task_name("BB run regular updates"), "BB: Run Regular Updates")
-        self.assertEqual(format_task_name("CB run regular updates"), "CB: Run Regular Updates")
-        self.assertEqual(format_task_name("AA-BB: BB Run Regular Updates"), "BB: Run Regular Updates")
-        self.assertEqual(format_task_name("tickets run regular updates"), "BB: Tickets Run Regular Updates")
-        self.assertEqual(format_task_name("BB sync contacts from aa-contacts"), "BB: Sync Contacts From AA Contacts")
+        self.assertEqual(
+            format_task_name("BB run regular updates"), "BB: Run Regular Updates"
+        )
+        self.assertEqual(
+            format_task_name("CB run regular updates"), "CB: Run Regular Updates"
+        )
+        self.assertEqual(
+            format_task_name("AA-BB: BB Run Regular Updates"), "BB: Run Regular Updates"
+        )
+        self.assertEqual(
+            format_task_name("tickets run regular updates"),
+            "BB: Tickets Run Regular Updates",
+        )
+        self.assertEqual(
+            format_task_name("BB sync contacts from aa-contacts"),
+            "BB: Sync Contacts From AA Contacts",
+        )
 
     def test_setup_periodic_task_creation(self):
         task_name = "BB run regular updates"
         setup_periodic_task(
-            name=task_name, task_path="aa_bb.tasks.BB_run_regular_updates", schedule=self.schedule, enabled=True
+            name=task_name,
+            task_path="aa_bb.tasks.BB_run_regular_updates",
+            schedule=self.schedule,
+            enabled=True,
         )
 
         expected_name = format_task_name(task_name)
@@ -40,12 +55,18 @@ class TestTaskSetup(TestCase):
         # Create a task with the old naming scheme
         old_name = "BB run regular updates"
         PeriodicTask.objects.create(
-            name=old_name, task="aa_bb.tasks.BB_run_regular_updates", interval=self.schedule, enabled=True
+            name=old_name,
+            task="aa_bb.tasks.BB_run_regular_updates",
+            interval=self.schedule,
+            enabled=True,
         )
 
         # Now run setup_periodic_task which should rename it
         setup_periodic_task(
-            name=old_name, task_path="aa_bb.tasks.BB_run_regular_updates", schedule=self.schedule, enabled=False
+            name=old_name,
+            task_path="aa_bb.tasks.BB_run_regular_updates",
+            schedule=self.schedule,
+            enabled=False,
         )
 
         expected_name = format_task_name(old_name)
@@ -60,14 +81,24 @@ class TestTaskSetup(TestCase):
     def test_persistent_lifecycle(self):
         # Even if enabled=False, the task should be created
         task_name = "Some Optional Task"
-        setup_periodic_task(name=task_name, task_path="aa_bb.tasks.some_task", schedule=self.schedule, enabled=False)
+        setup_periodic_task(
+            name=task_name,
+            task_path="aa_bb.tasks.some_task",
+            schedule=self.schedule,
+            enabled=False,
+        )
 
         expected_name = format_task_name(task_name)
         task = PeriodicTask.objects.get(name=expected_name)
         self.assertFalse(task.enabled)
 
         # Calling it again with enabled=True should update it
-        setup_periodic_task(name=task_name, task_path="aa_bb.tasks.some_task", schedule=self.schedule, enabled=True)
+        setup_periodic_task(
+            name=task_name,
+            task_path="aa_bb.tasks.some_task",
+            schedule=self.schedule,
+            enabled=True,
+        )
         task.refresh_from_db()
         self.assertTrue(task.enabled)
 

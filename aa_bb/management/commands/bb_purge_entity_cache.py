@@ -20,11 +20,22 @@ class Command(BaseCommand):
     help = "Purges old EntityInfoCache entries using raw SQL for maximum performance"
 
     def add_arguments(self, parser):
-        parser.add_argument("--days", type=int, default=2, help="Number of days of data to keep (default: 2)")
         parser.add_argument(
-            "--optimize", action="store_true", help="Optimize the table after purging to reclaim space"
+            "--days",
+            type=int,
+            default=2,
+            help="Number of days of data to keep (default: 2)",
         )
-        parser.add_argument("--truncate", action="store_true", help="Truncate the table entirely (ignores --days)")
+        parser.add_argument(
+            "--optimize",
+            action="store_true",
+            help="Optimize the table after purging to reclaim space",
+        )
+        parser.add_argument(
+            "--truncate",
+            action="store_true",
+            help="Truncate the table entirely (ignores --days)",
+        )
 
     def get_table_size(self, cursor, table_name):
         vendor = connection.vendor
@@ -78,7 +89,11 @@ class Command(BaseCommand):
 
         # Step 3: Check for large table and suggest truncate
         if size_gb > 2 and not truncate:
-            self.stdout.write(self.style.WARNING(f"Your database is exceedingly large: ({size_gb:.2f} GB)"))
+            self.stdout.write(
+                self.style.WARNING(
+                    f"Your database is exceedingly large: ({size_gb:.2f} GB)"
+                )
+            )
             confirm_truncate = input(
                 "Did you want to truncate instead? While this may still take awhile it will be faster than a purge (y/n): "
             )
@@ -110,10 +125,14 @@ class Command(BaseCommand):
                     else:
                         cursor.execute(f"TRUNCATE TABLE {table_name}")
 
-                    self.stdout.write(self.style.SUCCESS(f"Successfully truncated {table_name}."))
+                    self.stdout.write(
+                        self.style.SUCCESS(f"Successfully truncated {table_name}.")
+                    )
                     logger.info(f"bb_purge_entity_cache: Truncated {table_name}.")
                 else:
-                    self.stdout.write(f"Purging {table_name} entries older than {days} days ({threshold})...")
+                    self.stdout.write(
+                        f"Purging {table_name} entries older than {days} days ({threshold})..."
+                    )
                     # Using raw SQL to bypass ORM overhead and potential memory issues
                     # with large querysets. We chunk this to prevent long-held locks.
                     row_count = 0
@@ -122,7 +141,8 @@ class Command(BaseCommand):
                     while True:
                         if vendor in ["mysql", "mariadb"]:
                             cursor.execute(
-                                f"DELETE FROM {table_name} WHERE updated < %s LIMIT %s", [threshold, batch_size]
+                                f"DELETE FROM {table_name} WHERE updated < %s LIMIT %s",
+                                [threshold, batch_size],
                             )
                             batch_count = cursor.rowcount
                         elif vendor == "postgresql":
@@ -132,20 +152,31 @@ class Command(BaseCommand):
                             )
                             batch_count = cursor.rowcount
                         else:
-                            cursor.execute(f"DELETE FROM {table_name} WHERE updated < %s", [threshold])
+                            cursor.execute(
+                                f"DELETE FROM {table_name} WHERE updated < %s",
+                                [threshold],
+                            )
                             batch_count = cursor.rowcount
 
                         row_count += batch_count
-                        if batch_count < batch_size or vendor not in ["mysql", "mariadb", "postgresql"]:
+                        if batch_count < batch_size or vendor not in [
+                            "mysql",
+                            "mariadb",
+                            "postgresql",
+                        ]:
                             break
 
                         self.stdout.write(f"Purged {row_count} entries...")
                         time.sleep(0.1)  # Yield to other connections
 
                     self.stdout.write(
-                        self.style.SUCCESS(f"Successfully purged {row_count} entries from {table_name}.")
+                        self.style.SUCCESS(
+                            f"Successfully purged {row_count} entries from {table_name}."
+                        )
                     )
-                    logger.info(f"bb_purge_entity_cache: Purged {row_count} entries from {table_name}.")
+                    logger.info(
+                        f"bb_purge_entity_cache: Purged {row_count} entries from {table_name}."
+                    )
 
                 if optimize:
                     self.stdout.write(f"Optimizing {table_name}...")
@@ -160,16 +191,31 @@ class Command(BaseCommand):
                             opt_cursor.execute("VACUUM")
                         else:
                             self.stdout.write(
-                                self.style.WARNING(f"Optimization not implemented for database vendor: {vendor}")
+                                self.style.WARNING(
+                                    f"Optimization not implemented for database vendor: {vendor}"
+                                )
                             )
 
-                    self.stdout.write(self.style.SUCCESS(f"Optimization complete for {table_name}."))
-                    logger.info(f"bb_purge_entity_cache: Optimized {table_name} ({vendor}).")
+                    self.stdout.write(
+                        self.style.SUCCESS(f"Optimization complete for {table_name}.")
+                    )
+                    logger.info(
+                        f"bb_purge_entity_cache: Optimized {table_name} ({vendor})."
+                    )
 
         except Exception as e:
-            self.stderr.write(self.style.ERROR(f"Error during purge/optimization of {table_name}: {e}"))
-            logger.error(f"bb_purge_entity_cache: Error during purge/optimization of {table_name}: {e}", exc_info=True)
+            self.stderr.write(
+                self.style.ERROR(
+                    f"Error during purge/optimization of {table_name}: {e}"
+                )
+            )
+            logger.error(
+                f"bb_purge_entity_cache: Error during purge/optimization of {table_name}: {e}",
+                exc_info=True,
+            )
         finally:
             close_old_connections()
             self.stdout.write(f"Restoring BigBrother status to {original_status}...")
-            BigBrotherConfig.objects.filter(pk=config.pk).update(is_active=original_status)
+            BigBrotherConfig.objects.filter(pk=config.pk).update(
+                is_active=original_status
+            )

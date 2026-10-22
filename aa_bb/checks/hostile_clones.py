@@ -8,7 +8,7 @@ using the unified processor.
 """
 
 # Standard Library
-from typing import Dict, List
+import gc
 
 # Django
 from django.utils import timezone
@@ -33,7 +33,13 @@ logger = get_extension_logger(__name__)
 try:
     if corptools_active():
         # Third Party
-        from corptools.models import CharacterAudit, CharacterLocation, Clone, Implant, JumpClone
+        from corptools.models import (
+            CharacterAudit,
+            CharacterLocation,
+            Clone,
+            Implant,
+            JumpClone,
+        )
     else:
         CharacterAudit = None
         Clone = None
@@ -48,7 +54,7 @@ except ImportError:
     CharacterLocation = None
 
 
-def get_clones(user_id: int) -> Dict[int, dict]:
+def get_clones(user_id: int) -> dict[int, dict]:
     """
     Return a dict mapping system IDs to a dict containing their name and a list of locations
     where this user has clones.
@@ -56,18 +62,22 @@ def get_clones(user_id: int) -> Dict[int, dict]:
     if not corptools_active() or CharacterAudit is None:
         return {}
 
-    audits = CharacterAudit.objects.filter(character__character_ownership__user_id=user_id).select_related("character")
+    audits = CharacterAudit.objects.filter(
+        character__character_ownership__user_id=user_id
+    ).select_related("character")
     audit_ids = [a.pk for a in audits]
     char_map = {a.pk: a.character for a in audits}
 
     if not audit_ids:
         return {}
 
-    system_map: Dict[int, dict] = {}
+    system_map: dict[int, dict] = {}
     _loc_sys_cache = {}
     _loc_name_cache = {}
 
-    def add_location(system_obj, loc_id, char_id, char_name, implants=None, jump_clone_name=None):
+    def add_location(
+        system_obj, loc_id, char_id, char_name, implants=None, jump_clone_name=None
+    ):
         """Helper to safely extract system ID and name from various types."""
         sid = None
         sys_name = None
@@ -100,10 +110,15 @@ def get_clones(user_id: int) -> Dict[int, dict]:
             if loc_key in _loc_name_cache:
                 resolved_loc_name = _loc_name_cache[loc_key]
             else:
-                resolved_loc_name = resolve_location_name(loc_id) or f"Location {loc_id}"
+                resolved_loc_name = (
+                    resolve_location_name(loc_id) or f"Location {loc_id}"
+                )
                 _loc_name_cache[loc_key] = resolved_loc_name
 
-            system_map[sid]["locations"][loc_key] = {"name": resolved_loc_name, "clones": []}
+            system_map[sid]["locations"][loc_key] = {
+                "name": resolved_loc_name,
+                "clones": [],
+            }
 
         system_map[sid]["locations"][loc_key]["clones"].append(
             {
@@ -123,7 +138,9 @@ def get_clones(user_id: int) -> Dict[int, dict]:
         }
 
     # Bulk fetch home clones
-    home_clones = Clone.objects.select_related("location_name__system").filter(character_id__in=audit_ids)
+    home_clones = Clone.objects.select_related("location_name__system").filter(
+        character_id__in=audit_ids
+    )
     for hc in home_clones:
         char = char_map.get(hc.character_id)
         if not char:
@@ -150,7 +167,8 @@ def get_clones(user_id: int) -> Dict[int, dict]:
         if not char:
             continue
         implants = [
-            getattr(i.type_name, "name", None) or getattr(i.type_name, "type_name", None)
+            getattr(i.type_name, "name", None)
+            or getattr(i.type_name, "type_name", None)
             for i in jc.implant_set.all()
             if i.type_name
         ]
@@ -167,18 +185,17 @@ def get_clones(user_id: int) -> Dict[int, dict]:
             jump_clone_name=status,
         )
 
-    del _loc_sys_cache, _loc_name_cache, char_map, audit_ids, active_locs
-    # Standard Library
-    import gc
-
     gc.collect()
 
     return system_map
 
 
 def get_hostile_clone_locations(
-    user_id: int, cfg: BigBrotherConfig = None, safe_entities: set = None, entity_info_cache: dict = None
-) -> Dict[str, dict]:
+    user_id: int,
+    cfg: BigBrotherConfig = None,
+    safe_entities: set = None,
+    entity_info_cache: dict = None,
+) -> dict[str, dict]:
     """
     Returns a dict of system display name -> structured hostile data
     for systems where this user has home or jump clones in space and the
@@ -188,7 +205,7 @@ def get_hostile_clone_locations(
     if not systems:
         return {}
 
-    hostile_map: Dict[str, dict] = {}
+    hostile_map: dict[str, dict] = {}
     if safe_entities is None:
         from ..app_settings import get_safe_entities
 
@@ -203,8 +220,16 @@ def get_hostile_clone_locations(
 
         # System owner info for summary
         owner_info = get_system_owner({"id": system_id, "name": display_name})
-        system_owner_name = owner_info.get("owner_name", "Unresolvable") if owner_info else "Unresolvable"
-        region_name = owner_info.get("region_name", "Unknown Region") if owner_info else "Unknown Region"
+        system_owner_name = (
+            owner_info.get("owner_name", "Unresolvable")
+            if owner_info
+            else "Unresolvable"
+        )
+        region_name = (
+            owner_info.get("region_name", "Unknown Region")
+            if owner_info
+            else "Unknown Region"
+        )
 
         system_has_hostile = False
         records = []
@@ -214,7 +239,9 @@ def get_hostile_clone_locations(
             # Check if this is a citadel and get its owner
             location_owner_info = get_location_owner(loc_id)
             loc_owner = (
-                location_owner_info.get("owner_name", system_owner_name) if location_owner_info else system_owner_name
+                location_owner_info.get("owner_name", system_owner_name)
+                if location_owner_info
+                else system_owner_name
             )
 
             for clone in loc_data.get("clones", []):
@@ -247,12 +274,11 @@ def get_hostile_clone_locations(
                     )
 
         if system_has_hostile:
-            hostile_map[display_name] = {"owner": system_owner_name, "region": region_name, "records": records}
-
-    # CRITICAL FIX: Clean up memoization cache
-    del _hostile_memo
-    # Standard Library
-    import gc
+            hostile_map[display_name] = {
+                "owner": system_owner_name,
+                "region": region_name,
+                "records": records,
+            }
 
     gc.collect()
 
@@ -268,7 +294,7 @@ def render_clones(user_id: int) -> str:
     if not systems:
         return "<p>No clones found.</p>"
 
-    rows: List[Dict] = []
+    rows: list[dict] = []
     from ..app_settings import get_safe_entities
 
     safe_entities = get_safe_entities()
@@ -279,8 +305,16 @@ def render_clones(user_id: int) -> str:
         display_name = system_name or f"ID {system_id}"
 
         owner_info = get_system_owner({"id": system_id, "name": display_name})
-        system_owner_name = owner_info.get("owner_name", "Unresolvable") if owner_info else "Unresolvable"
-        region_name = owner_info.get("region_name", "Unknown Region") if owner_info else "Unknown Region"
+        system_owner_name = (
+            owner_info.get("owner_name", "Unresolvable")
+            if owner_info
+            else "Unresolvable"
+        )
+        region_name = (
+            owner_info.get("region_name", "Unknown Region")
+            if owner_info
+            else "Unknown Region"
+        )
 
         for loc_id, loc_data in data.get("locations", {}).items():
             loc_name = loc_data["name"]
@@ -329,7 +363,9 @@ def render_clones(user_id: int) -> str:
         return "<p>No clones found.</p>"
 
     # Sort: hostile first, then system, location, character
-    rows.sort(key=lambda x: (not x["hostile"], x["system"], x["location"], x["character"]))
+    rows.sort(
+        key=lambda x: (not x["hostile"], x["system"], x["location"], x["character"])
+    )
 
     html_parts = [
         '<table class="table table-striped table-hover stats">',

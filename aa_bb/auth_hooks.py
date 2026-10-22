@@ -36,7 +36,9 @@ class CorpBrotherMenuItem(MenuItemHook):
         except BigBrotherConfig.DoesNotExist:
             pass
 
-        if request.user.has_perm("aa_bb.basic_access_cb"):  # User has access permission.
+        if request.user.has_perm(
+            "aa_bb.basic_access_cb"
+        ):  # User has access permission.
             return MenuItemHook.render(self, request)
 
         return ""
@@ -71,7 +73,9 @@ class BigBrotherMenuItem(MenuItemHook):
     def render(self, request):
         """Render the menu item"""
 
-        if request.user.has_perm("aa_bb.basic_access"):  # Only show to approved members.
+        if request.user.has_perm(
+            "aa_bb.basic_access"
+        ):  # Only show to approved members.
             return MenuItemHook.render(self, request)
 
         return ""
@@ -107,7 +111,9 @@ class BigBrotherManualMenuItem(MenuItemHook):
 
     def render(self, request):
         """Show manual link for anyone with standard BB access."""
-        if request.user.has_perm("aa_bb.basic_access"):  # Manual mirrors BB permissions.
+        if request.user.has_perm(
+            "aa_bb.basic_access"
+        ):  # Manual mirrors BB permissions.
             return super().render(request)
         return ""
 
@@ -139,9 +145,13 @@ class LoAMenuItem(MenuItemHook):
     def render(self, request):
         """Show LoA entry when permission is active."""
         if request.user.has_perm("aa_bb.can_access_loa"):  # Basic LoA access.
-            if request.user.has_perm("aa_bb.can_view_all_loa"):  # Staff can see pending counters.
+            if request.user.has_perm(
+                "aa_bb.can_view_all_loa"
+            ):  # Staff can see pending counters.
                 pending_count = LeaveRequest.objects.filter(status="pending").count()
-                if pending_count:  # Highlight nav badge when there are pending requests.
+                if (
+                    pending_count
+                ):  # Highlight nav badge when there are pending requests.
                     self.count = pending_count
                 return MenuItemHook.render(self, request)
             return MenuItemHook.render(self, request)
