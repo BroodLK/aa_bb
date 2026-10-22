@@ -1046,8 +1046,11 @@ def mark_ticket_exception(ticket, user, reason=None):
     ticket.exception_reason = reason or f"Marked as exception by {user.username}"
     ticket.save(update_fields=["is_exception", "exception_reason"])
 
-    main_char = getattr(user.profile, "main_character", None)
-    name = main_char.character_name if main_char else user.username
+    profile = getattr(user, "profile", None) if user else None
+    main_char = getattr(profile, "main_character", None) if profile else None
+    name = (
+        main_char.character_name if main_char else (user.username if user else "System")
+    )
     msg = f"ℹ️ Ticket marked as exception by **{name}**."
     if reason:
         msg += f"\nReason: {reason}"
@@ -1061,8 +1064,16 @@ def clear_ticket_exception(ticket, user):
     ticket.exception_reason = None
     ticket.save(update_fields=["is_exception", "exception_reason"])
 
-    main_char = getattr(user.profile, "main_character", None)
-    name = main_char.character_name if main_char else user.username
+    profile = getattr(user, "profile", None) if user else None
+    main_char = getattr(profile, "main_character", None) if profile else None
+    name = (
+        main_char.character_name if main_char else (user.username if user else "System")
+    )
     msg = f"🔄 Exception status cleared by **{name}**."
 
     add_ticket_comment(ticket, user, msg, post_to_discord=True)
+
+
+# Backward compatibility aliases
+BB_run_tickets = hourly_compliance_check
+BB_check_awox_and_characters = hourly_compliance_check

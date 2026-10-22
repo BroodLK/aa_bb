@@ -307,3 +307,7 @@ def BB_send_recurring_stats():
 
     gc.collect()
     close_old_connections()
+
+
+# Backward compatibility alias
+send_recurring_stats_notification = BB_send_recurring_stats
