@@ -35,7 +35,7 @@ All while invisible to the general membership unless you choose to expose it to 
 ```md
 allianceauth >= 5.5.0
 allianceauth-corptools >= 3.0.0b13
-django-esi >= 9.0.0
+django-esi >= 10.0.0
 django-eveonline-sde >= 0.0.1b2
 ```
 ### Recommended plugins
