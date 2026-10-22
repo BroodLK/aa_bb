@@ -30,6 +30,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Internet :: WWW/HTTP",
     "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
 ]
@@ -38,7 +39,7 @@ dynamic = [
 ]
 dependencies = [
     "matplotlib>=3.7.2",
-    "allianceauth>=5",
+    "allianceauth>=5.5",
     "allianceauth-corptools>=3",
     "django-esi>=9",
     "django-eveonline-sde >= 0.0.1b2",
