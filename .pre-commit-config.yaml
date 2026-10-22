@@ -279,6 +279,7 @@ repos:
         description: Format the pyproject.toml file.
         args:
           - --indent=4
+          - --max-supported-python=3.14
         additional_dependencies:
           - tox==4.25.0  # https://github.com/tox-dev/tox/releases/latest
 
