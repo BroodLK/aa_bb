@@ -356,21 +356,15 @@ def get_user_cyno_info(user_id: int, cfg: bbc = None) -> dict:
                     char_dic[f"s_{key}"] = 2
 
         if (
-            char_dic["s_cyno"] > 0
-            and char_dic["s_recon"] > 0
-            and char_dic["i_recon"]
+            char_dic["s_cyno"] > 0 and char_dic["s_recon"] > 0 and char_dic["i_recon"]
         ):  # Standard cyno + recon hull.
             char_dic["can_light"] = True
         if (
-            char_dic["s_cyno"] > 0
-            and char_dic["s_hic"] > 0
-            and char_dic["i_hic"]
+            char_dic["s_cyno"] > 0 and char_dic["s_hic"] > 0 and char_dic["i_hic"]
         ):  # Standard cyno + HIC hull.
             char_dic["can_light"] = True
         if (
-            char_dic["s_cyno"] > 0
-            and char_dic["s_blops"] > 0
-            and char_dic["i_blops"]
+            char_dic["s_cyno"] > 0 and char_dic["s_blops"] > 0 and char_dic["i_blops"]
         ):  # Standard cyno + black ops.
             char_dic["can_light"] = True
         if (
@@ -380,9 +374,7 @@ def get_user_cyno_info(user_id: int, cfg: bbc = None) -> dict:
         ):  # Covert cyno + covops hull.
             char_dic["can_light"] = True
         if (
-            char_dic["s_cov_cyno"] > 0
-            and char_dic["s_brun"] > 0
-            and char_dic["i_brun"]
+            char_dic["s_cov_cyno"] > 0 and char_dic["s_brun"] > 0 and char_dic["i_brun"]
         ):  # Cov cyno + blockade runner.
             char_dic["can_light"] = True
         if (
@@ -392,9 +384,7 @@ def get_user_cyno_info(user_id: int, cfg: bbc = None) -> dict:
         ):  # Cov cyno + bomber.
             char_dic["can_light"] = True
         if (
-            char_dic["s_cov_cyno"] > 0
-            and char_dic["s_scru"] > 0
-            and char_dic["i_scru"]
+            char_dic["s_cov_cyno"] > 0 and char_dic["s_scru"] > 0 and char_dic["i_scru"]
         ):  # Cov cyno + T3 cruiser.
             char_dic["can_light"] = True
         if (

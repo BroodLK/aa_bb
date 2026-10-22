@@ -61,16 +61,13 @@
           <tr>
             <td><strong>{{ entry.user.main_character.character_name }}</strong></td>
             <td>
-              <input type="number" name="corp_paps_{{ entry.user.id }}"
-                     value="{{ entry.corp_paps }}" class="form-control form-control-sm" step="1">
+              <input type="number" name="corp_paps_{{ entry.user.id }}" value="{{ entry.corp_paps }}" class="form-control form-control-sm" step="1">
             </td>
             <td>
-              <input type="number" name="alliance_paps_{{ entry.user.id }}"
-                     value="{{ entry.alliance_paps }}" class="form-control form-control-sm" step="1">
+              <input type="number" name="alliance_paps_{{ entry.user.id }}" value="{{ entry.alliance_paps }}" class="form-control form-control-sm" step="1">
             </td>
             <td>
-              <input type="number" name="coalition_paps_{{ entry.user.id }}"
-                     value="{{ entry.coalition_paps }}" class="form-control form-control-sm" step="1">
+              <input type="number" name="coalition_paps_{{ entry.user.id }}" value="{{ entry.coalition_paps }}" class="form-control form-control-sm" step="1">
             </td>
           </tr>
         {% endfor %}

@@ -127,7 +127,7 @@ sudo supervisorctl restart myauth:
 
 In your supervisor.conf (baremetal only, skip if docker)
 
-```bash
+```ini
 [program:worker]
 command=/home/allianceserver/venv/auth/bin/celery -A myauth worker -P threads -c 10 -l INFO -n %(program_name)s_%(process_num)02d
 directory=/home/allianceserver/myauth
@@ -155,7 +155,7 @@ It is also recommended to disable gunicorn timeout, an example can be seen here:
 
 - For baremetal
 
-```bash
+```ini
 [program:gunicorn]
 user = allianceserver
 directory=/home/allianceserver/myauth
@@ -169,7 +169,7 @@ stopsignal=INT
 
 - For docker
 
-```bash
+```yaml
 allianceauth_gunicorn:
   ports:
     - 8000:8000

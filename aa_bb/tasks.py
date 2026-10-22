@@ -1364,28 +1364,28 @@ def BB_run_regular_updates():
 
     Workflow:
         1. Ensure the singleton config exists and derive the primary corp/alliance
-           from a superuser alt.
+        from a superuser alt.
         2. Iterate through every user returned by `get_users()`.
         3. For each user, recalculates every signal (awox, cyno, skills, hostiles,
-           etc.), compares against the previous snapshot, and appends human-readable
-           change notes to `changes`.
+        etc.), compares against the previous snapshot, and appends human-readable
+        change notes to `changes`.
         4. When certain checks flip (clone state, skill injections, awox kills),
-           Discord notifications and optional compliance tickets are issued.
+        Discord notifications and optional compliance tickets are issued.
         5. Persist the updated `UserStatus` row so the dashboard stays in sync.
 
     Section overview:
-        - Config bootstrap: lines 22–58 – ensure `BigBrotherConfig` is populated.
-        - User iteration: lines 60–138 – loop through every member returned by
-          `get_users`, fetch all relevant check data, and compute summary flags.
-        - Change detection: lines 140 onwards – compare each check’s result with the
-          previous values stored on `UserStatus` (clone states, SP injection, awox
-          kills, cyno readiness, skill summaries, hostile contacts, etc.). Each block
-          builds `changes` entries and updates the `UserStatus` fields accordingly.
+        - Config bootstrap: lines 22-58 - ensure `BigBrotherConfig` is populated.
+        - User iteration: lines 60-138 - loop through every member returned by
+        `get_users`, fetch all relevant check data, and compute summary flags.
+        - Change detection: lines 140 onwards - compare each check's result with the
+        previous values stored on `UserStatus` (clone states, SP injection, awox
+        kills, cyno readiness, skill summaries, hostile contacts, etc.). Each block
+        builds `changes` entries and updates the `UserStatus` fields accordingly.
         - Notifications/tickets: sprinkled throughout the change detection case
-          statements (e.g., awox block) – when a change warrants action a Discord
-          webhook is pinged via `get_pings` and compliance tickets may be opened.
+        statements (e.g., awox block) - when a change warrants action a Discord
+        webhook is pinged via `get_pings` and compliance tickets may be opened.
         - Persistence: after all comparisons, save `status` so the UI reflects the
-          latest state even if no Discord messages were sent this run.
+        latest state even if no Discord messages were sent this run.
     """
     # Close old DB connections to prevent memory leaks
     close_old_connections()
@@ -1627,6 +1627,7 @@ def BB_run_regular_updates():
                 color=0xFF0000,
             )
 
+    # Third Party
     from django_celery_beat.models import PeriodicTask
 
     from .task_helpers.periodic_tasks import format_task_name
@@ -1714,8 +1715,8 @@ def _parse_id_text(existing_text: str | None) -> set[int]:
 def _get_id_set(cfg, field_name: str, id_attr: str) -> set[int]:
     """
     Supports BOTH:
-      - ManyToMany manager (has .values_list)
-      - TextField CSV of IDs
+        - ManyToMany manager (has .values_list)
+        - TextField CSV of IDs
     """
     val = getattr(cfg, field_name, None)
     if val is None:
@@ -1731,8 +1732,8 @@ def _get_id_set(cfg, field_name: str, id_attr: str) -> set[int]:
 def _add_ids(cfg, field_name: str, ids: set[int]) -> bool:
     """
     Supports BOTH:
-      - ManyToMany manager (has .add)
-      - TextField CSV of IDs
+        - ManyToMany manager (has .add)
+        - TextField CSV of IDs
     Returns True if it changed something.
     """
     if not ids:
@@ -1759,8 +1760,8 @@ def _add_ids(cfg, field_name: str, ids: set[int]) -> bool:
 def _remove_ids(cfg, field_name: str, ids: set[int]) -> bool:
     """
     Remove a set of IDs from a config field that may be:
-      - A ManyToMany manager, or
-      - A CSV TextField of IDs.
+        - A ManyToMany manager, or
+        - A CSV TextField of IDs.
 
     Only removes the given IDs; anything else (e.g. manually
     added values that were never imported) is preserved.
@@ -1797,12 +1798,12 @@ def BB_sync_contacts_from_aa_contacts(self):
     Sync standings from aa-contacts into BigBrother hostiles/members/whitelists.
 
     Behaviour:
-      - No-ops if aa_contacts is not installed or contacts_source_alliances
+        - No-ops if aa_contacts is not installed or contacts_source_alliances
         is empty / missing.
-      - Adds NEW contacts from aa-contacts into the correct sets.
-      - Removes contacts that were previously imported from aa-contacts but
+        - Adds NEW contacts from aa-contacts into the correct sets.
+        - Removes contacts that were previously imported from aa-contacts but
         no longer appear there.
-      - Never touches IDs that were manually added directly in BigBrother.
+        - Never touches IDs that were manually added directly in BigBrother.
     """
     if not AA_CONTACTS_INSTALLED:
         return

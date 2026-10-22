@@ -2,10 +2,10 @@
 Celery tasks backing the CorpBrother module and related utilities.
 
 This file contains:
-  • `CB_run_regular_updates` which rebuilds every corp’s cache entries.
-  • Compliance helper tasks (role/token checking, PAP gaps, EveWho audits).
-  • Daily/optional Discord message broadcasters and their schedule bootstrapper.
-  • LoA status checks and DB cleanup routines.
+    - `CB_run_regular_updates` which rebuilds every corp’s cache entries.
+    - Compliance helper tasks (role/token checking, PAP gaps, EveWho audits).
+    - Daily/optional Discord message broadcasters and their schedule bootstrapper.
+    - LoA status checks and DB cleanup routines.
 """
 
 # Standard Library

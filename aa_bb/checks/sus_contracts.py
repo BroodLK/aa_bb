@@ -41,6 +41,7 @@ else:
     def check_char_corp_bl(_cid: int) -> bool:
         return False
 
+
 try:
     if corptools_active():
         # Third Party

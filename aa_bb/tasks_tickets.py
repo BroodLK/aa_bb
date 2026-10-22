@@ -71,6 +71,7 @@ if get_alts_queryset is None:
     def get_alts_queryset(*args, **kwargs):
         return []
 
+
 User = get_user_model()
 
 

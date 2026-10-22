@@ -502,11 +502,11 @@ def warm_cache(request):
 def get_warm_progress(request):
     """
     AJAX endpoint returning all in-flight and queued warm-up info:
-      {
-        in_progress: bool,
-        users: [ { user, current, total }, … ],
-        queued: { count, names: [...] }
-      }
+    {
+        "in_progress": bool,
+        "users": [ { user, current, total }, ... ],
+        "queued": { count, names: [...] }
+    }
     """
     qs = WarmProgress.objects.all()
     users = [
