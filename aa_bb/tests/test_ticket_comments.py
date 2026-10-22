@@ -10,6 +10,10 @@ from django.contrib.contenttypes.models import ContentType
 from django.test import Client, TestCase
 from django.urls import reverse
 
+# Alliance Auth
+from allianceauth.authentication.models import CharacterOwnership
+from allianceauth.eveonline.models import EveCharacter
+
 # AA BigBrother
 from aa_bb.models import (
     BigBrotherConfig,
@@ -38,6 +42,20 @@ class TestTicketComments(TestCase):
             password="password",
             email="ticket_admin@example.com",
         )
+        # AA wraps plugin URLs in main_character_required, so the commenter
+        # needs a main character or every request redirects to the dashboard.
+        char = EveCharacter.objects.create(
+            character_id=90000001,
+            character_name="Ticket Admin",
+            corporation_id=1,
+            corporation_name="Test Corp",
+        )
+        CharacterOwnership.objects.create(
+            character=char, user=self.commenter, owner_hash="ticket_admin_hash"
+        )
+        self.commenter.profile.main_character = char
+        self.commenter.profile.save()
+
         self.ticket_owner = User.objects.create_user(
             username="ticket_user", password="password"
         )
@@ -72,7 +90,11 @@ class TestTicketComments(TestCase):
             {"comment": "Need more time to fix this."},
         )
 
-        self.assertEqual(response.status_code, 302)
+        self.assertRedirects(
+            response,
+            reverse("aa_bb:ticket_view", args=[self.ticket.pk]),
+            fetch_redirect_response=False,
+        )
         self.assertEqual(
             ComplianceTicketComment.objects.filter(ticket=self.ticket).count(), 1
         )
