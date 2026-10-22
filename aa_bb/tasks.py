@@ -60,7 +60,7 @@ from .tasks_cb import (  # noqa: F401
     CB_update_single_corp,
     check_member_compliance,
 )
-from .tasks_ct import run_ct_kicker  # noqa: F401
+from .tasks_ct import kickstart_stale_ct_modules  # noqa: F401
 from .tasks_other import send_recurring_stats_notification  # noqa: F401
 from .tasks_tickets import (  # noqa: F401
     BB_check_awox_and_characters,

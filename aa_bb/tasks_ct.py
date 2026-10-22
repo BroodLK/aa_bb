@@ -440,3 +440,7 @@ def kickstart_stale_ct_modules(
             )
 
     return summary
+
+
+# Backward compatibility alias
+run_ct_kicker = kickstart_stale_ct_modules

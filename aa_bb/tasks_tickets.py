@@ -917,7 +917,8 @@ def add_ticket_comment(ticket, user, comment_text, post_to_discord=True):
         tcfg = TicketToolConfig.get_solo()
         attribution = ""
         if user:
-            main_char = getattr(user.profile, "main_character", None)
+            profile = getattr(user, "profile", None)
+            main_char = getattr(profile, "main_character", None) if profile else None
             attribution = (
                 f"**{main_char.character_name if main_char else user.username}**: "
             )
@@ -957,7 +958,8 @@ def close_ticket(ticket, user=None):
     """Close the Discord compliance ticket and mark it resolved locally."""
     message = "✅ Ticket resolved"
     if user:
-        main_char = getattr(user.profile, "main_character", None)
+        profile = getattr(user, "profile", None)
+        main_char = getattr(profile, "main_character", None) if profile else None
         name = main_char.character_name if main_char else user.username
         message += f" by **{name}**"
 
@@ -966,14 +968,19 @@ def close_ticket(ticket, user=None):
 
     if run_task_function and ticket.discord_channel_id:
         # Bot manages the channel, send message via close task to ensure it's seen before closing
-        run_task_function.apply_async(
-            args=["aa_bb.tasks_bot.close_ticket_channel"],
-            kwargs={
-                "task_args": [ticket.discord_channel_id],
-                "task_kwargs": {"message": message},
-            },
-            queue="aadiscordbot",
-        )
+        try:
+            run_task_function.apply_async(
+                args=["aa_bb.tasks_bot.close_ticket_channel"],
+                kwargs={
+                    "task_args": [ticket.discord_channel_id],
+                    "task_kwargs": {"message": message},
+                },
+                queue="aadiscordbot",
+            )
+        except Exception as e:
+            logger.warning(
+                f"⚠️  [AA-BB] - [close_ticket] - Failed to close Discord channel: {e}"
+            )
     elif ticket.discord_channel_id:
         # Not bot managed (e.g. forum thread via webhook), send message normally
         from .models import TicketToolConfig
@@ -1001,7 +1008,8 @@ def close_char_removed_ticket(ticket, user=None):
     """Mark a char_removed ticket resolved without deleting it (legacy behavior)."""
     message = "✅ Ticket resolved"
     if user:
-        main_char = getattr(user.profile, "main_character", None)
+        profile = getattr(user, "profile", None)
+        main_char = getattr(profile, "main_character", None) if profile else None
         name = main_char.character_name if main_char else user.username
         message += f" by **{name}**"
 
@@ -1014,7 +1022,8 @@ def close_char_removed_ticket(ticket, user=None):
 def reopen_ticket(ticket, user=None, message=None):
     """Reopen a resolved ticket and unarchive its Discord channel/thread."""
     if not message and user:
-        main_char = getattr(user.profile, "main_character", None)
+        profile = getattr(user, "profile", None)
+        main_char = getattr(profile, "main_character", None) if profile else None
         name = main_char.character_name if main_char else user.username
         message = f"🔄 Ticket reopened by **{name}**."
 

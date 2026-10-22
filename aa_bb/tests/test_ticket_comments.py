@@ -5,12 +5,18 @@ from unittest.mock import patch
 from celery.exceptions import NotRegistered as CeleryTaskNotRegistered
 
 # Django
-from django.contrib.auth.models import User
+from django.contrib.auth.models import Permission, User
+from django.contrib.contenttypes.models import ContentType
 from django.test import Client, TestCase
 from django.urls import reverse
 
 # AA BigBrother
-from aa_bb.models import BigBrotherConfig, ComplianceTicket, ComplianceTicketComment
+from aa_bb.models import (
+    BigBrotherConfig,
+    ComplianceTicket,
+    ComplianceTicketComment,
+    General,
+)
 
 
 class UnregisteredTaskProxy:
@@ -36,9 +42,16 @@ class TestTicketComments(TestCase):
             username="ticket_user", password="password"
         )
 
+        content_type = ContentType.objects.get_for_model(General)
+        perm = Permission.objects.filter(
+            content_type=content_type, codename="ticket_manager"
+        ).first()
+        if perm:
+            self.commenter.user_permissions.add(perm)
+
         cfg = BigBrotherConfig.get_solo()
         cfg.is_active = True
-        cfg.save(update_fields=["is_active"])
+        cfg.save()
 
         self.ticket = ComplianceTicket.objects.create(
             user=self.ticket_owner,
@@ -50,7 +63,9 @@ class TestTicketComments(TestCase):
 
     @patch("aa_bb.tasks_tickets.run_task_function", new=UnregisteredTaskProxy())
     def test_ticket_add_comment_handles_unregistered_discord_task(self):
-        self.client.force_login(self.commenter)
+        self.client.force_login(
+            self.commenter, backend="django.contrib.auth.backends.ModelBackend"
+        )
 
         response = self.client.post(
             reverse("aa_bb:ticket_add_comment", args=[self.ticket.pk]),

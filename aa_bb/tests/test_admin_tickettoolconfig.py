@@ -46,4 +46,5 @@ class TestTicketToolConfigAdmin(TestCase):
         compliance_filter_field = form_class.base_fields["compliance_filter_id"]
 
         self.assertIsInstance(compliance_filter_field, forms.ModelChoiceField)
-        self.assertSequenceEqual(compliance_filter_field.queryset, queryset)
+        self.assertEqual(list(compliance_filter_field.queryset), list(queryset))
+        self.assertEqual(compliance_filter_field.queryset.model, queryset.model)
