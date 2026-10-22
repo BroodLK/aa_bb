@@ -56,7 +56,11 @@ def BB_send_recurring_stats():
 
     # Alliance Auth
     from allianceauth.authentication.models import UserProfile
-    from allianceauth.eveonline.models import EveAllianceInfo, EveCharacter, EveCorporationInfo
+    from allianceauth.eveonline.models import (
+        EveAllianceInfo,
+        EveCharacter,
+        EveCorporationInfo,
+    )
 
     # Helper for optional imports (Discord, Mumble, corptools, esi)
     def safe_import(path, name):
@@ -73,10 +77,14 @@ def BB_send_recurring_stats():
     MumbleUser = None
 
     if discord_enabled:
-        DiscordUser = safe_import("allianceauth.services.modules.discord.models", "DiscordUser")
+        DiscordUser = safe_import(
+            "allianceauth.services.modules.discord.models", "DiscordUser"
+        )
 
     if mumble_enabled:
-        MumbleUser = safe_import("allianceauth.services.modules.mumble.models", "MumbleUser")
+        MumbleUser = safe_import(
+            "allianceauth.services.modules.mumble.models", "MumbleUser"
+        )
 
     Token = safe_import("esi.models", "Token")
     CharacterAudit = safe_import("corptools.models", "CharacterAudit")
@@ -98,7 +106,9 @@ def BB_send_recurring_stats():
 
         # Use single aggregate query instead of multiple counts
         state_counts = profiles_qs.values("state").annotate(count=Count("pk"))
-        auth_by_state = {str(row["state"]): row["count"] for row in state_counts if row["state"]}
+        auth_by_state = {
+            str(row["state"]): row["count"] for row in state_counts if row["state"]
+        }
         auth_total = sum(auth_by_state.values())
 
         snapshot["auth_total"] = auth_total
@@ -114,7 +124,9 @@ def BB_send_recurring_stats():
         # Use aggregate query
         state_counts = dq.values("user__profile__state").annotate(count=Count("pk"))
         discord_by_state = {
-            str(row["user__profile__state"]): row["count"] for row in state_counts if row["user__profile__state"]
+            str(row["user__profile__state"]): row["count"]
+            for row in state_counts
+            if row["user__profile__state"]
         }
         discord_total = sum(discord_by_state.values())
 
@@ -131,7 +143,9 @@ def BB_send_recurring_stats():
         # Use aggregate query
         state_counts = mq.values("user__profile__state").annotate(count=Count("pk"))
         mumble_by_state = {
-            str(row["user__profile__state"]): row["count"] for row in state_counts if row["user__profile__state"]
+            str(row["user__profile__state"]): row["count"]
+            for row in state_counts
+            if row["user__profile__state"]
         }
         mumble_total = sum(mumble_by_state.values())
 
@@ -155,12 +169,16 @@ def BB_send_recurring_stats():
         snapshot["alliances_total"] = ali_qs.count()
 
     # --- TOKENS ---
-    if Token is not None and (stats_cfg.include_tokens or stats_cfg.include_unique_tokens):
+    if Token is not None and (
+        stats_cfg.include_tokens or stats_cfg.include_unique_tokens
+    ):
         # Django
         from django.db.models import Count
 
         # Use single aggregate query for both metrics (no queryset materialization)
-        agg = Token.objects.aggregate(total=Count("id"), unique=Count("character_id", distinct=True))
+        agg = Token.objects.aggregate(
+            total=Count("id"), unique=Count("character_id", distinct=True)
+        )
         if stats_cfg.include_tokens:
             snapshot["tokens_total"] = agg["total"]
         if stats_cfg.include_unique_tokens:
@@ -188,7 +206,9 @@ def BB_send_recurring_stats():
 
     # Header with dates
     if stats_cfg.last_run_at:
-        lines.append(f"{today.strftime('%m/%d')} (since {stats_cfg.last_run_at.date().isoformat()})")
+        lines.append(
+            f"{today.strftime('%m/%d')} (since {stats_cfg.last_run_at.date().isoformat()})"
+        )
     else:
         lines.append(today.strftime("%m/%d"))
     lines.append("")
@@ -273,14 +293,17 @@ def BB_send_recurring_stats():
     if lines:
         chunks = _chunk_embed_lines(lines)
         for chunk in chunks:
-            send_status_embed(subject="Recurring Stats Update", lines=chunk, color=0x3498DB, hook=webhook)  # Blue
+            send_status_embed(
+                subject="Recurring Stats Update",
+                lines=chunk,
+                color=0x3498DB,
+                hook=webhook,
+            )  # Blue
 
     # Update snapshot + last run
     stats_cfg.last_run_at = now
     stats_cfg.last_snapshot = snapshot
     stats_cfg.save(update_fields=["last_run_at", "last_snapshot"])
 
-    # Clean up large data structures
-    del snapshot, previous, lines, selected_states
     gc.collect()
     close_old_connections()

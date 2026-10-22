@@ -6,7 +6,6 @@ Corporate wallet journal analysis helpers mirroring the member-level checks.
 import html
 import re
 from datetime import datetime
-from typing import Dict, List, Optional
 
 # Django
 from django.apps import apps
@@ -14,8 +13,6 @@ from django.apps import apps
 # Alliance Auth
 from allianceauth.eveonline.models import EveCorporationInfo
 from allianceauth.services.hooks import get_extension_logger
-
-logger = get_extension_logger(__name__)
 
 from ..app_settings import (
     aablacklist_active,
@@ -28,6 +25,14 @@ from ..app_settings import (
     resolve_location_name,
     resolve_location_system_id,
 )
+from ..models import (
+    BigBrotherConfig,
+    EntityInfoCache,
+    ProcessedTransaction,
+    SusTransactionNote,
+)
+
+logger = get_extension_logger(__name__)
 
 if aablacklist_active():
     # AA BigBrother
@@ -44,27 +49,25 @@ except ImportError:
     CorporationAudit = None
     CorporationWalletJournalEntry = None
 
-# Django
-
-from ..models import BigBrotherConfig, EntityInfoCache, ProcessedTransaction, SusTransactionNote
-
 SUS_TYPES = ("player_trading", "corporation_account_withdrawal", "player_donation")
 MARKET_REASON_RE = re.compile(
     r"^\s*(?P<quantity>\d+)x\s+(?P<type_name>.+?)\s+@\s+(?P<unit_price>[0-9][0-9,]*(?:\.\d+)?)\s+ISK\s*$"
 )
 
 
-def _find_employment_at(employment: list, date: datetime) -> Optional[dict]:
+def _find_employment_at(employment: list, date: datetime) -> dict | None:
     """Compat helper that returns the corp active at the provided date."""
     for i, rec in enumerate(employment):
         start = rec.get("start_date")
         end = rec.get("end_date")
-        if start and start <= date and (end is None or date < end):  # Match when the timestamp falls inside the stint.
+        if (
+            start and start <= date and (end is None or date < end)
+        ):  # Match when the timestamp falls inside the stint.
             return rec
     return None
 
 
-def _find_alliance_at(history: list, date: datetime) -> Optional[int]:
+def _find_alliance_at(history: list, date: datetime) -> int | None:
     """Compat helper returning the alliance id active during the period."""
     for i, rec in enumerate(history):
         start = rec.get("start_date")
@@ -79,7 +82,7 @@ def _find_alliance_at(history: list, date: datetime) -> Optional[int]:
     return None
 
 
-def _resolve_market_type_id(type_name: str) -> Optional[int]:
+def _resolve_market_type_id(type_name: str) -> int | None:
     if not type_name:
         return None
 
@@ -98,12 +101,18 @@ def _resolve_market_type_id(type_name: str) -> Optional[int]:
         except Exception:
             continue
 
-        name_field = next((name for name in ("name", "type_name") if name in field_names), None)
+        name_field = next(
+            (name for name in ("name", "type_name") if name in field_names), None
+        )
         if not name_field:
             continue
 
         try:
-            type_id = model.objects.filter(**{name_field: type_name}).values_list("pk", flat=True).first()
+            type_id = (
+                model.objects.filter(**{name_field: type_name})
+                .values_list("pk", flat=True)
+                .first()
+            )
         except Exception:
             continue
 
@@ -116,7 +125,7 @@ def _resolve_market_type_id(type_name: str) -> Optional[int]:
     return None
 
 
-def _parse_market_reason(reason: Optional[str]) -> dict:
+def _parse_market_reason(reason: str | None) -> dict:
     if not reason:
         return {}
 
@@ -158,13 +167,13 @@ def gather_user_transactions(corp_id: int, ref_types: list = None):
     return qs
 
 
-def get_user_transactions(qs) -> Dict[int, Dict]:
+def get_user_transactions(qs) -> dict[int, dict]:
     # Use a list to avoid re-evaluating the queryset
     entries = list(qs)
     if not entries:
         return {}
 
-    result: Dict[int, Dict] = {}
+    result: dict[int, dict] = {}
 
     # Pre-collect all entity IDs and their normalized timestamps for bulk fetching info
     # EntityInfoCache normalizes to the hour.
@@ -181,8 +190,8 @@ def get_user_transactions(qs) -> Dict[int, Dict]:
     # Bulk fetch EntityInfoCache entries
     # To avoid a massive Q-object chain for very large batches, we fetch by entity_id
     # and filter by hour as well to limit the result set.
-    eids = {l[0] for l in lookups}
-    hours = {l[1] for l in lookups}
+    eids = {item[0] for item in lookups}
+    hours = {item[1] for item in lookups}
     cache_entries = EntityInfoCache.objects.filter(entity_id__in=eids, as_of__in=hours)
 
     # Map them by (entity_id, as_of)
@@ -246,9 +255,9 @@ def get_user_transactions(qs) -> Dict[int, Dict]:
         result[tx_id] = {
             "entry_id": tx_id,
             "date": tx_date,
-            "amount": "{:,}".format(entry.amount),
+            "amount": f"{entry.amount:,}",
             "raw_amount": float(entry.amount),
-            "balance": "{:,}".format(entry.balance),
+            "balance": f"{entry.balance:,}",
             "description": entry.description,
             "reason": entry.reason,
             "first_party_id": first_party_id,
@@ -299,7 +308,9 @@ def is_transaction_hostile(tx: dict, safe_entities: set = None) -> bool:
         is_market=is_market,
         market_item_id=tx.get("type_id"),
         market_unit_price=(
-            abs(tx.get("raw_amount")) / (tx.get("quantity") or 1) if tx.get("raw_amount") is not None else None
+            abs(tx.get("raw_amount")) / (tx.get("quantity") or 1)
+            if tx.get("raw_amount") is not None
+            else None
         ),
         when=tx.get("date"),
         safe_entities=safe_entities,
@@ -321,7 +332,7 @@ def render_transactions(corp_id: int) -> str:
 
         # sort by date desc
         all_list = sorted(txs.values(), key=lambda x: x["date"], reverse=True)
-        hostile: List[dict] = []
+        hostile: list[dict] = []
         for tx in all_list:
             if is_transaction_hostile(
                 tx, safe_entities=safe_entities
@@ -350,7 +361,11 @@ def render_transactions(corp_id: int) -> str:
             if column not in HIDDEN:  # Hide ids/foreign keys that are not user-facing.
                 headers.append(column)
 
-        parts = ['<table class="table table-striped table-hover stats">', "<thead>", "<tr>"]
+        parts = [
+            '<table class="table table-striped table-hover stats">',
+            "<thead>",
+            "<tr>",
+        ]
         for h in headers:
             parts.append(f'<th>{html.escape(h.replace("_"," ").title())}</th>')
         parts.extend(["</tr>", "</thead>", "<tbody>"])
@@ -370,7 +385,10 @@ def render_transactions(corp_id: int) -> str:
                         if key in t["type"]:  # Suspect ref-type.
                             style = "color: red;"
                     if cfg.show_market_transactions:
-                        if "market_escrow" in t["type"] or "market_transaction" in t["type"]:
+                        if (
+                            "market_escrow" in t["type"]
+                            or "market_transaction" in t["type"]
+                        ):
                             style = "color: red;"
                 if col in ("first_party_name", "second_party_name"):
                     pid = t.get(col + "_id")
@@ -404,15 +422,19 @@ def render_transactions(corp_id: int) -> str:
         return f"<p class='text-danger'>Error rendering transactions: {str(e)}</p>"
 
 
-def get_corp_hostile_transactions(corp_id: int) -> Dict[int, str]:
+def get_corp_hostile_transactions(corp_id: int) -> dict[int, str]:
     """
     Persist and return formatted notes for hostile corporate transactions.
     """
     qs_all = gather_user_transactions(corp_id)
     all_ids = list(qs_all.values_list("entry_id", flat=True))
-    seen = set(ProcessedTransaction.objects.filter(entry_id__in=all_ids).values_list("entry_id", flat=True))
-    notes: Dict[int, str] = {}
-    new: List[int] = []
+    seen = set(
+        ProcessedTransaction.objects.filter(entry_id__in=all_ids).values_list(
+            "entry_id", flat=True
+        )
+    )
+    notes: dict[int, str] = {}
+    new: list[int] = []
     for eid in all_ids:
         if eid not in seen:  # Only keep transactions that need processing.
             new.append(eid)
@@ -433,7 +455,9 @@ def get_corp_hostile_transactions(corp_id: int) -> Dict[int, str]:
             pt, created = ProcessedTransaction.objects.get_or_create(entry_id=eid)
             if not created:  # Another worker finished first; do not duplicate notes.
                 continue
-            if not is_transaction_hostile(tx, safe_entities=safe_entities):  # Ignore non-hostile transactions.
+            if not is_transaction_hostile(
+                tx, safe_entities=safe_entities
+            ):  # Ignore non-hostile transactions.
                 continue
             flags = []
             if tx["type"]:  # Skip type analysis when CCP omitted the ref type.
@@ -441,20 +465,29 @@ def get_corp_hostile_transactions(corp_id: int) -> Dict[int, str]:
                     if key in tx["type"]:  # Tag suspicious ref types for operators.
                         flags.append(f"Transaction type is **{tx['type']}**")
                 if BigBrotherConfig.get_solo().show_market_transactions:
-                    if "market_escrow" in tx["type"] or "market_transaction" in tx["type"]:
+                    if (
+                        "market_escrow" in tx["type"]
+                        or "market_transaction" in tx["type"]
+                    ):
                         flags.append(f"Transaction type is **{tx['type']}**")
             BigBrotherConfig.get_solo()
 
             fpid = tx.get("first_party_id")
             if get_hostile_state(fpid, "character"):
-                flags.append(f"first_party **{tx['first_party_name']}** is hostile/blacklisted")
+                flags.append(
+                    f"first_party **{tx['first_party_name']}** is hostile/blacklisted"
+                )
 
             spid = tx.get("second_party_id")
             if get_hostile_state(spid, "character"):
-                flags.append(f"second_party **{tx['second_party_name']}** is hostile/blacklisted")
+                flags.append(
+                    f"second_party **{tx['second_party_name']}** is hostile/blacklisted"
+                )
 
             loc_id = tx.get("location_id") or tx.get("system_id")
-            if loc_id and is_location_hostile(tx.get("location_id"), tx.get("system_id")):
+            if loc_id and is_location_hostile(
+                tx.get("location_id"), tx.get("system_id")
+            ):
                 loc_name = resolve_location_name(loc_id) or f"ID {loc_id}"
                 owner_info = get_system_owner({"id": loc_id})
                 oname = owner_info.get("owner_name")
@@ -481,7 +514,9 @@ def get_corp_hostile_transactions(corp_id: int) -> Dict[int, str]:
                 f"\n  - **Flags:**"
                 f"\n    - {flags_text}"
             )
-            SusTransactionNote.objects.update_or_create(transaction=pt, defaults={"user_id": corp_id, "note": note})
+            SusTransactionNote.objects.update_or_create(
+                transaction=pt, defaults={"user_id": corp_id, "note": note}
+            )
             notes[eid] = note
 
     for note_obj in SusTransactionNote.objects.filter(

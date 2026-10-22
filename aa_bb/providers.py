@@ -271,7 +271,9 @@ class ESIHandler:
         corporation_id: int,
         **result_kwargs: Any,
     ) -> tuple[Any | None, timezone.datetime | None]:
-        operation = esi.client.Corporation.GetCorporationsCorporationId(corporation_id=corporation_id)
+        operation = esi.client.Corporation.GetCorporationsCorporationId(
+            corporation_id=corporation_id
+        )
         return cls.result_with_expiry(operation, **result_kwargs)
 
     @classmethod
@@ -289,7 +291,9 @@ class ESIHandler:
         character_id: int,
         **result_kwargs: Any,
     ) -> tuple[Any | None, timezone.datetime | None]:
-        operation = esi.client.Character.GetCharactersCharacterIdCorporationhistory(character_id=character_id)
+        operation = esi.client.Character.GetCharactersCharacterIdCorporationhistory(
+            character_id=character_id
+        )
         return cls.results_with_expiry(operation, **result_kwargs)
 
     @classmethod
@@ -298,7 +302,9 @@ class ESIHandler:
         corporation_id: int,
         **result_kwargs: Any,
     ) -> tuple[Any | None, timezone.datetime | None]:
-        operation = esi.client.Corporation.GetCorporationsCorporationIdAlliancehistory(corporation_id=corporation_id)
+        operation = esi.client.Corporation.GetCorporationsCorporationIdAlliancehistory(
+            corporation_id=corporation_id
+        )
         return cls.results_with_expiry(operation, **result_kwargs)
 
     @classmethod

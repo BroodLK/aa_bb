@@ -41,7 +41,9 @@ def get_user_roles(user_id):
     """
     if not corptools_active() or CharacterAudit is None:
         return {}
-    characters = CharacterOwnership.objects.filter(user__id=user_id).select_related("character")
+    characters = CharacterOwnership.objects.filter(user__id=user_id).select_related(
+        "character"
+    )
 
     roles_dict = {}
 
@@ -88,7 +90,9 @@ def get_user_tokens(user_id):
 
     CORPORATION_SCOPES = BigBrotherConfig.get_solo().corporation_scopes.split(",")
 
-    characters = CharacterOwnership.objects.filter(user__id=user_id).select_related("character")
+    characters = CharacterOwnership.objects.filter(user__id=user_id).select_related(
+        "character"
+    )
     tokens_dict = {}
 
     for ownership in characters:
@@ -96,7 +100,9 @@ def get_user_tokens(user_id):
         char_name = eve_char.character_name
 
         # Get all tokens for this character
-        all_tokens = Token.objects.filter(character_id=eve_char.character_id, user_id=user_id)
+        all_tokens = Token.objects.filter(
+            character_id=eve_char.character_id, user_id=user_id
+        )
 
         char_scopes_owned = set()
         corp_scopes_owned = set()
@@ -149,9 +155,9 @@ def get_user_roles_and_tokens(user_id):
 def render_user_roles_tokens_html(user_id: int) -> str:
     """
     Returns an HTML snippet showing, for each of the user's characters:
-      - director / accountant / station_manager / personnel_manager (True/False)
-      - whether they have a character_token
-      - whether they have a corporation_token
+        - director / accountant / station_manager / personnel_manager (True/False)
+        - whether they have a character_token
+        - whether they have a corporation_token
     """
     data = get_user_roles_and_tokens(user_id)
     html = ""
@@ -163,13 +169,13 @@ def render_user_roles_tokens_html(user_id: int) -> str:
         # table start
         html += """
         <table class="table table-responsive compliance">
-          <thead>
-            <tr>
-              <th>Attribute</th>
-              <th>Value</th>
-            </tr>
-          </thead>
-          <tbody>
+            <thead>
+                <tr>
+                    <th>Attribute</th>
+                    <th>Value</th>
+                </tr>
+            </thead>
+            <tbody>
         """
 
         # roles
@@ -196,10 +202,18 @@ def render_user_roles_tokens_html(user_id: int) -> str:
         ):
             val = info.get(key, False)
             # if character_token is False → make it red
-            if key == "character_token" and not val:  # Character audit missing entirely.
-                val_txt = mark_safe('<span class="text-danger">False</span> has no audit record.')
-            elif key == "corporation_token" and not val:  # No corp token; severity depends on corp roles.
-                if has_roles:  # Elevated corp roles without corp token is especially risky.
+            if (
+                key == "character_token" and not val
+            ):  # Character audit missing entirely.
+                val_txt = mark_safe(
+                    '<span class="text-danger">False</span> has no audit record.'
+                )
+            elif (
+                key == "corporation_token" and not val
+            ):  # No corp token; severity depends on corp roles.
+                if (
+                    has_roles
+                ):  # Elevated corp roles without corp token is especially risky.
                     val_txt = mark_safe(
                         '<span class="text-danger">False</span> has elevated roles. A corporation token is expected.'
                     )
@@ -210,13 +224,17 @@ def render_user_roles_tokens_html(user_id: int) -> str:
             html += format_html("<tr><td>{}</td><td>{}</td></tr>", label, val_txt)
 
         # scopes
-        for key, label in (("missing_corporation_scopes", "Missing Corporation Scopes"),):
+        for key, label in (
+            ("missing_corporation_scopes", "Missing Corporation Scopes"),
+        ):
             val = info.get(key, "")
             if val:  # only add row if non-empty
                 html += format_html(
                     "<tr><td>{}</td><td colspan='2'>{}</td></tr>",
                     label,
-                    mark_safe(val.replace(",", "<br>")),  # comma-separated string of missing scopes
+                    mark_safe(
+                        val.replace(",", "<br>")
+                    ),  # comma-separated string of missing scopes
                 )
 
         # table end

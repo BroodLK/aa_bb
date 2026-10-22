@@ -7,7 +7,6 @@ counterparties, and persist short notes for reuse in notifications.
 
 # Standard Library
 from datetime import datetime
-from typing import Dict, List, Optional
 
 # Django
 from django.utils import timezone
@@ -26,6 +25,14 @@ from ..app_settings import (
     is_location_hostile,
     resolve_location_name,
 )
+from ..models import (
+    BigBrotherConfig,
+    EntityInfoCache,
+    ProcessedContract,
+    SusContractNote,
+)
+
+logger = get_extension_logger(__name__)
 
 if aablacklist_active():
     pass
@@ -33,13 +40,6 @@ else:
 
     def check_char_corp_bl(_cid: int) -> bool:
         return False
-
-
-# Django
-
-from ..models import BigBrotherConfig, EntityInfoCache, ProcessedContract, SusContractNote
-
-logger = get_extension_logger(__name__)
 
 try:
     if corptools_active():
@@ -51,7 +51,7 @@ except ImportError:
     Contract = None
 
 
-def _find_employment_at(employment: list, date: datetime) -> Optional[dict]:
+def _find_employment_at(employment: list, date: datetime) -> dict | None:
     for rec in employment:
         start = rec.get("start_date")
         end = rec.get("end_date")
@@ -60,7 +60,7 @@ def _find_employment_at(employment: list, date: datetime) -> Optional[dict]:
     return None
 
 
-def _find_alliance_at(history: list, date: datetime) -> Optional[int]:
+def _find_alliance_at(history: list, date: datetime) -> int | None:
     for i, rec in enumerate(history):
         start = rec.get("start_date")
         next_start = history[i + 1]["start_date"] if i + 1 < len(history) else None
@@ -74,18 +74,18 @@ def gather_user_contracts(user_id: int):
         return []
     user_chars = get_user_characters(user_id)
     user_ids = set(user_chars.keys())
-    return Contract.objects.filter(character__character__character_id__in=user_ids).select_related(
-        "character__character"
-    )
+    return Contract.objects.filter(
+        character__character__character_id__in=user_ids
+    ).select_related("character__character")
 
 
-def get_user_contracts(qs) -> Dict[int, Dict]:
+def get_user_contracts(qs) -> dict[int, dict]:
     # Use a list to avoid re-evaluating the queryset
     entries = list(qs)
     if not entries:
         return {}
 
-    result: Dict[int, Dict] = {}
+    result: dict[int, dict] = {}
 
     # Pre-collect all entity IDs and their normalized timestamps for bulk fetching info
     # EntityInfoCache normalizes to the hour.
@@ -106,8 +106,8 @@ def get_user_contracts(qs) -> Dict[int, Dict]:
     # Bulk fetch EntityInfoCache entries
     # To avoid a massive Q-object chain for very large batches, we fetch by entity_id
     # and filter by hour as well to limit the result set.
-    eids = {l[0] for l in lookups}
-    hours = {l[1] for l in lookups}
+    eids = {item[0] for item in lookups}
+    hours = {item[1] for item in lookups}
     cache_entries = EntityInfoCache.objects.filter(entity_id__in=eids, as_of__in=hours)
 
     # Map them by (entity_id, as_of)
@@ -157,9 +157,13 @@ def get_user_contracts(qs) -> Dict[int, Dict]:
             "assignee_alliance_id": ainfo["alli_id"],
             "status": c.status,
             "start_location_id": getattr(c, "start_location_id", None),
-            "start_location": resolve_location_name(getattr(c, "start_location_id", None)) or "Unknown Location",
+            "start_location": resolve_location_name(
+                getattr(c, "start_location_id", None)
+            )
+            or "Unknown Location",
             "end_location_id": getattr(c, "end_location_id", None),
-            "end_location": resolve_location_name(getattr(c, "end_location_id", None)) or "Unknown Location",
+            "end_location": resolve_location_name(getattr(c, "end_location_id", None))
+            or "Unknown Location",
             "info_cache": {issuer_id: iinfo, assignee_id: ainfo},
         }
 
@@ -181,7 +185,9 @@ def get_cell_style_for_contract_row(column: str, row: dict) -> str:
 
     if column == "issuer_corporation":
         cid = row.get("issuer_corporation_id")
-        if get_hostile_state(cid, "corporation", when=when, entity_info_cache=info_cache):
+        if get_hostile_state(
+            cid, "corporation", when=when, entity_info_cache=info_cache
+        ):
             return "color: red;"
         return ""
 
@@ -193,7 +199,9 @@ def get_cell_style_for_contract_row(column: str, row: dict) -> str:
 
     if column == "assignee_corporation":
         cid = row.get("assignee_corporation_id")
-        if get_hostile_state(cid, "corporation", when=when, entity_info_cache=info_cache):
+        if get_hostile_state(
+            cid, "corporation", when=when, entity_info_cache=info_cache
+        ):
             return "color: red;"
         return ""
 
@@ -206,7 +214,9 @@ def get_cell_style_for_contract_row(column: str, row: dict) -> str:
     return ""
 
 
-def is_contract_row_hostile(row: dict, safe_entities: set = None, cfg: BigBrotherConfig = None) -> bool:
+def is_contract_row_hostile(
+    row: dict, safe_entities: set = None, cfg: BigBrotherConfig = None
+) -> bool:
     """
     Checks if a contract is considered hostile using the unified processor.
     Checks both start and end locations.
@@ -245,8 +255,11 @@ def is_contract_row_hostile(row: dict, safe_entities: set = None, cfg: BigBrothe
 
 
 def get_user_hostile_contracts(
-    user_id: int, cfg: BigBrotherConfig = None, safe_entities: set = None, entity_info_cache: dict = None
-) -> Dict[int, str]:
+    user_id: int,
+    cfg: BigBrotherConfig = None,
+    safe_entities: set = None,
+    entity_info_cache: dict = None,
+) -> dict[int, str]:
     if cfg is None:
         cfg = BigBrotherConfig.get_solo()
     if safe_entities is None:
@@ -257,9 +270,13 @@ def get_user_hostile_contracts(
     all_qs = gather_user_contracts(user_id)
     all_ids = list(all_qs.values_list("contract_id", flat=True))
 
-    seen_ids = set(ProcessedContract.objects.filter(contract_id__in=all_ids).values_list("contract_id", flat=True))
+    seen_ids = set(
+        ProcessedContract.objects.filter(contract_id__in=all_ids).values_list(
+            "contract_id", flat=True
+        )
+    )
 
-    notes: Dict[int, str] = {}
+    notes: dict[int, str] = {}
     new_ids = [cid for cid in all_ids if cid not in seen_ids]
 
     # Build hauling corp exclusion set
@@ -269,7 +286,11 @@ def get_user_hostile_contracts(
         hauling_corps = {98681117, 98079862, 98421812, 384667640, 1495741119}
         # Add custom corps from config
         if cfg.custom_hauling_corps:
-            custom_corps = [int(c.strip()) for c in cfg.custom_hauling_corps.split(",") if c.strip().isdigit()]
+            custom_corps = [
+                int(c.strip())
+                for c in cfg.custom_hauling_corps.split(",")
+                if c.strip().isdigit()
+            ]
             hauling_corps.update(custom_corps)
 
     if new_ids:
@@ -301,14 +322,19 @@ def get_user_hostile_contracts(
             if is_contract_row_hostile(c, safe_entities=safe_entities, cfg=cfg):
                 hostile_rows[cid] = c
         if hostile_rows:
-            pcs = {pc.contract_id: pc for pc in ProcessedContract.objects.filter(contract_id__in=hostile_rows.keys())}
+            pcs = {
+                pc.contract_id: pc
+                for pc in ProcessedContract.objects.filter(
+                    contract_id__in=hostile_rows.keys()
+                )
+            }
 
             for cid, c in hostile_rows.items():
                 pc = pcs.get(cid)
                 if not pc:
                     continue
 
-                flags: List[str] = []
+                flags: list[str] = []
                 # issuer
                 if get_hostile_state(
                     c["issuer_id"],
@@ -317,7 +343,9 @@ def get_user_hostile_contracts(
                     entity_info_cache=entity_info_cache,
                     cfg=cfg,
                 ):
-                    flags.append(f"Issuer **{c['issuer_name']}** is hostile/blacklisted")
+                    flags.append(
+                        f"Issuer **{c['issuer_name']}** is hostile/blacklisted"
+                    )
 
                 # assignee
                 if get_hostile_state(
@@ -327,9 +355,13 @@ def get_user_hostile_contracts(
                     entity_info_cache=entity_info_cache,
                     cfg=cfg,
                 ):
-                    flags.append(f"Assignee **{c['assignee_name']}** is hostile/blacklisted")
+                    flags.append(
+                        f"Assignee **{c['assignee_name']}** is hostile/blacklisted"
+                    )
 
-                if is_location_hostile(c.get("start_location_id"), safe_entities=safe_entities, cfg=cfg):
+                if is_location_hostile(
+                    c.get("start_location_id"), safe_entities=safe_entities, cfg=cfg
+                ):
                     loc_id = c.get("start_location_id")
                     owner_info = get_system_owner({"id": loc_id})
                     oname = owner_info.get("owner_name")
@@ -344,7 +376,9 @@ def get_user_hostile_contracts(
                         flag += f" ({' | '.join(info_parts)})"
                     flags.append(flag)
 
-                if is_location_hostile(c.get("end_location_id"), safe_entities=safe_entities, cfg=cfg):
+                if is_location_hostile(
+                    c.get("end_location_id"), safe_entities=safe_entities, cfg=cfg
+                ):
                     loc_id = c.get("end_location_id")
                     owner_info = get_system_owner({"id": loc_id})
                     oname = owner_info.get("owner_name")
@@ -361,7 +395,10 @@ def get_user_hostile_contracts(
 
                 flags_text = "\n    - ".join(flags) if flags else "(no flags)"
 
-                if c["contract_type"] == "item_exchange" or c["start_location"] == c["end_location"]:
+                if (
+                    c["contract_type"] == "item_exchange"
+                    or c["start_location"] == c["end_location"]
+                ):
                     loc_text = c["start_location"]
                 else:
                     loc_text = f"{c['start_location']} → {c['end_location']}"

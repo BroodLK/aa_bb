@@ -8,8 +8,10 @@ blacklist when authorized staff request it.
 
 # Django
 from django.contrib.auth.models import User
+from django.core.exceptions import ObjectDoesNotExist
 from django.middleware.csrf import get_token
 from django.urls import reverse
+from django.utils import timezone
 
 # Alliance Auth
 from allianceauth.authentication.models import CharacterOwnership
@@ -44,9 +46,9 @@ def check_char_add_to_bl(cid):
         # Third Party
         from blacklist.models import EveNote
 
-        blacklisted_ids = EveNote.objects.filter(blacklisted=True, eve_catagory="character").values_list(
-            "eve_id", flat=True
-        )
+        blacklisted_ids = EveNote.objects.filter(
+            blacklisted=True, eve_catagory="character"
+        ).values_list("eve_id", flat=True)
         return cid in blacklisted_ids
 
 
@@ -55,7 +57,9 @@ def get_add_to_blacklist_html(request, issuer_user_id: int, target_user_id: int)
     Render a simple HTML summary (one line per four characters) along with
     a POST form that lets moderators enqueue a blacklist request.
     """
-    if not aablacklist_active():  # Without the plugin installed there is nothing to display.
+    if (
+        not aablacklist_active()
+    ):  # Without the plugin installed there is nothing to display.
         return (
             "Please "
             "<a href='https://github.com/Solar-Helix-Independent-Transport/"
@@ -82,7 +86,9 @@ def get_add_to_blacklist_html(request, issuer_user_id: int, target_user_id: int)
 
     html.append("  </ul>")
 
-    if request.user.has_perm("aa_bb.can_blacklist_characters"):  # Only staff can see the POST form.
+    if request.user.has_perm(
+        "aa_bb.can_blacklist_characters"
+    ):  # Only staff can see the POST form.
         html += [
             f"<form method='post' action='{action_url}'>",
             f"  <input type='hidden' name='csrfmiddlewaretoken' value='{token}'/>",
@@ -95,11 +101,6 @@ def get_add_to_blacklist_html(request, issuer_user_id: int, target_user_id: int)
         ]
 
     return "\n".join(html)
-
-
-# Django
-from django.core.exceptions import ObjectDoesNotExist
-from django.utils import timezone
 
 
 def add_user_characters_to_blacklist(
@@ -121,7 +122,10 @@ def add_user_characters_to_blacklist(
     issuer = User.objects.get(pk=issuer_user_id)
     try:
         main_char = issuer.profile.main_character
-    except (ObjectDoesNotExist, AttributeError):  # Profiles may not exist for every user.
+    except (
+        ObjectDoesNotExist,
+        AttributeError,
+    ):  # Profiles may not exist for every user.
         main_char = None
     if main_char is None:  # As fallback, just take the first owned character.
         co_first = CharacterOwnership.objects.filter(user=issuer).first()
@@ -142,7 +146,11 @@ def add_user_characters_to_blacklist(
     if target_main_char is None:  # Fallback to first character if no profile/main set.
         co_first_t = CharacterOwnership.objects.filter(user=target_user).first()
         target_main_char = co_first_t.character if co_first_t else None
-    target_main_name = target_main_char.character_name if target_main_char else target_user.get_username()
+    target_main_name = (
+        target_main_char.character_name
+        if target_main_char
+        else target_user.get_username()
+    )
 
     # 4. Build the final reason string
     timestamp = timezone.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -157,7 +165,9 @@ def add_user_characters_to_blacklist(
     newly_blacklisted = []
     for co in CharacterOwnership.objects.filter(user__id=target_user_id):
         char = co.character
-        exists = EveNote.objects.filter(eve_id=char.character_id, eve_catagory="character", blacklisted=True).exists()
+        exists = EveNote.objects.filter(
+            eve_id=char.character_id, eve_catagory="character", blacklisted=True
+        ).exists()
         if exists:  # Skip characters already blacklisted.
             continue
 

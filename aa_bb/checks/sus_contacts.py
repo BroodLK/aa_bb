@@ -8,13 +8,11 @@ entities, and expose utilities for producing notification text.
 # Standard Library
 import html
 
-# Alliance Auth
-from allianceauth.services.hooks import get_extension_logger
-
-logger = get_extension_logger(__name__)
-
 # Django
 from django.utils import timezone
+
+# Alliance Auth
+from allianceauth.services.hooks import get_extension_logger
 
 from ..app_settings import (
     aablacklist_active,
@@ -28,6 +26,9 @@ from ..app_settings import (
     resolve_alliance_name,
     resolve_corporation_name,
 )
+from ..models import BigBrotherConfig
+
+logger = get_extension_logger(__name__)
 
 if aablacklist_active():
     from .add_to_blacklist import check_char_add_to_bl
@@ -41,8 +42,6 @@ try:
 except ImportError:
     CharacterContact = None
 
-from ..models import BigBrotherConfig
-
 
 def get_user_contacts(user_id: int) -> dict[int, dict]:
     """
@@ -54,9 +53,9 @@ def get_user_contacts(user_id: int) -> dict[int, dict]:
     user_chars = get_user_characters(user_id)
     user_char_ids = set(user_chars.keys())
 
-    qs = CharacterContact.objects.filter(character__character__character_id__in=user_char_ids).select_related(
-        "contact_name", "character__character"
-    )
+    qs = CharacterContact.objects.filter(
+        character__character__character_id__in=user_char_ids
+    ).select_related("contact_name", "character__character")
 
     contacts: dict[int, dict] = {}
 
@@ -65,11 +64,15 @@ def get_user_contacts(user_id: int) -> dict[int, dict]:
         ctype = cc.contact_type
 
         # skip NPC entries and characters owned by the user
-        if ctype == "npc" or cid in user_char_ids:  # Ignore NPC entries or self-references.
+        if (
+            ctype == "npc" or cid in user_char_ids
+        ):  # Ignore NPC entries or self-references.
             continue
 
         # skip NPC characters via app filter
-        if ctype == "character" and is_npc_character(cid):  # Filter NPC characters using helper.
+        if ctype == "character" and is_npc_character(
+            cid
+        ):  # Filter NPC characters using helper.
             continue
 
         if cid not in contacts:  # First encounter of this contact; initialize entry.
@@ -80,7 +83,9 @@ def get_user_contacts(user_id: int) -> dict[int, dict]:
             contact_name = "-"
             character_name = "-"
 
-            if ctype == "character":  # Populate character + org info for character contacts.
+            if (
+                ctype == "character"
+            ):  # Populate character + org info for character contacts.
                 # Character: populate all three columns using point-in-time info
                 character_name = cc.contact_name.name
                 info = get_entity_info(cid, timezone.now())
@@ -90,7 +95,9 @@ def get_user_contacts(user_id: int) -> dict[int, dict]:
                 alli_name = info.get("alli_name") or ""
                 contact_name = character_name
 
-            elif ctype == "corporation":  # Corp contacts show corp and current alliance details.
+            elif (
+                ctype == "corporation"
+            ):  # Corp contacts show corp and current alliance details.
                 # Corporation: show corp and its current alliance
                 corp_id = cid
                 if is_npc_corporation(corp_id):  # Skip NPC corps altogether.
@@ -158,7 +165,9 @@ def get_cell_style_for_row(cid: int, column: str, row: dict) -> str:
 
     # New fixed columns
     if column == "character":
-        if row.get("contact_type") == "character" and get_hostile_state(cid, "character"):
+        if row.get("contact_type") == "character" and get_hostile_state(
+            cid, "character"
+        ):
             return "color: red;"
     elif column == "corporation":
         coid = row.get("coid")
@@ -172,7 +181,9 @@ def get_cell_style_for_row(cid: int, column: str, row: dict) -> str:
     return ""
 
 
-def group_contacts_by_standing(contacts: dict[int, dict]) -> dict[int, list[tuple[int, dict]]]:
+def group_contacts_by_standing(
+    contacts: dict[int, dict],
+) -> dict[int, list[tuple[int, dict]]]:
     """Bucket contacts into the fixed standings categories displayed in the UI."""
     buckets = {10: [], 5: [], 0: [], -5: [], -10: []}
     for cid, info in contacts.items():
@@ -191,7 +202,11 @@ def group_contacts_by_standing(contacts: dict[int, dict]) -> dict[int, list[tupl
 
 
 def _get_contact_alerts(
-    cid: int, info: dict, cfg: BigBrotherConfig = None, safe_entities: set = None, entity_info_cache: dict = None
+    cid: int,
+    info: dict,
+    cfg: BigBrotherConfig = None,
+    safe_entities: set = None,
+    entity_info_cache: dict = None,
 ) -> list[str]:
     """
     Internal helper to determine why a contact is flagged as suspicious.
@@ -215,14 +230,26 @@ def _get_contact_alerts(
 
         # Check if the character itself or its parents are hostile
         if get_hostile_state(
-            cid, "character", safe_entities=safe_entities, entity_info_cache=entity_info_cache, cfg=cfg
+            cid,
+            "character",
+            safe_entities=safe_entities,
+            entity_info_cache=entity_info_cache,
+            cfg=cfg,
         ):
             if coid and get_hostile_state(
-                coid, "corporation", safe_entities=safe_entities, entity_info_cache=entity_info_cache, cfg=cfg
+                coid,
+                "corporation",
+                safe_entities=safe_entities,
+                entity_info_cache=entity_info_cache,
+                cfg=cfg,
             ):
                 alerts.append(f"Corporation ({corp_name}) is hostile")
             if aid and get_hostile_state(
-                aid, "alliance", safe_entities=safe_entities, entity_info_cache=entity_info_cache, cfg=cfg
+                aid,
+                "alliance",
+                safe_entities=safe_entities,
+                entity_info_cache=entity_info_cache,
+                cfg=cfg,
             ):
                 alerts.append(f"Alliance ({alli_name}) is hostile")
 
@@ -231,10 +258,18 @@ def _get_contact_alerts(
 
     elif ctype == "corporation":
         if get_hostile_state(
-            cid, "corporation", safe_entities=safe_entities, entity_info_cache=entity_info_cache, cfg=cfg
+            cid,
+            "corporation",
+            safe_entities=safe_entities,
+            entity_info_cache=entity_info_cache,
+            cfg=cfg,
         ):
             if aid and get_hostile_state(
-                aid, "alliance", safe_entities=safe_entities, entity_info_cache=entity_info_cache, cfg=cfg
+                aid,
+                "alliance",
+                safe_entities=safe_entities,
+                entity_info_cache=entity_info_cache,
+                cfg=cfg,
             ):
                 alerts.append(f"Alliance ({alli_name}) is hostile")
             if not alerts:
@@ -242,7 +277,11 @@ def _get_contact_alerts(
 
     elif ctype == "alliance":
         if get_hostile_state(
-            cid, "alliance", safe_entities=safe_entities, entity_info_cache=entity_info_cache, cfg=cfg
+            cid,
+            "alliance",
+            safe_entities=safe_entities,
+            entity_info_cache=entity_info_cache,
+            cfg=cfg,
         ):
             alerts.append("Alliance is hostile")
 
@@ -291,7 +330,9 @@ def render_contacts(user_id: int) -> str:
         html_parts.append("  <thead>")
         html_parts.append("    <tr>")
         for h in headers:
-            html_parts.append(f'      <th>{html.escape(str(h)).replace("_", " ").title()}</th>')
+            html_parts.append(
+                f'      <th>{html.escape(str(h)).replace("_", " ").title()}</th>'
+            )
         html_parts.append("    </tr>")
         html_parts.append("  </thead>")
         html_parts.append("  <tbody>")
@@ -301,7 +342,10 @@ def render_contacts(user_id: int) -> str:
                 style = ""
                 if h == "reason":
                     display_val = "<br>".join(
-                        [f'<span class="text-danger">{html.escape(a)}</span>' for a in entry.get("alerts", [])]
+                        [
+                            f'<span class="text-danger">{html.escape(a)}</span>'
+                            for a in entry.get("alerts", [])
+                        ]
                     )
                 elif h == "owner":
                     display_val = html.escape(", ".join(entry.get("characters", [])))
@@ -320,7 +364,10 @@ def render_contacts(user_id: int) -> str:
 
 
 def get_user_hostile_notifications(
-    user_id: int, cfg: BigBrotherConfig = None, safe_entities: set = None, entity_info_cache: dict = None
+    user_id: int,
+    cfg: BigBrotherConfig = None,
+    safe_entities: set = None,
+    entity_info_cache: dict = None,
 ) -> dict[int, str]:
     """
     Fetches all contacts for the given user, checks each one against
@@ -342,7 +389,11 @@ def get_user_hostile_notifications(
             continue
 
         alerts = _get_contact_alerts(
-            cid, info, cfg=cfg, safe_entities=safe_entities, entity_info_cache=entity_info_cache
+            cid,
+            info,
+            cfg=cfg,
+            safe_entities=safe_entities,
+            entity_info_cache=entity_info_cache,
         )
         if alerts:
             ctype = info["contact_type"]  # 'character' | 'corporation' | 'alliance'

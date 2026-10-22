@@ -51,7 +51,9 @@ class TestTasksNotifications(TestCase):
     ):
         # Setup mocks to return some "suspicious" data to trigger changes
         mock_get_user_cyno_info.return_value = {}
-        mock_get_multiple_user_skill_info.return_value = {"Test Char": {"total_sp": 1000000}}
+        mock_get_multiple_user_skill_info.return_value = {
+            "Test Char": {"total_sp": 1000000}
+        }
         mock_determine_character_state.return_value = {}
         mock_get_awox_kill_links.return_value = []
         mock_get_hostile_clone_locations.return_value = {}

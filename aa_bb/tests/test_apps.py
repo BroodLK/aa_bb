@@ -14,7 +14,9 @@ class TestAaBbAppsModuleImport(TestCase):
 
         def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
             if name == "allianceauth.services.hooks":
-                raise AssertionError("aa_bb.apps imported allianceauth.services.hooks during module import")
+                raise AssertionError(
+                    "aa_bb.apps imported allianceauth.services.hooks during module import"
+                )
             return real_import(name, globals, locals, fromlist, level)
 
         with patch("builtins.__import__", side_effect=guarded_import):

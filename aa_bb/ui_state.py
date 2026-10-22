@@ -5,7 +5,6 @@ from functools import wraps
 from django.http import HttpResponseForbidden, JsonResponse
 from django.shortcuts import render
 
-# AA BigBrother
 from .models import BigBrotherConfig
 
 BIG_BROTHER_INACTIVE_MESSAGE = "Big Brother is currently inactive."

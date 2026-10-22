@@ -17,5 +17,6 @@ def get_external_blacklist_link():
     if not url:
         return "External Blacklist URL not configured."
     return format_html(
-        '<a href="{}" target="_blank" class="btn btn-primary btn-block">Go to External Blacklist</a>', url
+        '<a href="{}" target="_blank" class="btn btn-primary btn-block">Go to External Blacklist</a>',
+        url,
     )

@@ -49,7 +49,9 @@ def get_frequent_corp_changes(user_id, cfg: BigBrotherConfig = None):
     # Try 4h cache first
     try:
         cache_entry = FrequentCorpChangesCache.objects.get(pk=user_id)
-        if timezone.now() - cache_entry.updated < TTL_SHORT:  # Serve cached card for ~4h to limit upstream calls.
+        if (
+            timezone.now() - cache_entry.updated < TTL_SHORT
+        ):  # Serve cached card for ~4h to limit upstream calls.
             try:
                 cache_entry.last_accessed = timezone.now()
                 cache_entry.save(update_fields=["last_accessed"])
@@ -103,13 +105,17 @@ def get_frequent_corp_changes(user_id, cfg: BigBrotherConfig = None):
 
         for idx, membership in enumerate(history):
             corp_id = membership["corporation_id"]
-            if is_npc_corporation(corp_id):  # Skip meaningless entries (NPC corps clutter the table).
+            if is_npc_corporation(
+                corp_id
+            ):  # Skip meaningless entries (NPC corps clutter the table).
                 continue
 
             # Membership window
             start = ensure_datetime(membership["start_date"])
             end = (
-                ensure_datetime(history[idx + 1]["start_date"]) if idx + 1 < len(history) else now()
+                ensure_datetime(history[idx + 1]["start_date"])
+                if idx + 1 < len(history)
+                else now()
             )  # End date = next start or now.
             total_days = (end - start).days
 
@@ -118,7 +124,9 @@ def get_frequent_corp_changes(user_id, cfg: BigBrotherConfig = None):
 
             # Corp cell with external site favicons (fetched live)
             corp_color = (
-                ' class="text-danger"' if (hostile_corps and corp_id in hostile_corps) else ""
+                ' class="text-danger"'
+                if (hostile_corps and corp_id in hostile_corps)
+                else ""
             )  # Highlight hostile corps.
             corp_cell = (
                 f"<span{corp_color}>{corp_name}</span>"
@@ -136,17 +144,27 @@ def get_frequent_corp_changes(user_id, cfg: BigBrotherConfig = None):
             alliance_history = get_alliance_history_for_corp(corp_id)
             for j, ent in enumerate(alliance_history):
                 a_start = ent["start_date"]
-                a_end = alliance_history[j + 1]["start_date"] if j + 1 < len(alliance_history) else None
+                a_end = (
+                    alliance_history[j + 1]["start_date"]
+                    if j + 1 < len(alliance_history)
+                    else None
+                )
                 seg_start = max(start, a_start)
                 seg_end = min(end, a_end) if a_end else end
-                if seg_start < seg_end:  # Only render overlapping time periods (ignore non-overlaps).
+                if (
+                    seg_start < seg_end
+                ):  # Only render overlapping time periods (ignore non-overlaps).
                     aid = ent["alliance_id"]
                     aname = get_alliance_name(aid)
                     period = f"{seg_start.date()} - {seg_end.date()}"
 
-                    if aid:  # Only render alliance rows when the corp was in an alliance.
+                    if (
+                        aid
+                    ):  # Only render alliance rows when the corp was in an alliance.
                         alliance_color = (
-                            ' class="text-danger"' if (hostile_alliances and aid in hostile_alliances) else ""
+                            ' class="text-danger"'
+                            if (hostile_alliances and aid in hostile_alliances)
+                            else ""
                         )  # Flag hostile alliances.
                         name_cell = f"<span{alliance_color}>{aname}</span>"
                         icons = (
@@ -163,13 +181,17 @@ def get_frequent_corp_changes(user_id, cfg: BigBrotherConfig = None):
                     alliances_html.append(name_cell + icons)
                     periods_html.append(period)
 
-            if not alliances_html:  # When no alliance data, fallback to corp membership range.
+            if (
+                not alliances_html
+            ):  # When no alliance data, fallback to corp membership range.
                 alliances_html = ["-"]
                 periods_html = [membership_range]
 
             # Duration cell coloring only
             dur_color = (
-                ' class="text-danger"' if total_days < 10 else (' class="text-warning"' if total_days < 30 else "")
+                ' class="text-danger"'
+                if total_days < 10
+                else (' class="text-warning"' if total_days < 30 else "")
             )  # Quick visual for recent corps.
 
             rows.append(
@@ -202,7 +224,8 @@ def get_frequent_corp_changes(user_id, cfg: BigBrotherConfig = None):
     # Save cache
     try:
         FrequentCorpChangesCache.objects.update_or_create(
-            user_id=user_id, defaults={"html": str(html), "last_accessed": timezone.now()}
+            user_id=user_id,
+            defaults={"html": str(html), "last_accessed": timezone.now()},
         )
     except Exception:
         pass
@@ -238,7 +261,9 @@ def get_current_stint_days_in_corp(char_id: int, corp_id: int) -> int:
         # 4h cached value
         try:
             cache = CurrentStintCache.objects.get(char_id=char_id, corp_id=corp_id)
-            if timezone.now() - cache.updated < TTL_SHORT:  # Serve cached days when fresh.
+            if (
+                timezone.now() - cache.updated < TTL_SHORT
+            ):  # Serve cached days when fresh.
                 try:
                     cache.last_accessed = timezone.now()
                     cache.save(update_fields=["last_accessed"])
@@ -273,5 +298,10 @@ def get_current_stint_days_in_corp(char_id: int, corp_id: int) -> int:
         return days
 
     except Exception as e:
-        logger.exception("Failed to compute current stint days for char %s in corp %s: %s", char_id, corp_id, e)
+        logger.exception(
+            "Failed to compute current stint days for char %s in corp %s: %s",
+            char_id,
+            corp_id,
+            e,
+        )
         return 0

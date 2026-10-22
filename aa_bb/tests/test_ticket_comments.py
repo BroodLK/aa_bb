@@ -26,7 +26,9 @@ class TestTicketComments(TestCase):
             password="password",
             email="ticket_admin@example.com",
         )
-        self.ticket_owner = User.objects.create_user(username="ticket_user", password="password")
+        self.ticket_owner = User.objects.create_user(
+            username="ticket_user", password="password"
+        )
 
         cfg = BigBrotherConfig.get_solo()
         cfg.is_active = True
@@ -51,7 +53,9 @@ class TestTicketComments(TestCase):
         )
 
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(ComplianceTicketComment.objects.filter(ticket=self.ticket).count(), 1)
+        self.assertEqual(
+            ComplianceTicketComment.objects.filter(ticket=self.ticket).count(), 1
+        )
         comment = ComplianceTicketComment.objects.get(ticket=self.ticket)
         self.assertEqual(comment.user, self.commenter)
         self.assertEqual(comment.comment, "Need more time to fix this.")

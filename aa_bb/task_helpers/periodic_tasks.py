@@ -72,11 +72,17 @@ def setup_periodic_task(
 
     # 2. Find existing task
     task = PeriodicTask.objects.filter(name=standardized_name).first()
-    old_task = PeriodicTask.objects.filter(name=name).first() if standardized_name != name else None
+    old_task = (
+        PeriodicTask.objects.filter(name=name).first()
+        if standardized_name != name
+        else None
+    )
 
     if task and old_task and task.pk != old_task.pk:
         # Both exist! Delete the old one to avoid duplicates.
-        logger.info(f"Found both '{standardized_name}' and '{name}'. Deleting the old one.")
+        logger.info(
+            f"Found both '{standardized_name}' and '{name}'. Deleting the old one."
+        )
         old_task.delete()
     elif not task and old_task:
         # Only old one exists, rename it
@@ -121,10 +127,14 @@ def setup_periodic_task(
             )
         except IntegrityError:
             # Handle race condition where another process might have created it
-            logger.warning(f"IntegrityError while saving periodic task '{standardized_name}', fetching existing.")
+            logger.warning(
+                f"IntegrityError while saving periodic task '{standardized_name}', fetching existing."
+            )
             task = PeriodicTask.objects.get(name=standardized_name)
     else:
-        logger.info(f"ℹ️  [AA-BB] - [Tasks] - '{standardized_name}' periodic task already exists and is up to date")
+        logger.info(
+            f"ℹ️  [AA-BB] - [Tasks] - '{standardized_name}' periodic task already exists and is up to date"
+        )
 
     return task
 
@@ -142,7 +152,9 @@ def sync_periodic_tasks():
     config = BigBrotherConfig.get_solo()
     config.refresh_from_db()
     master_active = config.is_active
-    logger.info(f"ℹ️  [AA-BB] - [Tasks] - Starting sync_periodic_tasks. Master Active: {master_active}")
+    logger.info(
+        f"ℹ️  [AA-BB] - [Tasks] - Starting sync_periodic_tasks. Master Active: {master_active}"
+    )
 
     # --- Schedules ---
 
@@ -331,7 +343,11 @@ def sync_periodic_tasks():
         # Resolve schedule
         schedule_attr = task_info.get("schedule_attr")
         if schedule_attr:
-            schedule = getattr(config, schedule_attr, None) or task_info.get("default_schedule") or daily_12_schedule
+            schedule = (
+                getattr(config, schedule_attr, None)
+                or task_info.get("default_schedule")
+                or daily_12_schedule
+            )
         else:
             schedule = task_info.get("schedule")
 

@@ -16,18 +16,18 @@ import traceback
 from datetime import timedelta
 
 # Third Party
+import requests
 from celery import shared_task
 from django_celery_beat.models import PeriodicTask
 
 # Django
+from django.db import OperationalError, close_old_connections, connection, transaction
 from django.db.models import Q
 from django.utils import timezone
 
 # Alliance Auth
 from allianceauth.eveonline.models import EveCharacter, EveCorporationInfo
 from allianceauth.services.hooks import get_extension_logger
-
-logger = get_extension_logger(__name__)
 
 # AA BigBrother
 from aa_bb.checks.roles_and_tokens import get_user_roles_and_tokens
@@ -39,8 +39,8 @@ from .app_settings import (
     _chunk_embed_lines,
     corptools_active,
     get_character_id,
-    get_profile_main_character_id,
     get_pings,
+    get_profile_main_character_id,
     get_user_id,
     get_user_profiles,
     resolve_corporation_name,
@@ -82,12 +82,6 @@ except ImportError:
     MailMessage = None
     CharacterWalletJournalEntry = None
     CorporationWalletJournalEntry = None
-
-# Django
-from django.db import OperationalError, close_old_connections, connection, transaction
-
-# Alliance Auth
-from allianceauth.services.hooks import get_extension_logger
 
 logger = get_extension_logger(__name__)
 VERBOSE_WEBHOOK_LOGGING = True
@@ -152,13 +146,21 @@ def CB_update_single_corp(corp_id):
     for attempt in range(3):
         try:
             ignored_str = instance.ignored_corporations or ""
-            ignored_ids = {int(s) for s in ignored_str.split(",") if s.strip().isdigit()}
+            ignored_ids = {
+                int(s) for s in ignored_str.split(",") if s.strip().isdigit()
+            }
             if corp_id in ignored_ids:
                 return
 
             hostile_assets_result = get_corp_hostile_asset_locations(corp_id)
-            sus_contracts_result = {str(issuer_id): v for issuer_id, v in get_corp_hostile_contracts(corp_id).items()}
-            sus_trans_result = {str(issuer_id): v for issuer_id, v in get_corp_hostile_transactions(corp_id).items()}
+            sus_contracts_result = {
+                str(issuer_id): v
+                for issuer_id, v in get_corp_hostile_contracts(corp_id).items()
+            }
+            sus_trans_result = {
+                str(issuer_id): v
+                for issuer_id, v in get_corp_hostile_transactions(corp_id).items()
+            }
 
             has_hostile_assets = bool(hostile_assets_result)
             has_sus_contracts = bool(sus_contracts_result)
@@ -170,9 +172,9 @@ def CB_update_single_corp(corp_id):
                 return x if isinstance(x, dict) else {}
 
             # Hostile Assets
-            if corpstatus.has_hostile_assets != has_hostile_assets or set(hostile_assets_result) != set(
-                corpstatus.hostile_assets or []
-            ):
+            if corpstatus.has_hostile_assets != has_hostile_assets or set(
+                hostile_assets_result
+            ) != set(corpstatus.hostile_assets or []):
                 old_systems = set(corpstatus.hostile_assets or [])
                 new_systems = set(hostile_assets_result) - old_systems
 
@@ -192,21 +194,25 @@ def CB_update_single_corp(corp_id):
                         asset_lines.append(f"   - {loc_name}")
 
                 link_list = "\n".join(asset_lines)
-                logger.debug(f"✅  [AA-BB] - [CB_update_single_corp] - {corp_name} new assets {link_list}")
+                logger.debug(
+                    f"✅  [AA-BB] - [CB_update_single_corp] - {corp_name} new assets {link_list}"
+                )
                 if corpstatus.has_hostile_assets != has_hostile_assets:
                     if not has_hostile_assets:
-                        corp_changes.append(f"## Hostile Corp Assets: 🟢")
+                        corp_changes.append("## Hostile Corp Assets: 🟢")
 
                 if asset_lines:
-                    corp_changes.append(f"##{get_pings('New Hostile Assets')} New Hostile Assets:\n{link_list}")
+                    corp_changes.append(
+                        f"##{get_pings('New Hostile Assets')} New Hostile Assets:\n{link_list}"
+                    )
 
                 corpstatus.has_hostile_assets = has_hostile_assets
                 corpstatus.hostile_assets = hostile_assets_result
 
             # Suspicious Contracts
-            if corpstatus.has_sus_contracts != has_sus_contracts or set(sus_contracts_result) != set(
-                as_dict(corpstatus.sus_contracts) or {}
-            ):
+            if corpstatus.has_sus_contracts != has_sus_contracts or set(
+                sus_contracts_result
+            ) != set(as_dict(corpstatus.sus_contracts) or {}):
                 old_contracts = as_dict(corpstatus.sus_contracts) or {}
                 old_ids = set(old_contracts.keys())
                 new_ids = set(sus_contracts_result.keys())
@@ -214,7 +220,7 @@ def CB_update_single_corp(corp_id):
 
                 if corpstatus.has_sus_contracts != has_sus_contracts:
                     if not has_sus_contracts:
-                        corp_changes.append(f"## Sus Corp Contracts: 🟢")
+                        corp_changes.append("## Sus Corp Contracts: 🟢")
 
                 if new_links:
                     contract_lines = []
@@ -226,15 +232,17 @@ def CB_update_single_corp(corp_id):
                         contract_lines.append(f"{res} {ping}")
 
                     if contract_lines:
-                        corp_changes.append(f"## New Sus Contracts:\n" + "\n".join(contract_lines))
+                        corp_changes.append(
+                            "## New Sus Contracts:\n" + "\n".join(contract_lines)
+                        )
 
                 corpstatus.has_sus_contracts = has_sus_contracts
                 corpstatus.sus_contracts = sus_contracts_result
 
             # Suspicious Transactions
-            if corpstatus.has_sus_trans != has_sus_trans or set(sus_trans_result) != set(
-                as_dict(corpstatus.sus_trans) or {}
-            ):
+            if corpstatus.has_sus_trans != has_sus_trans or set(
+                sus_trans_result
+            ) != set(as_dict(corpstatus.sus_trans) or {}):
                 old_trans = as_dict(corpstatus.sus_trans) or {}
                 old_ids = set(old_trans.keys())
                 new_ids = set(sus_trans_result.keys())
@@ -242,10 +250,13 @@ def CB_update_single_corp(corp_id):
 
                 if corpstatus.has_sus_trans != has_sus_trans:
                     if not has_sus_trans:
-                        corp_changes.append(f"## Sus Corp Transactions: 🟢")
+                        corp_changes.append("## Sus Corp Transactions: 🟢")
 
                 if new_links:
-                    link_list_tx = "\n".join(f"{sus_trans_result[issuer_id]}" for issuer_id in sorted(new_links))
+                    link_list_tx = "\n".join(
+                        f"{sus_trans_result[issuer_id]}"
+                        for issuer_id in sorted(new_links)
+                    )
                     corp_changes.append(
                         f"### New Sus Transactions{get_pings('New Sus Transactions')}:\n{link_list_tx}"
                     )
@@ -286,7 +297,12 @@ def CB_update_single_corp(corp_id):
             corpstatus.save()
 
             # Clean up large variables to free memory
-            del hostile_assets_result, sus_contracts_result, sus_trans_result, corp_changes
+            del (
+                hostile_assets_result,
+                sus_contracts_result,
+                sus_trans_result,
+                corp_changes,
+            )
             if "all_chunks" in locals():
                 del all_chunks
 
@@ -312,7 +328,8 @@ def CB_update_single_corp(corp_id):
             raise
         except Exception as e:
             logger.error(
-                f"ℹ️  [AA-BB] - [CB_update_single_corp] - Failed to update corp {corp_id}: {e}", exc_info=True
+                f"ℹ️  [AA-BB] - [CB_update_single_corp] - Failed to update corp {corp_id}: {e}",
+                exc_info=True,
             )
             # Clean up on error
             gc.collect()
@@ -337,10 +354,20 @@ def CB_run_regular_updates():
             if qs is None:
                 return
 
-            member_corps = {int(x) for x in (instance.member_corporations or "").split(",") if x.strip().isdigit()}
-            member_allis = {int(x) for x in (instance.member_alliances or "").split(",") if x.strip().isdigit()}
+            member_corps = {
+                int(x)
+                for x in (instance.member_corporations or "").split(",")
+                if x.strip().isdigit()
+            }
+            member_allis = {
+                int(x)
+                for x in (instance.member_alliances or "").split(",")
+                if x.strip().isdigit()
+            }
             if member_corps or member_allis:
-                qs = qs.filter(Q(corporation_id__in=member_corps) | Q(alliance_id__in=member_allis))
+                qs = qs.filter(
+                    Q(corporation_id__in=member_corps) | Q(alliance_id__in=member_allis)
+                )
 
             corps = list(
                 qs.select_related("alliance")
@@ -350,7 +377,9 @@ def CB_run_regular_updates():
             )
 
             total_corps = len(corps)
-            logger.info(f"✅  [AA-BB] - [CB_run_regular_updates] - Dispatching updates for {total_corps} corps.")
+            logger.info(
+                f"✅  [AA-BB] - [CB_run_regular_updates] - Dispatching updates for {total_corps} corps."
+            )
 
             # Backlog check (cached to avoid repeated expensive introspection)
             try:
@@ -385,7 +414,11 @@ def CB_run_regular_updates():
                     # Cache for 60 seconds to avoid repeated expensive introspection
                     cache.set(backlog_cache_key, remaining_count, 60)
 
-                if remaining_count and remaining_count > 0 and instance.update_backlog_notify:
+                if (
+                    remaining_count
+                    and remaining_count > 0
+                    and instance.update_backlog_notify
+                ):
                     # For corps we might use the same threshold or a fixed one?
                     # Let's use the same threshold but against total_corps?
                     # Actually, let's just use a fixed small number or similar logic.
@@ -403,7 +436,9 @@ def CB_run_regular_updates():
                                 color=0xFF0000,
                             )
             except Exception as e:
-                logger.error(f"ℹ️  [AA-BB] - [CB_run_regular_updates] - Failed to check for backlog: {e}")
+                logger.error(
+                    f"ℹ️  [AA-BB] - [CB_run_regular_updates] - Failed to check for backlog: {e}"
+                )
 
             # Dispatch with staggered delays to smooth load
             for idx, corp_id in enumerate(corps):
@@ -421,12 +456,17 @@ def CB_run_regular_updates():
         close_old_connections()
 
     except Exception:
-        logger.error("ℹ️  [AA-BB] - [CB_run_regular_updates] - Task failed", exc_info=True)
+        logger.error(
+            "ℹ️  [AA-BB] - [CB_run_regular_updates] - Task failed", exc_info=True
+        )
         gc.collect()
         close_old_connections()
         tb_str = traceback.format_exc()
         tb_lines = (
-            [f"{get_pings('Error')} Corp Brother encountered an unexpected error", "```python"]
+            [
+                f"{get_pings('Error')} Corp Brother encountered an unexpected error",
+                "```python",
+            ]
             + tb_str.split("\n")
             + ["```"]
         )
@@ -470,7 +510,9 @@ def check_member_compliance():
         return
     profiles_qs = get_user_profiles()
     if instance.limit_to_main_corp:
-        profiles_qs = profiles_qs.filter(main_character__corporation_id=instance.main_corporation_id)
+        profiles_qs = profiles_qs.filter(
+            main_character__corporation_id=instance.main_corporation_id
+        )
 
     users = list(profiles_qs.values_list("main_character__character_name", flat=True))
     messages = ""
@@ -482,15 +524,25 @@ def check_member_compliance():
 
         for character, info in data.items():
             has_roles = any(
-                info.get(role, False) for role in ("director", "accountant", "station_manager", "personnel_manager")
+                info.get(role, False)
+                for role in (
+                    "director",
+                    "accountant",
+                    "station_manager",
+                    "personnel_manager",
+                )
             )
             has_char_token = info.get("character_token", False)
             has_corp_token = info.get("corporation_token", False)
 
             # Non-compliant if character has roles but no corporation token or missing character token
-            if not has_char_token or (has_roles and not has_corp_token):  # only flag when a requirement is unmet
+            if not has_char_token or (
+                has_roles and not has_corp_token
+            ):  # only flag when a requirement is unmet
                 details = []
-                if not has_char_token:  # Missing personal token always fails compliance.
+                if (
+                    not has_char_token
+                ):  # Missing personal token always fails compliance.
                     details.append("      - missing character token\n")
                 if has_roles and not has_corp_token:  # Corp roles mandate a corp token.
                     details.append("      - has corp roles but missing corp token\n")
@@ -515,14 +567,18 @@ def check_member_compliance():
 
     if corp_ids:  # optionally check extra corp ids even if they're outside auth
         # Batch query all corp characters upfront
-        all_corp_ids = [int(c.strip()) for c in corp_ids.split(",") if c.strip().isdigit()]
+        all_corp_ids = [
+            int(c.strip()) for c in corp_ids.split(",") if c.strip().isdigit()
+        ]
         linked_chars_by_corp = {}
         if all_corp_ids:
-            all_linked = EveCharacter.objects.filter(corporation_id__in=all_corp_ids).values(
-                "corporation_id", "character_name"
-            )
+            all_linked = EveCharacter.objects.filter(
+                corporation_id__in=all_corp_ids
+            ).values("corporation_id", "character_name")
             for rec in all_linked:
-                linked_chars_by_corp.setdefault(rec["corporation_id"], set()).add(rec["character_name"])
+                linked_chars_by_corp.setdefault(rec["corporation_id"], set()).add(
+                    rec["character_name"]
+                )
 
         for corp_id in all_corp_ids:
             corp_chars = []
@@ -542,26 +598,38 @@ def check_member_compliance():
     logger.debug(f"✅  [AA-BB] - [check_member_compliance] - ali_ids: {str(ali_ids)}")
     if ali_ids:  # optional alliance-level audits
         # Batch query all alliance characters upfront
-        all_ali_ids = [int(a.strip()) for a in ali_ids.split(",") if a.strip().isdigit()]
+        all_ali_ids = [
+            int(a.strip()) for a in ali_ids.split(",") if a.strip().isdigit()
+        ]
         linked_chars_by_ali = {}
         if all_ali_ids:
-            all_linked = EveCharacter.objects.filter(alliance_id__in=all_ali_ids).values(
-                "alliance_id", "character_name"
-            )
+            all_linked = EveCharacter.objects.filter(
+                alliance_id__in=all_ali_ids
+            ).values("alliance_id", "character_name")
             for rec in all_linked:
-                linked_chars_by_ali.setdefault(rec["alliance_id"], set()).add(rec["character_name"])
+                linked_chars_by_ali.setdefault(rec["alliance_id"], set()).add(
+                    rec["character_name"]
+                )
 
         for ali_id in all_ali_ids:
-            logger.debug(f"✅  [AA-BB] - [check_member_compliance] - ali_id: {str(ali_id)}")
+            logger.debug(
+                f"✅  [AA-BB] - [check_member_compliance] - ali_id: {str(ali_id)}"
+            )
             ali_chars = []
             linked_chars = linked_chars_by_ali.get(ali_id, set())
-            logger.debug(f"✅  [AA-BB] - [check_member_compliance] - linked_chars: {str(linked_chars)}")
+            logger.debug(
+                f"✅  [AA-BB] - [check_member_compliance] - linked_chars: {str(linked_chars)}"
+            )
 
             ali_name = get_alliance_name(ali_id)
-            logger.debug(f"✅  [AA-BB] - [check_member_compliance] - ali_name: {str(ali_name)}")
+            logger.debug(
+                f"✅  [AA-BB] - [check_member_compliance] - ali_name: {str(ali_name)}"
+            )
             # Get characters from EveWho API
             all_ali_members = get_ali_character_names(ali_id)
-            logger.debug(f"✅  [AA-BB] - [check_member_compliance] - all_ali_members: {str(all_ali_members)}")
+            logger.debug(
+                f"✅  [AA-BB] - [check_member_compliance] - all_ali_members: {str(all_ali_members)}"
+            )
             # Find missing characters
             for char_name in all_ali_members:
                 if char_name not in linked_chars:  # missing from Auth → flag
@@ -571,15 +639,19 @@ def check_member_compliance():
                 missing_characters.append(f"- {ali_name}\n{chars_str}")
     compliance_msg = ""
     if missing_characters:  # Prepend EveWho gaps when any exist.
-        logger.debug(f"✅  [AA-BB] - [check_member_compliance] - missing_characters: {str(missing_characters)}")
+        logger.debug(
+            f"✅  [AA-BB] - [check_member_compliance] - missing_characters: {str(missing_characters)}"
+        )
         joined_msg = "\n".join(missing_characters)
         compliance_msg += f"\n## Missing tokens for member characters:\n{joined_msg}"
 
     if messages:  # Attach per-user compliance flags when collected.
-        compliance_msg += f"\n## Non Compliant users found:\n" + messages
+        compliance_msg += "\n## Non Compliant users found:\n" + messages
 
     if compliance_msg:  # Only ping Discord when there is something to report.
-        lines = [f"{get_pings('Compliance')} Compliance Issues found:"] + compliance_msg.split("\n")
+        lines = [
+            f"{get_pings('Compliance')} Compliance Issues found:"
+        ] + compliance_msg.split("\n")
         for chunk in _chunk_embed_lines(lines):
             send_status_embed(
                 subject="Compliance Audit",
@@ -594,10 +666,6 @@ def check_member_compliance():
         del users
     gc.collect()
     close_old_connections()
-
-
-# Third Party
-import requests
 
 
 def get_corp_character_names(corp_id: int) -> str:
@@ -839,7 +907,9 @@ def BB_register_message_tasks():
     """
     Ensure all periodic tasks exist and match the configuration.
     """
-    logger.info("✅  [AA-BB] - [BB_register_message_tasks] - Running BB_register_message_tasks...")
+    logger.info(
+        "✅  [AA-BB] - [BB_register_message_tasks] - Running BB_register_message_tasks..."
+    )
     from .task_helpers.periodic_tasks import sync_periodic_tasks
 
     sync_periodic_tasks()
@@ -852,11 +922,15 @@ def BB_run_regular_loa_updates():
     """
     cfg = BigBrotherConfig.get_solo()
     if not cfg.is_active:
-        logger.warning("ℹ️  [AA-BB] - [BB_run_regular_loa_updates] - Plugin is disabled.")
+        logger.warning(
+            "ℹ️  [AA-BB] - [BB_run_regular_loa_updates] - Plugin is disabled."
+        )
         return
     qs_profiles = get_user_profiles()
     if not qs_profiles.exists():  # No members matching filters, so nothing to process.
-        logger.info("ℹ️  [AA-BB] - [BB_run_regular_loa_updates] - No member mains found.")
+        logger.info(
+            "ℹ️  [AA-BB] - [BB_run_regular_loa_updates] - No member mains found."
+        )
         return
 
     flags = []
@@ -870,7 +944,11 @@ def BB_run_regular_loa_updates():
             main_id = get_character_id(profile)
 
         # Load main character
-        ec = EveCharacter.objects.only("character_id").filter(character_id=main_id).first()
+        ec = (
+            EveCharacter.objects.only("character_id")
+            .filter(character_id=main_id)
+            .first()
+        )
         if not ec:  # Skip mains that cannot be resolved to an EveCharacter.
             continue
 
@@ -879,7 +957,9 @@ def BB_run_regular_loa_updates():
         for char in get_alts_queryset(ec):
             audit = getattr(char, "characteraudit", None)
             ts = getattr(audit, "last_known_logoff", None) if audit else None
-            if ts and (latest_logoff is None or ts > latest_logoff):  # Track the most recent logoff across alts.
+            if ts and (
+                latest_logoff is None or ts > latest_logoff
+            ):  # Track the most recent logoff across alts.
                 latest_logoff = ts
 
         if not latest_logoff:  # Without logoff data inactivity cannot be determined.
@@ -901,10 +981,14 @@ def BB_run_regular_loa_updates():
                 lr.save(update_fields=["status"])
                 send_status_embed(
                     subject="LoA Status Change",
-                    lines=[f"{user.username}'s LoA Request status changed to in progress"],
+                    lines=[
+                        f"{user.username}'s LoA Request status changed to in progress"
+                    ],
                     color=0x3498DB,
                 )
-            elif today > lr.end_date and lr.status != "finished":  # Auto-close requests whose end dates passed.
+            elif (
+                today > lr.end_date and lr.status != "finished"
+            ):  # Auto-close requests whose end dates passed.
                 lr.status = "finished"
                 lr.save(update_fields=["status"])
                 send_status_embed(
@@ -985,7 +1069,8 @@ def BB_daily_DB_cleanup():
             while True:
                 if vendor in ["mysql", "mariadb"]:
                     cursor.execute(
-                        f"DELETE FROM {table_name} WHERE updated < %s LIMIT %s", [threshold_entity, batch_size]
+                        f"DELETE FROM {table_name} WHERE updated < %s LIMIT %s",
+                        [threshold_entity, batch_size],
                     )
                     count = cursor.rowcount
                 elif vendor == "postgresql":
@@ -995,16 +1080,25 @@ def BB_daily_DB_cleanup():
                     )
                     count = cursor.rowcount
                 else:
-                    cursor.execute(f"DELETE FROM {table_name} WHERE updated < %s", [threshold_entity])
+                    cursor.execute(
+                        f"DELETE FROM {table_name} WHERE updated < %s",
+                        [threshold_entity],
+                    )
                     count = cursor.rowcount
 
                 total_deleted += count
-                if count < batch_size or vendor not in ["mysql", "mariadb", "postgresql"]:
+                if count < batch_size or vendor not in [
+                    "mysql",
+                    "mariadb",
+                    "postgresql",
+                ]:
                     break
                 time.sleep(0.1)
 
             if total_deleted > 0:
-                flags.append(f"- Deleted {total_deleted} old Entity Info Cache records.")
+                flags.append(
+                    f"- Deleted {total_deleted} old Entity Info Cache records."
+                )
         close_old_connections()
     except Exception as e:
         logger.error(f"Failed to cleanup EntityInfoCache: {e}")
@@ -1053,7 +1147,9 @@ def BB_daily_DB_cleanup():
         stale_ids = id_types.objects.filter(last_accessed__lt=prune_threshold)
         count, _ = stale_ids.delete()
         if count > 0:
-            flags.append(f"- Deleted {count} old ID type cache records (by last access).")
+            flags.append(
+                f"- Deleted {count} old ID type cache records (by last access)."
+            )
     except Exception:
         pass
 
@@ -1065,7 +1161,6 @@ def BB_daily_DB_cleanup():
     # ProcessedContract and SusContractNote are retained permanently.  The
     # corptools contract snapshot may expire or be refreshed, but the
     # processed ID is the deduplication history for hostile-contract alerts.
-
     # -- MAILS --
     # Use database-side subquery to avoid loading all mail IDs into memory
     orphaned_processed_mails = ProcessedMail.objects.filter(
@@ -1076,26 +1171,38 @@ def BB_daily_DB_cleanup():
 
     if count_proc > 0:
         with transaction.atomic():
-            count_sus = SusMailNote.objects.filter(mail__in=orphaned_processed_mails).delete()[0]
+            count_sus = SusMailNote.objects.filter(
+                mail__in=orphaned_processed_mails
+            ).delete()[0]
             orphaned_processed_mails.delete()
 
-        flags.append(f"- Deleted {count_proc} old ProcessedMail and {count_sus} SusMailNote records.")
+        flags.append(
+            f"- Deleted {count_proc} old ProcessedMail and {count_sus} SusMailNote records."
+        )
 
     # -- TRANSACTIONS --
     # Use database-side subquery to avoid loading all transaction IDs into memory
     orphaned_processed_transactions = ProcessedTransaction.objects.filter(
-        ~Exists(CharacterWalletJournalEntry.objects.filter(entry_id=OuterRef("entry_id")))
-        & ~Exists(CorporationWalletJournalEntry.objects.filter(entry_id=OuterRef("entry_id")))
+        ~Exists(
+            CharacterWalletJournalEntry.objects.filter(entry_id=OuterRef("entry_id"))
+        )
+        & ~Exists(
+            CorporationWalletJournalEntry.objects.filter(entry_id=OuterRef("entry_id"))
+        )
     )
 
     count_proc = orphaned_processed_transactions.count()
 
     if count_proc > 0:
         with transaction.atomic():
-            count_sus = SusTransactionNote.objects.filter(transaction__in=orphaned_processed_transactions).delete()[0]
+            count_sus = SusTransactionNote.objects.filter(
+                transaction__in=orphaned_processed_transactions
+            ).delete()[0]
             orphaned_processed_transactions.delete()
 
-        flags.append(f"- Deleted {count_proc} old ProcessedTransaction and {count_sus} SusTransactionNote records.")
+        flags.append(
+            f"- Deleted {count_proc} old ProcessedTransaction and {count_sus} SusTransactionNote records."
+        )
 
     # -- PAP COMPLIANCE: drop entries for non-members --
     try:
@@ -1105,9 +1212,13 @@ def BB_daily_DB_cleanup():
         )
         deleted_pc = non_member_pc_qs.delete()[0]
         if deleted_pc > 0:
-            flags.append(f"- Deleted {deleted_pc} PapCompliance records for non-members.")
+            flags.append(
+                f"- Deleted {deleted_pc} PapCompliance records for non-members."
+            )
     except Exception as e:
-        logger.warning(f"ℹ️  [AA-BB] - [BB_daily_DB_cleanup] - PapCompliance cleanup failed: {e}")
+        logger.warning(
+            f"ℹ️  [AA-BB] - [BB_daily_DB_cleanup] - PapCompliance cleanup failed: {e}"
+        )
 
     if flags:  # Summarize cleanup actions when anything was removed.
         lines = ["DB Cleanup Complete:"] + flags

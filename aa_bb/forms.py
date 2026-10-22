@@ -49,9 +49,16 @@ class LeaveRequestForm(forms.ModelForm):
         # If either missing, let field-level validators handle
         if start and end:  # Only perform cross-field validation when both dates exist.
             if start < today:  # Block past start dates.
-                self.add_error("start_date", ValidationError("Start date cannot be in the past."))
+                self.add_error(
+                    "start_date", ValidationError("Start date cannot be in the past.")
+                )
             if end < today:  # Block past end dates.
-                self.add_error("end_date", ValidationError("End date cannot be in the past."))
+                self.add_error(
+                    "end_date", ValidationError("End date cannot be in the past.")
+                )
             if start > end:  # Enforce chronological ordering.
-                self.add_error("end_date", ValidationError("End date must be on or after start date."))
+                self.add_error(
+                    "end_date",
+                    ValidationError("End date must be on or after start date."),
+                )
         return cleaned

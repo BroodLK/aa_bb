@@ -5,11 +5,6 @@ import os
 # Third Party
 import matplotlib.pyplot as plt
 
-# Alliance Auth
-from allianceauth.services.hooks import get_extension_logger
-
-logger = get_extension_logger(__name__)
-
 # Django
 from django.conf import settings
 from django.contrib.auth.decorators import login_required, permission_required
@@ -18,8 +13,19 @@ from django.urls import reverse
 from django.utils.timezone import now
 from django.views.decorators.http import require_POST
 
+# Alliance Auth
+from allianceauth.services.hooks import get_extension_logger
+
 from .app_settings import afat_active, get_user_characters, get_user_profiles
-from .models import BigBrotherConfig, LeaveRequest, PapCompliance, PapsConfig, TicketToolConfig
+from .models import (
+    BigBrotherConfig,
+    LeaveRequest,
+    PapCompliance,
+    PapsConfig,
+    TicketToolConfig,
+)
+
+logger = get_extension_logger(__name__)
 
 AFAT_INSTALLED = False
 if afat_active():
@@ -54,7 +60,9 @@ def index(request):
     error_messages = []
 
     # Handle bulk data POST
-    if request.method == "POST":  # Bulk upload mode; parse pasted values into POST fields.
+    if (
+        request.method == "POST"
+    ):  # Bulk upload mode; parse pasted values into POST fields.
         bulk_data = request.POST.get("bulk_data", "")
         lines = bulk_data.strip().split("\n")
         for line in lines:
@@ -100,13 +108,22 @@ def index(request):
 
         # Count how many overlap
         matching_count = len(user_groups_set & auth_groups_set)
-        excluded = bool(user_groups_set & excluded_groups_set)  # True if user belongs to any excluded group.
+        excluded = bool(
+            user_groups_set & excluded_groups_set
+        )  # True if user belongs to any excluded group.
         excluded_users_paps = PapsConfig.get_solo().excluded_users_paps.all()
-        if profile.user not in excluded_users_paps:  # Only award group PAPs when user not excluded.
+        if (
+            profile.user not in excluded_users_paps
+        ):  # Only award group PAPs when user not excluded.
             if not excluded:  # Normal path: add modifier times group overlaps.
-                corp_paps = corp_paps + matching_count * PapsConfig.get_solo().group_paps_modifier
+                corp_paps = (
+                    corp_paps
+                    + matching_count * PapsConfig.get_solo().group_paps_modifier
+                )
             else:
-                if PapsConfig.get_solo().excluded_groups_get_paps:  # Optionally still award excluded groups.
+                if (
+                    PapsConfig.get_solo().excluded_groups_get_paps
+                ):  # Optionally still award excluded groups.
                     corp_paps = corp_paps + PapsConfig.get_solo().group_paps_modifier
 
         def _group_name(g):
@@ -147,8 +164,12 @@ def index(request):
         # Override with POSTed values (manual or bulk)
         if request.method == "POST":  # Manual overrides from form submission.
             corp_paps = int(request.POST.get(f"corp_paps_{user_id}", corp_paps))
-            alliance_paps = int(request.POST.get(f"alliance_paps_{user_id}", alliance_paps))
-            coalition_paps = int(request.POST.get(f"coalition_paps_{user_id}", coalition_paps))
+            alliance_paps = int(
+                request.POST.get(f"alliance_paps_{user_id}", alliance_paps)
+            )
+            coalition_paps = int(
+                request.POST.get(f"coalition_paps_{user_id}", coalition_paps)
+            )
 
         users_data.append(
             {
@@ -236,8 +257,14 @@ def generate_pap_chart(request):
         user_id = profile.user.id
         corp_raw = int(request.POST.get(f"corp_paps_{user_id}", 0)) * conf.corp_modifier
         corp_paps = min(corp_raw, conf.max_corp_paps)  # cap at configured maximum
-        alliance_paps = int(request.POST.get(f"alliance_paps_{user_id}", 0)) * conf.alliance_modifier
-        coalition_paps = int(request.POST.get(f"coalition_paps_{user_id}", 0)) * conf.coalition_modifier
+        alliance_paps = (
+            int(request.POST.get(f"alliance_paps_{user_id}", 0))
+            * conf.alliance_modifier
+        )
+        coalition_paps = (
+            int(request.POST.get(f"coalition_paps_{user_id}", 0))
+            * conf.coalition_modifier
+        )
         corp_ab = corp_raw - conf.max_corp_paps
         if corp_ab < 0:
             corp_ab = 0
@@ -270,7 +297,9 @@ def generate_pap_chart(request):
     filepath = os.path.join(app_static_dir, filename)
 
     # Generate stacked chart
-    fig, ax = plt.subplots(figsize=(12, 6))  # Build stacked bar chart in neutral dark theme.
+    fig, ax = plt.subplots(
+        figsize=(12, 6)
+    )  # Build stacked bar chart in neutral dark theme.
     fig.patch.set_facecolor("#4B4B4B")  # Dark grey background
     ax.set_facecolor("#4B4B4B")
 
@@ -290,18 +319,42 @@ def generate_pap_chart(request):
     ax.bar(x, alliance, label=f"Alliance Paps(x{alliance_m})", color="#58D68D")
 
     # Next: Coalition
-    ax.bar(x, coalition, bottom=alliance, label=f"Coalition Paps(x{coalition_m})", color="#F5B041")
-    bottom_stack = [l + im for l, im in zip(alliance, coalition)]
+    ax.bar(
+        x,
+        coalition,
+        bottom=alliance,
+        label=f"Coalition Paps(x{coalition_m})",
+        color="#F5B041",
+    )
+    bottom_stack = [a + co for a, co in zip(alliance, coalition)]
 
     # Next: Corp (capped part)
-    ax.bar(x, corp, bottom=bottom_stack, label=f"Corp Paps(x{corp_m}, max {corp_max})", color="#5DADE2")
+    ax.bar(
+        x,
+        corp,
+        bottom=bottom_stack,
+        label=f"Corp Paps(x{corp_m}, max {corp_max})",
+        color="#5DADE2",
+    )
     corp_stack = [b + c for b, c in zip(bottom_stack, corp)]
 
     # Top: Corp above cap
-    ax.bar(x, corp_abo, bottom=corp_stack, label=f"Corp Paps above {corp_max}(x{corp_m})", color="#9EC5DF")
+    ax.bar(
+        x,
+        corp_abo,
+        bottom=corp_stack,
+        label=f"Corp Paps above {corp_max}(x{corp_m})",
+        color="#9EC5DF",
+    )
 
     # Horizontal red dashed line at y=6
-    ax.axhline(y=conf.required_paps, color="red", linestyle="--", linewidth=2, label="PAP Requirement")
+    ax.axhline(
+        y=conf.required_paps,
+        color="red",
+        linestyle="--",
+        linewidth=2,
+        label="PAP Requirement",
+    )
 
     # Labels and style
     ax.set_xticks(x)
@@ -309,7 +362,11 @@ def generate_pap_chart(request):
     ax.set_ylabel("Total Paps", color="white")
     month_name = calendar.month_name[month]
     main_corporation = BigBrotherConfig.get_solo().main_corporation
-    ax.set_title(f"{main_corporation} Fleet Breakdown for {month_name} {year}", color="white", fontweight="bold")
+    ax.set_title(
+        f"{main_corporation} Fleet Breakdown for {month_name} {year}",
+        color="white",
+        fontweight="bold",
+    )
 
     # All spines and ticks in white
     ax.spines["bottom"].set_color("black")
@@ -320,25 +377,41 @@ def generate_pap_chart(request):
     ax.tick_params(axis="y", colors="white")
 
     # Legend in top-right
-    ax.legend(loc="upper right", facecolor="#4B4B4B", edgecolor="white", labelcolor="white")
+    ax.legend(
+        loc="upper right", facecolor="#4B4B4B", edgecolor="white", labelcolor="white"
+    )
 
     # Add labels above the stacked bars
-    for i, (l, im, c) in enumerate(zip(alliance, coalition, corp)):  # Label capped totals in contrasting color.
-        total = l + im + c
+    for i, (a, co, c) in enumerate(
+        zip(alliance, coalition, corp)
+    ):  # Label capped totals in contrasting color.
+        total = a + co + c
         coll = "red"
         if total >= conf.required_paps:
             coll = "white"
         ax.text(i, total, str(total), ha="center", va="bottom", color=coll, fontsize=10)
 
-    for i, (l, im, c, ca) in enumerate(zip(alliance, coalition, corp, corp_abo)):  # Label above-cap contributions.
-        total = l + im + c
+    for i, (a, co, c, ca) in enumerate(
+        zip(alliance, coalition, corp, corp_abo)
+    ):  # Label above-cap contributions.
+        total = a + co + c
         total_c = total + ca
         coll = "white"
         if total != total_c:
-            ax.text(i, total_c, str(total_c), ha="center", va="bottom", color=coll, fontsize=10)
+            ax.text(
+                i,
+                total_c,
+                str(total_c),
+                ha="center",
+                va="bottom",
+                color=coll,
+                fontsize=10,
+            )
 
     # Determine the max total height of stacked bars
-    max_total = max([l + im + c + ca for l, im, c, ca in zip(alliance, coalition, corp, corp_abo)])
+    max_total = max(
+        [a + co + c + ca for a, co, c, ca in zip(alliance, coalition, corp, corp_abo)]
+    )
     if max_total < conf.required_paps:
         max_total = conf.required_paps
 
@@ -346,7 +419,9 @@ def generate_pap_chart(request):
     ax.set_ylim(0, max_total * 1.1)
 
     plt.tight_layout()
-    plt.savefig(filepath, dpi=150, facecolor=fig.get_facecolor())  # save with background
+    plt.savefig(
+        filepath, dpi=150, facecolor=fig.get_facecolor()
+    )  # save with background
     plt.close(fig)
 
     # Redirect to history page

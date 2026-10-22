@@ -157,7 +157,9 @@ def _get_latest_discord_log_entry(user_id):
         return None
     try:
         return (
-            AdminLogEntry.objects.filter(category=AdminLogEntry.CATEGORY_DISCORD, target_user_id=user_id)
+            AdminLogEntry.objects.filter(
+                category=AdminLogEntry.CATEGORY_DISCORD, target_user_id=user_id
+            )
             .order_by("-created_at")
             .first()
         )
@@ -239,14 +241,21 @@ def _extract_discord_role_changes(result):
     added = []
     removed = []
     if isinstance(result, dict):
-        added = result.get("added") or result.get("roles_added") or result.get("add") or []
-        removed = result.get("removed") or result.get("roles_removed") or result.get("remove") or []
+        added = (
+            result.get("added") or result.get("roles_added") or result.get("add") or []
+        )
+        removed = (
+            result.get("removed")
+            or result.get("roles_removed")
+            or result.get("remove")
+            or []
+        )
         if not added and not removed:
             before = result.get("before") or result.get("old") or []
             after = result.get("after") or result.get("new") or []
             if isinstance(before, (list, tuple)) and isinstance(after, (list, tuple)):
-                before_set = set(str(v) for v in before)
-                after_set = set(str(v) for v in after)
+                before_set = {str(v) for v in before}
+                after_set = {str(v) for v in after}
                 added = sorted(after_set - before_set)
                 removed = sorted(before_set - after_set)
     elif isinstance(result, (list, tuple)) and len(result) == 2:
@@ -290,7 +299,9 @@ def removed_character(sender, instance, **kwargs):
         ensure_ticket(instance.user, "char_removed", details=str(character))
 
     except Exception as e:
-        logger.error("✅  [AA-BB] - [Signals] - Failed to create character-removed ticket: %s", e)
+        logger.error(
+            "✅  [AA-BB] - [Signals] - Failed to create character-removed ticket: %s", e
+        )
 
 
 @receiver(pre_delete, sender=CharacterOwnership)
@@ -343,12 +354,16 @@ def cache_profile_state(sender, instance, **kwargs):
         instance._bb_prev_main_character_name = None
         return
     try:
-        prev = UserProfile.objects.select_related("state").values(
-            "state_id",
-            "state__name",
-            "main_character_id",
-            "main_character__character_name",
-        ).get(pk=instance.pk)
+        prev = (
+            UserProfile.objects.select_related("state")
+            .values(
+                "state_id",
+                "state__name",
+                "main_character_id",
+                "main_character__character_name",
+            )
+            .get(pk=instance.pk)
+        )
         instance._bb_prev_state_id = prev["state_id"]
         instance._bb_prev_state_name = prev["state__name"]
         instance._bb_prev_main_character_id = prev["main_character_id"]
@@ -448,7 +463,9 @@ def log_user_changes(sender, instance, created, **kwargs):
     if prev.is_superuser != instance.is_superuser:
         log_admin_event(
             category=AdminLogEntry.CATEGORY_AUTH,
-            action="superuser_granted" if instance.is_superuser else "superuser_revoked",
+            action=(
+                "superuser_granted" if instance.is_superuser else "superuser_revoked"
+            ),
             target_user=instance,
             message=f"Superuser status {'granted' if instance.is_superuser else 'revoked'}",
             reason="superuser_status_changed",
@@ -549,9 +566,17 @@ def _resolve_target_user_from_log_entry(entry):
             return UserProfile.objects.select_related("user").get(pk=object_id_int).user
         except UserProfile.DoesNotExist:
             return None
-    if app_label == "authentication" and model == "characterownership" and object_id_int:
+    if (
+        app_label == "authentication"
+        and model == "characterownership"
+        and object_id_int
+    ):
         try:
-            return CharacterOwnership.objects.select_related("user").get(pk=object_id_int).user
+            return (
+                CharacterOwnership.objects.select_related("user")
+                .get(pk=object_id_int)
+                .user
+            )
         except CharacterOwnership.DoesNotExist:
             return None
 
@@ -565,9 +590,15 @@ def log_admin_actions(sender, instance, created, **kwargs):
         return
 
     if instance.content_type:
-        if instance.content_type.app_label == "aa_bb" and instance.content_type.model == "adminlogentry":
+        if (
+            instance.content_type.app_label == "aa_bb"
+            and instance.content_type.model == "adminlogentry"
+        ):
             return
-        if instance.content_type.app_label == "admin" and instance.content_type.model == "logentry":
+        if (
+            instance.content_type.app_label == "admin"
+            and instance.content_type.model == "logentry"
+        ):
             return
 
     action_map = {
@@ -588,7 +619,9 @@ def log_admin_actions(sender, instance, created, **kwargs):
         reason=instance.change_message or "",
         source="admin",
         metadata={
-            "content_type": str(instance.content_type) if instance.content_type else None,
+            "content_type": (
+                str(instance.content_type) if instance.content_type else None
+            ),
             "object_id": instance.object_id,
             "action_flag": instance.action_flag,
         },
@@ -600,12 +633,21 @@ if DiscordUser is not None:
     @receiver(post_save, sender=DiscordUser)
     def log_discord_user_change(sender, instance, created, **kwargs):
         """Log when a Discord account is linked or updated."""
-        discord_id = getattr(instance, "uid", None) or getattr(instance, "discord_id", None)
+        discord_id = getattr(instance, "uid", None) or getattr(
+            instance, "discord_id", None
+        )
         prior_entry = _get_latest_discord_log_entry(getattr(instance, "user_id", None))
         prior_unlink = prior_entry and prior_entry.action == "discord_unlinked"
-        prior_discord_id = _extract_discord_id_from_log(prior_entry) if prior_unlink else None
+        prior_discord_id = (
+            _extract_discord_id_from_log(prior_entry) if prior_unlink else None
+        )
         new_discord_id = str(discord_id) if discord_id else None
-        should_alert = prior_unlink and prior_discord_id and new_discord_id and prior_discord_id != new_discord_id
+        should_alert = (
+            prior_unlink
+            and prior_discord_id
+            and new_discord_id
+            and prior_discord_id != new_discord_id
+        )
         log_admin_event(
             category=AdminLogEntry.CATEGORY_DISCORD,
             action="discord_linked" if created else "discord_updated",
@@ -622,7 +664,9 @@ if DiscordUser is not None:
     @receiver(pre_delete, sender=DiscordUser)
     def log_discord_user_unlink(sender, instance, **kwargs):
         """Log when a Discord account is unlinked."""
-        discord_id = getattr(instance, "uid", None) or getattr(instance, "discord_id", None)
+        discord_id = getattr(instance, "uid", None) or getattr(
+            instance, "discord_id", None
+        )
         log_admin_event(
             category=AdminLogEntry.CATEGORY_DISCORD,
             action="discord_unlinked",
@@ -716,7 +760,9 @@ if Token is not None:
             message_parts.append("(scopes pending)")
         else:
             message_parts.append(f"(scopes {len(scopes)})")
-        category = AdminLogEntry.CATEGORY_AUTH if scopes else AdminLogEntry.CATEGORY_SYSTEM
+        category = (
+            AdminLogEntry.CATEGORY_AUTH if scopes else AdminLogEntry.CATEGORY_SYSTEM
+        )
         log_admin_event(
             category=category,
             action="token_created",
@@ -756,7 +802,9 @@ if Token is not None:
         age_human = None
         if created_at:
             if timezone.is_naive(created_at):
-                created_at = timezone.make_aware(created_at, timezone.get_current_timezone())
+                created_at = timezone.make_aware(
+                    created_at, timezone.get_current_timezone()
+                )
             age_seconds = (timezone.now() - created_at).total_seconds()
             age_human = _format_age_seconds(age_seconds)
         message_parts = ["ESI token deleted"]
@@ -768,7 +816,9 @@ if Token is not None:
             message_parts.append(f"(age {age_human})")
         if reason_hint:
             message_parts.append(f"via {reason_hint}")
-        category = AdminLogEntry.CATEGORY_AUTH if scopes else AdminLogEntry.CATEGORY_SYSTEM
+        category = (
+            AdminLogEntry.CATEGORY_AUTH if scopes else AdminLogEntry.CATEGORY_SYSTEM
+        )
         log_admin_event(
             category=category,
             action="token_deleted",
@@ -840,7 +890,9 @@ if OwnershipRecord is not None:
             category=AdminLogEntry.CATEGORY_AUTH,
             action="ownership_record_created",
             target_user=instance.user,
-            target_label=getattr(instance.character, "character_name", str(instance.character)),
+            target_label=getattr(
+                instance.character, "character_name", str(instance.character)
+            ),
             message="Ownership record created",
             reason="ownership_record_created",
             source="auth",
@@ -869,7 +921,9 @@ if State is not None:
     if hasattr(State, "member_characters"):
 
         @receiver(m2m_changed, sender=State.member_characters.through)
-        def log_state_member_characters_changed(sender, instance, action, pk_set, **kwargs):
+        def log_state_member_characters_changed(
+            sender, instance, action, pk_set, **kwargs
+        ):
             if action not in ("post_add", "post_remove", "post_clear"):
                 return
             log_admin_event(
@@ -885,7 +939,9 @@ if State is not None:
     if hasattr(State, "member_corporations"):
 
         @receiver(m2m_changed, sender=State.member_corporations.through)
-        def log_state_member_corporations_changed(sender, instance, action, pk_set, **kwargs):
+        def log_state_member_corporations_changed(
+            sender, instance, action, pk_set, **kwargs
+        ):
             if action not in ("post_add", "post_remove", "post_clear"):
                 return
             log_admin_event(
@@ -901,7 +957,9 @@ if State is not None:
     if hasattr(State, "member_alliances"):
 
         @receiver(m2m_changed, sender=State.member_alliances.through)
-        def log_state_member_alliances_changed(sender, instance, action, pk_set, **kwargs):
+        def log_state_member_alliances_changed(
+            sender, instance, action, pk_set, **kwargs
+        ):
             if action not in ("post_add", "post_remove", "post_clear"):
                 return
             log_admin_event(
@@ -917,7 +975,9 @@ if State is not None:
     if hasattr(State, "member_factions"):
 
         @receiver(m2m_changed, sender=State.member_factions.through)
-        def log_state_member_factions_changed(sender, instance, action, pk_set, **kwargs):
+        def log_state_member_factions_changed(
+            sender, instance, action, pk_set, **kwargs
+        ):
             if action not in ("post_add", "post_remove", "post_clear"):
                 return
             log_admin_event(
@@ -938,7 +998,11 @@ if GroupRequest is not None:
         """Log when a user applies to join/leave a group."""
         if not created:
             return
-        action = "group_leave_request_created" if instance.leave_request else "group_join_request_created"
+        action = (
+            "group_leave_request_created"
+            if instance.leave_request
+            else "group_join_request_created"
+        )
         log_admin_event(
             category=AdminLogEntry.CATEGORY_GROUP,
             action=action,
@@ -960,7 +1024,11 @@ if GroupRequest is not None:
         """Log when a user cancels their own request (best-effort)."""
         actor, _meta = get_request_context()
         if actor and instance.user_id == actor.id:
-            action = "group_leave_request_cancelled" if instance.leave_request else "group_join_request_cancelled"
+            action = (
+                "group_leave_request_cancelled"
+                if instance.leave_request
+                else "group_join_request_cancelled"
+            )
             log_admin_event(
                 category=AdminLogEntry.CATEGORY_GROUP,
                 action=action,
@@ -1033,7 +1101,9 @@ if celery_signals is not None:
         return _is_discord_update_groups_task_name(name)
 
     @celery_signals.task_success.connect
-    def log_discord_task_success(sender=None, result=None, args=None, kwargs=None, **extras):
+    def log_discord_task_success(
+        sender=None, result=None, args=None, kwargs=None, **extras
+    ):
         if not sender or not _is_discord_update_groups_task(sender):
             return
         user_pk = None
@@ -1082,7 +1152,9 @@ if celery_signals is not None:
                 category=AdminLogEntry.CATEGORY_DISCORD,
                 action="discord_roles_updated",
                 target_user=target_user,
-                target_label=getattr(target_user, "username", "") if target_user else "",
+                target_label=(
+                    getattr(target_user, "username", "") if target_user else ""
+                ),
                 message="Discord roles update completed (no changes detected)",
                 reason="discord_update_groups_success",
                 source="discord",
@@ -1094,7 +1166,9 @@ if celery_signals is not None:
             )
 
     @celery_signals.task_failure.connect
-    def log_discord_task_failure(sender=None, exception=None, args=None, kwargs=None, **extras):
+    def log_discord_task_failure(
+        sender=None, exception=None, args=None, kwargs=None, **extras
+    ):
         if not sender or not _is_discord_update_groups_task(sender):
             return
         user_pk = None

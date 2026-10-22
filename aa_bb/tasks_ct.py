@@ -7,9 +7,9 @@ logging, throttling, and message notifications.
 
 # Standard Library
 import datetime
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from random import random
-from typing import Callable, Iterable, List, Optional, Sequence
 
 # Third Party
 from celery import chain, shared_task
@@ -33,7 +33,11 @@ try:
     if corptools_active():
         # Third Party
         from corptools import app_settings
-        from corptools.models import CharacterAudit, CorptoolsConfiguration, EveCharacter
+        from corptools.models import (
+            CharacterAudit,
+            CorptoolsConfiguration,
+            EveCharacter,
+        )
         from corptools.tasks.character import (
             update_char_assets,
             update_char_clones,
@@ -65,12 +69,12 @@ class ModuleRule:
     """Definition of a CT module, its gating attributes, and tasks to execute."""
 
     name: str
-    enabled_flag: Optional[str]
-    runtime_disable_attr: Optional[str]
+    enabled_flag: str | None
+    runtime_disable_attr: str | None
     last_update_fields: Sequence[str]
     required_scopes: Sequence[str]
     tasks: Sequence[Callable]
-    extra_predicate: Optional[Callable[[], bool]] = None
+    extra_predicate: Callable[[], bool] | None = None
 
 
 def _safe_identity_refresh(char_id: int):
@@ -89,25 +93,26 @@ def _safe_identity_refresh(char_id: int):
         cache.set(cache_key, True, 3600)  # Cache for 1 hour
     except Exception as e:
         logger.warning(
-            f"✅  [AA-BB] - [_safe_identity_refresh] - Identity refresh failed for {char_id}: {e}", exc_info=True
+            f"✅  [AA-BB] - [_safe_identity_refresh] - Identity refresh failed for {char_id}: {e}",
+            exc_info=True,
         )
 
 
-def _is_enabled(flag_name: Optional[str]) -> bool:
+def _is_enabled(flag_name: str | None) -> bool:
     """Check whether a module flag is globally enabled."""
     if not flag_name:  # No flag configured, treat module as enabled by default.
         return True
     return bool(getattr(app_settings, flag_name, False))
 
 
-def _not_temp_disabled(conf: CorptoolsConfiguration, attr: Optional[str]) -> bool:
+def _not_temp_disabled(conf: CorptoolsConfiguration, attr: str | None) -> bool:
     """Inspect runtime toggle on CorptoolsConfiguration to see if module paused."""
     if not attr:  # No runtime toggle specified, nothing to disable here.
         return True
     return bool(getattr(conf, attr, False) is False)
 
 
-def _available_fields(audit: CharacterAudit, fields: Iterable[str]) -> List[str]:
+def _available_fields(audit: CharacterAudit, fields: Iterable[str]) -> list[str]:
     """Return the subset of last-update fields that the audit record actually has."""
     return [f for f in fields if hasattr(audit, f)]
 
@@ -117,7 +122,9 @@ def _is_stale_value(dt, cutoff) -> bool:
     return (dt is None) or (dt <= cutoff)
 
 
-def _any_available_field_stale(audit: CharacterAudit, fields: Iterable[str], cutoff) -> bool:
+def _any_available_field_stale(
+    audit: CharacterAudit, fields: Iterable[str], cutoff
+) -> bool:
     """Check whether any available last-update field is stale."""
     avail = _available_fields(audit, fields)
     if not avail:  # If audit lacks these fields, the entry is not considered stale.
@@ -147,13 +154,16 @@ def _has_valid_token_with_scopes(char_id: int, scopes: Sequence[str]) -> bool:
         return False
 
 
-RULES: List[ModuleRule] = [
+RULES: list[ModuleRule] = [
     ModuleRule(
         name="Location",
         enabled_flag="CT_CHAR_LOCATIONS_MODULE",
         runtime_disable_attr="disable_update_location",
         last_update_fields=["last_update_location", "last_update_locations"],
-        required_scopes=["esi-location.read_location.v1", "esi-location.read_ship_type.v1"],
+        required_scopes=[
+            "esi-location.read_location.v1",
+            "esi-location.read_ship_type.v1",
+        ],
         tasks=[update_char_location],
     ),
     ModuleRule(
@@ -216,7 +226,12 @@ RULES: List[ModuleRule] = [
             "esi-wallet.read_character_wallet.v1",
             "esi-markets.read_character_orders.v1",
         ],
-        tasks=[update_char_wallet, update_char_transactions, update_char_orders, update_char_order_history],
+        tasks=[
+            update_char_wallet,
+            update_char_transactions,
+            update_char_orders,
+            update_char_order_history,
+        ],
     ),
     ModuleRule(
         name="Contracts",
@@ -225,7 +240,9 @@ RULES: List[ModuleRule] = [
         last_update_fields=["last_update_contracts"],
         required_scopes=["esi-contracts.read_character_contracts.v1"],
         tasks=[update_char_contracts],
-        extra_predicate=lambda: (not getattr(app_settings, "CT_CHAR_PAUSE_CONTRACTS", False)),
+        extra_predicate=lambda: (
+            not getattr(app_settings, "CT_CHAR_PAUSE_CONTRACTS", False)
+        ),
     ),
     ModuleRule(
         name="Clones",
@@ -269,7 +286,9 @@ RULES: List[ModuleRule] = [
 
 
 @shared_task(time_limit=7200)
-def kickstart_stale_ct_modules(days_stale: int = 2, limit: Optional[int] = None, dry_run: bool = False) -> str:
+def kickstart_stale_ct_modules(
+    days_stale: int = 2, limit: int | None = None, dry_run: bool = False
+) -> str:
     """
     Iterate audits and queue CT module tasks for any characters with stale data.
 
@@ -294,12 +313,25 @@ def kickstart_stale_ct_modules(days_stale: int = 2, limit: Optional[int] = None,
     cutoff = timezone.now() - datetime.timedelta(days=days_stale)
     cutoff_really_stale = timezone.now() - datetime.timedelta(days=days_stale, hours=6)
 
-    qs = CharacterAudit.objects.filter(character__character_ownership__isnull=False).select_related("character")
+    qs = CharacterAudit.objects.filter(
+        character__character_ownership__isnull=False
+    ).select_related("character")
 
-    member_corps = {int(x) for x in (instance.member_corporations or "").split(",") if x.strip().isdigit()}
-    member_allis = {int(x) for x in (instance.member_alliances or "").split(",") if x.strip().isdigit()}
+    member_corps = {
+        int(x)
+        for x in (instance.member_corporations or "").split(",")
+        if x.strip().isdigit()
+    }
+    member_allis = {
+        int(x)
+        for x in (instance.member_alliances or "").split(",")
+        if x.strip().isdigit()
+    }
     if member_corps or member_allis:
-        qs = qs.filter(Q(character__corporation_id__in=member_corps) | Q(character__alliance_id__in=member_allis))
+        qs = qs.filter(
+            Q(character__corporation_id__in=member_corps)
+            | Q(character__alliance_id__in=member_allis)
+        )
 
     if limit:  # Honor caller-provided limit to avoid scanning the entire table.
         qs = qs[: int(limit)]
@@ -307,26 +339,38 @@ def kickstart_stale_ct_modules(days_stale: int = 2, limit: Optional[int] = None,
     total_chars = 0
     total_tasks = 0
     submitted_chars = 0
-    updated_names: List[str] = []
+    updated_names: list[str] = []
 
     for audit in qs.iterator():
         total_chars += 1
         char_id = audit.character.character_id
         kickedcharactermodel = False
 
-        que: List = []
+        que: list = []
 
         for rule in RULES:
-            really_stale = _any_available_field_stale(audit, rule.last_update_fields, cutoff_really_stale)
-            if not _is_enabled(rule.enabled_flag):  # Skip modules turned off in settings.
+            really_stale = _any_available_field_stale(
+                audit, rule.last_update_fields, cutoff_really_stale
+            )
+            if not _is_enabled(
+                rule.enabled_flag
+            ):  # Skip modules turned off in settings.
                 continue
-            if not _not_temp_disabled(conf, rule.runtime_disable_attr):  # Honor runtime pause switches.
+            if not _not_temp_disabled(
+                conf, rule.runtime_disable_attr
+            ):  # Honor runtime pause switches.
                 continue
-            if rule.extra_predicate and not rule.extra_predicate():  # Allow ad-hoc guards (e.g. paused contracts).
+            if (
+                rule.extra_predicate and not rule.extra_predicate()
+            ):  # Allow ad-hoc guards (e.g. paused contracts).
                 continue
-            if not _has_valid_token_with_scopes(char_id, rule.required_scopes):  # Cannot update without the scopes.
+            if not _has_valid_token_with_scopes(
+                char_id, rule.required_scopes
+            ):  # Cannot update without the scopes.
                 continue
-            if not _any_available_field_stale(audit, rule.last_update_fields, cutoff):  # Fresh data needs no action.
+            if not _any_available_field_stale(
+                audit, rule.last_update_fields, cutoff
+            ):  # Fresh data needs no action.
                 continue
 
             if (

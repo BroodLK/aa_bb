@@ -1,12 +1,11 @@
 # Standard Library
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 # Django
 from django.contrib.auth.models import User
 from django.test import TestCase
 
 # AA BigBrother
-from aa_bb.checks.hostile_assets import check_asset_audits_complete, get_asset_locations
 from aa_bb.models import BigBrotherConfig, UserStatus
 from aa_bb.tasks import BB_update_single_user
 
@@ -75,7 +74,13 @@ class TestHostileAssetsFlapping(TestCase):
                 "LXQ2-T": {
                     "owner": "Rote Works",
                     "region": "Etherium Reach",
-                    "records": [{"char_name": "Test Char", "location_name": "LXQ2-T - Freeport", "ships": ["Helios"]}],
+                    "records": [
+                        {
+                            "char_name": "Test Char",
+                            "location_name": "LXQ2-T - Freeport",
+                            "ships": ["Helios"],
+                        }
+                    ],
                 }
             },
         )
@@ -156,7 +161,13 @@ class TestHostileAssetsFlapping(TestCase):
                 "LXQ2-T": {
                     "owner": "Rote Works",
                     "region": "Etherium Reach",
-                    "records": [{"char_name": "Test Char", "location_name": "LXQ2-T - Freeport", "ships": ["Helios"]}],
+                    "records": [
+                        {
+                            "char_name": "Test Char",
+                            "location_name": "LXQ2-T - Freeport",
+                            "ships": ["Helios"],
+                        }
+                    ],
                 }
             },
         )

@@ -8,7 +8,6 @@ recipients, and persist short notes for repeated reporting.
 # Standard Library
 import html
 from datetime import datetime
-from typing import Dict, List, Optional
 
 # Django
 from django.utils import timezone
@@ -24,6 +23,9 @@ from ..app_settings import (
     get_user_characters,
     is_hostile_unified,
 )
+from ..models import BigBrotherConfig, EntityInfoCache, ProcessedMail, SusMailNote
+
+logger = get_extension_logger(__name__)
 
 if aablacklist_active():
     pass
@@ -31,13 +33,6 @@ else:
 
     def check_char_corp_bl(_cid: int) -> bool:
         return False
-
-
-# Django
-
-from ..models import BigBrotherConfig, EntityInfoCache, ProcessedMail, SusMailNote
-
-logger = get_extension_logger(__name__)
 
 try:
     if corptools_active():
@@ -51,7 +46,7 @@ except ImportError:
     MailRecipient = None
 
 
-def _find_employment_at(employment: List[dict], date: datetime) -> Optional[dict]:
+def _find_employment_at(employment: list[dict], date: datetime) -> dict | None:
     for rec in employment:
         start = rec.get("start_date")
         end = rec.get("end_date")
@@ -60,7 +55,7 @@ def _find_employment_at(employment: List[dict], date: datetime) -> Optional[dict
     return None
 
 
-def _find_alliance_at(history: List[dict], date: datetime) -> Optional[int]:
+def _find_alliance_at(history: list[dict], date: datetime) -> int | None:
     for i, rec in enumerate(history):
         start = rec.get("start_date")
         next_start = history[i + 1]["start_date"] if i + 1 < len(history) else None
@@ -74,18 +69,18 @@ def gather_user_mails(user_id: int):
         return []
     user_chars = get_user_characters(user_id)
     user_ids = set(user_chars.keys())
-    return MailMessage.objects.filter(recipients__recipient_id__in=user_ids).prefetch_related(
-        "recipients", "recipients__recipient_name"
-    )
+    return MailMessage.objects.filter(
+        recipients__recipient_id__in=user_ids
+    ).prefetch_related("recipients", "recipients__recipient_name")
 
 
-def get_user_mails(qs) -> Dict[int, Dict]:
+def get_user_mails(qs) -> dict[int, dict]:
     # Use a list to avoid re-evaluating the queryset
     entries = list(qs)
     if not entries:
         return {}
 
-    result: Dict[int, Dict] = {}
+    result: dict[int, dict] = {}
 
     # Pre-collect all entity IDs and their normalized timestamps for bulk fetching info
     # EntityInfoCache normalizes to the hour.
@@ -101,8 +96,8 @@ def get_user_mails(qs) -> Dict[int, Dict]:
     # Bulk fetch EntityInfoCache entries
     # To avoid a massive Q-object chain for very large batches, we fetch by entity_id
     # and filter by hour as well to limit the result set.
-    eids = {l[0] for l in lookups}
-    hours = {l[1] for l in lookups}
+    eids = {item[0] for item in lookups}
+    hours = {item[1] for item in lookups}
     cache_entries = EntityInfoCache.objects.filter(entity_id__in=eids, as_of__in=hours)
 
     # Map them by (entity_id, as_of)
@@ -174,7 +169,9 @@ def get_user_mails(qs) -> Dict[int, Dict]:
     return result
 
 
-def get_cell_style_for_mail_cell(column: str, row: dict, index: Optional[int] = None) -> str:
+def get_cell_style_for_mail_cell(
+    column: str, row: dict, index: int | None = None
+) -> str:
     """Centralized inline-style logic so tables and exports highlight hostiles."""
     when = row.get("sent_date")
     # sender cell
@@ -190,7 +187,9 @@ def get_cell_style_for_mail_cell(column: str, row: dict, index: Optional[int] = 
     return ""
 
 
-def is_mail_row_hostile(row: dict, safe_entities: set = None, cfg: BigBrotherConfig = None) -> bool:
+def is_mail_row_hostile(
+    row: dict, safe_entities: set = None, cfg: BigBrotherConfig = None
+) -> bool:
     """
     Checks if a mail is considered hostile using the unified processor.
     """
@@ -219,16 +218,16 @@ def render_mails(user_id: int) -> str:
     """
     mails = get_user_mails(gather_user_mails(user_id))
     if not mails:  # User has no mail history yet.
-        return (
-            '<table class="table stats"><tbody><tr><td class="text-center">No mails found.</td></tr></tbody></table>'
-        )
+        return '<table class="table stats"><tbody><tr><td class="text-center">No mails found.</td></tr></tbody></table>'
 
     from ..app_settings import get_safe_entities
 
     safe_entities = get_safe_entities()
 
     rows = sorted(mails.values(), key=lambda x: x["sent_date"], reverse=True)
-    hostile_rows = [r for r in rows if is_mail_row_hostile(r, safe_entities=safe_entities)]
+    hostile_rows = [
+        r for r in rows if is_mail_row_hostile(r, safe_entities=safe_entities)
+    ]
     total = len(hostile_rows)
     if total == 0:  # Nothing matched the hostile criteria.
         return '<table class="table stats"><tbody><tr><td class="text-center">No hostile mails found.</td></tr></tbody></table>'
@@ -251,7 +250,10 @@ def render_mails(user_id: int) -> str:
     ]
 
     # Build HTML table
-    html_parts = ['<table class="table table-striped table-hover stats">', "<thead><tr>"]
+    html_parts = [
+        '<table class="table table-striped table-hover stats">',
+        "<thead><tr>",
+    ]
     for col in VISIBLE:
         html_parts.append(f'<th>{html.escape(col.replace("_", " ").title())}</th>')
     html_parts.append("</tr></thead><tbody>")
@@ -265,7 +267,11 @@ def render_mails(user_id: int) -> str:
                 parts = []
                 for idx, item in enumerate(val):
                     style = get_cell_style_for_mail_cell(col, row, index=idx)
-                    prefix = f"<span style='{style}' class='text-danger'>" if style else "<span>"
+                    prefix = (
+                        f"<span style='{style}' class='text-danger'>"
+                        if style
+                        else "<span>"
+                    )
                     parts.append(f"{prefix}{html.escape(str(item))}</span>")
                 cell = "<td>" + ", ".join(parts) + "</td>"
             else:
@@ -278,24 +284,33 @@ def render_mails(user_id: int) -> str:
 
     html_parts.append("</tbody></table>")
     if skipped:  # Alert reviewers when more hostile mails exist beyond the table.
-        html_parts.append(f"<p>Showing {limit} of {total} hostile mails; skipped {skipped}.</p>")
+        html_parts.append(
+            f"<p>Showing {limit} of {total} hostile mails; skipped {skipped}.</p>"
+        )
 
     return "\n".join(html_parts)
 
 
 def get_user_hostile_mails(
-    user_id: int, cfg: BigBrotherConfig = None, safe_entities: set = None, entity_info_cache: dict = None
-) -> Dict[int, str]:
+    user_id: int,
+    cfg: BigBrotherConfig = None,
+    safe_entities: set = None,
+    entity_info_cache: dict = None,
+) -> dict[int, str]:
     if cfg is None:
         cfg = BigBrotherConfig.get_solo()
 
     all_qs = gather_user_mails(user_id)
     all_ids = list(all_qs.values_list("id_key", flat=True))
 
-    seen_ids = set(ProcessedMail.objects.filter(mail_id__in=all_ids).values_list("mail_id", flat=True))
+    seen_ids = set(
+        ProcessedMail.objects.filter(mail_id__in=all_ids).values_list(
+            "mail_id", flat=True
+        )
+    )
 
     new_ids = [mid for mid in all_ids if mid not in seen_ids]
-    notes: Dict[int, str] = {}
+    notes: dict[int, str] = {}
 
     if new_ids:
         new_qs = all_qs.filter(id_key__in=new_ids)
@@ -313,19 +328,24 @@ def get_user_hostile_mails(
             safe_entities = get_safe_entities()
 
         hostile_rows: dict[int, dict] = {
-            mid: m for mid, m in new_rows.items() if is_mail_row_hostile(m, safe_entities=safe_entities, cfg=cfg)
+            mid: m
+            for mid, m in new_rows.items()
+            if is_mail_row_hostile(m, safe_entities=safe_entities, cfg=cfg)
         }
 
         pms: dict[int, ProcessedMail] = {}
         if hostile_rows:
-            pms = {pm.mail_id: pm for pm in ProcessedMail.objects.filter(mail_id__in=hostile_rows.keys())}
+            pms = {
+                pm.mail_id: pm
+                for pm in ProcessedMail.objects.filter(mail_id__in=hostile_rows.keys())
+            }
 
         for mid, m in hostile_rows.items():
             pm = pms.get(mid)
             if not pm:
                 continue
 
-            flags: List[str] = []
+            flags: list[str] = []
             # Check sender
             if get_hostile_state(
                 m.get("sender_id"),
@@ -339,7 +359,11 @@ def get_user_hostile_mails(
             # Check recipients
             for idx, rid in enumerate(m.get("recipient_ids", [])):
                 if get_hostile_state(
-                    rid, "character", safe_entities=safe_entities, entity_info_cache=entity_info_cache, cfg=cfg
+                    rid,
+                    "character",
+                    safe_entities=safe_entities,
+                    entity_info_cache=entity_info_cache,
+                    cfg=cfg,
                 ):
                     name = m["recipient_names"][idx]
                     flags.append(f"Recipient **{name}** is hostile/blacklisted")

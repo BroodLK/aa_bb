@@ -1,8 +1,11 @@
+# Django
 from django.contrib.auth.models import User
 from django.test import TestCase
 
+# Alliance Auth
 from allianceauth.eveonline.models import EveCharacter
 
+# AA BigBrother
 from aa_bb.models import BigBrotherConfig
 from aa_bb.tasks import BB_run_regular_updates
 

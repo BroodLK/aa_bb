@@ -28,7 +28,9 @@ class TestTicketToolConfigAdmin(TestCase):
 
     @patch("aa_bb.admin.charlink_active", return_value=True)
     @patch("aa_bb.admin.apps.get_model")
-    def test_get_form_exposes_model_choice_for_compliance_filter_id(self, mock_get_model, _mock_charlink_active):
+    def test_get_form_exposes_model_choice_for_compliance_filter_id(
+        self, mock_get_model, _mock_charlink_active
+    ):
         queryset = TicketToolConfig.objects.none()
         filter_result = Mock()
         filter_result.first.return_value = None

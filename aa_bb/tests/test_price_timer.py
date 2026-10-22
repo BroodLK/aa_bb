@@ -25,7 +25,9 @@ class TestPriceTimer(TestCase):
         # With our config 10 days it should NOT refresh
         item_id = 1234
         old_date = timezone.now() - timedelta(days=8)
-        price_obj = EveItemPrice.objects.create(eve_type_id=item_id, buy=100.0, sell=110.0)
+        price_obj = EveItemPrice.objects.create(
+            eve_type_id=item_id, buy=100.0, sell=110.0
+        )
         # Manually update the 'updated' field because it's auto_now=True
         EveItemPrice.objects.filter(eve_type_id=item_id).update(updated=old_date)
 
@@ -48,7 +50,10 @@ class TestPriceTimer(TestCase):
         mock_response.status_code = 200
         # Fuzzwork format
         mock_response.json.return_value = {
-            "1234": {"buy": {"max": 200.0, "percentile": 190.0}, "sell": {"min": 210.0, "percentile": 220.0}}
+            "1234": {
+                "buy": {"max": 200.0, "percentile": 190.0},
+                "sell": {"min": 210.0, "percentile": 220.0},
+            }
         }
         mock_get.return_value = mock_response
         self.config.market_transactions_price_method = "Fuzzwork"
@@ -59,7 +64,9 @@ class TestPriceTimer(TestCase):
 
         # Verify it DID refresh
         self.assertTrue(mock_get.called)
-        self.assertEqual(result.buy, 200.0)  # market_transactions_price_instant is True by default
+        self.assertEqual(
+            result.buy, 200.0
+        )  # market_transactions_price_instant is True by default
 
     @patch("aa_bb.app_settings.requests.get")
     def test_price_creation_recovers_from_duplicate_insert(self, mock_get):
@@ -83,7 +90,9 @@ class TestPriceTimer(TestCase):
             original_create(*args, **kwargs)
             raise IntegrityError("Duplicate entry for primary key")
 
-        with patch.object(EveItemPrice.objects, "create", side_effect=create_then_raise):
+        with patch.object(
+            EveItemPrice.objects, "create", side_effect=create_then_raise
+        ):
             result = get_or_create_prices(item_id)
 
         self.assertEqual(result.eve_type_id, item_id)
