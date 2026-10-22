@@ -493,9 +493,9 @@ def CB_run_regular_updates():
 def check_member_compliance():
     """
     Nightly compliance sweep:
-      • Ensures characters with corp roles still have valid corp tokens.
-      • Reports missing characters per corp/alliance (via EveWho).
-      • Sends a single consolidated Discord message with all findings.
+        - Ensures characters with corp roles still have valid corp tokens.
+        - Reports missing characters per corp/alliance (via EveWho).
+        - Sends a single consolidated Discord message with all findings.
     """
     # Close old DB connections to prevent memory leaks
     close_old_connections()
