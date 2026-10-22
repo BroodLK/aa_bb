@@ -937,14 +937,19 @@ def add_ticket_comment(ticket, user, comment_text, post_to_discord=True):
             }  # Orange
             send_message({"embeds": [embed]}, hook=webhook_url)
         elif run_task_function:
-            run_task_function.apply_async(
-                args=["aa_bb.tasks_bot.send_ticket_reminder"],
-                kwargs={
-                    "task_args": [ticket.discord_channel_id, 0, full_content],
-                    "task_kwargs": {},
-                },
-                queue="aadiscordbot",
-            )
+            try:
+                run_task_function.apply_async(
+                    args=["aa_bb.tasks_bot.send_ticket_reminder"],
+                    kwargs={
+                        "task_args": [ticket.discord_channel_id, 0, full_content],
+                        "task_kwargs": {},
+                    },
+                    queue="aadiscordbot",
+                )
+            except Exception as e:
+                logger.warning(
+                    f"⚠️  [AA-BB] - [add_ticket_comment] - Failed to send comment to Discord: {e}"
+                )
     return comment
 
 

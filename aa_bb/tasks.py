@@ -59,7 +59,6 @@ from .tasks_cb import (  # noqa: F401
     CB_send_discord_notifications,
     CB_update_single_corp,
     check_member_compliance,
-    run_daily_update_task,
 )
 from .tasks_ct import run_ct_kicker  # noqa: F401
 from .tasks_other import send_recurring_stats_notification  # noqa: F401

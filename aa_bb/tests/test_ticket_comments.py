@@ -17,6 +17,12 @@ class UnregisteredTaskProxy:
     def _get_current_object(self):
         raise CeleryTaskNotRegistered("aadiscordbot.tasks.run_task_function")
 
+    def __getattr__(self, name):
+        return getattr(self._get_current_object(), name)
+
+    def apply_async(self, *args, **kwargs):
+        raise CeleryTaskNotRegistered("aadiscordbot.tasks.run_task_function")
+
 
 class TestTicketComments(TestCase):
     def setUp(self):
@@ -43,7 +49,6 @@ class TestTicketComments(TestCase):
         )
 
     @patch("aa_bb.tasks_tickets.run_task_function", new=UnregisteredTaskProxy())
-    @patch("aa_bb.tasks_tickets._RUN_TASK_FUNCTION_UNAVAILABLE_LOGGED", new=False)
     def test_ticket_add_comment_handles_unregistered_discord_task(self):
         self.client.force_login(self.commenter)
 

@@ -262,10 +262,8 @@ class TestSusTrans(TestCase):
     @patch("aa_bb.checks_cb.sus_trans.resolve_location_name")
     @patch("aa_bb.checks_cb.sus_trans.resolve_location_system_id")
     @patch("aa_bb.checks_cb.sus_trans.get_entity_info")
-    @patch("aa_bb.checks_cb.sus_trans.get_eve_entity_type")
     def test_structure_id_resolution_cb(
         self,
-        mock_get_type,
         mock_get_entity_info,
         mock_resolve_system,
         mock_resolve_name,
@@ -278,7 +276,6 @@ class TestSusTrans(TestCase):
             "alli_id": 456,
             "alli_name": "Test Alliance",
         }
-        mock_get_type.return_value = "character"
 
         # Setup mock for location resolution
         mock_resolve_name.return_value = "Test Structure CB"
