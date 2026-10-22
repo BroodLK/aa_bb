@@ -27,7 +27,6 @@ INSTALLED_APPS = [
     "django.contrib.humanize",
     "django_celery_beat",
     "solo",
-    "bootstrapform",
     "django_bootstrap5",  # https://github.com/zostera/django-bootstrap5
     "sortedm2m",
     "esi",
