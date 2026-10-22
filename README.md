@@ -33,9 +33,9 @@ All while invisible to the general membership unless you choose to expose it to 
 ### The following AllianceAuth plugins are **_required_**:
 
 ```md
-allianceauth >= 4.13.1
+allianceauth >= 5.5.0
 allianceauth-corptools >= 3.0.0b13
-django-esi >= 8.3.1
+django-esi >= 9.0.0
 django-eveonline-sde >= 0.0.1b2
 ```
 ### Recommended plugins

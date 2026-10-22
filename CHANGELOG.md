@@ -1,3 +1,22 @@
+## [3.3.7] - 2026-10-22
+
+> [!CAUTION]
+> This release ends Python 3.10 compatibility.
+> `aa_bb` 3.3.7 requires Alliance Auth 5.5 and newer.
+
+### Changed
+- Dropped Python 3.10 support.
+- Added Python 3.14+ support.
+
+### Fixed
+- Re-alerting of the same users every few days.
+- Various performance fixes
+
+## [3.3.6] - 2026-08-03
+
+### Fixed
+- Issue with Compliance Filter
+
 ## [3.3.5] - 2026-06-15
 
 > [!CAUTION]
