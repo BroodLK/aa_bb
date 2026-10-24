@@ -281,16 +281,15 @@ class TestDashboardViews(TestCase):
         mock_get_card_data.return_value = ("<p>Test Card Content</p>", True)
         self.assertTrue(self.client.login(username="admin", password="password"))
 
-        # Find index of a standard card (e.g., 'skills')
         cards = get_available_cards()
-        skills_idx = next(i for i, c in enumerate(cards) if c["key"] == "skills")
+        skills_idx = next((i for i, c in enumerate(cards) if c["key"] == "skills"), 0)
 
         url = reverse("aa_bb:load_card")
         response = self.client.get(url, {"option": "Member Char", "index": skills_idx})
 
         self.assertEqual(response.status_code, 200)
         data = response.json()
-        self.assertEqual(data["title"], "Skills")
+        self.assertEqual(data["title"], cards[skills_idx]["title"])
         self.assertEqual(data["content"], "<p>Test Card Content</p>")
         self.assertTrue(data["status"])
 

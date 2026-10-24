@@ -98,8 +98,11 @@ class PerformanceTest(TestCase):
 
         with (
             patch("aa_bb.checks.sus_trans.get_user_characters") as mock_get_chars,
+            patch("aa_bb.checks.sus_trans.gather_user_transactions") as mock_gather_txs,
             patch("aa_bb.checks.sus_trans.get_user_transactions") as mock_get_txs,
             patch("aa_bb.checks.sus_trans.is_transaction_hostile") as mock_hostile,
+            patch("aa_bb.checks.sus_trans.get_hostile_state") as mock_hostile_state,
+            patch("aa_bb.checks.sus_trans.is_location_hostile") as mock_loc_hostile,
             patch("aa_bb.app_settings.is_above_market_threshold") as mock_threshold,
             patch("aa_bb.checks.sus_trans.BigBrotherConfig.get_solo") as mock_get_solo,
         ):
@@ -109,8 +112,11 @@ class PerformanceTest(TestCase):
             mock_get_solo.return_value = mock_config
 
             mock_get_chars.return_value = {1001: "Main Character"}
+            mock_gather_txs.return_value = list(mock_txs.keys())
             mock_get_txs.return_value = mock_txs
             mock_hostile.return_value = True
+            mock_hostile_state.return_value = False
+            mock_loc_hostile.return_value = False
             mock_threshold.return_value = True
 
             start_time = time.time()

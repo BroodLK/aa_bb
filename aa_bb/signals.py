@@ -1191,3 +1191,120 @@ if celery_signals is not None:
                 "user_pk": user_pk,
             },
         )
+
+
+try:
+    # Third Party
+    from afat.models import Fat, FatLink
+
+    @receiver(post_save, sender=FatLink)
+    def on_fatlink_saved(sender, instance, created, **kwargs):
+        try:
+            # AA BigBrother
+            from aa_bb.counterintel.ingest.paps import FCRosterIngestor
+            from aa_bb.counterintel.models import CIOperation
+            from aa_bb.counterintel.services.correlation import CorrelationEngine
+            from aa_bb.counterintel.services.identity import IdentityResolver
+
+            fleet_name = (
+                getattr(instance, "fleet", None) or f"AFAT Fleet #{instance.id}"
+            )
+            start_time = (
+                getattr(instance, "created", None)
+                or getattr(instance, "created_at", None)
+                or getattr(instance, "start_time", None)
+                or timezone.now()
+            )
+            end_time = (
+                getattr(instance, "closed_at", None)
+                or getattr(instance, "closed", None)
+                or getattr(instance, "end_time", None)
+                or None
+            )
+
+            fc_user = None
+            if hasattr(instance, "character") and instance.character:
+                fc_char = instance.character
+                fc_user = IdentityResolver.resolve_user_by_character(
+                    getattr(fc_char, "character_id", None)
+                    or getattr(fc_char, "id", None)
+                )
+            elif hasattr(instance, "creator") and instance.creator:
+                fc_user = instance.creator
+
+            op, _ = CIOperation.objects.get_or_create(
+                name=str(fleet_name),
+                start_time=start_time,
+                defaults={
+                    "end_time": end_time,
+                    "operation_type": "strategic",
+                    "fleet_commander": fc_user,
+                    "notes": f"Synced automatically from AFAT FatLink #{instance.id}",
+                },
+            )
+            if end_time and op.end_time != end_time:
+                op.end_time = end_time
+                op.save(update_fields=["end_time"])
+
+            FCRosterIngestor.ingest_afat_fleet(op, instance.id)
+            CorrelationEngine.correlate_operation(op)
+        except Exception as e:
+            logger.debug(f"Error handling FatLink post_save: {e}")
+
+    @receiver(post_save, sender=Fat)
+    def on_fat_saved(sender, instance, created, **kwargs):
+        try:
+            if getattr(instance, "fatlink_id", None):
+                on_fatlink_saved(FatLink, instance.fatlink, False)
+        except Exception:
+            pass
+
+except ImportError:
+    pass
+
+
+try:
+    # Third Party
+    from afat.models import AFATFleet, AFATFleetAttendance
+
+    @receiver(post_save, sender=AFATFleet)
+    def on_afatfleet_saved(sender, instance, created, **kwargs):
+        try:
+            # AA BigBrother
+            from aa_bb.counterintel.ingest.paps import FCRosterIngestor
+            from aa_bb.counterintel.models import CIOperation
+            from aa_bb.counterintel.services.correlation import CorrelationEngine
+
+            op, _ = CIOperation.objects.get_or_create(
+                name=instance.fleet_name or f"AFAT Fleet #{instance.id}",
+                start_time=instance.start_time,
+                defaults={
+                    "end_time": getattr(instance, "end_time", None),
+                    "operation_type": "strategic",
+                    "fleet_commander": (
+                        instance.fleet_commander.user
+                        if instance.fleet_commander
+                        else None
+                    ),
+                    "notes": f"Synced automatically from AFAT Fleet #{instance.id}",
+                },
+            )
+            if getattr(instance, "end_time", None) and op.end_time != instance.end_time:
+                op.end_time = instance.end_time
+                op.save(update_fields=["end_time"])
+
+            FCRosterIngestor.ingest_afat_fleet(op, instance.id)
+            CorrelationEngine.correlate_operation(op)
+        except Exception as e:
+            logger.debug(f"Error handling AFATFleet post_save: {e}")
+
+    @receiver(post_save, sender=AFATFleetAttendance)
+    def on_afatattendance_saved(sender, instance, created, **kwargs):
+        try:
+            if getattr(instance, "fleet_id", None):
+                on_afatfleet_saved(AFATFleet, instance.fleet, False)
+        except Exception:
+            pass
+
+except ImportError:
+    pass

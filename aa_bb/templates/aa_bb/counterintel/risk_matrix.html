@@ -1,0 +1,149 @@
+{% extends 'aa_bb/counterintel/base.html' %}
+{% load i18n %}
+
+{% block ci_content %}
+<div class="row mb-3">
+    <div class="col-md-3">
+        <div class="card text-center bg-dark border-secondary text-light mb-2">
+            <div class="card-body py-2">
+                <h6 class="text-muted mb-1">{% translate "Tracked Members" %}</h6>
+                <h4 class="mb-0">{{ total_members }}</h4>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center bg-dark border-danger text-danger mb-2">
+            <div class="card-body py-2">
+                <h6 class="text-muted mb-1">{% translate "High Risk" %}</h6>
+                <h4 class="mb-0">{{ high_risk_count }}</h4>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center bg-dark border-warning text-warning mb-2">
+            <div class="card-body py-2">
+                <h6 class="text-muted mb-1">{% translate "Medium Risk" %}</h6>
+                <h4 class="mb-0">{{ med_risk_count }}</h4>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card text-center bg-dark border-success text-success mb-2">
+            <div class="card-body py-2">
+                <h6 class="text-muted mb-1">{% translate "Low / Nominal Risk" %}</h6>
+                <h4 class="mb-0">{{ low_risk_count }}</h4>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card bg-dark text-light border-secondary mb-3">
+    <div class="card-header border-secondary d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <h5 class="mb-0"><i class="fas fa-chart-line me-2"></i>{% translate "Alliance Member Risk Matrix" %}</h5>
+        <div class="d-flex align-items-center gap-2">
+            <div class="btn-group btn-group-sm" role="group">
+                <a href="?q={{ search_q }}" class="btn {% if not tier_filter %}btn-primary{% else %}btn-outline-secondary{% endif %}">{% translate "All" %}</a>
+                <a href="?tier=HIGH&q={{ search_q }}" class="btn {% if tier_filter == 'HIGH' %}btn-danger{% else %}btn-outline-danger{% endif %}">{% translate "High Risk" %}</a>
+                <a href="?tier=MEDIUM&q={{ search_q }}" class="btn {% if tier_filter == 'MEDIUM' %}btn-warning{% else %}btn-outline-warning{% endif %}">{% translate "Medium" %}</a>
+                <a href="?tier=LOW&q={{ search_q }}" class="btn {% if tier_filter == 'LOW' %}btn-success{% else %}btn-outline-success{% endif %}">{% translate "Low" %}</a>
+            </div>
+            <form method="get" class="d-flex">
+                {% if tier_filter %}
+                <input type="hidden" name="tier" value="{{ tier_filter }}">
+                {% endif %}
+                <input type="text" name="q" value="{{ search_q }}" class="form-control form-control-sm bg-dark text-light border-secondary" placeholder="{% translate 'Search member...' %}">
+                <button type="submit" class="btn btn-sm btn-secondary ms-1"><i class="fas fa-search"></i></button>
+            </form>
+        </div>
+    </div>
+    <div class="card-body p-0 table-responsive">
+        <table class="table table-dark table-hover mb-0 align-middle">
+            <thead class="table-secondary">
+                <tr>
+                    <th>{% translate "Member / Main" %}</th>
+                    <th>{% translate "State" %}</th>
+                    <th>{% translate "Risk Index" %}</th>
+                    <th>{% translate "Risk Tier" %}</th>
+                    <th>{% translate "Anomalies Flagged" %}</th>
+                    <th>{% translate "Discord Text Activity" %}</th>
+                    <th class="text-end">{% translate "Actions" %}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in page_obj %}
+                <tr>
+                    <td>
+                        <div class="fw-bold">{{ item.user.username }}</div>
+                        <small class="text-muted">{{ item.main_character|default:_("No Main Character") }}</small>
+                    </td>
+                    <td><span class="badge bg-secondary">{{ item.state|default:_("None") }}</span></td>
+                    <td>
+                        <div class="progress bg-secondary" style="height: 18px; min-width: 100px;">
+                            <div class="progress-bar bg-{{ item.risk_class }}" role="progressbar" style="width: {% widthratio item.risk_score 1 100 %}%;" aria-valuenow="{{ item.risk_score }}" aria-valuemin="0" aria-valuemax="1">
+                                {{ item.risk_score }}
+                            </div>
+                        </div>
+                    </td>
+                    <td>
+                        <span class="badge bg-{{ item.risk_class }}">{{ item.risk_tier }}</span>
+                    </td>
+                    <td>
+                        {% if item.anomaly_count > 0 %}
+                        <span class="badge bg-danger">{{ item.anomaly_count }} {% translate "finding(s)" %}</span>
+                        {% else %}
+                        <span class="badge bg-success">0</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if item.last_discord %}
+                        <small class="text-info">{{ item.last_discord|date:"Y-m-d H:i" }} UTC</small>
+                        {% else %}
+                        <small class="text-muted">{% translate "No text messages" %}</small>
+                        {% endif %}
+                    </td>
+                    <td class="text-end">
+                        <div class="btn-group btn-group-sm">
+                            <a href="{% url 'ci:member_activity' item.user.id %}" class="btn btn-outline-info" title="{% translate 'View Activity' %}">
+                                <i class="fas fa-eye me-1"></i>{% translate "Activity" %}
+                            </a>
+                            <a href="{% url 'ci:member_dossier' item.user.id %}?format=json" target="_blank" class="btn btn-outline-secondary" title="{% translate 'Export Dossier JSON' %}">
+                                <i class="fas fa-file-code"></i>
+                            </a>
+                        </div>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="7" class="text-center py-4 text-muted">
+                        {% translate "No members matching the current criteria." %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% if page_obj.has_other_pages %}
+    <div class="card-footer border-secondary d-flex justify-content-center py-2">
+        <nav>
+            <ul class="pagination pagination-sm mb-0">
+                {% if page_obj.has_previous %}
+                <li class="page-item">
+                    <a class="page-link bg-dark text-light border-secondary" href="?page={{ page_obj.previous_page_number }}{% if search_q %}&q={{ search_q }}{% endif %}{% if tier_filter %}&tier={{ tier_filter }}{% endif %}">&laquo;</a>
+                </li>
+                {% endif %}
+                <li class="page-item disabled">
+                    <span class="page-link bg-dark text-light border-secondary">
+                        {% translate "Page" %} {{ page_obj.number }} {% translate "of" %} {{ page_obj.paginator.num_pages }}
+                    </span>
+                </li>
+                {% if page_obj.has_next %}
+                <li class="page-item">
+                    <a class="page-link bg-dark text-light border-secondary" href="?page={{ page_obj.next_page_number }}{% if search_q %}&q={{ search_q }}{% endif %}{% if tier_filter %}&tier={{ tier_filter }}{% endif %}">&raquo;</a>
+                </li>
+                {% endif %}
+            </ul>
+        </nav>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

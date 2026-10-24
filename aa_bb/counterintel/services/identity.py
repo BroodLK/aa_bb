@@ -3,6 +3,7 @@ Identity resolution service supporting effective dates across EVE, Discord, Mumb
 """
 
 # Standard Library
+import re
 from datetime import timedelta
 
 # Django
@@ -98,36 +99,51 @@ class IdentityResolver:
     def resolve_user_by_mumble(cls, mumble_username: str, at_time=None) -> User | None:
         if not mumble_username:
             return None
-        clean_name = mumble_username.strip()
+        raw_name = mumble_username.strip()
         dt = at_time or timezone.now()
-        qs = CIIdentity.objects.filter(
-            mumble_username__iexact=clean_name,
-            effective_from__lte=dt,
-        ).filter(Q(effective_until__isnull=True) | Q(effective_until__gt=dt))
-        identity = (
-            qs.select_related("user")
-            .order_by("-is_verified", "-effective_from")
-            .first()
-        )
-        if identity:
-            return identity.user
 
-        # Fallback: check matching Auth username or main character name
-        user = User.objects.filter(username__iexact=clean_name).first()
-        if user:
-            return user
+        # Candidates to try: raw name, stripped tags, space-replaced
+        candidates = [raw_name]
+        # Strip corp/alliance tags e.g. "[CORP] Name" or "Name [CORP]" or "(CORP) Name"
+        clean = re.sub(r"^[\[\(].*?[\]\)]\s*", "", raw_name).strip()
+        clean = re.sub(r"\s*[\[\(].*?[\]\)]$", "", clean).strip()
+        if clean and clean not in candidates:
+            candidates.append(clean)
 
-        try:
-            # Alliance Auth
-            from allianceauth.eveonline.models import EveCharacter
+        space_name = clean.replace("_", " ").strip()
+        if space_name and space_name not in candidates:
+            candidates.append(space_name)
 
-            char = EveCharacter.objects.filter(
-                character_name__iexact=clean_name
-            ).first()
-            if char:
-                return cls.resolve_user_by_character(char.character_id, at_time=dt)
-        except Exception:
-            pass
+        for name in candidates:
+            qs = CIIdentity.objects.filter(
+                mumble_username__iexact=name,
+                effective_from__lte=dt,
+            ).filter(Q(effective_until__isnull=True) | Q(effective_until__gt=dt))
+            identity = (
+                qs.select_related("user")
+                .order_by("-is_verified", "-effective_from")
+                .first()
+            )
+            if identity and identity.user:
+                return identity.user
+
+            user = User.objects.filter(username__iexact=name).first()
+            if user:
+                return user
+
+            try:
+                # Alliance Auth
+                from allianceauth.eveonline.models import EveCharacter
+
+                char = EveCharacter.objects.filter(character_name__iexact=name).first()
+                if char:
+                    resolved = cls.resolve_user_by_character(
+                        char.character_id, at_time=dt
+                    )
+                    if resolved:
+                        return resolved
+            except Exception:
+                pass
 
         return None
 

@@ -247,6 +247,8 @@ class CICorrelation(models.Model):
     )
     anomaly_type = models.CharField(max_length=64)
     confidence = models.FloatField(default=0.0)
+    risk_score = models.FloatField(default=0.0)
+    factors = models.JSONField(default=dict, blank=True)
     data_completeness = models.FloatField(default=1.0)
     algorithm_version = models.CharField(max_length=32)
     source_event_ids = models.JSONField(default=list)
@@ -261,10 +263,11 @@ class CICorrelation(models.Model):
         indexes = [
             models.Index(fields=["operation", "user"]),
             models.Index(fields=["anomaly_type", "confidence"]),
+            models.Index(fields=["risk_score"]),
         ]
 
     def __str__(self):
-        return f"Correlation({self.user.username}, {self.operation.name}, {self.anomaly_type}, conf={self.confidence:.2f})"
+        return f"Correlation({self.user.username}, {self.operation.name}, {self.anomaly_type}, conf={self.confidence:.2f}, risk={self.risk_score:.2f})"
 
 
 class CIInvestigation(models.Model):
@@ -280,6 +283,16 @@ class CIInvestigation(models.Model):
         ("dismissed", _("Dismissed")),
     ]
 
+    RESOLUTION_CHOICES = [
+        ("isp_outage", _("ISP / Technical Outage")),
+        ("scout_alt", _("Authorized Scout / Cyno Alt")),
+        ("fc_authorized_drop", _("FC Authorized Disconnect / Standing Down")),
+        ("unlinked_alt", _("Unlinked Alt Identified")),
+        ("confirmed_leak", _("Confirmed Information Leak / Hostile Action")),
+        ("benign_coincidence", _("Benign Schedule Coincidence")),
+        ("other", _("Other")),
+    ]
+
     operation = models.ForeignKey(
         CIOperation,
         on_delete=models.SET_NULL,
@@ -293,6 +306,9 @@ class CIInvestigation(models.Model):
     status = models.CharField(
         max_length=32, choices=STATUS_CHOICES, default="pending", db_index=True
     )
+    resolution_tag = models.CharField(
+        max_length=64, choices=RESOLUTION_CHOICES, blank=True, default="", db_index=True
+    )
     assigned_reviewer = models.ForeignKey(
         User,
         on_delete=models.SET_NULL,
@@ -302,6 +318,7 @@ class CIInvestigation(models.Model):
     )
     agent_summary = models.TextField(blank=True)
     reviewer_notes = models.TextField(blank=True)
+    dossier_hash = models.CharField(max_length=64, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -313,11 +330,84 @@ class CIInvestigation(models.Model):
         indexes = [
             models.Index(fields=["status", "created_at"]),
             models.Index(fields=["subject_user", "status"]),
+            models.Index(fields=["resolution_tag"]),
         ]
 
     def __str__(self):
         op_name = self.operation.name if self.operation else "General"
         return f"Investigation({self.subject_user.username} @ {op_name} - {self.get_status_display()})"
+
+    def compute_dossier_payload(self) -> dict:
+        """
+        Builds a canonical, reproducible JSON payload representing the investigation's evidentiary state.
+        """
+        correlations = (
+            list(
+                CICorrelation.objects.filter(
+                    user=self.subject_user,
+                    operation=self.operation,
+                ).values(
+                    "anomaly_type",
+                    "confidence",
+                    "risk_score",
+                    "algorithm_version",
+                    "explanation",
+                    "source_event_ids",
+                )
+            )
+            if self.operation
+            else []
+        )
+
+        payload = {
+            "investigation_id": self.id,
+            "subject_username": self.subject_user.username,
+            "subject_user_id": self.subject_user.id,
+            "operation_id": self.operation_id,
+            "operation_name": self.operation.name if self.operation else None,
+            "status": self.status,
+            "resolution_tag": self.resolution_tag,
+            "agent_summary": self.agent_summary,
+            "reviewer_notes": self.reviewer_notes,
+            "assigned_reviewer": (
+                self.assigned_reviewer.username if self.assigned_reviewer else None
+            ),
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "correlations": correlations,
+        }
+        return payload
+
+    def compute_dossier_hash(self) -> str:
+        """
+        Calculates cryptographic SHA-256 hash of the investigation dossier for chain of custody.
+        """
+        raw_json = json.dumps(self.compute_dossier_payload(), sort_keys=True)
+        return hashlib.sha256(raw_json.encode("utf-8")).hexdigest()
+
+    def update_dossier_hash(self, commit: bool = True):
+        self.dossier_hash = self.compute_dossier_hash()
+        if commit and self.pk:
+            self.save(update_fields=["dossier_hash"])
+        return self.dossier_hash
+
+
+class CILogIngestState(models.Model):
+    """
+    Tracks seek offsets and inodes for incremental, RAM-efficient log parsing.
+    """
+
+    file_path = models.CharField(max_length=512, unique=True, db_index=True)
+    last_inode = models.BigIntegerField(null=True, blank=True)
+    last_offset = models.BigIntegerField(default=0)
+    last_ingested_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        app_label = "aa_bb"
+        verbose_name = _("CI Log Ingest State")
+        verbose_name_plural = _("CI Log Ingest States")
+
+    def __str__(self):
+        return f"LogState({self.file_path}: offset={self.last_offset})"
 
 
 class CIOverride(models.Model):

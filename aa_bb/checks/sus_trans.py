@@ -433,7 +433,20 @@ def get_user_hostile_transactions(
     entity_info_cache: dict = None,
 ) -> dict[int, str]:
     qs_all = gather_user_transactions(user_id)
-    all_ids = list(qs_all.values_list("entry_id", flat=True))
+    if not qs_all:
+        return {}
+
+    if hasattr(qs_all, "values_list"):
+        all_ids = list(qs_all.values_list("entry_id", flat=True))
+    elif isinstance(qs_all, dict):
+        all_ids = list(qs_all.keys())
+    elif isinstance(qs_all, (list, set, tuple)):
+        all_ids = [
+            getattr(x, "entry_id", x.get("entry_id") if isinstance(x, dict) else x)
+            for x in qs_all
+        ]
+    else:
+        all_ids = []
 
     seen = set(
         ProcessedTransaction.objects.filter(entry_id__in=all_ids).values_list(
@@ -445,8 +458,13 @@ def get_user_hostile_transactions(
     new = [eid for eid in all_ids if eid not in seen]
 
     if new:
-        new_qs = qs_all.filter(entry_id__in=new)
-        rows = get_user_transactions(new_qs)
+        if hasattr(qs_all, "filter"):
+            new_qs = qs_all.filter(entry_id__in=new)
+            rows = get_user_transactions(new_qs)
+        elif isinstance(qs_all, dict):
+            rows = {k: v for k, v in qs_all.items() if k in new}
+        else:
+            rows = get_user_transactions(qs_all)
 
         # Mark all new transactions as processed to prevent re-processing safe ones
         ProcessedTransaction.objects.bulk_create(
@@ -509,9 +527,8 @@ def get_user_hostile_transactions(
                     entity_info_cache=entity_info_cache,
                     cfg=cfg,
                 ):
-                    flags.append(
-                        f"first_party **{tx['first_party_name']}** is hostile/blacklisted"
-                    )
+                    fp_name = tx.get("first_party_name") or fpid
+                    flags.append(f"first_party **{fp_name}** is hostile/blacklisted")
 
                 spid = tx.get("second_party_id")
                 if get_hostile_state(
@@ -521,9 +538,8 @@ def get_user_hostile_transactions(
                     entity_info_cache=entity_info_cache,
                     cfg=cfg,
                 ):
-                    flags.append(
-                        f"second_party **{tx['second_party_name']}** is hostile/blacklisted"
-                    )
+                    sp_name = tx.get("second_party_name") or spid
+                    flags.append(f"second_party **{sp_name}** is hostile/blacklisted")
 
                 loc_id = tx.get("location_id") or tx.get("system_id")
                 if loc_id and is_location_hostile(
@@ -554,15 +570,15 @@ def get_user_hostile_transactions(
                 )
 
                 note_lines = [
-                    f"- **{tx['date']}** · **{tx['amount']} ISK**",
-                    f"  - **Type:** {tx['type']}",
+                    f"- **{tx.get('date', 'Unknown Date')}** · **{tx.get('amount', 0)} ISK**",
+                    f"  - **Type:** {tx.get('type', 'Unknown')}",
                     (
-                        f"  - **From:** {tx['first_party_name']} "
-                        f"({tx['first_party_corporation']} | {tx['first_party_alliance']})"
+                        f"  - **From:** {tx.get('first_party_name', 'Unknown')} "
+                        f"({tx.get('first_party_corporation', 'None')} | {tx.get('first_party_alliance', 'None')})"
                     ),
                     (
-                        f"  - **To:** {tx['second_party_name']} "
-                        f"({tx['second_party_corporation']} | {tx['second_party_alliance']})"
+                        f"  - **To:** {tx.get('second_party_name', 'Unknown')} "
+                        f"({tx.get('second_party_corporation', 'None')} | {tx.get('second_party_alliance', 'None')})"
                     ),
                 ]
 

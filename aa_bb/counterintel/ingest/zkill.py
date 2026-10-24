@@ -107,3 +107,37 @@ class ZKillIngestor:
             ev = cls.ingest_killmail(km, operation=operation)
             events.append(ev)
         return events
+
+    @classmethod
+    def analyze_completed_operation(
+        cls,
+        operation: CIOperation,
+        killmails: list[dict] = None,
+    ) -> list[CIEvent]:
+        """
+        Enforces that zKillboard combat analysis is strictly executed only AFTER
+        an operation has concluded (completed operation pulled from AFAT/ESI).
+        """
+        if not operation.end_time:
+            logger.info(
+                f"Skipping zKill analysis for operation '{operation.name}' (ID: {operation.id}): "
+                f"operation is active or ongoing."
+            )
+            return []
+
+        # Check existing combat events for this operation
+        existing_combat_count = CIEvent.objects.filter(
+            operation=operation,
+            source="zkill",
+        ).count()
+
+        if existing_combat_count > 0 and not killmails:
+            logger.info(
+                f"Operation '{operation.name}' already has {existing_combat_count} combat events recorded."
+            )
+            return list(CIEvent.objects.filter(operation=operation, source="zkill"))
+
+        if killmails:
+            return cls.ingest_killmails_batch(killmails, operation=operation)
+
+        return list(CIEvent.objects.filter(operation=operation, source="zkill"))

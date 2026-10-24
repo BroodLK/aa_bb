@@ -12,11 +12,19 @@
                         Subject: <strong>{{ investigation.subject_user.username }}</strong>
                         &bull; Operation: <strong>{{ investigation.operation.name|default:"General / Historical" }}</strong>
                         &bull; Opened: {{ investigation.created_at|date:"Y-m-d H:i" }}
+                        {% if investigation.dossier_hash %}
+                        &bull; Hash: <code class="text-info">{{ investigation.dossier_hash|slice:":12" }}...</code>
+                        {% endif %}
                     </p>
                 </div>
-                <a href="{% url 'ci:review_queue' %}" class="btn btn-outline-light btn-sm">
-                    <i class="fas fa-arrow-left me-1"></i>{% translate "Back to Queue" %}
-                </a>
+                <div class="d-flex gap-2">
+                    <a href="{% url 'ci:export_investigation_dossier' investigation.id %}" class="btn btn-outline-info btn-sm">
+                        <i class="fas fa-download me-1"></i>{% translate "Export Dossier (JSON)" %}
+                    </a>
+                    <a href="{% url 'ci:review_queue' %}" class="btn btn-outline-light btn-sm">
+                        <i class="fas fa-arrow-left me-1"></i>{% translate "Back to Queue" %}
+                    </a>
+                </div>
             </div>
         </div>
     </div>
@@ -178,6 +186,17 @@
                             <option value="{{ code }}" {% if investigation.status == code %}selected{% endif %}>{{ label }}</option>
                             {% endfor %}
                         </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">{% translate "Resolution / Disposition Tag" %}</label>
+                        <select name="resolution_tag" class="form-select">
+                            <option value="">-- {% translate "None / Unresolved" %} --</option>
+                            {% for code, label in resolution_choices %}
+                            <option value="{{ code }}" {% if investigation.resolution_tag == code %}selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                        <small class="text-muted d-block mt-1">{% translate "Selecting a resolution tag for cleared/dismissed cases automatically creates scoped CIOverrides to prevent future false-positive alerts." %}</small>
                     </div>
 
                     <div class="mb-3">

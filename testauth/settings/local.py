@@ -69,10 +69,17 @@ NOTIFICATIONS_MAX_PER_USER = 50
 # Add any additional apps to this list.
 INSTALLED_APPS += [
     "eve_sde",
-    "corptools",
     "allianceauth.services.modules.discord",
     PACKAGE,
 ]
+
+try:
+    # Third Party
+    import corptools
+
+    INSTALLED_APPS.append("corptools")
+except ImportError:
+    pass
 
 if "eve_sde" in INSTALLED_APPS:
     CELERYBEAT_SCHEDULE["EVE SDE :: Check for SDE Updates"] = {
@@ -174,6 +181,18 @@ except Exception:
             "LOCATION": "unique-snowflake",
         }
     }
+
+    # Django
+    from django.core.cache.backends.locmem import LocMemCache
+
+    _orig_locmem_set = LocMemCache.set
+
+    def _safe_locmem_set(self, key, value, timeout=None, version=None, **kwargs):
+        if kwargs.get("nx"):
+            return self.add(key, value, timeout=timeout, version=version)
+        return _orig_locmem_set(self, key, value, timeout=timeout, version=version)
+
+    LocMemCache.set = _safe_locmem_set
 
 CELERY_ALWAYS_EAGER = True
 CELERY_TASK_ALWAYS_EAGER = True

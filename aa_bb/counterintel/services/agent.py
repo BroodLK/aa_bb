@@ -4,6 +4,7 @@ Read-only AI Investigation Assistant service for counterintelligence triage and 
 
 # Standard Library
 import logging
+from datetime import timedelta
 
 # Django
 from django.contrib.auth.models import User
@@ -124,6 +125,50 @@ class CIAgentService:
                 }
             )
 
+        # 5. Discord Chat Activity Telemetry Context
+        try:
+            # AA BigBrother
+            from aa_bb.models import UserStatus
+
+            status = UserStatus.objects.filter(user=user).first()
+            if status and status.last_discord_message_at:
+                if operation and operation.start_time:
+                    op_start = operation.start_time - timedelta(hours=2)
+                    op_end = (operation.end_time or operation.start_time) + timedelta(
+                        hours=2
+                    )
+                    if op_start <= status.last_discord_message_at <= op_end:
+                        explanations.append(
+                            {
+                                "category": "Text Communication Presence",
+                                "badge": "Active Discord Chat",
+                                "badge_class": "bg-success text-white",
+                                "text": f"Member was active in Discord text chat near this operational window ({status.last_discord_message_at:%Y-%m-%d %H:%M} UTC), indicating continued organizational engagement.",
+                            }
+                        )
+                else:
+                    days_ago = (timezone.now() - status.last_discord_message_at).days
+                    if days_ago <= 7:
+                        explanations.append(
+                            {
+                                "category": "Text Communication Presence",
+                                "badge": "Recent Discord Activity",
+                                "badge_class": "bg-info text-dark",
+                                "text": f"Member has recent Discord text activity ({status.last_discord_message_at:%Y-%m-%d %H:%M} UTC), confirming active text communication.",
+                            }
+                        )
+            elif status and not status.last_discord_message_at:
+                explanations.append(
+                    {
+                        "category": "Communication Profile",
+                        "badge": "No Discord Chat",
+                        "badge_class": "bg-warning text-dark",
+                        "text": "No Discord text message activity recorded for this member (pilot communicates primarily via voice or remains passive in text channels).",
+                    }
+                )
+        except Exception:
+            pass
+
         return explanations
 
     @classmethod
@@ -208,6 +253,23 @@ class CIAgentService:
         lines.append(
             f"- 60-Day Confirmed Fleet Participations: `{baseline['total_fleets']}`"
         )
+
+        try:
+            # AA BigBrother
+            from aa_bb.models import UserStatus
+
+            status = UserStatus.objects.filter(user=user).first()
+            if status and status.last_discord_message_at:
+                lines.append(
+                    f"- Discord Text Chat Activity: Last message sent `{status.last_discord_message_at:%Y-%m-%d %H:%M:%S UTC}`"
+                )
+            else:
+                lines.append(
+                    "- Discord Text Chat Activity: `None recorded (no text messages sent)`"
+                )
+        except Exception:
+            pass
+
         if overrides:
             lines.append(
                 f"- Documented Overrides / Exemptions: `{len(overrides)}` active policy exemption(s)"
@@ -237,6 +299,131 @@ class CIAgentService:
         investigation.agent_summary = report
         investigation.save(update_fields=["agent_summary", "updated_at"])
         return report
+
+    @classmethod
+    def generate_case_dossier(cls, subject_user: User) -> dict:
+        """
+        Aggregates all operations, correlations, voice telemetry, alt characters,
+        and investigation records for a member into a unified, cryptographically-hashed dossier.
+        """
+        # Standard Library
+        import hashlib
+        import json
+
+        # Fetch character alts
+        characters = []
+        for co in subject_user.character_ownerships.select_related("character").all():
+            char = co.character
+            if char:
+                characters.append(
+                    {
+                        "character_id": char.character_id,
+                        "character_name": char.character_name,
+                        "corporation_id": char.corporation_id,
+                        "corporation_name": char.corporation_name,
+                        "alliance_id": char.alliance_id,
+                        "alliance_name": char.alliance_name,
+                    }
+                )
+
+        # Baseline & Voice Telemetry
+        baseline = BaselineEngine.calculate_personal_baseline(subject_user)
+        total_sessions = CISession.objects.filter(user=subject_user).count()
+
+        # Correlations
+        correlations_qs = (
+            CICorrelation.objects.filter(user=subject_user)
+            .select_related("operation")
+            .order_by("-computed_at")
+        )
+        correlations_data = []
+        for c in correlations_qs[:50]:
+            correlations_data.append(
+                {
+                    "operation_id": c.operation_id,
+                    "operation_name": c.operation.name if c.operation else None,
+                    "anomaly_type": c.anomaly_type,
+                    "confidence": c.confidence,
+                    "risk_score": c.risk_score,
+                    "explanation": c.explanation,
+                    "computed_at": c.computed_at.isoformat() if c.computed_at else None,
+                }
+            )
+
+        # Investigations
+        investigations_qs = (
+            CIInvestigation.objects.filter(subject_user=subject_user)
+            .select_related("operation")
+            .order_by("-created_at")
+        )
+        investigations_data = []
+        for inv in investigations_qs:
+            investigations_data.append(
+                {
+                    "id": inv.id,
+                    "operation_id": inv.operation_id,
+                    "operation_name": inv.operation.name if inv.operation else None,
+                    "status": inv.status,
+                    "resolution_tag": inv.resolution_tag,
+                    "dossier_hash": inv.dossier_hash,
+                    "created_at": (
+                        inv.created_at.isoformat() if inv.created_at else None
+                    ),
+                }
+            )
+
+        # UserStatus / Discord activity
+        user_status = getattr(subject_user, "userstatus", None)
+        last_discord = user_status.last_discord_message_at if user_status else None
+
+        # Overall composite risk score
+        risk_score, factors = BaselineEngine.calculate_user_risk_score(
+            subject_user, findings=correlations_data
+        )
+
+        if risk_score >= 0.70:
+            risk_tier = "HIGH"
+            risk_class = "danger"
+        elif risk_score >= 0.40:
+            risk_tier = "MEDIUM"
+            risk_class = "warning"
+        else:
+            risk_tier = "LOW"
+            risk_class = "success"
+
+        main_char = getattr(
+            getattr(subject_user, "profile", None), "main_character", None
+        )
+
+        dossier = {
+            "subject_username": subject_user.username,
+            "subject_user_id": subject_user.id,
+            "main_character": str(main_char) if main_char else "None",
+            "state": str(
+                getattr(getattr(subject_user, "profile", None), "state", "None")
+            ),
+            "characters": characters,
+            "character_count": len(characters),
+            "total_voice_sessions": total_sessions,
+            "total_fleets": baseline.get("total_fleets", 0),
+            "last_discord_message_at": (
+                last_discord.isoformat() if last_discord else None
+            ),
+            "risk_score": risk_score,
+            "risk_tier": risk_tier,
+            "risk_class": risk_class,
+            "factors": factors,
+            "total_anomalies": len(correlations_data),
+            "correlations": correlations_data,
+            "investigations": investigations_data,
+            "generated_at": timezone.now().isoformat(),
+        }
+
+        raw_canonical = json.dumps(dossier, sort_keys=True)
+        dossier["integrity_hash"] = hashlib.sha256(
+            raw_canonical.encode("utf-8")
+        ).hexdigest()
+        return dossier
 
     @classmethod
     def auto_triage_operation(cls, operation: CIOperation) -> list[CIInvestigation]:

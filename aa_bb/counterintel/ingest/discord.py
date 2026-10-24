@@ -103,6 +103,19 @@ class DiscordIngestor:
                 "payload": payload,
             },
         )
+
+        if user:
+            try:
+                # AA BigBrother
+                from aa_bb.models import UserStatus
+
+                UserStatus.objects.update_or_create(
+                    user=user,
+                    defaults={"last_discord_message_at": ts},
+                )
+            except Exception:
+                pass
+
         return event
 
     @classmethod

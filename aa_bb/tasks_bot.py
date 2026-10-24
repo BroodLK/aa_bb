@@ -818,6 +818,19 @@ class TicketCommands(commands.Cog):
                 await sync_to_async(UserStatus.objects.update_or_create)(
                     user=du.user, defaults={"last_discord_message_at": timezone.now()}
                 )
+                try:
+                    # AA BigBrother
+                    from aa_bb.counterintel.ingest.discord import DiscordIngestor
+
+                    await sync_to_async(DiscordIngestor.ingest_message_event)(
+                        discord_user_id=uid,
+                        channel_id=getattr(message.channel, "id", 0),
+                        message_id=getattr(message, "id", 0),
+                        timestamp=timezone.now(),
+                        content_length=len(getattr(message, "content", "") or ""),
+                    )
+                except Exception:
+                    pass
                 # Cache for 1 hour to avoid excessive DB writes
                 cache.set(cache_key, True, 3600)
             except DiscordUser.DoesNotExist:

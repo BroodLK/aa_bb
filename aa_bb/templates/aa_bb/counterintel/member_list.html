@@ -19,6 +19,7 @@
                         <th>{% translate "Main Character" %}</th>
                         <th>{% translate "Comms Sessions" %}</th>
                         <th>{% translate "Fleet Participations" %}</th>
+                        <th>{% translate "Last Discord Chat" %}</th>
                         <th>{% translate "Anomalies Flagged" %}</th>
                         <th>{% translate "Action" %}</th>
                     </tr>
@@ -30,6 +31,15 @@
                         <td>{{ u.profile.main_character.character_name|default:"-" }}</td>
                         <td><span class="badge bg-info text-dark">{{ u.ci_sessions.count }}</span></td>
                         <td><span class="badge bg-primary">{{ u.ci_participations.count }}</span></td>
+                        <td>
+                            {% if u.userstatus.last_discord_message_at %}
+                                <span class="badge bg-secondary" title="{{ u.userstatus.last_discord_message_at|date:'Y-m-d H:i' }} UTC">
+                                    {{ u.userstatus.last_discord_message_at|timesince }} {% translate "ago" %}
+                                </span>
+                            {% else %}
+                                <span class="badge bg-light text-muted">{% translate "Never" %}</span>
+                            {% endif %}
+                        </td>
                         <td>
                             {% if u.ci_correlations.count %}
                                 <span class="badge bg-warning text-dark">{{ u.ci_correlations.count }}</span>
@@ -45,7 +55,7 @@
                     </tr>
                     {% empty %}
                     <tr>
-                        <td colspan="6" class="text-center text-muted py-4">
+                        <td colspan="7" class="text-center text-muted py-4">
                             {% translate "No members found." %}
                         </td>
                     </tr>

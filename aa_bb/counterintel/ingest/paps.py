@@ -284,13 +284,16 @@ class FCRosterIngestor:
                     fc_user = None
                     if hasattr(fatlink, "character") and fatlink.character:
                         fc_char = fatlink.character
-                        if hasattr(fc_char, "userprofile") and fc_char.userprofile:
-                            fc_user = fc_char.userprofile.user
+                        fc_user = IdentityResolver.resolve_user_by_character(
+                            getattr(fc_char, "character_id", None)
+                            or getattr(fc_char, "id", None)
+                        )
                     elif hasattr(fatlink, "creator") and fatlink.creator:
                         fc_user = fatlink.creator
 
                     recorded_time = (
-                        getattr(fatlink, "created_at", None)
+                        getattr(fatlink, "created", None)
+                        or getattr(fatlink, "created_at", None)
                         or getattr(fatlink, "start_time", None)
                         or timezone.now()
                     )
@@ -352,17 +355,38 @@ class FCRosterIngestor:
             # Third Party
             from afat.models import FatLink
 
-            recent_fatlinks = FatLink.objects.filter(created_at__gte=cutoff)
+            recent_fatlinks = []
+            if hasattr(FatLink, "created"):
+                recent_fatlinks = FatLink.objects.filter(created__gte=cutoff)
+            elif hasattr(FatLink, "created_at"):
+                recent_fatlinks = FatLink.objects.filter(created_at__gte=cutoff)
+            elif hasattr(FatLink, "start_time"):
+                recent_fatlinks = FatLink.objects.filter(start_time__gte=cutoff)
+            else:
+                recent_fatlinks = FatLink.objects.all()
+
             for fl in recent_fatlinks:
                 fleet_name = getattr(fl, "fleet", None) or f"AFAT Fleet #{fl.id}"
-                start_time = getattr(fl, "created_at", timezone.now())
-                end_time = getattr(fl, "closed_at", None)
+                start_time = (
+                    getattr(fl, "created", None)
+                    or getattr(fl, "created_at", None)
+                    or getattr(fl, "start_time", None)
+                    or timezone.now()
+                )
+                end_time = (
+                    getattr(fl, "closed_at", None)
+                    or getattr(fl, "closed", None)
+                    or getattr(fl, "end_time", None)
+                    or None
+                )
 
                 fc_user = None
                 if hasattr(fl, "character") and fl.character:
                     fc_char = fl.character
-                    if hasattr(fc_char, "userprofile") and fc_char.userprofile:
-                        fc_user = fc_char.userprofile.user
+                    fc_user = IdentityResolver.resolve_user_by_character(
+                        getattr(fc_char, "character_id", None)
+                        or getattr(fc_char, "id", None)
+                    )
                 elif hasattr(fl, "creator") and fl.creator:
                     fc_user = fl.creator
 
@@ -376,6 +400,10 @@ class FCRosterIngestor:
                         "notes": f"Synced automatically from AFAT FatLink #{fl.id}",
                     },
                 )
+                if end_time and op.end_time != end_time:
+                    op.end_time = end_time
+                    op.save(update_fields=["end_time"])
+
                 cls.ingest_afat_fleet(op, fl.id)
                 synced_ops.append(op)
         except Exception:

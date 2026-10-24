@@ -13,7 +13,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 # Alliance Auth
-from allianceauth.authentication.models import CharacterOwnership, State
+from allianceauth.authentication.models import CharacterOwnership, State, UserProfile
 from allianceauth.eveonline.models import EveCharacter
 
 # AA BigBrother
@@ -26,7 +26,7 @@ from aa_bb.counterintel.models import (
 from aa_bb.counterintel.services.agent import CIAgentService
 from aa_bb.counterintel.services.identity import IdentityResolver
 from aa_bb.counterintel.services.operations import CIOperationService
-from aa_bb.models import General
+from aa_bb.models import BigBrotherConfig, General
 
 
 class TestCIInvestigation(TestCase):
@@ -50,6 +50,8 @@ class TestCIInvestigation(TestCase):
         member_state, _ = State.objects.get_or_create(
             name="Member", defaults={"priority": 100}
         )
+        bb_cfg = BigBrotherConfig.get_solo()
+        bb_cfg.bb_member_states.set([member_state])
         for idx, u in enumerate([self.reviewer, self.viewer, self.pilot]):
             char, _ = EveCharacter.objects.get_or_create(
                 character_id=9900 + idx,
@@ -65,6 +67,7 @@ class TestCIInvestigation(TestCase):
             u.profile.main_character = char
             u.profile.state = member_state
             u.profile.save()
+            UserProfile.objects.filter(pk=u.profile.pk).update(state=member_state)
 
         # Permissions
         content_type = ContentType.objects.get_for_model(General)
@@ -321,3 +324,154 @@ class TestCIInvestigation(TestCase):
 
             char_name = resolve_character_name(888888)
             self.assertEqual(char_name, "Character 888888")
+
+    def test_member_list_designated_states_filtering(self):
+        bb_cfg = BigBrotherConfig.get_solo()
+        member_state, _ = State.objects.get_or_create(
+            name="Member", defaults={"priority": 100}
+        )
+        guest_state, _ = State.objects.get_or_create(
+            name="Guest", defaults={"priority": 200}
+        )
+        bb_cfg.bb_member_states.set([member_state])
+
+        # Create a guest user not in designated states
+        guest_user = User.objects.create_user(
+            username="guest_pilot", email="guest@example.com"
+        )
+        guest_char, _ = EveCharacter.objects.get_or_create(
+            character_id=99988,
+            defaults={
+                "character_name": "Guest Pilot Char",
+                "corporation_id": 2,
+                "corporation_name": "Guest Corp",
+            },
+        )
+        CharacterOwnership.objects.get_or_create(
+            character=guest_char, user=guest_user, defaults={"owner_hash": "h_guest"}
+        )
+        guest_user.profile.main_character = guest_char
+        guest_user.profile.state = guest_state
+        guest_user.profile.save()
+        UserProfile.objects.filter(pk=guest_user.profile.pk).update(state=guest_state)
+
+        self.client.force_login(self.viewer)
+        url = reverse("ci:member_list")
+        resp = self.client.get(url)
+        self.assertEqual(resp.status_code, 200)
+
+        # Designated members should be present
+        members = resp.context["page_obj"].object_list
+        self.assertIn(self.pilot, members)
+        self.assertIn(self.viewer, members)
+        self.assertIn(self.reviewer, members)
+
+        # Guest user should NOT be present
+        self.assertNotIn(guest_user, members)
+
+        # Search for guest user should yield no results
+        resp_search_guest = self.client.get(url, {"q": "guest_pilot"})
+        self.assertEqual(resp_search_guest.status_code, 200)
+        self.assertEqual(len(resp_search_guest.context["page_obj"].object_list), 0)
+
+        # Search for valid member should yield that member
+        resp_search_member = self.client.get(url, {"q": "suspect_pilot"})
+        self.assertEqual(resp_search_member.status_code, 200)
+        self.assertIn(self.pilot, resp_search_member.context["page_obj"].object_list)
+
+    def test_member_activity_designated_states_access(self):
+        bb_cfg = BigBrotherConfig.get_solo()
+        member_state, _ = State.objects.get_or_create(
+            name="Member", defaults={"priority": 100}
+        )
+        guest_state, _ = State.objects.get_or_create(
+            name="Guest", defaults={"priority": 200}
+        )
+        bb_cfg.bb_member_states.set([member_state])
+
+        guest_user = User.objects.create_user(
+            username="guest_pilot_2", email="guest2@example.com"
+        )
+        guest_char, _ = EveCharacter.objects.get_or_create(
+            character_id=99989,
+            defaults={
+                "character_name": "Guest Pilot Char 2",
+                "corporation_id": 2,
+                "corporation_name": "Guest Corp",
+            },
+        )
+        CharacterOwnership.objects.get_or_create(
+            character=guest_char, user=guest_user, defaults={"owner_hash": "h_guest2"}
+        )
+        guest_user.profile.main_character = guest_char
+        guest_user.profile.state = guest_state
+        guest_user.profile.save()
+        UserProfile.objects.filter(pk=guest_user.profile.pk).update(state=guest_state)
+
+        self.client.force_login(self.viewer)
+
+        # Member activity for designated member -> 200
+        resp_member = self.client.get(
+            reverse("ci:member_activity", kwargs={"user_id": self.pilot.id})
+        )
+        self.assertEqual(resp_member.status_code, 200)
+
+        # Member activity for non-designated state user -> 404
+        resp_guest = self.client.get(
+            reverse("ci:member_activity", kwargs={"user_id": guest_user.id})
+        )
+        self.assertEqual(resp_guest.status_code, 404)
+
+    def test_member_activity_and_list_discord_chat_tracking(self):
+        # AA BigBrother
+        from aa_bb.models import UserStatus
+
+        # Pilot with recent Discord message
+        msg_time = self.now - timedelta(hours=2)
+        UserStatus.objects.create(user=self.pilot, last_discord_message_at=msg_time)
+
+        self.client.force_login(self.viewer)
+
+        # 1. Member Directory shows Last Discord Chat
+        resp_list = self.client.get(reverse("ci:member_list"))
+        self.assertEqual(resp_list.status_code, 200)
+        self.assertContains(resp_list, "Last Discord Chat")
+        self.assertContains(resp_list, "ago")
+
+        # 2. Member Activity View includes Discord Text Activity context and card
+        resp_activity = self.client.get(
+            reverse("ci:member_activity", kwargs={"user_id": self.pilot.id})
+        )
+        self.assertEqual(resp_activity.status_code, 200)
+        self.assertEqual(resp_activity.context["last_discord_chat"], msg_time)
+        self.assertContains(resp_activity, "Discord Text Activity")
+        self.assertContains(resp_activity, "Last Message Sent")
+
+    def test_agent_synthesis_with_discord_chat_context(self):
+        # AA BigBrother
+        from aa_bb.models import UserStatus
+
+        op = CIOperationService.create_operation(
+            name="Op Silent Watch",
+            start_time=self.now,
+            end_time=self.now + timedelta(hours=2),
+        )
+        # Pilot sent a Discord chat during the op window
+        UserStatus.objects.create(
+            user=self.pilot,
+            last_discord_message_at=self.now + timedelta(minutes=30),
+        )
+
+        case = CIAgentService.create_or_update_investigation(
+            subject_user=self.pilot,
+            operation=op,
+            auto_synthesize=True,
+        )
+
+        explanations = CIAgentService.get_benign_explanations(case)
+        categories = [e["category"] for e in explanations]
+        self.assertIn("Text Communication Presence", categories)
+
+        report = case.agent_summary
+        self.assertIn("Discord Text Chat Activity", report)
+        self.assertIn("Last message sent", report)

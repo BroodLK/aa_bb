@@ -317,3 +317,37 @@ class TestCIOperations(TestCase):
         self.client.force_login(self.reviewer)
         resp_reviewer = self.client.get(queue_url)
         self.assertEqual(resp_reviewer.status_code, 200)
+
+    def test_sync_recent_afat_fleets_with_completed_updates(self):
+        # Standard Library
+        import sys
+        import types
+        from unittest.mock import MagicMock, patch
+
+        # Create mock module for afat if not present
+        afat_mod = types.ModuleType("afat")
+        afat_models_mod = types.ModuleType("afat.models")
+
+        mock_fatlink = MagicMock()
+        mock_fatlink.id = 777
+        mock_fatlink.fleet = "Op Strategic Recon"
+        mock_fatlink.created = self.now - timedelta(hours=2)
+        mock_fatlink.closed_at = self.now - timedelta(hours=1)
+        mock_fatlink.character = MagicMock(character_id=8800)
+
+        mock_fatlink_cls = MagicMock()
+        mock_fatlink_cls.created = MagicMock()
+        mock_fatlink_cls.objects.filter.return_value = [mock_fatlink]
+        afat_models_mod.FatLink = mock_fatlink_cls
+
+        with patch.dict(
+            sys.modules, {"afat": afat_mod, "afat.models": afat_models_mod}
+        ):
+            with patch.object(FCRosterIngestor, "ingest_afat_fleet") as mock_ingest:
+                synced = FCRosterIngestor.sync_recent_afat_fleets(hours=24)
+                self.assertEqual(len(synced), 1)
+                op = synced[0]
+                self.assertEqual(op.name, "Op Strategic Recon")
+                self.assertEqual(op.fleet_commander, self.officer)
+                self.assertIsNotNone(op.end_time)
+                mock_ingest.assert_called_once_with(op, 777)

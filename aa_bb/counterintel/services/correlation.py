@@ -9,6 +9,9 @@ from datetime import timedelta
 # Django
 from django.contrib.auth.models import User
 
+# AA BigBrother
+from aa_bb.models import BigBrotherConfig
+
 from ..models import (
     CICorrelation,
     CIOperation,
@@ -24,10 +27,13 @@ logger = logging.getLogger(__name__)
 class CorrelationEngine:
     """
     Evaluates multi-source activity against operational windows, personal baselines,
-    and role contexts to generate versioned, reproducible correlation findings.
+    alt character identities, and role contexts to generate versioned, reproducible
+    correlation findings and composite risk indices.
     """
 
-    ALGORITHM_VERSION = "1.0.0"
+    ALGORITHM_VERSION = "1.2.0"
+    ALERT_CONFIDENCE_THRESHOLD = 0.85
+    ALERT_RISK_THRESHOLD = 0.80
 
     @classmethod
     def correlate_operation(
@@ -67,9 +73,37 @@ class CorrelationEngine:
             )
         )
 
+        # 5. Multi-Character & Alt-Identity Correlation
+        findings.extend(
+            cls._detect_alt_operational_proximity(
+                operation, timeline, confirmed_user_ids, algorithm_version
+            )
+        )
+        findings.extend(
+            cls._detect_alt_in_hostile_entity(operation, timeline, algorithm_version)
+        )
+        findings.extend(
+            cls._detect_alt_shared_voice_identity(
+                operation, timeline, algorithm_version
+            )
+        )
+
+        # 6. Co-occurrence & Fleet Leak Ring Detection
+        findings.extend(
+            cls._detect_co_occurring_disconnect_rings(
+                operation, timeline, algorithm_version
+            )
+        )
+
         # Filter out findings suppressed by documented CIOverrides
         persisted_findings = []
         user_overrides_map = {}
+
+        # Group findings by user for risk score calculation
+        findings_by_user = {}
+        for f in findings:
+            findings_by_user.setdefault(f["user"].id, []).append(f)
+
         for finding in findings:
             user = finding["user"]
             anomaly_type = finding["anomaly_type"]
@@ -88,12 +122,20 @@ class CorrelationEngine:
                 )
                 continue
 
-            corr, _ = CICorrelation.objects.update_or_create(
+            # Calculate composite Bayesian risk score and factor breakdown
+            user_findings = findings_by_user.get(user.id, [finding])
+            risk_score, factors = BaselineEngine.calculate_user_risk_score(
+                user, operation=operation, findings=user_findings
+            )
+
+            corr, created = CICorrelation.objects.update_or_create(
                 operation=operation,
                 user=user,
                 anomaly_type=anomaly_type,
                 defaults={
                     "confidence": finding["confidence"],
+                    "risk_score": risk_score,
+                    "factors": factors,
                     "data_completeness": finding["data_completeness"],
                     "algorithm_version": algorithm_version,
                     "source_event_ids": finding["source_event_ids"],
@@ -101,6 +143,13 @@ class CorrelationEngine:
                 },
             )
             persisted_findings.append(corr)
+
+            # Trigger automated webhook notification for high-confidence anomalies
+            if (
+                corr.confidence >= cls.ALERT_CONFIDENCE_THRESHOLD
+                or corr.risk_score >= cls.ALERT_RISK_THRESHOLD
+            ):
+                cls.notify_high_confidence_finding(corr)
 
         return persisted_findings
 
@@ -298,3 +347,344 @@ class CorrelationEngine:
             )
 
         return findings
+
+    @classmethod
+    def _detect_alt_operational_proximity(
+        cls,
+        operation: CIOperation,
+        timeline: dict,
+        confirmed_user_ids: set,
+        algorithm_version: str,
+    ) -> list[dict]:
+        """
+        Flags when an uncredited alt character belonging to a fleet participant or comms attendee
+        was co-located in operational solar systems or combat areas during the active fleet window.
+        """
+        findings = []
+        combat_events = [e for e in timeline["events"] if e["source"] == "zkill"]
+        op_systems = set()
+        for e in combat_events:
+            sys_id = e.get("payload", {}).get("solar_system_id")
+            if sys_id:
+                op_systems.add(sys_id)
+
+        all_user_ids = confirmed_user_ids | {s["user_id"] for s in timeline["sessions"]}
+
+        for uid in all_user_ids:
+            user = (
+                User.objects.filter(id=uid)
+                .prefetch_related("character_ownerships__character")
+                .first()
+            )
+            if not user:
+                continue
+
+            user_char_ids = {
+                co.character.character_id
+                for co in user.character_ownerships.all()
+                if co.character
+            }
+            credited_char_ids = {
+                p["character_id"]
+                for p in timeline["participants"]
+                if p["user_id"] == uid
+            }
+            uncredited_alts = user_char_ids - credited_char_ids
+
+            if not uncredited_alts:
+                continue
+
+            # Check if uncredited alt appears in combat events in operational systems
+            for ev in combat_events:
+                p_load = ev.get("payload", {})
+                sys_id = p_load.get("solar_system_id")
+                vic_id = p_load.get("victim_character_id")
+                att_ids = set(p_load.get("attacker_character_ids", []))
+
+                alt_matched = uncredited_alts.intersection({vic_id} | att_ids)
+                if alt_matched:
+                    matched_id = list(alt_matched)[0]
+                    findings.append(
+                        {
+                            "user": user,
+                            "anomaly_type": "alt_operational_proximity",
+                            "confidence": 0.85,
+                            "data_completeness": 0.90,
+                            "source_event_ids": [f"zkill:{ev.get('id', '')}"],
+                            "explanation": (
+                                f"User {user.username}'s uncredited alt character ({matched_id}) was active "
+                                f"in operational solar system {sys_id} during {operation.name}."
+                            ),
+                        }
+                    )
+                    break
+
+        return findings
+
+    @classmethod
+    def _detect_alt_in_hostile_entity(
+        cls,
+        operation: CIOperation,
+        timeline: dict,
+        algorithm_version: str,
+    ) -> list[dict]:
+        """
+        Flags when a member present in strategic voice comms or fleet rosters maintains
+        an alt character in a designated hostile corporation or alliance.
+        """
+        findings = []
+        try:
+            cfg = BigBrotherConfig.get_solo()
+            hostile_corps = {
+                int(x.strip())
+                for x in (cfg.hostile_corporations or "").split(",")
+                if x.strip().isdigit()
+            }
+            hostile_alliances = {
+                int(x.strip())
+                for x in (cfg.hostile_alliances or "").split(",")
+                if x.strip().isdigit()
+            }
+        except Exception:
+            return findings
+
+        if not hostile_corps and not hostile_alliances:
+            return findings
+
+        active_user_ids = {p["user_id"] for p in timeline["participants"]} | {
+            s["user_id"] for s in timeline["sessions"]
+        }
+
+        for uid in active_user_ids:
+            user = (
+                User.objects.filter(id=uid)
+                .prefetch_related("character_ownerships__character")
+                .first()
+            )
+            if not user:
+                continue
+
+            for co in user.character_ownerships.all():
+                char = co.character
+                if not char:
+                    continue
+
+                is_hostile_corp = char.corporation_id in hostile_corps
+                is_hostile_ally = char.alliance_id in hostile_alliances
+
+                if is_hostile_corp or is_hostile_ally:
+                    entity_str = (
+                        f"hostile alliance ({char.alliance_name or char.alliance_id})"
+                        if is_hostile_ally
+                        else f"hostile corporation ({char.corporation_name or char.corporation_id})"
+                    )
+                    findings.append(
+                        {
+                            "user": user,
+                            "anomaly_type": "alt_in_hostile_entity",
+                            "confidence": 0.90,
+                            "data_completeness": 0.95,
+                            "source_event_ids": [f"char:{char.character_id}"],
+                            "explanation": (
+                                f"User {user.username} has alt character '{char.character_name}' "
+                                f"affiliated with {entity_str} while attending operational activity."
+                            ),
+                        }
+                    )
+                    break
+
+        return findings
+
+    @classmethod
+    def _detect_alt_shared_voice_identity(
+        cls,
+        operation: CIOperation,
+        timeline: dict,
+        algorithm_version: str,
+    ) -> list[dict]:
+        """
+        Flags when multiple distinct Alliance Auth users share identical Mumble usernames,
+        indicating shared credentials or unvetted multi-boxing across voice endpoints.
+        """
+        findings = []
+        mumble_events = [
+            e
+            for e in timeline["events"]
+            if e["source"] == "mumble" and e.get("payload", {}).get("username")
+        ]
+
+        username_to_users = {}
+        for ev in mumble_events:
+            uname = ev["payload"]["username"].strip().lower()
+            uid = ev.get("user_id")
+            if uname and uid:
+                username_to_users.setdefault(uname, set()).add(uid)
+
+        for uname, uids in username_to_users.items():
+            if len(uids) > 1:
+                users = list(User.objects.filter(id__in=uids))
+                user_names = ", ".join(u.username for u in users)
+                for u in users:
+                    findings.append(
+                        {
+                            "user": u,
+                            "anomaly_type": "alt_shared_mumble_identity",
+                            "confidence": 0.85,
+                            "data_completeness": 0.90,
+                            "source_event_ids": [f"mumble:{uname}"],
+                            "explanation": (
+                                f"Multiple Alliance Auth accounts ({user_names}) authenticated "
+                                f"using identical Mumble handle '{uname}' during {operation.name}."
+                            ),
+                        }
+                    )
+
+        return findings
+
+    @classmethod
+    def _detect_co_occurring_disconnect_rings(
+        cls,
+        operation: CIOperation,
+        timeline: dict,
+        algorithm_version: str,
+    ) -> list[dict]:
+        """
+        Detects leak rings: groups of 2 or more users who systematically drop voice comms
+        simultaneously (within 5 minutes) prior to hostile combat contact across multiple operations.
+        """
+        findings = []
+        combat_events = [e for e in timeline["events"] if e["source"] == "zkill"]
+        if not combat_events:
+            return findings
+
+        first_contact = min(e["timestamp"] for e in combat_events)
+        critical_window_start = first_contact - timedelta(minutes=15)
+
+        # Users who disconnected in the critical window for this op
+        curr_op_disconnect_uids = set()
+        for s in timeline["sessions"]:
+            end_time = s["end_time"]
+            if end_time and critical_window_start <= end_time <= first_contact:
+                curr_op_disconnect_uids.add(s["user_id"])
+
+        if len(curr_op_disconnect_uids) < 2:
+            return findings
+
+        # Look back at historical pre-contact disconnect correlations over the past 30 days
+        lookback_cutoff = operation.start_time - timedelta(days=30)
+        past_disconnect_correlations = (
+            CICorrelation.objects.filter(
+                anomaly_type="pre_contact_disconnect",
+                operation__start_time__gte=lookback_cutoff,
+                operation__start_time__lt=operation.start_time,
+            )
+            .exclude(operation=operation)
+            .values("operation_id", "user_id")
+        )
+
+        op_to_users = {}
+        for row in past_disconnect_correlations:
+            op_to_users.setdefault(row["operation_id"], set()).add(row["user_id"])
+
+        # Check for co-occurrence pair in at least 1 prior operation
+        co_occurring_pairs = set()
+        disconnect_uids_list = list(curr_op_disconnect_uids)
+        for i in range(len(disconnect_uids_list)):
+            for j in range(i + 1, len(disconnect_uids_list)):
+                u1 = disconnect_uids_list[i]
+                u2 = disconnect_uids_list[j]
+                # Check prior operations where both u1 and u2 dropped comms
+                shared_prior_ops = [
+                    op_id
+                    for op_id, u_set in op_to_users.items()
+                    if u1 in u_set and u2 in u_set
+                ]
+                if shared_prior_ops:
+                    co_occurring_pairs.add(u1)
+                    co_occurring_pairs.add(u2)
+
+        if co_occurring_pairs:
+            ring_users = list(User.objects.filter(id__in=co_occurring_pairs))
+            ring_names = ", ".join(u.username for u in ring_users)
+            for u in ring_users:
+                findings.append(
+                    {
+                        "user": u,
+                        "anomaly_type": "co_occurring_disconnect_ring",
+                        "confidence": 0.88,
+                        "data_completeness": 0.90,
+                        "source_event_ids": [f"op:{operation.id}"],
+                        "explanation": (
+                            f"User {u.username} demonstrated synchronized pre-contact voice comms disconnects "
+                            f"with member(s) ({ring_names}) across multiple operational windows."
+                        ),
+                    }
+                )
+
+        return findings
+
+    @classmethod
+    def notify_high_confidence_finding(cls, correlation: CICorrelation):
+        """
+        Sends an automated Discord webhook alert for high-confidence anomalies.
+        """
+        try:
+            # AA BigBrother
+            from aa_bb.app_settings import send_status_embed
+
+            cfg = BigBrotherConfig.get_solo()
+            webhook = getattr(cfg, "ci_webhook", None) or cfg.webhook
+            if not webhook:
+                return
+
+            user = correlation.user
+            op_name = (
+                correlation.operation.name
+                if correlation.operation
+                else "General Operation"
+            )
+
+            fields = [
+                {
+                    "name": "Subject Member",
+                    "value": f"**{user.username}**",
+                    "inline": True,
+                },
+                {"name": "Operation", "value": op_name, "inline": True},
+                {
+                    "name": "Anomaly Type",
+                    "value": f"`{correlation.anomaly_type}`",
+                    "inline": True,
+                },
+                {
+                    "name": "Confidence Score",
+                    "value": f"**{int(correlation.confidence * 100)}%**",
+                    "inline": True,
+                },
+                {
+                    "name": "Risk Index",
+                    "value": f"**{int(correlation.risk_score * 100)}%**",
+                    "inline": True,
+                },
+                {
+                    "name": "Algorithm Version",
+                    "value": correlation.algorithm_version,
+                    "inline": True,
+                },
+                {
+                    "name": "Evidence Summary",
+                    "value": correlation.explanation[:1000],
+                    "inline": False,
+                },
+            ]
+
+            send_status_embed(
+                title="🚨 Counterintelligence High-Confidence Finding",
+                description=f"Automated correlation flagged anomalous behavior for **{user.username}** during **{op_name}**.",
+                color=15158332,  # Crimson Red
+                fields=fields,
+                hook=webhook,
+                footer_text="Alliance Auth BigBrother · Counterintelligence Engine",
+            )
+        except Exception as e:
+            logger.warning(f"Could not send CI high-confidence finding webhook: {e}")

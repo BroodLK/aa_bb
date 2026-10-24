@@ -2,8 +2,11 @@
 import calendar
 import os
 
-# Third Party
-import matplotlib.pyplot as plt
+try:
+    # Third Party
+    import matplotlib.pyplot as plt
+except ImportError:
+    plt = None
 
 # Django
 from django.conf import settings

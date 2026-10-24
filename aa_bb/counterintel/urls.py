@@ -29,11 +29,18 @@ urlpatterns = [
     ),
     path("members/", views.member_list, name="member_list"),
     path("members/<int:user_id>/", views.member_activity, name="member_activity"),
+    path("members/<int:user_id>/dossier/", views.member_dossier, name="member_dossier"),
+    path("risk-matrix/", views.risk_matrix, name="risk_matrix"),
     path("review/", views.review_queue, name="review_queue"),
     path(
         "review/<int:investigation_id>/",
         views.investigation_detail,
         name="investigation_detail",
+    ),
+    path(
+        "review/<int:investigation_id>/export/",
+        views.export_investigation_dossier,
+        name="export_investigation_dossier",
     ),
     path(
         "review/<int:investigation_id>/quick-disposition/",

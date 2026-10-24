@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
-from ..models import CIEvent, CISession
+from ..models import CIEvent, CILogIngestState, CISession
 from ..services.identity import IdentityResolver
 
 
@@ -24,19 +24,38 @@ class MumbleLogIngestor:
 
     # Regex patterns for various Mumble authenticator/server log lines
     PATTERNS = [
-        # <W>2026-10-22 20:30:15.123 1 => <1234:Username(-1)> Authenticated
-        re.compile(
-            r"<[A-Z]>(?P<timestamp>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?)\s+\d+\s+=>\s+<(?P<session_id>\d+):(?P<username>[^>\(]+)(?:\(-?\d+\))?>\s+(?P<action>Authenticated|Connection closed|Moved to channel:\s*(?P<channel>[^$]+))",
-            re.IGNORECASE,
-        ),
-        # 2026-10-22 20:30:15 - [INFO] User 'Username' connected (session 1234)
-        re.compile(
-            r"(?P<timestamp>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?)\s*-\s*\[?[A-Z]+\]?\s*User\s+'(?P<username>[^']+)'\s+(?P<action>connected|disconnected|joined channel\s+'(?P<channel>[^']+)')(?:.*session\s+(?P<session_id>\d+))?",
-            re.IGNORECASE,
-        ),
+        # 1. Bracketed timestamp / structured format:
         # [2026-10-22T20:30:15Z] Username AUTHENTICATE session=1234 channel="Fleet 1"
+        # [2026-10-23 18:22:01] INFO [authenticator] userConnected: 12 (John Doe)
         re.compile(
-            r"\[(?P<timestamp>[^\]]+)\]\s+(?P<username>\S+)\s+(?P<action>AUTHENTICATE|DISCONNECT|CHANNEL_MOVE)(?:\s+session=(?P<session_id>\S+))?(?:\s+channel=\"(?P<channel>[^\"]+)\")?",
+            r"^\[(?P<timestamp>[^\]]+)\]\s*(?:\[?(?:INFO|WARN|WARNING|ERROR|DEBUG|CRITICAL)\]?\s*)?(?:\[(?P<logger>[^\]]+)\]\s*)?(?:(?P<username>[^<>\(\)\s]+)\s+)?(?P<action>AUTHENTICATE|DISCONNECT|CHANNEL_MOVE|userConnected|userDisconnected|connected|disconnected)(?:\s*[:=]?\s*(?P<session_id>\d+))?(?:\s*\((?P<username2>[^\)]+)\))?(?:\s+session=(?P<session_id2>\S+))?(?:\s+channel=[\"'](?P<channel>[^\"']+)[\"'])?",
+            re.IGNORECASE,
+        ),
+        # 2. Murmur native server log:
+        # <W>2026-10-22 20:30:15.123 1 => <1234:Username(-1)> Authenticated
+        # <W>2026-10-22 20:30:15.123 1 => <1234:Username(-1)> Connection closed: [-1]
+        # <W>2026-10-22 20:30:15.123 1 => <1234:(-1)> Connection closed: [-1]
+        re.compile(
+            r"^<[A-Z]>(?P<timestamp>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?)\s+\d+\s+=>\s+<(?P<session_id>\d+):(?:(?P<username>[^>\(]+)(?:\(-?\d+\))?|\(-?\d+\))>\s+(?P<action>Authenticated|Connection closed|Moved to channel:\s*(?P<channel>[^$]+)|[^\n]+)",
+            re.IGNORECASE,
+        ),
+        # 3. Python Authenticator callback format:
+        # 2026-10-23 18:22:01,123 - authenticator - INFO - userConnected: 12 (John Doe)
+        # 2026-10-23 18:22:01,123 - authenticator - INFO - userDisconnected: 12 (John Doe)
+        # 2026-10-23 18:22:01,123 - authenticator - INFO - userDisconnected: 12
+        # 2026-10-23 18:22:01,123 - authenticator - INFO - userAuthenticate: John Doe -> 1
+        # 2026-10-23 18:22:01,123 - authenticator - INFO - Authenticating user: John Doe
+        # 2026-10-23 18:22:01,123 - authenticator - INFO - Authenticated John Doe
+        re.compile(
+            r"^(?P<timestamp>\d{4}-\d{2}-\d{2}[\sT]\d{2}:\d{2}:\d{2}(?:[,\.]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\s*(?:-\s*[\w\.]+\s*)?[-:]?\s*\[?(?:INFO|WARN|WARNING|ERROR|DEBUG|CRITICAL)?\]?\s*[-:]?\s*(?P<action>userConnected|userDisconnected|userAuthenticate|Authenticating user|Authenticated|Authenticate)\s*[:=]?\s*(?:session\s*(?P<session_id>\d+)\s*(?:for\s*)?)?(?:(?P<session_id_pre>\d+)\s*(?:\((?P<username>[^\)]+)\))?|['\"]?(?P<username2>[^'\"<>\n]+?)['\"]?(?:\s*->\s*(?P<session_id_post>\d+))?)$",
+            re.IGNORECASE,
+        ),
+        # 4. Standard user connected / disconnected / channel move format:
+        # 2026-10-22 20:30:15 - [INFO] User 'Username' connected (session 1234)
+        # 2026-10-22 20:30:15,123 [INFO] User Username joined channel 'Fleet 1'
+        # 2026-10-23 18:22:01,123 - authenticator - INFO - User John Doe moved to channel Fleet 1
+        re.compile(
+            r"^(?P<timestamp>\d{4}-\d{2}-\d{2}[\sT]\d{2}:\d{2}:\d{2}(?:[,\.]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\s*(?:-\s*[\w\.]+\s*)?[-:]?\s*\[?(?:INFO|WARN|WARNING|ERROR|DEBUG|CRITICAL)?\]?\s*[-:]?\s*(?:User\s+)?['\"]?(?P<username>[^'\"<>\n:]+?)['\"]?\s+(?P<action>connected|disconnected|joined channel\s+['\"]?(?P<channel>[^'\"]+)['\"]?|moved to channel\s*[:]?\s*['\"]?(?P<channel2>[^'\"]+)['\"]?)(?:.*session\s*[:=]?\s*(?P<session_id>\d+))?",
             re.IGNORECASE,
         ),
     ]
@@ -59,8 +78,22 @@ class MumbleLogIngestor:
                         cleaned_ts = raw_ts.replace(",", ".")
                         parsed_dt = datetime.fromisoformat(cleaned_ts)
                     except Exception:
-                        continue
-                if parsed_dt and timezone.is_naive(parsed_dt):
+                        for fmt in (
+                            "%Y-%m-%d %H:%M:%S.%f",
+                            "%Y-%m-%d %H:%M:%S",
+                            "%Y-%m-%dT%H:%M:%SZ",
+                            "%Y-%m-%dT%H:%M:%S%z",
+                        ):
+                            try:
+                                parsed_dt = datetime.strptime(
+                                    raw_ts.replace(",", "."), fmt
+                                )
+                                break
+                            except Exception:
+                                pass
+                if not parsed_dt:
+                    continue
+                if timezone.is_naive(parsed_dt):
                     parsed_dt = timezone.make_aware(parsed_dt)
 
                 action_raw = data.get("action", "").lower()
@@ -73,12 +106,24 @@ class MumbleLogIngestor:
                 else:
                     action = "info"
 
+                username = (data.get("username") or data.get("username2") or "").strip()
+
+                session_id = (
+                    data.get("session_id")
+                    or data.get("session_id_pre")
+                    or data.get("session_id_post")
+                    or data.get("session_id2")
+                    or ""
+                ).strip()
+
+                channel = (data.get("channel") or data.get("channel2") or "").strip()
+
                 return {
                     "timestamp": parsed_dt,
-                    "username": data["username"].strip(),
+                    "username": username,
                     "action": action,
-                    "session_id": (data.get("session_id") or "").strip(),
-                    "channel": (data.get("channel") or "").strip(),
+                    "session_id": session_id,
+                    "channel": channel,
                 }
 
         return None
@@ -108,9 +153,10 @@ class MumbleLogIngestor:
         return events
 
     @classmethod
-    def ingest_log_file(cls, file_path: str) -> list[CIEvent]:
+    def ingest_log_file(cls, file_path: str, use_offsets: bool = True) -> list[CIEvent]:
         """
-        Reads and ingests a Mumble log file directly from disk idempotently.
+        Reads and ingests a Mumble log file directly from disk idempotently
+        using incremental seek offsets to minimize disk I/O and RAM usage.
         """
         # Standard Library
         import os
@@ -118,13 +164,54 @@ class MumbleLogIngestor:
         if not os.path.exists(file_path):
             return []
 
+        state = None
+        start_offset = 0
+        current_inode = None
+
+        if use_offsets:
+            try:
+                stat_res = os.stat(file_path)
+                current_inode = getattr(stat_res, "st_ino", None)
+                file_size = stat_res.st_size
+
+                state, _ = CILogIngestState.objects.get_or_create(
+                    file_path=file_path,
+                    defaults={
+                        "last_inode": current_inode,
+                        "last_offset": 0,
+                    },
+                )
+
+                # Reset offset if file truncated or rotated
+                if file_size < state.last_offset or (
+                    state.last_inode
+                    and current_inode
+                    and state.last_inode != current_inode
+                ):
+                    start_offset = 0
+                else:
+                    start_offset = state.last_offset
+            except Exception:
+                start_offset = 0
+
         events = []
         try:
             with open(file_path, encoding="utf-8", errors="replace") as f:
+                if start_offset > 0:
+                    f.seek(start_offset)
+
                 for line in f:
                     ev = cls.ingest_log_line(line)
                     if ev:
                         events.append(ev)
+
+                if state:
+                    state.last_offset = f.tell()
+                    state.last_inode = current_inode
+                    state.last_ingested_at = timezone.now()
+                    state.save(
+                        update_fields=["last_offset", "last_inode", "last_ingested_at"]
+                    )
         except Exception:
             return []
         return events
@@ -142,17 +229,34 @@ class MumbleLogIngestor:
         if timezone.is_naive(timestamp):
             timestamp = timezone.make_aware(timestamp)
 
-        resolved_user = IdentityResolver.resolve_user_by_mumble(
-            username, at_time=timestamp
-        )
-        source_event_id = (
-            f"mumble:{username}:{session_id or '0'}:{action}:{timestamp.timestamp()}"
-        )
+        resolved_user = None
+        if username:
+            resolved_user = IdentityResolver.resolve_user_by_mumble(
+                username, at_time=timestamp
+            )
+
+        # Fallback if username missing or not resolved directly (e.g. disconnect by session_id only)
+        if not resolved_user and session_id:
+            prev_event = (
+                CIEvent.objects.filter(
+                    source="mumble",
+                    payload__session_id=str(session_id),
+                )
+                .exclude(user__isnull=True)
+                .order_by("-timestamp")
+                .first()
+            )
+            if prev_event:
+                resolved_user = prev_event.user
+                if not username and prev_event.payload:
+                    username = prev_event.payload.get("username", "")
+
+        source_event_id = f"mumble:{username or 'unknown'}:{session_id or '0'}:{action}:{timestamp.timestamp()}"
         payload = {
             "username": username,
             "action": action,
             "channel_name": channel_name,
-            "session_id": session_id,
+            "session_id": str(session_id or ""),
             "metadata": metadata or {},
         }
         dedup_hash = CIEvent.generate_dedup_hash(

@@ -5,6 +5,7 @@ Routed to dedicated queue 'aa_bb_ci' to ensure character audits remain unaffecte
 
 # Standard Library
 import logging
+import os
 from datetime import timedelta
 
 # Third Party
@@ -16,7 +17,8 @@ from django.utils import timezone
 
 from .ingest.mumble import MumbleLogIngestor
 from .ingest.paps import FCRosterIngestor
-from .models import CIOperation
+from .ingest.zkill import ZKillIngestor
+from .models import CIEvent, CIOperation
 from .services.correlation import CorrelationEngine
 
 logger = logging.getLogger(__name__)
@@ -25,12 +27,15 @@ logger = logging.getLogger(__name__)
 @shared_task(queue="aa_bb_ci", time_limit=1800)
 def sync_recent_afat_fleets_task(hours: int = 48):
     """
-    Periodic job syncing recent AFAT and ESI fleet rosters directly into CIOperations
-    and triggering automated correlation calculations.
+    Periodic job syncing recent AFAT and ESI fleet rosters directly into CIOperations,
+    running completed operation zKill combat enrichments, and triggering correlation calculations.
     """
     synced_ops = FCRosterIngestor.sync_recent_afat_fleets(hours=hours)
     for op in synced_ops:
         try:
+            # Only run zKill analysis if operation has concluded
+            if op.end_time:
+                ZKillIngestor.analyze_completed_operation(op)
             CorrelationEngine.correlate_operation(op)
         except Exception as e:
             logger.error(f"Error auto-correlating synced AFAT operation {op.id}: {e}")
@@ -45,14 +50,59 @@ def ingest_mumble_logs_task(log_file_path: str = None):
     Periodic or on-demand task pulling Mumble authenticator/server logs from disk,
     updating session intervals, and running operational correlation.
     """
-    path = (
-        log_file_path
-        or getattr(settings, "MUMBLE_AUTHENTICATOR_LOG_PATH", None)
-        or getattr(settings, "MUMBLE_LOG_PATH", None)
-        or "/var/log/mumble-authenticator.log"
+    candidate_paths = []
+    if log_file_path:
+        candidate_paths.append(log_file_path)
+
+    # Configured settings
+    for setting_key in [
+        "MUMBLE_AUTHENTICATOR_LOG_PATH",
+        "MUMBLE_LOG_PATH",
+        "MUMBLE_LOG_FILE",
+    ]:
+        val = getattr(settings, setting_key, None)
+        if val and val not in candidate_paths:
+            candidate_paths.append(val)
+
+    # Standard Alliance Auth installation paths
+    base_dir = getattr(settings, "BASE_DIR", "")
+    if base_dir:
+        for fname in ["mumble_authenticator.log", "mumble.log", "authenticator.log"]:
+            p = os.path.join(base_dir, "log", fname)
+            if p not in candidate_paths:
+                candidate_paths.append(p)
+
+    # Common system / server paths
+    system_paths = [
+        "/home/allianceserver/myauth/log/mumble_authenticator.log",
+        "/home/allianceserver/myauth/log/mumble.log",
+        "/var/log/mumble_authenticator.log",
+        "/var/log/mumble-authenticator.log",
+        "/var/log/mumble/mumble-server.log",
+        "/var/log/murmur/mumble-server.log",
+        "/var/log/mumble-server.log",
+    ]
+    for sp in system_paths:
+        if sp not in candidate_paths:
+            candidate_paths.append(sp)
+
+    found_paths = [p for p in candidate_paths if os.path.exists(p)]
+    target_paths = (
+        found_paths
+        if found_paths
+        else (
+            [candidate_paths[0]]
+            if candidate_paths
+            else ["/home/allianceserver/myauth/log/mumble_authenticator.log"]
+        )
     )
-    events = MumbleLogIngestor.ingest_log_file(path)
-    logger.info(f"Ingested {len(events)} Mumble events from {path}.")
+
+    total_events = 0
+    for path in target_paths:
+        events = MumbleLogIngestor.ingest_log_file(path)
+        total_events += len(events)
+        if events:
+            logger.info(f"Ingested {len(events)} Mumble events from {path}.")
 
     # Run correlation on recent operations
     (
@@ -60,7 +110,7 @@ def ingest_mumble_logs_task(log_file_path: str = None):
         if hasattr(run_scheduled_ci_correlation, "delay")
         else run_scheduled_ci_correlation()
     )
-    return f"Ingested {len(events)} events from {path}."
+    return f"Ingested {total_events} events from {target_paths}."
 
 
 @shared_task(queue="aa_bb_ci", time_limit=1800)
@@ -117,3 +167,36 @@ def run_scheduled_ci_correlation():
         processed += 1
 
     return f"Processed CI correlation for {processed} operations."
+
+
+@shared_task(queue="aa_bb_ci", time_limit=1800)
+def prune_ci_telemetry_task(retention_days: int = 90) -> str:
+    """
+    RAM-conscious automated data retention task.
+    Prunes raw second-by-second CIEvent records older than `retention_days` in batches
+    to avoid memory spikes and table locking, while preserving CISession, CIOperation,
+    CICorrelation, and CIInvestigation records indefinitely.
+    """
+    cutoff = timezone.now() - timedelta(days=retention_days)
+    total_deleted = 0
+    batch_size = 1000
+
+    while True:
+        # Fetch batch of IDs to delete in chunks
+        batch_ids = list(
+            CIEvent.objects.filter(timestamp__lt=cutoff).values_list("id", flat=True)[
+                :batch_size
+            ]
+        )
+        if not batch_ids:
+            break
+
+        deleted_count, _ = CIEvent.objects.filter(id__in=batch_ids).delete()
+        total_deleted += deleted_count
+        if len(batch_ids) < batch_size:
+            break
+
+    logger.info(
+        f"Pruned {total_deleted} raw CIEvent records older than {retention_days} days."
+    )
+    return f"Pruned {total_deleted} raw telemetry events."

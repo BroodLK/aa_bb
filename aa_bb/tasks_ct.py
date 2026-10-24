@@ -5,6 +5,8 @@ These helpers mirror the upstream corptools modules but add BigBrother-specific
 logging, throttling, and message notifications.
 """
 
+from __future__ import annotations
+
 # Standard Library
 import datetime
 from collections.abc import Callable, Iterable, Sequence
@@ -30,38 +32,60 @@ from .models import BigBrotherConfig
 logger = get_extension_logger(__name__)
 
 try:
-    if corptools_active():
-        # Third Party
-        from corptools import app_settings
-        from corptools.models import (
-            CharacterAudit,
-            CorptoolsConfiguration,
-            EveCharacter,
-        )
-        from corptools.tasks.character import (
-            update_char_assets,
-            update_char_clones,
-            update_char_contacts,
-            update_char_contracts,
-            update_char_industry_jobs,
-            update_char_location,
-            update_char_loyaltypoints,
-            update_char_mail,
-            update_char_mining_ledger,
-            update_char_notifications,
-            update_char_order_history,
-            update_char_orders,
-            update_char_roles,
-            update_char_skill_list,
-            update_char_skill_queue,
-            update_char_titles,
-            update_char_transactions,
-            update_char_wallet,
-        )
-    else:
-        CharacterAudit = None
+    # Third Party
+    from corptools import app_settings
+    from corptools.models import (
+        CharacterAudit,
+        CorptoolsConfiguration,
+        EveCharacter,
+    )
+    from corptools.tasks.character import (
+        update_char_assets,
+        update_char_clones,
+        update_char_contacts,
+        update_char_contracts,
+        update_char_industry_jobs,
+        update_char_location,
+        update_char_loyaltypoints,
+        update_char_mail,
+        update_char_mining_ledger,
+        update_char_notifications,
+        update_char_order_history,
+        update_char_orders,
+        update_char_roles,
+        update_char_skill_list,
+        update_char_skill_queue,
+        update_char_titles,
+        update_char_transactions,
+        update_char_wallet,
+    )
 except ImportError:
+    app_settings = None
     CharacterAudit = None
+    CorptoolsConfiguration = None
+    EveCharacter = None
+
+    def _dummy_task(*args, **kwargs):
+        return None
+
+    update_char_assets = _dummy_task
+    update_char_clones = _dummy_task
+    update_char_contacts = _dummy_task
+    update_char_contracts = _dummy_task
+    update_char_industry_jobs = _dummy_task
+    update_char_location = _dummy_task
+    update_char_loyaltypoints = _dummy_task
+    update_char_mail = _dummy_task
+    update_char_mining_ledger = _dummy_task
+    update_char_notifications = _dummy_task
+    update_char_order_history = _dummy_task
+    update_char_orders = _dummy_task
+    update_char_roles = _dummy_task
+    update_char_skill_list = _dummy_task
+    update_char_skill_queue = _dummy_task
+    update_char_titles = _dummy_task
+    update_char_transactions = _dummy_task
+    update_char_wallet = _dummy_task
 
 
 @dataclass(frozen=True)

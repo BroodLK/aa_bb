@@ -251,6 +251,12 @@ class TestCIModelsAndIngest(TestCase):
         self.assertEqual(ev_msg.user, self.user2)
         self.assertNotIn("content", ev_msg.payload)  # Privacy requirement
 
+        # AA BigBrother
+        from aa_bb.models import UserStatus
+
+        status = UserStatus.objects.get(user=self.user2)
+        self.assertEqual(status.last_discord_message_at, t_msg)
+
         ev_leave = DiscordIngestor.ingest_voice_state_update(
             discord_user_id=discord_uid,
             channel_id=987654321,
@@ -299,3 +305,53 @@ class TestCIModelsAndIngest(TestCase):
             created_by=self.user2,
         )
         self.assertIn("comms_without_pap", str(ovr))
+
+    def test_mumble_authenticator_log_formats(self):
+        IdentityResolver.register_identity(
+            user=self.user1,
+            mumble_username="pilot_alpha",
+            effective_from=self.now - timedelta(days=1),
+            is_verified=True,
+        )
+
+        log_lines = """
+        2026-10-23 18:22:01,123 - authenticator - INFO - Authenticating user: pilot_alpha
+        2026-10-23 18:22:02,456 - authenticator - INFO - userConnected: 42 (pilot_alpha)
+        2026-10-23 18:45:00,789 - authenticator - INFO - User pilot_alpha moved to channel Fleet 1
+        2026-10-23 19:10:00,123 - authenticator - INFO - userDisconnected: 42 (pilot_alpha)
+        """
+        events = MumbleLogIngestor.ingest_log_text(log_lines)
+        self.assertEqual(len(events), 4)
+
+        # Check all resolved to user1
+        for ev in events:
+            self.assertEqual(ev.user, self.user1)
+
+        sessions = CISession.objects.filter(user=self.user1, source="mumble")
+        self.assertEqual(sessions.count(), 1)
+        sess = sessions.first()
+        self.assertEqual(sess.channel_name, "Fleet 1")
+        self.assertIsNotNone(sess.end_time)
+        self.assertGreater(sess.duration_seconds, 0)
+
+    def test_mumble_disconnect_by_session_id_resolution(self):
+        IdentityResolver.register_identity(
+            user=self.user1,
+            mumble_username="pilot_alpha",
+            effective_from=self.now - timedelta(days=1),
+            is_verified=True,
+        )
+
+        # First line connects with session id 88, second disconnects with session id only
+        log_lines = """
+        2026-10-23 18:22:01,123 - authenticator - INFO - userConnected: 88 (pilot_alpha)
+        2026-10-23 18:35:00,456 - authenticator - INFO - userDisconnected: 88
+        """
+        events = MumbleLogIngestor.ingest_log_text(log_lines)
+        self.assertEqual(len(events), 2)
+        self.assertEqual(events[0].user, self.user1)
+        self.assertEqual(events[1].user, self.user1)
+
+        sessions = CISession.objects.filter(user=self.user1, source="mumble")
+        self.assertEqual(sessions.count(), 1)
+        self.assertIsNotNone(sessions.first().end_time)
