@@ -18,3 +18,4 @@ alliance_auth.sqlite3
 /test_output.txt
 /find_dupes.py
 /debug_admin.py
+/.junie/
