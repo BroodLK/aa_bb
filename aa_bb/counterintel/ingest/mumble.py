@@ -3,8 +3,8 @@ Idempotent Mumble log ingestor and session tracker.
 """
 
 # Standard Library
-from datetime import datetime, timedelta
 import re
+from datetime import datetime, timedelta
 
 # Django
 from django.utils import timezone
@@ -112,6 +112,7 @@ class MumbleLogIngestor:
         """
         Reads and ingests a Mumble log file directly from disk idempotently.
         """
+        # Standard Library
         import os
 
         if not os.path.exists(file_path):
@@ -119,7 +120,7 @@ class MumbleLogIngestor:
 
         events = []
         try:
-            with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+            with open(file_path, encoding="utf-8", errors="replace") as f:
                 for line in f:
                     ev = cls.ingest_log_line(line)
                     if ev:
@@ -141,8 +142,12 @@ class MumbleLogIngestor:
         if timezone.is_naive(timestamp):
             timestamp = timezone.make_aware(timestamp)
 
-        resolved_user = IdentityResolver.resolve_user_by_mumble(username, at_time=timestamp)
-        source_event_id = f"mumble:{username}:{session_id or '0'}:{action}:{timestamp.timestamp()}"
+        resolved_user = IdentityResolver.resolve_user_by_mumble(
+            username, at_time=timestamp
+        )
+        source_event_id = (
+            f"mumble:{username}:{session_id or '0'}:{action}:{timestamp.timestamp()}"
+        )
         payload = {
             "username": username,
             "action": action,
@@ -150,7 +155,9 @@ class MumbleLogIngestor:
             "session_id": session_id,
             "metadata": metadata or {},
         }
-        dedup_hash = CIEvent.generate_dedup_hash("mumble", source_event_id, timestamp, payload)
+        dedup_hash = CIEvent.generate_dedup_hash(
+            "mumble", source_event_id, timestamp, payload
+        )
 
         event, created = CIEvent.objects.get_or_create(
             dedup_hash=dedup_hash,
@@ -184,13 +191,19 @@ class MumbleLogIngestor:
                 .first()
             )
 
-            if recent_session and recent_session.end_time and recent_session.end_time >= cutoff:
+            if (
+                recent_session
+                and recent_session.end_time
+                and recent_session.end_time >= cutoff
+            ):
                 # Reconnection after brief drop
                 recent_session.end_time = None
                 recent_session.reconnect_count += 1
                 if channel_name:
                     recent_session.channel_name = channel_name
-                recent_session.save(update_fields=["end_time", "reconnect_count", "channel_name"])
+                recent_session.save(
+                    update_fields=["end_time", "reconnect_count", "channel_name"]
+                )
             elif recent_session and not recent_session.end_time:
                 # Session was already marked open
                 if channel_name:

@@ -3,7 +3,6 @@ Read-only AI Investigation Assistant service for counterintelligence triage and 
 """
 
 # Standard Library
-from datetime import timedelta
 import logging
 
 # Django
@@ -12,18 +11,13 @@ from django.utils import timezone
 
 from ..models import (
     CICorrelation,
-    CIEvent,
-    CIIdentity,
     CIInvestigation,
     CIOperation,
-    CIOperationObjective,
-    CIOperationParticipant,
     CIOverride,
     CISession,
 )
 from .baseline import BaselineEngine
 from .correlation import CorrelationEngine
-from .operations import CIOperationService
 
 logger = logging.getLogger(__name__)
 
@@ -75,50 +69,60 @@ class CIAgentService:
                 if BaselineEngine.is_role_exempt_from_combat(obj.expected_roles):
                     support_objectives.append(f"{obj.name} ({obj.objective_type})")
             if support_objectives:
-                explanations.append({
-                    "category": "Operational Role Context",
-                    "badge": "Support Role",
-                    "badge_class": "bg-info text-dark",
-                    "text": f"Operation includes registered non-combat support roles ({', '.join(support_objectives)}). Absence from combat killmails is standard operational behavior.",
-                })
+                explanations.append(
+                    {
+                        "category": "Operational Role Context",
+                        "badge": "Support Role",
+                        "badge_class": "bg-info text-dark",
+                        "text": f"Operation includes registered non-combat support roles ({', '.join(support_objectives)}). Absence from combat killmails is standard operational behavior.",
+                    }
+                )
 
         # 2. Network Drops / Connection Volatility
         user_sessions = CISession.objects.filter(user=user).order_by("-start_time")[:10]
         reconnect_total = sum(s.reconnect_count for s in user_sessions)
         if reconnect_total > 2:
-            explanations.append({
-                "category": "Connection Volatility",
-                "badge": "Network Instability",
-                "badge_class": "bg-warning text-dark",
-                "text": f"Observed {reconnect_total} recent reconnect events across sessions, consistent with ISP drops or network jitter rather than intentional disengagement.",
-            })
+            explanations.append(
+                {
+                    "category": "Connection Volatility",
+                    "badge": "Network Instability",
+                    "badge_class": "bg-warning text-dark",
+                    "text": f"Observed {reconnect_total} recent reconnect events across sessions, consistent with ISP drops or network jitter rather than intentional disengagement.",
+                }
+            )
 
         # 3. Logoff Habit vs. Fleet Timing
         baseline = BaselineEngine.calculate_personal_baseline(user)
         if baseline.get("total_sessions", 0) > 0:
             avg_mins = int(baseline.get("avg_session_duration_seconds", 0) // 60)
-            explanations.append({
-                "category": "Habitual Logoff Baseline",
-                "badge": "Historical Baseline",
-                "badge_class": "bg-secondary",
-                "text": f"Member historical baseline shows an average comms duration of {avg_mins} minutes across {baseline['total_sessions']} sessions.",
-            })
+            explanations.append(
+                {
+                    "category": "Habitual Logoff Baseline",
+                    "badge": "Historical Baseline",
+                    "badge_class": "bg-secondary",
+                    "text": f"Member historical baseline shows an average comms duration of {avg_mins} minutes across {baseline['total_sessions']} sessions.",
+                }
+            )
         else:
-            explanations.append({
-                "category": "Data Scarcity",
-                "badge": "Sparse Baseline",
-                "badge_class": "bg-secondary",
-                "text": "Limited historical session baseline available for this pilot; anomaly ratings should be interpreted conservatively.",
-            })
+            explanations.append(
+                {
+                    "category": "Data Scarcity",
+                    "badge": "Sparse Baseline",
+                    "badge_class": "bg-secondary",
+                    "text": "Limited historical session baseline available for this pilot; anomaly ratings should be interpreted conservatively.",
+                }
+            )
 
         # 4. Roster Administrative Omission
         if operation and not operation.participants.filter(user=user).exists():
-            explanations.append({
-                "category": "Roster Incompletion",
-                "badge": "FC Roster Omission",
-                "badge_class": "bg-light text-dark",
-                "text": "Absence from FC roster may be an administrative oversight or late fleet join rather than unauthorized comms presence.",
-            })
+            explanations.append(
+                {
+                    "category": "Roster Incompletion",
+                    "badge": "FC Roster Omission",
+                    "badge_class": "bg-light text-dark",
+                    "text": "Absence from FC roster may be an administrative oversight or late fleet join rather than unauthorized comms presence.",
+                }
+            )
 
         return explanations
 
@@ -134,11 +138,13 @@ class CIAgentService:
 
         # Fetch correlations
         if operation:
-            correlations = list(CICorrelation.objects.filter(operation=operation, user=user))
-            timeline = CIOperationService.reconstruct_timeline(operation)
+            correlations = list(
+                CICorrelation.objects.filter(operation=operation, user=user)
+            )
         else:
-            correlations = list(CICorrelation.objects.filter(user=user).order_by("-computed_at")[:5])
-            timeline = None
+            correlations = list(
+                CICorrelation.objects.filter(user=user).order_by("-computed_at")[:5]
+            )
 
         # Fetch personal baseline and benign explanations
         baseline = BaselineEngine.calculate_personal_baseline(user)
@@ -152,50 +158,80 @@ class CIAgentService:
         op_title = operation.name if operation else "General Activity Review"
         lines.append(f"### Investigation Case Summary: {user.username} @ {op_title}")
         lines.append("")
-        lines.append(f"- **Subject**: `{user.username}` (Main: `{getattr(getattr(user, 'profile', None), 'main_character', None) or 'Unknown'}`)")
-        lines.append(f"- **Operation**: `{op_title}` (Type: `{operation.operation_type if operation else 'N/A'}`, Secrecy: `{operation.secrecy_level if operation else 'Standard'}`)")
+        lines.append(
+            f"- **Subject**: `{user.username}` (Main: `{getattr(getattr(user, 'profile', None), 'main_character', None) or 'Unknown'}`)"
+        )
+        lines.append(
+            f"- **Operation**: `{op_title}` (Type: `{operation.operation_type if operation else 'N/A'}`, Secrecy: `{operation.secrecy_level if operation else 'Standard'}`)"
+        )
         lines.append(f"- **Case Status**: `{investigation.get_status_display()}`")
-        lines.append(f"- **Synthesis Timestamp**: `{timezone.now():%Y-%m-%d %H:%M:%S UTC}`")
+        lines.append(
+            f"- **Synthesis Timestamp**: `{timezone.now():%Y-%m-%d %H:%M:%S UTC}`"
+        )
         lines.append("")
 
         # Standardized "Plausible Benign Explanations" Box right at the top
         lines.append("#### ┌────────────────────────────────────────────────────────┐")
-        lines.append("#### │ Standardized Plausible Benign Explanations & Alternative Factors │")
+        lines.append(
+            "#### │ Standardized Plausible Benign Explanations & Alternative Factors │"
+        )
         lines.append("#### └────────────────────────────────────────────────────────┘")
         lines.append("##### Alternative Explanations & Confounding Factors")
         if benign_explanations:
             for b in benign_explanations:
                 lines.append(f"- **[{b['badge']}]** ({b['category']}): {b['text']}")
         else:
-            lines.append("- No common benign confounding factors identified in telemetry.")
+            lines.append(
+                "- No common benign confounding factors identified in telemetry."
+            )
         lines.append("")
 
         # 1. Primary Observations
         lines.append("#### 1. Primary Observations & Correlated Anomalies")
         if correlations:
             for c in correlations:
-                lines.append(f"- **{c.anomaly_type}** (Confidence: `{c.confidence:.2f}`, Completeness: `{c.data_completeness:.2f}`):")
+                lines.append(
+                    f"- **{c.anomaly_type}** (Confidence: `{c.confidence:.2f}`, Completeness: `{c.data_completeness:.2f}`):"
+                )
                 lines.append(f"  - {c.explanation}")
         else:
-            lines.append("- No high-confidence statistical anomalies flagged for this operational window.")
+            lines.append(
+                "- No high-confidence statistical anomalies flagged for this operational window."
+            )
         lines.append("")
 
         # 2. Baseline & Historical Context
         lines.append("#### 2. Baseline & Historical Activity Context")
-        lines.append(f"- 60-Day Observed Comms Sessions: `{baseline['total_sessions']}` (Avg Duration: `{int(baseline['avg_session_duration_seconds'] // 60)}` mins)")
-        lines.append(f"- 60-Day Confirmed Fleet Participations: `{baseline['total_fleets']}`")
+        lines.append(
+            f"- 60-Day Observed Comms Sessions: `{baseline['total_sessions']}` (Avg Duration: `{int(baseline['avg_session_duration_seconds'] // 60)}` mins)"
+        )
+        lines.append(
+            f"- 60-Day Confirmed Fleet Participations: `{baseline['total_fleets']}`"
+        )
         if overrides:
-            lines.append(f"- Documented Overrides / Exemptions: `{len(overrides)}` active policy exemption(s)")
+            lines.append(
+                f"- Documented Overrides / Exemptions: `{len(overrides)}` active policy exemption(s)"
+            )
             for ovr in overrides:
-                lines.append(f"  - Exemption: `{', '.join(ovr.exempt_anomaly_types)}` (Reason: {ovr.reason})")
+                lines.append(
+                    f"  - Exemption: `{', '.join(ovr.exempt_anomaly_types)}` (Reason: {ovr.reason})"
+                )
         lines.append("")
 
         # 3. Recommended Reviewer Actions & One-Click Dispositions
         lines.append("#### 3. Recommended Investigator Next Steps & Quick Dispositions")
-        lines.append("1. **Clear (Verified Alt / Scout)**: If subject was performing recon, cyno, or hauling.")
-        lines.append("2. **Clear (Routine Habitual Logoff)**: If disconnect matches habitual baseline.")
-        lines.append("3. **Clear (Incomplete Roster Submission)**: If FC omitted member from roster.")
-        lines.append("4. **Escalate for Senior Review**: If unresolved operational security concerns persist.")
+        lines.append(
+            "1. **Clear (Verified Alt / Scout)**: If subject was performing recon, cyno, or hauling."
+        )
+        lines.append(
+            "2. **Clear (Routine Habitual Logoff)**: If disconnect matches habitual baseline."
+        )
+        lines.append(
+            "3. **Clear (Incomplete Roster Submission)**: If FC omitted member from roster."
+        )
+        lines.append(
+            "4. **Escalate for Senior Review**: If unresolved operational security concerns persist."
+        )
 
         report = "\n".join(lines)
         investigation.agent_summary = report

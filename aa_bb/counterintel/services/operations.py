@@ -12,7 +12,6 @@ from django.utils import timezone
 
 from ..models import (
     CIEvent,
-    CIIdentity,
     CIOperation,
     CIOperationObjective,
     CIOperationParticipant,
@@ -89,7 +88,9 @@ class CIOperationService:
         if timezone.is_naive(rec_at):
             rec_at = timezone.make_aware(rec_at)
 
-        resolved_user = user or IdentityResolver.resolve_user_by_character(character_id, at_time=rec_at)
+        resolved_user = user or IdentityResolver.resolve_user_by_character(
+            character_id, at_time=rec_at
+        )
         if not resolved_user:
             # Fallback or create provisional identity if needed
             return None
@@ -129,50 +130,63 @@ class CIOperationService:
         Reconstruct complete operational timeline across CIEvents, CISessions,
         FC participants, and combat data within the operational window.
         """
-        window_start, window_end = cls.get_operational_window(operation, pre_minutes, post_minutes)
+        window_start, window_end = cls.get_operational_window(
+            operation, pre_minutes, post_minutes
+        )
 
         # Retrieve direct events
-        events_qs = CIEvent.objects.filter(
-            Q(operation=operation)
-            | Q(timestamp__gte=window_start, timestamp__lte=window_end)
-        ).select_related("user").order_by("timestamp")
+        events_qs = (
+            CIEvent.objects.filter(
+                Q(operation=operation)
+                | Q(timestamp__gte=window_start, timestamp__lte=window_end)
+            )
+            .select_related("user")
+            .order_by("timestamp")
+        )
 
         events_list = []
         unique_users_seen = set()
         for ev in events_qs:
             if ev.user:
                 unique_users_seen.add(ev.user_id)
-            events_list.append({
-                "id": ev.id,
-                "source": ev.source,
-                "source_event_id": ev.source_event_id,
-                "timestamp": ev.timestamp,
-                "user_id": ev.user_id,
-                "username": ev.user.username if ev.user else "Unknown",
-                "payload": ev.payload,
-            })
+            events_list.append(
+                {
+                    "id": ev.id,
+                    "source": ev.source,
+                    "source_event_id": ev.source_event_id,
+                    "timestamp": ev.timestamp,
+                    "user_id": ev.user_id,
+                    "username": ev.user.username if ev.user else "Unknown",
+                    "payload": ev.payload,
+                }
+            )
 
         # Retrieve comms sessions overlapping the window
-        sessions_qs = CISession.objects.filter(
-            start_time__lte=window_end,
-        ).filter(
-            Q(end_time__isnull=True) | Q(end_time__gte=window_start)
-        ).select_related("user").order_by("start_time")
+        sessions_qs = (
+            CISession.objects.filter(
+                start_time__lte=window_end,
+            )
+            .filter(Q(end_time__isnull=True) | Q(end_time__gte=window_start))
+            .select_related("user")
+            .order_by("start_time")
+        )
 
         sessions_list = []
         for s in sessions_qs:
             unique_users_seen.add(s.user_id)
-            sessions_list.append({
-                "id": s.id,
-                "source": s.source,
-                "user_id": s.user_id,
-                "username": s.user.username,
-                "start_time": s.start_time,
-                "end_time": s.end_time,
-                "channel_name": s.channel_name,
-                "reconnect_count": s.reconnect_count,
-                "duration_seconds": s.duration_seconds,
-            })
+            sessions_list.append(
+                {
+                    "id": s.id,
+                    "source": s.source,
+                    "user_id": s.user_id,
+                    "username": s.user.username,
+                    "start_time": s.start_time,
+                    "end_time": s.end_time,
+                    "channel_name": s.channel_name,
+                    "reconnect_count": s.reconnect_count,
+                    "duration_seconds": s.duration_seconds,
+                }
+            )
 
         # Objectives
         objectives_list = [
@@ -236,7 +250,11 @@ class CIOperationService:
                 "secrecy_level": operation.secrecy_level,
                 "start_time": operation.start_time,
                 "end_time": operation.end_time,
-                "fleet_commander": operation.fleet_commander.username if operation.fleet_commander else None,
+                "fleet_commander": (
+                    operation.fleet_commander.username
+                    if operation.fleet_commander
+                    else None
+                ),
                 "notes": operation.notes,
             },
             "window_start": window_start,

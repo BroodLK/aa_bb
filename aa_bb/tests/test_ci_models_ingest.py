@@ -11,12 +11,12 @@ from django.db import IntegrityError
 from django.test import TestCase
 from django.utils import timezone
 
+# AA BigBrother
 from aa_bb.counterintel.ingest.discord import DiscordIngestor
 from aa_bb.counterintel.ingest.mumble import MumbleLogIngestor
 from aa_bb.counterintel.models import (
     CICorrelation,
     CIEvent,
-    CIIdentity,
     CIInvestigation,
     CIOperation,
     CIOperationObjective,
@@ -30,8 +30,12 @@ from aa_bb.counterintel.services.identity import IdentityResolver
 class TestCIModelsAndIngest(TestCase):
     def setUp(self):
         super().setUp()
-        self.user1 = User.objects.create_user(username="pilot_alpha", email="alpha@example.com")
-        self.user2 = User.objects.create_user(username="pilot_bravo", email="bravo@example.com")
+        self.user1 = User.objects.create_user(
+            username="pilot_alpha", email="alpha@example.com"
+        )
+        self.user2 = User.objects.create_user(
+            username="pilot_bravo", email="bravo@example.com"
+        )
         self.now = timezone.now()
 
     def test_ci_identity_effective_dates(self):
@@ -40,7 +44,7 @@ class TestCIModelsAndIngest(TestCase):
         t2 = self.now
 
         # Initial identity: pilot_alpha had mumble username "AlphaOld"
-        id1 = IdentityResolver.register_identity(
+        IdentityResolver.register_identity(
             user=self.user1,
             character_id=90001,
             mumble_username="AlphaOld",
@@ -50,7 +54,7 @@ class TestCIModelsAndIngest(TestCase):
         )
 
         # Later identity: pilot_alpha changed mumble username to "AlphaNew"
-        id2 = IdentityResolver.register_identity(
+        IdentityResolver.register_identity(
             user=self.user1,
             character_id=90001,
             mumble_username="AlphaNew",
@@ -59,19 +63,27 @@ class TestCIModelsAndIngest(TestCase):
         )
 
         # Resolution at past time t0 + 1 day should resolve to user1 via AlphaOld
-        resolved_past = IdentityResolver.resolve_user_by_mumble("AlphaOld", at_time=t0 + timedelta(days=1))
+        resolved_past = IdentityResolver.resolve_user_by_mumble(
+            "AlphaOld", at_time=t0 + timedelta(days=1)
+        )
         self.assertEqual(resolved_past, self.user1)
 
         # Resolution at past time via AlphaNew should be None
-        resolved_past_new = IdentityResolver.resolve_user_by_mumble("AlphaNew", at_time=t0 + timedelta(days=1))
+        resolved_past_new = IdentityResolver.resolve_user_by_mumble(
+            "AlphaNew", at_time=t0 + timedelta(days=1)
+        )
         self.assertIsNone(resolved_past_new)
 
         # Resolution at current time via AlphaNew should resolve to user1
-        resolved_current = IdentityResolver.resolve_user_by_mumble("AlphaNew", at_time=t2)
+        resolved_current = IdentityResolver.resolve_user_by_mumble(
+            "AlphaNew", at_time=t2
+        )
         self.assertEqual(resolved_current, self.user1)
 
         # Resolution at current time via AlphaOld should be None
-        resolved_expired = IdentityResolver.resolve_user_by_mumble("AlphaOld", at_time=t2)
+        resolved_expired = IdentityResolver.resolve_user_by_mumble(
+            "AlphaOld", at_time=t2
+        )
         self.assertIsNone(resolved_expired)
 
     def test_ci_operation_and_participant_constraints(self):
@@ -246,6 +258,7 @@ class TestCIModelsAndIngest(TestCase):
             action="leave",
             timestamp=t_leave,
         )
+        self.assertEqual(ev_leave.user, self.user2)
 
         sessions = CISession.objects.filter(user=self.user2, source="discord")
         self.assertEqual(sessions.count(), 1)

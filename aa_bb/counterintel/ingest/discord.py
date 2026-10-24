@@ -36,7 +36,9 @@ class DiscordIngestor:
             ts = timezone.make_aware(ts)
 
         user = IdentityResolver.resolve_user_by_discord(discord_user_id, at_time=ts)
-        source_event_id = f"discord:voice:{discord_user_id}:{channel_id}:{action}:{ts.timestamp()}"
+        source_event_id = (
+            f"discord:voice:{discord_user_id}:{channel_id}:{action}:{ts.timestamp()}"
+        )
         payload = {
             "discord_user_id": discord_user_id,
             "channel_id": str(channel_id),
@@ -45,7 +47,9 @@ class DiscordIngestor:
             "mute": mute,
             "deaf": deaf,
         }
-        dedup_hash = CIEvent.generate_dedup_hash("discord", source_event_id, ts, payload)
+        dedup_hash = CIEvent.generate_dedup_hash(
+            "discord", source_event_id, ts, payload
+        )
 
         event, created = CIEvent.objects.get_or_create(
             dedup_hash=dedup_hash,
@@ -85,7 +89,9 @@ class DiscordIngestor:
             "message_id": str(message_id),
             "content_length": content_length,
         }
-        dedup_hash = CIEvent.generate_dedup_hash("discord", source_event_id, ts, payload)
+        dedup_hash = CIEvent.generate_dedup_hash(
+            "discord", source_event_id, ts, payload
+        )
 
         event, _ = CIEvent.objects.get_or_create(
             dedup_hash=dedup_hash,
@@ -100,7 +106,9 @@ class DiscordIngestor:
         return event
 
     @classmethod
-    def _update_voice_session(cls, user, action: str, timestamp, channel_name: str = ""):
+    def _update_voice_session(
+        cls, user, action: str, timestamp, channel_name: str = ""
+    ):
         if action == "join":
             cutoff = timestamp - timedelta(seconds=cls.RECONNECT_THRESHOLD_SECONDS)
             recent_session = (
@@ -113,12 +121,18 @@ class DiscordIngestor:
                 .first()
             )
 
-            if recent_session and recent_session.end_time and recent_session.end_time >= cutoff:
+            if (
+                recent_session
+                and recent_session.end_time
+                and recent_session.end_time >= cutoff
+            ):
                 recent_session.end_time = None
                 recent_session.reconnect_count += 1
                 if channel_name:
                     recent_session.channel_name = channel_name
-                recent_session.save(update_fields=["end_time", "reconnect_count", "channel_name"])
+                recent_session.save(
+                    update_fields=["end_time", "reconnect_count", "channel_name"]
+                )
             elif recent_session and not recent_session.end_time:
                 if channel_name:
                     recent_session.channel_name = channel_name

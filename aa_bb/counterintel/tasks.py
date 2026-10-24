@@ -4,8 +4,8 @@ Routed to dedicated queue 'aa_bb_ci' to ensure character audits remain unaffecte
 """
 
 # Standard Library
-from datetime import timedelta
 import logging
+from datetime import timedelta
 
 # Third Party
 from celery import shared_task
@@ -55,7 +55,11 @@ def ingest_mumble_logs_task(log_file_path: str = None):
     logger.info(f"Ingested {len(events)} Mumble events from {path}.")
 
     # Run correlation on recent operations
-    run_scheduled_ci_correlation.delay() if hasattr(run_scheduled_ci_correlation, "delay") else run_scheduled_ci_correlation()
+    (
+        run_scheduled_ci_correlation.delay()
+        if hasattr(run_scheduled_ci_correlation, "delay")
+        else run_scheduled_ci_correlation()
+    )
     return f"Ingested {len(events)} events from {path}."
 
 
@@ -69,13 +73,17 @@ def correlate_operation_task(operation_id: int, algorithm_version: str = "1.0.0"
         logger.warning(f"CIOperation {operation_id} not found for correlation task.")
         return 0
 
-    findings = CorrelationEngine.correlate_operation(op, algorithm_version=algorithm_version)
+    findings = CorrelationEngine.correlate_operation(
+        op, algorithm_version=algorithm_version
+    )
     logger.info(f"CI Correlation complete for {op.name} ({len(findings)} findings).")
     return len(findings)
 
 
 @shared_task(queue="aa_bb_ci", time_limit=3600)
-def replay_historical_operation_task(operation_id: int, algorithm_version: str = "1.0.0"):
+def replay_historical_operation_task(
+    operation_id: int, algorithm_version: str = "1.0.0"
+):
     """
     Deterministic historical replay of an operation.
     """
@@ -84,7 +92,9 @@ def replay_historical_operation_task(operation_id: int, algorithm_version: str =
         logger.warning(f"CIOperation {operation_id} not found for historical replay.")
         return 0
 
-    findings = CorrelationEngine.correlate_operation(op, algorithm_version=algorithm_version)
+    findings = CorrelationEngine.correlate_operation(
+        op, algorithm_version=algorithm_version
+    )
     return {
         "operation_id": op.id,
         "operation_name": op.name,

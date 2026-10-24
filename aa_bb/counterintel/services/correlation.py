@@ -3,21 +3,17 @@ Multi-dimensional counterintelligence correlation and behavioral anomaly engine.
 """
 
 # Standard Library
-from datetime import timedelta
 import logging
+from datetime import timedelta
 
 # Django
 from django.contrib.auth.models import User
-from django.utils import timezone
 
 from ..models import (
     CICorrelation,
-    CIEvent,
     CIOperation,
-    CIOperationObjective,
     CIOperationParticipant,
     CIOverride,
-    CISession,
 )
 from .baseline import BaselineEngine
 from .operations import CIOperationService
@@ -46,20 +42,30 @@ class CorrelationEngine:
         findings = []
 
         confirmed_user_ids = {p["user_id"] for p in timeline["participants"]}
-        op_start = operation.start_time
-        op_end = operation.end_time or (op_start + timedelta(hours=2))
 
         # 1. Comms presence without PAP credit
-        findings.extend(cls._detect_comms_without_pap(operation, timeline, confirmed_user_ids, algorithm_version))
+        findings.extend(
+            cls._detect_comms_without_pap(
+                operation, timeline, confirmed_user_ids, algorithm_version
+            )
+        )
 
         # 2. Pre-contact disconnect detection
-        findings.extend(cls._detect_pre_contact_disconnects(operation, timeline, algorithm_version))
+        findings.extend(
+            cls._detect_pre_contact_disconnects(operation, timeline, algorithm_version)
+        )
 
         # 3. Briefing attendance without deployment
-        findings.extend(cls._detect_briefing_anomalies(operation, timeline, algorithm_version))
+        findings.extend(
+            cls._detect_briefing_anomalies(operation, timeline, algorithm_version)
+        )
 
         # 4. Role-aware combat participation check
-        findings.extend(cls._detect_combat_discrepancies(operation, timeline, confirmed_user_ids, algorithm_version))
+        findings.extend(
+            cls._detect_combat_discrepancies(
+                operation, timeline, confirmed_user_ids, algorithm_version
+            )
+        )
 
         # Filter out findings suppressed by documented CIOverrides
         persisted_findings = []
@@ -77,7 +83,9 @@ class CorrelationEngine:
             )
 
             if is_exempt:
-                logger.info(f"Anomaly {anomaly_type} for user {user.username} suppressed by active CIOverride.")
+                logger.info(
+                    f"Anomaly {anomaly_type} for user {user.username} suppressed by active CIOverride."
+                )
                 continue
 
             corr, _ = CICorrelation.objects.update_or_create(
@@ -120,19 +128,24 @@ class CorrelationEngine:
                         continue
                     confidence = min(0.95, 0.4 + (total_duration / 3600.0) * 0.5)
                     source_ids = [f"session:{s['id']}" for s in sessions]
-                    channels = ", ".join(filter(None, {s["channel_name"] for s in sessions})) or "General Comms"
+                    channels = (
+                        ", ".join(filter(None, {s["channel_name"] for s in sessions}))
+                        or "General Comms"
+                    )
                     explanation = (
                         f"User {user.username} observed in operational comms ({channels}) for "
                         f"{int(total_duration // 60)} minutes without confirmed FC fleet credit."
                     )
-                    findings.append({
-                        "user": user,
-                        "anomaly_type": "comms_without_pap",
-                        "confidence": round(confidence, 2),
-                        "data_completeness": 0.95,
-                        "source_event_ids": source_ids,
-                        "explanation": explanation,
-                    })
+                    findings.append(
+                        {
+                            "user": user,
+                            "anomaly_type": "comms_without_pap",
+                            "confidence": round(confidence, 2),
+                            "data_completeness": 0.95,
+                            "source_event_ids": source_ids,
+                            "explanation": explanation,
+                        }
+                    )
 
         return findings
 
@@ -160,14 +173,16 @@ class CorrelationEngine:
                     continue
 
                 minutes_before = int((first_contact - end_time).total_seconds() // 60)
-                is_typical, habit_prob = BaselineEngine.is_typical_disconnect_time(user, end_time)
+                is_typical, habit_prob = BaselineEngine.is_typical_disconnect_time(
+                    user, end_time
+                )
 
                 # Calibrate confidence based on historical habit
                 if is_typical:
                     confidence = 0.25  # Low confidence: habit explains logoff
                     explanation = (
                         f"User {user.username} disconnected {minutes_before}m prior to hostile contact, "
-                        f"matching their habitual daily logoff schedule ({int(habit_prob*100)}% historical frequency)."
+                        f"matching their habitual daily logoff schedule ({int(habit_prob * 100)}% historical frequency)."
                     )
                 else:
                     confidence = 0.85  # High confidence: statistical outlier
@@ -176,14 +191,19 @@ class CorrelationEngine:
                         f"This logoff is an outlier relative to their historical activity baseline."
                     )
 
-                findings.append({
-                    "user": user,
-                    "anomaly_type": "pre_contact_disconnect",
-                    "confidence": round(confidence, 2),
-                    "data_completeness": 0.90,
-                    "source_event_ids": [f"session:{s['id']}", f"zkill:{combat_events[0]['id']}"],
-                    "explanation": explanation,
-                })
+                findings.append(
+                    {
+                        "user": user,
+                        "anomaly_type": "pre_contact_disconnect",
+                        "confidence": round(confidence, 2),
+                        "data_completeness": 0.90,
+                        "source_event_ids": [
+                            f"session:{s['id']}",
+                            f"zkill:{combat_events[0]['id']}",
+                        ],
+                        "explanation": explanation,
+                    }
+                )
 
         return findings
 
@@ -195,7 +215,9 @@ class CorrelationEngine:
         algorithm_version: str,
     ) -> list[dict]:
         findings = []
-        briefing_objectives = [o for o in timeline["objectives"] if o["objective_type"] == "briefing"]
+        briefing_objectives = [
+            o for o in timeline["objectives"] if o["objective_type"] == "briefing"
+        ]
         if not briefing_objectives and operation.secrecy_level != "classified":
             return findings
 
@@ -212,17 +234,19 @@ class CorrelationEngine:
             ).count()
 
             if recent_fleets == 0 and s["duration_seconds"] >= 600:
-                findings.append({
-                    "user": user,
-                    "anomaly_type": "briefing_without_deployment",
-                    "confidence": 0.70,
-                    "data_completeness": 0.85,
-                    "source_event_ids": [f"session:{s['id']}"],
-                    "explanation": (
-                        f"User {user.username} attended sensitive strategic briefing ({operation.name}) "
-                        f"without subsequent fleet deployment over the following 7 days."
-                    ),
-                })
+                findings.append(
+                    {
+                        "user": user,
+                        "anomaly_type": "briefing_without_deployment",
+                        "confidence": 0.70,
+                        "data_completeness": 0.85,
+                        "source_event_ids": [f"session:{s['id']}"],
+                        "explanation": (
+                            f"User {user.username} attended sensitive strategic briefing ({operation.name}) "
+                            f"without subsequent fleet deployment over the following 7 days."
+                        ),
+                    }
+                )
 
         return findings
 
@@ -246,7 +270,9 @@ class CorrelationEngine:
 
         # If operation objectives indicate support/recon/logi, suppress combat absence
         if BaselineEngine.is_role_exempt_from_combat(all_expected_roles):
-            logger.info(f"Operation {operation.name} marked with support/exempt roles; suppressing combat absence check.")
+            logger.info(
+                f"Operation {operation.name} marked with support/exempt roles; suppressing combat absence check."
+            )
             return findings
 
         combat_user_ids = {e["user_id"] for e in combat_events if e["user_id"]}
@@ -257,16 +283,18 @@ class CorrelationEngine:
             if not user:
                 continue
 
-            findings.append({
-                "user": user,
-                "anomaly_type": "combat_absence_unexplained",
-                "confidence": 0.45,
-                "data_completeness": 0.80,
-                "source_event_ids": [f"op:{operation.id}"],
-                "explanation": (
-                    f"User {user.username} was confirmed on combat fleet roster but did not appear on "
-                    f"any of the {len(combat_events)} recorded killmails for this engagement."
-                ),
-            })
+            findings.append(
+                {
+                    "user": user,
+                    "anomaly_type": "combat_absence_unexplained",
+                    "confidence": 0.45,
+                    "data_completeness": 0.80,
+                    "source_event_ids": [f"op:{operation.id}"],
+                    "explanation": (
+                        f"User {user.username} was confirmed on combat fleet roster but did not appear on "
+                        f"any of the {len(combat_events)} recorded killmails for this engagement."
+                    ),
+                }
+            )
 
         return findings

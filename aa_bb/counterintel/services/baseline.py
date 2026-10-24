@@ -3,14 +3,13 @@ Personal and role baseline computation engine for counterintelligence behavioral
 """
 
 # Standard Library
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 # Django
 from django.contrib.auth.models import User
-from django.db.models import Avg, Count, Q
 from django.utils import timezone
 
-from ..models import CIEvent, CIOperationParticipant, CISession
+from ..models import CIOperationParticipant, CISession
 
 
 class BaselineEngine:
@@ -38,7 +37,9 @@ class BaselineEngine:
 
         session_count = sessions.count()
         total_duration = sum(s.duration_seconds for s in sessions)
-        avg_session_duration = (total_duration / session_count) if session_count > 0 else 0.0
+        avg_session_duration = (
+            (total_duration / session_count) if session_count > 0 else 0.0
+        )
 
         # Disconnect hour distribution (0-23 UTC)
         disconnect_hours = [0] * 24
@@ -64,7 +65,9 @@ class BaselineEngine:
         }
 
     @classmethod
-    def is_typical_disconnect_time(cls, user: User, timestamp, tolerance_hours: int = 1) -> tuple[bool, float]:
+    def is_typical_disconnect_time(
+        cls, user: User, timestamp, tolerance_hours: int = 1
+    ) -> tuple[bool, float]:
         """
         Evaluates whether a disconnect at `timestamp` aligns with the user's habitual logoff times.
         Returns (is_typical, probability_score).
@@ -82,7 +85,9 @@ class BaselineEngine:
 
         target_hour = timestamp.hour
         matching_count = 0
-        for h in range(target_hour - tolerance_hours, target_hour + tolerance_hours + 1):
+        for h in range(
+            target_hour - tolerance_hours, target_hour + tolerance_hours + 1
+        ):
             normalized_h = h % 24
             matching_count += disconnect_hours[normalized_h]
 
@@ -95,6 +100,15 @@ class BaselineEngine:
         """
         Determines if an assigned or expected role is non-combat support (Logi, Recon, Cyno, Briefing).
         """
-        support_roles = {"logi", "logistics", "recon", "scout", "cyno", "briefing", "hauler", "leadership"}
+        support_roles = {
+            "logi",
+            "logistics",
+            "recon",
+            "scout",
+            "cyno",
+            "briefing",
+            "hauler",
+            "leadership",
+        }
         roles_set = {str(r).lower() for r in (expected_roles or [])}
         return bool(roles_set.intersection(support_roles))

@@ -12,23 +12,21 @@ from django.test import Client, TestCase
 from django.urls import reverse
 from django.utils import timezone
 
+# Alliance Auth
+from allianceauth.authentication.models import CharacterOwnership, State
+from allianceauth.eveonline.models import EveCharacter
+
+# AA BigBrother
 from aa_bb.counterintel.ingest.mumble import MumbleLogIngestor
-from aa_bb.counterintel.ingest.paps import FCRosterIngestor
 from aa_bb.counterintel.models import (
     CICorrelation,
     CIInvestigation,
-    CIOperation,
-    CIOperationObjective,
-    CIOperationParticipant,
-    CIOverride,
     CISession,
 )
-from aa_bb.models import General
 from aa_bb.counterintel.services.agent import CIAgentService
 from aa_bb.counterintel.services.identity import IdentityResolver
 from aa_bb.counterintel.services.operations import CIOperationService
-from allianceauth.authentication.models import CharacterOwnership, State
-from allianceauth.eveonline.models import EveCharacter
+from aa_bb.models import General
 
 
 class TestCIInvestigation(TestCase):
@@ -38,26 +36,48 @@ class TestCIInvestigation(TestCase):
         self.now = timezone.now()
 
         # Users
-        self.reviewer = User.objects.create_user(username="ci_reviewer", email="rev@example.com")
-        self.viewer = User.objects.create_user(username="ci_viewer", email="view@example.com")
-        self.pilot = User.objects.create_user(username="suspect_pilot", email="sus@example.com")
+        self.reviewer = User.objects.create_user(
+            username="ci_reviewer", email="rev@example.com"
+        )
+        self.viewer = User.objects.create_user(
+            username="ci_viewer", email="view@example.com"
+        )
+        self.pilot = User.objects.create_user(
+            username="suspect_pilot", email="sus@example.com"
+        )
 
         # States & Auth Characters for middleware
-        member_state, _ = State.objects.get_or_create(name="Member", defaults={"priority": 100})
+        member_state, _ = State.objects.get_or_create(
+            name="Member", defaults={"priority": 100}
+        )
         for idx, u in enumerate([self.reviewer, self.viewer, self.pilot]):
             char, _ = EveCharacter.objects.get_or_create(
                 character_id=9900 + idx,
-                defaults={"character_name": f"Char_{u.username}", "corporation_id": 1, "corporation_name": "Corp"},
+                defaults={
+                    "character_name": f"Char_{u.username}",
+                    "corporation_id": 1,
+                    "corporation_name": "Corp",
+                },
             )
-            CharacterOwnership.objects.get_or_create(character=char, user=u, defaults={"owner_hash": f"h_{idx}"})
+            CharacterOwnership.objects.get_or_create(
+                character=char, user=u, defaults={"owner_hash": f"h_{idx}"}
+            )
             u.profile.main_character = char
             u.profile.state = member_state
             u.profile.save()
 
         # Permissions
         content_type = ContentType.objects.get_for_model(General)
-        view_perm, _ = Permission.objects.get_or_create(codename="can_view_ci", content_type=content_type, defaults={"name": "View CI"})
-        review_perm, _ = Permission.objects.get_or_create(codename="can_review_ci", content_type=content_type, defaults={"name": "Review CI"})
+        view_perm, _ = Permission.objects.get_or_create(
+            codename="can_view_ci",
+            content_type=content_type,
+            defaults={"name": "View CI"},
+        )
+        review_perm, _ = Permission.objects.get_or_create(
+            codename="can_review_ci",
+            content_type=content_type,
+            defaults={"name": "Review CI"},
+        )
 
         self.viewer.user_permissions.add(view_perm)
         self.reviewer.user_permissions.add(view_perm, review_perm)
@@ -69,7 +89,13 @@ class TestCIInvestigation(TestCase):
             if hasattr(u, "_user_perm_cache"):
                 delattr(u, "_user_perm_cache")
 
-        IdentityResolver.register_identity(user=self.pilot, character_id=3001, mumble_username="suspect_pilot", effective_from=self.now - timedelta(days=65), is_verified=True)
+        IdentityResolver.register_identity(
+            user=self.pilot,
+            character_id=3001,
+            mumble_username="suspect_pilot",
+            effective_from=self.now - timedelta(days=65),
+            is_verified=True,
+        )
 
     def test_agent_synthesis_and_structured_findings(self):
         op = CIOperationService.create_operation(
@@ -119,8 +145,18 @@ class TestCIInvestigation(TestCase):
         )
 
         # High confidence anomaly -> should triage
-        MumbleLogIngestor.ingest_raw_event("suspect_pilot", "connect", self.now + timedelta(minutes=5), channel_name="Classified Comms")
-        MumbleLogIngestor.ingest_raw_event("suspect_pilot", "disconnect", self.now + timedelta(minutes=55), channel_name="Classified Comms")
+        MumbleLogIngestor.ingest_raw_event(
+            "suspect_pilot",
+            "connect",
+            self.now + timedelta(minutes=5),
+            channel_name="Classified Comms",
+        )
+        MumbleLogIngestor.ingest_raw_event(
+            "suspect_pilot",
+            "disconnect",
+            self.now + timedelta(minutes=55),
+            channel_name="Classified Comms",
+        )
 
         triaged = CIAgentService.auto_triage_operation(op)
 
@@ -141,7 +177,9 @@ class TestCIInvestigation(TestCase):
             agent_summary="Initial synthesis",
         )
 
-        detail_url = reverse("ci:investigation_detail", kwargs={"investigation_id": case.id})
+        detail_url = reverse(
+            "ci:investigation_detail", kwargs={"investigation_id": case.id}
+        )
         queue_url = reverse("ci:review_queue")
 
         # Viewer cannot access review queue
@@ -179,7 +217,9 @@ class TestCIInvestigation(TestCase):
             status="pending",
         )
 
-        quick_url = reverse("ci:quick_disposition", kwargs={"investigation_id": case.id})
+        quick_url = reverse(
+            "ci:quick_disposition", kwargs={"investigation_id": case.id}
+        )
 
         # Test POST one-click clear for scout
         self.client.force_login(self.reviewer)
@@ -195,7 +235,7 @@ class TestCIInvestigation(TestCase):
         resp_ajax = self.client.post(
             quick_url,
             {"action": "escalate_senior"},
-            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+            headers={"x-requested-with": "XMLHttpRequest"},
         )
         self.assertEqual(resp_ajax.status_code, 200)
         data = resp_ajax.json()
@@ -266,10 +306,16 @@ class TestCIInvestigation(TestCase):
         self.assertIn("Operational Role Context", categories)
 
     def test_graceful_degradation_on_external_api_errors(self):
+        # Standard Library
         from unittest.mock import patch
+
+        # AA BigBrother
         from aa_bb.app_settings import resolve_character_name, resolve_corporation_name
 
-        with patch("aa_bb.app_settings.ESIHandler.post_universe_names", side_effect=Exception("404 HTTPClientError")):
+        with patch(
+            "aa_bb.app_settings.ESIHandler.post_universe_names",
+            side_effect=Exception("404 HTTPClientError"),
+        ):
             corp_name = resolve_corporation_name(999999)
             self.assertEqual(corp_name, "Corporation 999999")
 

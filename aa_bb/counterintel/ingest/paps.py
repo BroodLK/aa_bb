@@ -3,9 +3,6 @@ Read-only FC-submitted PAP / AFAT fleet roster ingestion engine.
 Strictly authoritative FC rosters with zero member participation or self-reporting.
 """
 
-# Standard Library
-from datetime import datetime
-
 # Django
 from django.contrib.auth.models import User
 from django.utils import timezone
@@ -51,16 +48,23 @@ class FCRosterIngestor:
 
             resolved_user = None
             if char_id:
-                resolved_user = IdentityResolver.resolve_user_by_character(char_id, at_time=ts)
+                resolved_user = IdentityResolver.resolve_user_by_character(
+                    char_id, at_time=ts
+                )
 
             if not resolved_user and char_name:
                 try:
+                    # Alliance Auth
                     from allianceauth.eveonline.models import EveCharacter
 
-                    ec = EveCharacter.objects.filter(character_name__iexact=char_name).first()
+                    ec = EveCharacter.objects.filter(
+                        character_name__iexact=char_name
+                    ).first()
                     if ec:
                         char_id = ec.character_id
-                        resolved_user = IdentityResolver.resolve_user_by_character(char_id, at_time=ts)
+                        resolved_user = IdentityResolver.resolve_user_by_character(
+                            char_id, at_time=ts
+                        )
                 except Exception:
                     pass
 
@@ -96,9 +100,19 @@ class FCRosterIngestor:
                 "operation_id": operation.id,
                 "character_id": char_id,
                 "character_name": char_name,
-                "fc_user_id": fc_user.id if fc_user else (operation.fleet_commander_id if operation.fleet_commander else None),
+                "fc_user_id": (
+                    fc_user.id
+                    if fc_user
+                    else (
+                        operation.fleet_commander_id
+                        if operation.fleet_commander
+                        else None
+                    )
+                ),
             }
-            dedup_hash = CIEvent.generate_dedup_hash("pap", source_event_id, ts, payload)
+            dedup_hash = CIEvent.generate_dedup_hash(
+                "pap", source_event_id, ts, payload
+            )
 
             CIEvent.objects.get_or_create(
                 dedup_hash=dedup_hash,
@@ -127,6 +141,7 @@ class FCRosterIngestor:
         chat channel member list, or comma/newline separated character names).
         Requires zero plugin dependencies or member action.
         """
+        # Standard Library
         import re
 
         if not text_data or not text_data.strip():
@@ -177,18 +192,24 @@ class FCRosterIngestor:
         communication presence (Mumble, Discord) during the operation window.
         Provides zero-overhead roster generation for alliances not using PAP/AFAT.
         """
+        # Standard Library
         from datetime import timedelta
+
+        # Django
         from django.db.models import Q
+
         from ..models import CISession
 
         op_start = operation.start_time
         op_end = operation.end_time or (op_start + timedelta(hours=2))
 
-        sessions_qs = CISession.objects.filter(
-            start_time__lte=op_end,
-        ).filter(
-            Q(end_time__isnull=True) | Q(end_time__gte=op_start)
-        ).select_related("user")
+        sessions_qs = (
+            CISession.objects.filter(
+                start_time__lte=op_end,
+            )
+            .filter(Q(end_time__isnull=True) | Q(end_time__gte=op_start))
+            .select_related("user")
+        )
 
         if channel_keywords:
             q_channel = Q()
@@ -237,20 +258,29 @@ class FCRosterIngestor:
         try:
             # 1. Try standard AFAT FatLink / Fat models
             try:
+                # Third Party
                 from afat.models import Fat, FatLink
 
                 fatlink = FatLink.objects.filter(id=afat_fleet_id).first()
                 if fatlink:
                     roster = []
-                    fats = Fat.objects.filter(fatlink=fatlink).select_related("character")
+                    fats = Fat.objects.filter(fatlink=fatlink).select_related(
+                        "character"
+                    )
                     for f in fats:
-                        char_id = getattr(f.character, "character_id", None) or getattr(f.character, "id", None)
-                        char_name = getattr(f.character, "character_name", None) or getattr(f.character, "name", "")
+                        char_id = getattr(f.character, "character_id", None) or getattr(
+                            f.character, "id", None
+                        )
+                        char_name = getattr(
+                            f.character, "character_name", None
+                        ) or getattr(f.character, "name", "")
                         if char_id:
-                            roster.append({
-                                "character_id": char_id,
-                                "character_name": str(char_name),
-                            })
+                            roster.append(
+                                {
+                                    "character_id": char_id,
+                                    "character_name": str(char_name),
+                                }
+                            )
                     fc_user = None
                     if hasattr(fatlink, "character") and fatlink.character:
                         fc_char = fatlink.character
@@ -259,7 +289,11 @@ class FCRosterIngestor:
                     elif hasattr(fatlink, "creator") and fatlink.creator:
                         fc_user = fatlink.creator
 
-                    recorded_time = getattr(fatlink, "created_at", None) or getattr(fatlink, "start_time", None) or timezone.now()
+                    recorded_time = (
+                        getattr(fatlink, "created_at", None)
+                        or getattr(fatlink, "start_time", None)
+                        or timezone.now()
+                    )
                     return cls.ingest_fc_roster(
                         operation=operation,
                         roster_entries=roster,
@@ -271,18 +305,25 @@ class FCRosterIngestor:
 
             # 2. Try AFATFleet / AFATFleetAttendance models
             try:
+                # Third Party
                 from afat.models import AFATFleet, AFATFleetAttendance
 
                 fleet = AFATFleet.objects.filter(id=afat_fleet_id).first()
                 if fleet:
                     roster = []
-                    for att in AFATFleetAttendance.objects.filter(fleet=fleet).select_related("character"):
-                        roster.append({
-                            "character_id": att.character.character_id,
-                            "character_name": att.character.character_name,
-                        })
+                    for att in AFATFleetAttendance.objects.filter(
+                        fleet=fleet
+                    ).select_related("character"):
+                        roster.append(
+                            {
+                                "character_id": att.character.character_id,
+                                "character_name": att.character.character_name,
+                            }
+                        )
 
-                    fc_user = fleet.fleet_commander.user if fleet.fleet_commander else None
+                    fc_user = (
+                        fleet.fleet_commander.user if fleet.fleet_commander else None
+                    )
                     return cls.ingest_fc_roster(
                         operation=operation,
                         roster_entries=roster,
@@ -308,6 +349,7 @@ class FCRosterIngestor:
 
         # 1. Sync from FatLink
         try:
+            # Third Party
             from afat.models import FatLink
 
             recent_fatlinks = FatLink.objects.filter(created_at__gte=cutoff)
@@ -341,6 +383,7 @@ class FCRosterIngestor:
 
         # 2. Sync from AFATFleet
         try:
+            # Third Party
             from afat.models import AFATFleet
 
             recent_fleets = AFATFleet.objects.filter(start_time__gte=cutoff)
@@ -351,7 +394,9 @@ class FCRosterIngestor:
                     defaults={
                         "end_time": getattr(f, "end_time", None),
                         "operation_type": "strategic",
-                        "fleet_commander": f.fleet_commander.user if f.fleet_commander else None,
+                        "fleet_commander": (
+                            f.fleet_commander.user if f.fleet_commander else None
+                        ),
                         "notes": f"Synced automatically from AFAT Fleet #{f.id}",
                     },
                 )

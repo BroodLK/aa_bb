@@ -11,16 +11,14 @@ from django.test import Client, TestCase
 from django.urls import reverse
 from django.utils import timezone
 
+# AA BigBrother
 from aa_bb.counterintel.ingest.mumble import MumbleLogIngestor
 from aa_bb.counterintel.ingest.paps import FCRosterIngestor
 from aa_bb.counterintel.ingest.zkill import ZKillIngestor
 from aa_bb.counterintel.models import (
     CIEvent,
     CIInvestigation,
-    CIOperation,
-    CIOperationObjective,
     CIOperationParticipant,
-    CISession,
 )
 from aa_bb.counterintel.services.identity import IdentityResolver
 from aa_bb.counterintel.services.operations import CIOperationService
@@ -33,18 +31,37 @@ class TestCIOperations(TestCase):
         self.now = timezone.now()
 
         # Users
-        self.fc_user = User.objects.create_user(username="fleet_commander_1", email="fc@example.com")
-        self.officer = User.objects.create_user(username="ci_officer", email="officer@example.com")
-        self.reviewer = User.objects.create_user(username="ci_reviewer", email="reviewer@example.com")
-        self.pilot1 = User.objects.create_user(username="pilot_dps", email="dps@example.com")
-        self.pilot2 = User.objects.create_user(username="pilot_logi", email="logi@example.com")
-        self.pilot3 = User.objects.create_user(username="pilot_scout", email="scout@example.com")
-        self.pilot4 = User.objects.create_user(username="pilot_spy", email="spy@example.com")
+        self.fc_user = User.objects.create_user(
+            username="fleet_commander_1", email="fc@example.com"
+        )
+        self.officer = User.objects.create_user(
+            username="ci_officer", email="officer@example.com"
+        )
+        self.reviewer = User.objects.create_user(
+            username="ci_reviewer", email="reviewer@example.com"
+        )
+        self.pilot1 = User.objects.create_user(
+            username="pilot_dps", email="dps@example.com"
+        )
+        self.pilot2 = User.objects.create_user(
+            username="pilot_logi", email="logi@example.com"
+        )
+        self.pilot3 = User.objects.create_user(
+            username="pilot_scout", email="scout@example.com"
+        )
+        self.pilot4 = User.objects.create_user(
+            username="pilot_spy", email="spy@example.com"
+        )
 
         # Permissions
+        # Django
         from django.contrib.contenttypes.models import ContentType
+
+        # Alliance Auth
         from allianceauth.authentication.models import CharacterOwnership, State
         from allianceauth.eveonline.models import EveCharacter
+
+        # AA BigBrother
         from aa_bb.models import General
 
         member_state, _ = State.objects.get_or_create(
@@ -80,7 +97,9 @@ class TestCIOperations(TestCase):
         manage_perm, _ = Permission.objects.get_or_create(
             codename="can_manage_ci",
             content_type=content_type,
-            defaults={"name": "Can manage Counterintelligence operations and baselines"},
+            defaults={
+                "name": "Can manage Counterintelligence operations and baselines"
+            },
         )
 
         self.officer.user_permissions.add(view_perm, manage_perm)
@@ -94,10 +113,34 @@ class TestCIOperations(TestCase):
                 delattr(u, "_user_perm_cache")
 
         # Identity mappings
-        IdentityResolver.register_identity(user=self.pilot1, character_id=1001, mumble_username="pilot_dps", effective_from=self.now - timedelta(days=1), is_verified=True)
-        IdentityResolver.register_identity(user=self.pilot2, character_id=1002, mumble_username="pilot_logi", effective_from=self.now - timedelta(days=1), is_verified=True)
-        IdentityResolver.register_identity(user=self.pilot3, character_id=1003, mumble_username="pilot_scout", effective_from=self.now - timedelta(days=1), is_verified=True)
-        IdentityResolver.register_identity(user=self.pilot4, character_id=1004, mumble_username="pilot_spy", effective_from=self.now - timedelta(days=1), is_verified=True)
+        IdentityResolver.register_identity(
+            user=self.pilot1,
+            character_id=1001,
+            mumble_username="pilot_dps",
+            effective_from=self.now - timedelta(days=1),
+            is_verified=True,
+        )
+        IdentityResolver.register_identity(
+            user=self.pilot2,
+            character_id=1002,
+            mumble_username="pilot_logi",
+            effective_from=self.now - timedelta(days=1),
+            is_verified=True,
+        )
+        IdentityResolver.register_identity(
+            user=self.pilot3,
+            character_id=1003,
+            mumble_username="pilot_scout",
+            effective_from=self.now - timedelta(days=1),
+            is_verified=True,
+        )
+        IdentityResolver.register_identity(
+            user=self.pilot4,
+            character_id=1004,
+            mumble_username="pilot_spy",
+            effective_from=self.now - timedelta(days=1),
+            is_verified=True,
+        )
 
     def test_operation_creation_and_objectives(self):
         op = CIOperationService.create_operation(
@@ -111,13 +154,13 @@ class TestCIOperations(TestCase):
         self.assertEqual(op.name, "Op Iron Shield")
         self.assertEqual(op.fleet_commander, self.fc_user)
 
-        obj1 = CIOperationService.add_objective(
+        CIOperationService.add_objective(
             operation=op,
             name="Citadel Defense",
             objective_type="strategic_defense",
             expected_roles=["dps", "logi"],
         )
-        obj2 = CIOperationService.add_objective(
+        CIOperationService.add_objective(
             operation=op,
             name="Cyno Recon",
             objective_type="recon",
@@ -148,9 +191,21 @@ class TestCIOperations(TestCase):
 
         self.assertEqual(len(participants), 2)
         self.assertEqual(CIOperationParticipant.objects.filter(operation=op).count(), 2)
-        self.assertTrue(CIOperationParticipant.objects.filter(operation=op, user=self.pilot1).exists())
-        self.assertTrue(CIOperationParticipant.objects.filter(operation=op, user=self.pilot2).exists())
-        self.assertFalse(CIOperationParticipant.objects.filter(operation=op, user=self.pilot4).exists())
+        self.assertTrue(
+            CIOperationParticipant.objects.filter(
+                operation=op, user=self.pilot1
+            ).exists()
+        )
+        self.assertTrue(
+            CIOperationParticipant.objects.filter(
+                operation=op, user=self.pilot2
+            ).exists()
+        )
+        self.assertFalse(
+            CIOperationParticipant.objects.filter(
+                operation=op, user=self.pilot4
+            ).exists()
+        )
 
         # CIEvent created for each roster entry
         pap_events = CIEvent.objects.filter(source="pap", operation=op)
@@ -200,9 +255,24 @@ class TestCIOperations(TestCase):
         )
 
         # Mumble comms: pilot1 (confirmed), pilot2 (confirmed), pilot4 (NOT on roster - spy/observer)
-        MumbleLogIngestor.ingest_raw_event("pilot_dps", "connect", op_start + timedelta(minutes=5), channel_name="Fleet 1")
-        MumbleLogIngestor.ingest_raw_event("pilot_logi", "connect", op_start + timedelta(minutes=5), channel_name="Fleet 1")
-        MumbleLogIngestor.ingest_raw_event("pilot_spy", "connect", op_start + timedelta(minutes=2), channel_name="Fleet 1")
+        MumbleLogIngestor.ingest_raw_event(
+            "pilot_dps",
+            "connect",
+            op_start + timedelta(minutes=5),
+            channel_name="Fleet 1",
+        )
+        MumbleLogIngestor.ingest_raw_event(
+            "pilot_logi",
+            "connect",
+            op_start + timedelta(minutes=5),
+            channel_name="Fleet 1",
+        )
+        MumbleLogIngestor.ingest_raw_event(
+            "pilot_spy",
+            "connect",
+            op_start + timedelta(minutes=2),
+            channel_name="Fleet 1",
+        )
 
         timeline = CIOperationService.reconstruct_timeline(op)
 
@@ -216,7 +286,7 @@ class TestCIOperations(TestCase):
             name="Op Restricted",
             start_time=self.now,
         )
-        inv = CIInvestigation.objects.create(
+        CIInvestigation.objects.create(
             operation=op,
             subject_user=self.pilot4,
             status="pending",

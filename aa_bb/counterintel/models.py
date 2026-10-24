@@ -194,7 +194,9 @@ class CIEvent(models.Model):
     def generate_dedup_hash(
         source: str, source_event_id: str, timestamp, payload: dict = None
     ) -> str:
-        ts_str = timestamp.isoformat() if hasattr(timestamp, "isoformat") else str(timestamp)
+        ts_str = (
+            timestamp.isoformat() if hasattr(timestamp, "isoformat") else str(timestamp)
+        )
         payload_str = json.dumps(payload or {}, sort_keys=True)
         raw = f"{source}:{source_event_id}:{ts_str}:{payload_str}"
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
@@ -206,9 +208,7 @@ class CISession(models.Model):
     """
 
     source = models.CharField(max_length=64)  # mumble, discord
-    user = models.ForeignKey(
-        User, on_delete=models.CASCADE, related_name="ci_sessions"
-    )
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="ci_sessions")
     start_time = models.DateTimeField(db_index=True)
     end_time = models.DateTimeField(null=True, blank=True, db_index=True)
     channel_name = models.CharField(max_length=255, blank=True)

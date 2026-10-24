@@ -7,17 +7,15 @@ from django.contrib import messages
 from django.contrib.auth.decorators import permission_required
 from django.contrib.auth.models import User
 from django.core.paginator import Paginator
-from django.http import Http404, JsonResponse
+from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
-
 from django.views.decorators.http import require_POST
 
 from .ingest.paps import FCRosterIngestor
 from .models import (
     CICorrelation,
-    CIEvent,
     CIIdentity,
     CIInvestigation,
     CIOperation,
@@ -60,7 +58,10 @@ def operation_timeline(request, operation_id: int):
     operation = get_object_or_404(CIOperation, id=operation_id)
     timeline = CIOperationService.reconstruct_timeline(operation)
 
-    if request.headers.get("x-requested-with") == "XMLHttpRequest" or request.GET.get("format") == "json":
+    if (
+        request.headers.get("x-requested-with") == "XMLHttpRequest"
+        or request.GET.get("format") == "json"
+    ):
         return JsonResponse(timeline, safe=False)
 
     return render(
@@ -104,10 +105,20 @@ def member_activity(request, user_id: int):
     Longitudinal communication and fleet activity view for a specific member.
     """
     subject_user = get_object_or_404(User, id=user_id)
-    identities = CIIdentity.objects.filter(user=subject_user).order_by("-effective_from")
+    identities = CIIdentity.objects.filter(user=subject_user).order_by(
+        "-effective_from"
+    )
     sessions = CISession.objects.filter(user=subject_user).order_by("-start_time")[:50]
-    participations = CIOperationParticipant.objects.filter(user=subject_user).select_related("operation").order_by("-recorded_at")[:50]
-    correlations = CICorrelation.objects.filter(user=subject_user).select_related("operation").order_by("-computed_at")
+    participations = (
+        CIOperationParticipant.objects.filter(user=subject_user)
+        .select_related("operation")
+        .order_by("-recorded_at")[:50]
+    )
+    correlations = (
+        CICorrelation.objects.filter(user=subject_user)
+        .select_related("operation")
+        .order_by("-computed_at")
+    )
     overrides = CIOverride.objects.filter(user=subject_user).order_by("-created_at")
 
     return render(
@@ -163,7 +174,9 @@ def investigation_detail(request, investigation_id: int):
     Detail and disposition view for an investigation case.
     """
     investigation = get_object_or_404(
-        CIInvestigation.objects.select_related("subject_user", "operation", "assigned_reviewer"),
+        CIInvestigation.objects.select_related(
+            "subject_user", "operation", "assigned_reviewer"
+        ),
         id=investigation_id,
     )
 
@@ -225,7 +238,9 @@ def quick_disposition(request, investigation_id: int):
         ),
         "clear_habitual": (
             "cleared",
-            _("[One-Click] Cleared: Routine habitual logoff pattern matching baseline."),
+            _(
+                "[One-Click] Cleared: Routine habitual logoff pattern matching baseline."
+            ),
         ),
         "clear_roster": (
             "cleared",
@@ -233,7 +248,9 @@ def quick_disposition(request, investigation_id: int):
         ),
         "escalate_senior": (
             "escalated",
-            _("[One-Click] Escalated for senior counterintelligence leadership review."),
+            _(
+                "[One-Click] Escalated for senior counterintelligence leadership review."
+            ),
         ),
         "dismiss": (
             "dismissed",
@@ -254,21 +271,28 @@ def quick_disposition(request, investigation_id: int):
     timestamp_str = timezone.now().strftime("%Y-%m-%d %H:%M UTC")
     author_str = request.user.username
     entry = f"[{timestamp_str} by {author_str}] {note}"
-    investigation.reviewer_notes = f"{existing_notes}\n{entry}".strip() if existing_notes else entry
+    investigation.reviewer_notes = (
+        f"{existing_notes}\n{entry}".strip() if existing_notes else entry
+    )
     investigation.save()
 
-    messages.success(request, _(f"Case #{investigation.id} updated: {investigation.get_status_display()}"))
+    messages.success(
+        request,
+        _(f"Case #{investigation.id} updated: {investigation.get_status_display()}"),
+    )
 
     if request.headers.get("x-requested-with") == "XMLHttpRequest":
-        return JsonResponse({
-            "success": True,
-            "investigation_id": investigation.id,
-            "status": investigation.status,
-            "status_display": investigation.get_status_display(),
-            "notes": investigation.reviewer_notes,
-        })
+        return JsonResponse(
+            {
+                "success": True,
+                "investigation_id": investigation.id,
+                "status": investigation.status,
+                "status_display": investigation.get_status_display(),
+                "notes": investigation.reviewer_notes,
+            }
+        )
 
-    next_url = request.POST.get("next") or request.META.get("HTTP_REFERER")
+    next_url = request.POST.get("next") or request.headers.get("referer")
     if next_url:
         return redirect(next_url)
     return redirect("ci:review_queue")
@@ -295,7 +319,9 @@ def quick_roster_ingest(request, operation_id: int):
     )
     messages.success(
         request,
-        _(f"Successfully processed roster: {len(participants)} participant(s) registered."),
+        _(
+            f"Successfully processed roster: {len(participants)} participant(s) registered."
+        ),
     )
     return redirect("ci:operation_timeline", operation_id=operation.id)
 
@@ -311,6 +337,8 @@ def auto_detect_comms(request, operation_id: int):
     participants = FCRosterIngestor.auto_detect_fleet_participants(operation=operation)
     messages.success(
         request,
-        _(f"Auto-detected {len(participants)} fleet participant(s) from comms presence."),
+        _(
+            f"Auto-detected {len(participants)} fleet participant(s) from comms presence."
+        ),
     )
     return redirect("ci:operation_timeline", operation_id=operation.id)

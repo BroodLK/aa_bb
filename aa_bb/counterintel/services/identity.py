@@ -25,17 +25,27 @@ class IdentityResolver:
         if not character_id:
             return None
         dt = at_time or timezone.now()
-        qs = CIIdentity.objects.filter(
-            character_id=character_id,
-        ).filter(
-            Q(effective_from__lte=dt) | Q(effective_from__lte=dt + timedelta(minutes=5))
-        ).filter(Q(effective_until__isnull=True) | Q(effective_until__gt=dt))
-        identity = qs.select_related("user").order_by("-is_verified", "-effective_from").first()
+        qs = (
+            CIIdentity.objects.filter(
+                character_id=character_id,
+            )
+            .filter(
+                Q(effective_from__lte=dt)
+                | Q(effective_from__lte=dt + timedelta(minutes=5))
+            )
+            .filter(Q(effective_until__isnull=True) | Q(effective_until__gt=dt))
+        )
+        identity = (
+            qs.select_related("user")
+            .order_by("-is_verified", "-effective_from")
+            .first()
+        )
         if identity:
             return identity.user
 
         # Fallback to direct CharacterOwnership if within current time
         try:
+            # Alliance Auth
             from allianceauth.authentication.models import CharacterOwnership
 
             co = (
@@ -59,15 +69,24 @@ class IdentityResolver:
             discord_id=discord_id,
             effective_from__lte=dt,
         ).filter(Q(effective_until__isnull=True) | Q(effective_until__gt=dt))
-        identity = qs.select_related("user").order_by("-is_verified", "-effective_from").first()
+        identity = (
+            qs.select_related("user")
+            .order_by("-is_verified", "-effective_from")
+            .first()
+        )
         if identity:
             return identity.user
 
         # Fallback to DiscordUser
         try:
+            # Alliance Auth
             from allianceauth.services.modules.discord.models import DiscordUser
 
-            du = DiscordUser.objects.filter(uid=discord_id).select_related("user").first()
+            du = (
+                DiscordUser.objects.filter(uid=discord_id)
+                .select_related("user")
+                .first()
+            )
             if du and du.user:
                 return du.user
         except Exception:
@@ -85,7 +104,11 @@ class IdentityResolver:
             mumble_username__iexact=clean_name,
             effective_from__lte=dt,
         ).filter(Q(effective_until__isnull=True) | Q(effective_until__gt=dt))
-        identity = qs.select_related("user").order_by("-is_verified", "-effective_from").first()
+        identity = (
+            qs.select_related("user")
+            .order_by("-is_verified", "-effective_from")
+            .first()
+        )
         if identity:
             return identity.user
 
@@ -95,9 +118,12 @@ class IdentityResolver:
             return user
 
         try:
+            # Alliance Auth
             from allianceauth.eveonline.models import EveCharacter
 
-            char = EveCharacter.objects.filter(character_name__iexact=clean_name).first()
+            char = EveCharacter.objects.filter(
+                character_name__iexact=clean_name
+            ).first()
             if char:
                 return cls.resolve_user_by_character(char.character_id, at_time=dt)
         except Exception:
@@ -147,9 +173,12 @@ class IdentityResolver:
         eff_from = at_time or timezone.now()
         # Characters
         try:
+            # Alliance Auth
             from allianceauth.authentication.models import CharacterOwnership
 
-            for co in CharacterOwnership.objects.filter(user=user).select_related("character"):
+            for co in CharacterOwnership.objects.filter(user=user).select_related(
+                "character"
+            ):
                 cls.register_identity(
                     user=user,
                     character_id=co.character.character_id,
@@ -161,6 +190,7 @@ class IdentityResolver:
 
         # Discord
         try:
+            # Alliance Auth
             from allianceauth.services.modules.discord.models import DiscordUser
 
             du = DiscordUser.objects.filter(user=user).first()

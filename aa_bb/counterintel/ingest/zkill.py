@@ -3,13 +3,10 @@ zKillboard combat event enrichment with rate limiting and deduplication.
 """
 
 # Standard Library
-from datetime import datetime
-import json
 import logging
-import time
+from datetime import datetime
 
 # Django
-from django.core.cache import cache
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
@@ -36,7 +33,9 @@ class ZKillIngestor:
         """
         Normalize a single killmail payload into a CIEvent.
         """
-        killmail_id = str(killmail_data.get("killmail_id") or killmail_data.get("killID") or "")
+        killmail_id = str(
+            killmail_data.get("killmail_id") or killmail_data.get("killID") or ""
+        )
         raw_ts = killmail_data.get("killmail_time") or killmail_data.get("killTime")
         if isinstance(raw_ts, str):
             ts = parse_datetime(raw_ts)
@@ -53,15 +52,15 @@ class ZKillIngestor:
         attackers = killmail_data.get("attackers") or []
 
         attacker_char_ids = [
-            att.get("character_id")
-            for att in attackers
-            if att.get("character_id")
+            att.get("character_id") for att in attackers if att.get("character_id")
         ]
 
         # Resolve primary subject user if any participant belongs to the alliance
         resolved_user = None
         if victim_char_id:
-            resolved_user = IdentityResolver.resolve_user_by_character(victim_char_id, at_time=ts)
+            resolved_user = IdentityResolver.resolve_user_by_character(
+                victim_char_id, at_time=ts
+            )
 
         if not resolved_user:
             for att_id in attacker_char_ids:

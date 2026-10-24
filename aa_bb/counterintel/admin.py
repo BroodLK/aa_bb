@@ -20,7 +20,14 @@ from .models import (
 
 @admin.register(CIOperation)
 class CIOperationAdmin(admin.ModelAdmin):
-    list_display = ("name", "operation_type", "secrecy_level", "start_time", "end_time", "fleet_commander")
+    list_display = (
+        "name",
+        "operation_type",
+        "secrecy_level",
+        "start_time",
+        "end_time",
+        "fleet_commander",
+    )
     list_filter = ("operation_type", "secrecy_level", "start_time")
     search_fields = ("name", "notes", "fleet_commander__username")
 
@@ -34,14 +41,28 @@ class CIOperationObjectiveAdmin(admin.ModelAdmin):
 
 @admin.register(CIOperationParticipant)
 class CIOperationParticipantAdmin(admin.ModelAdmin):
-    list_display = ("operation", "user", "character_id", "confirmed_by_fc", "recorded_at")
+    list_display = (
+        "operation",
+        "user",
+        "character_id",
+        "confirmed_by_fc",
+        "recorded_at",
+    )
     list_filter = ("confirmed_by_fc", "recorded_at")
     search_fields = ("user__username", "character_id", "operation__name")
 
 
 @admin.register(CIIdentity)
 class CIIdentityAdmin(admin.ModelAdmin):
-    list_display = ("user", "character_id", "discord_id", "mumble_username", "effective_from", "effective_until", "is_verified")
+    list_display = (
+        "user",
+        "character_id",
+        "discord_id",
+        "mumble_username",
+        "effective_from",
+        "effective_until",
+        "is_verified",
+    )
     list_filter = ("is_verified", "effective_from")
     search_fields = ("user__username", "mumble_username", "character_id", "discord_id")
 
@@ -55,23 +76,50 @@ class CIEventAdmin(admin.ModelAdmin):
 
 @admin.register(CISession)
 class CISessionAdmin(admin.ModelAdmin):
-    list_display = ("source", "user", "start_time", "end_time", "channel_name", "reconnect_count")
+    list_display = (
+        "source",
+        "user",
+        "start_time",
+        "end_time",
+        "channel_name",
+        "reconnect_count",
+    )
     list_filter = ("source", "start_time")
     search_fields = ("user__username", "channel_name")
 
 
 @admin.register(CICorrelation)
 class CICorrelationAdmin(admin.ModelAdmin):
-    list_display = ("operation", "user", "anomaly_type", "confidence", "data_completeness", "algorithm_version", "computed_at")
+    list_display = (
+        "operation",
+        "user",
+        "anomaly_type",
+        "confidence",
+        "data_completeness",
+        "algorithm_version",
+        "computed_at",
+    )
     list_filter = ("anomaly_type", "algorithm_version", "computed_at")
     search_fields = ("user__username", "operation__name", "explanation")
 
 
 @admin.register(CIInvestigation)
 class CIInvestigationAdmin(admin.ModelAdmin):
-    list_display = ("id", "subject_user", "operation", "status", "assigned_reviewer", "created_at")
+    list_display = (
+        "id",
+        "subject_user",
+        "operation",
+        "status",
+        "assigned_reviewer",
+        "created_at",
+    )
     list_filter = ("status", "created_at")
-    search_fields = ("subject_user__username", "operation__name", "reviewer_notes", "agent_summary")
+    search_fields = (
+        "subject_user__username",
+        "operation__name",
+        "reviewer_notes",
+        "agent_summary",
+    )
 
 
 @admin.register(CIOverride)
