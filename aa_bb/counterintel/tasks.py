@@ -1,6 +1,5 @@
 """
 Celery tasks for counterintelligence correlation and historical replay.
-Routed to dedicated queue 'aa_bb_ci' to ensure character audits remain unaffected.
 """
 
 # Standard Library
@@ -24,7 +23,7 @@ from .services.correlation import CorrelationEngine
 logger = logging.getLogger(__name__)
 
 
-@shared_task(queue="aa_bb_ci", time_limit=1800)
+@shared_task(time_limit=1800)
 def sync_recent_afat_fleets_task(hours: int = 48):
     """
     Periodic job syncing recent AFAT and ESI fleet rosters directly into CIOperations,
@@ -44,7 +43,7 @@ def sync_recent_afat_fleets_task(hours: int = 48):
     return f"Synced {len(synced_ops)} AFAT fleets."
 
 
-@shared_task(queue="aa_bb_ci", time_limit=1800)
+@shared_task(time_limit=1800)
 def ingest_mumble_logs_task(log_file_path: str = None):
     """
     Periodic or on-demand task pulling Mumble authenticator/server logs from disk,
@@ -113,7 +112,7 @@ def ingest_mumble_logs_task(log_file_path: str = None):
     return f"Ingested {total_events} events from {target_paths}."
 
 
-@shared_task(queue="aa_bb_ci", time_limit=1800)
+@shared_task(time_limit=1800)
 def correlate_operation_task(operation_id: int, algorithm_version: str = "1.0.0"):
     """
     Run correlation engine against a single operation.
@@ -130,7 +129,7 @@ def correlate_operation_task(operation_id: int, algorithm_version: str = "1.0.0"
     return len(findings)
 
 
-@shared_task(queue="aa_bb_ci", time_limit=3600)
+@shared_task(time_limit=3600)
 def replay_historical_operation_task(
     operation_id: int, algorithm_version: str = "1.0.0"
 ):
@@ -154,7 +153,7 @@ def replay_historical_operation_task(
     }
 
 
-@shared_task(queue="aa_bb_ci", time_limit=1800)
+@shared_task(time_limit=1800)
 def run_scheduled_ci_correlation():
     """
     Periodic job checking recent operations within the last 48 hours and triggering correlation.
@@ -169,7 +168,7 @@ def run_scheduled_ci_correlation():
     return f"Processed CI correlation for {processed} operations."
 
 
-@shared_task(queue="aa_bb_ci", time_limit=1800)
+@shared_task(time_limit=1800)
 def prune_ci_telemetry_task(retention_days: int = 90) -> str:
     """
     RAM-conscious automated data retention task.
