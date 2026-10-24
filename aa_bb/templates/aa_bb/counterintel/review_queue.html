@@ -1,0 +1,160 @@
+{% extends 'aa_bb/counterintel/base.html' %}
+{% load i18n %}
+
+{% block ci_content %}
+<div class="card">
+    <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="fas fa-shield-alt me-2"></i>{% translate "Counterintelligence Investigation Review Queue" %}</h5>
+        <div class="btn-group btn-group-sm">
+            <a href="?status=all" class="btn btn-outline-light {% if current_status == 'all' %}active bg-light text-dark fw-bold{% endif %}" {% if current_status == 'all' %}style="color: #212529 !important; background-color: #f8f9fa !important; border-color: #f8f9fa !important;"{% endif %}>{% translate "All" %}</a>
+            <a href="?status=pending" class="btn btn-outline-light {% if current_status == 'pending' %}active bg-light text-dark fw-bold{% endif %}" {% if current_status == 'pending' %}style="color: #212529 !important; background-color: #f8f9fa !important; border-color: #f8f9fa !important;"{% endif %}>{% translate "Needs Review" %}</a>
+            <a href="?status=in_review" class="btn btn-outline-light {% if current_status == 'in_review' %}active bg-light text-dark fw-bold{% endif %}" {% if current_status == 'in_review' %}style="color: #212529 !important; background-color: #f8f9fa !important; border-color: #f8f9fa !important;"{% endif %}>{% translate "In Review" %}</a>
+            <a href="?status=escalated" class="btn btn-outline-light {% if current_status == 'escalated' %}active bg-light text-dark fw-bold{% endif %}" {% if current_status == 'escalated' %}style="color: #212529 !important; background-color: #f8f9fa !important; border-color: #f8f9fa !important;"{% endif %}>{% translate "Escalated" %}</a>
+            <a href="?status=cleared" class="btn btn-outline-light {% if current_status == 'cleared' %}active bg-light text-dark fw-bold{% endif %}" {% if current_status == 'cleared' %}style="color: #212529 !important; background-color: #f8f9fa !important; border-color: #f8f9fa !important;"{% endif %}>{% translate "Cleared" %}</a>
+        </div>
+    </div>
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-striped table-hover align-middle">
+                <thead>
+                    <tr>
+                        <th>{% translate "Case #" %}</th>
+                        <th>{% translate "Subject" %}</th>
+                        <th>{% translate "Operation" %}</th>
+                        <th>{% translate "Status" %}</th>
+                        <th>{% translate "Plausible Benign Hypotheses" %}</th>
+                        <th>{% translate "Reviewer" %}</th>
+                        <th>{% translate "Created (UTC)" %}</th>
+                        <th>{% translate "Actions" %}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for case in page_obj %}
+                    <tr>
+                        <td><strong>#{{ case.id }}</strong></td>
+                        <td>
+                            <a href="{% url 'ci:member_activity' case.subject_user.id %}" class="fw-bold">
+                                {{ case.subject_user.username }}
+                            </a>
+                        </td>
+                        <td>
+                            {% if case.operation %}
+                                <a href="{% url 'ci:operation_timeline' case.operation.id %}">
+                                    {{ case.operation.name }}
+                                </a>
+                            {% else %}
+                                <span class="text-muted">General</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if case.status == 'pending' %}
+                                <span class="badge bg-warning text-dark">{{ case.get_status_display }}</span>
+                            {% elif case.status == 'escalated' %}
+                                <span class="badge bg-danger">{{ case.get_status_display }}</span>
+                            {% elif case.status == 'cleared' or case.status == 'dismissed' %}
+                                <span class="badge bg-success">{{ case.get_status_display }}</span>
+                            {% else %}
+                                <span class="badge bg-info text-dark">{{ case.get_status_display }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="small">
+                            {% if case.benign_explanations %}
+                                {% for b in case.benign_explanations %}
+                                    <div class="mb-1" title="{{ b.text }}">
+                                        <span class="badge {{ b.badge_class }} me-1">{{ b.badge }}</span>
+                                        <span class="text-muted">{{ b.text|truncatechars:45 }}</span>
+                                    </div>
+                                {% endfor %}
+                            {% else %}
+                                <span class="text-muted">{% translate "No benign factors flagged" %}</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ case.assigned_reviewer.username|default:"Unassigned" }}</td>
+                        <td>{{ case.created_at|date:"Y-m-d H:i" }}</td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <a href="{% url 'ci:investigation_detail' case.id %}" class="btn btn-outline-primary" title="{% translate 'Full Case Review' %}">
+                                    <i class="fas fa-search"></i>
+                                </a>
+                                <button type="button" class="btn btn-outline-success dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown" aria-expanded="false" title="{% translate 'One-Click Disposition' %}">
+                                    <span class="visually-hidden">Toggle Dropdown</span>
+                                </button>
+                                <ul class="dropdown-menu dropdown-menu-end shadow">
+                                    <li><h6 class="dropdown-header">{% translate "One-Click Dispositions" %}</h6></li>
+                                    <li>
+                                        <form method="post" action="{% url 'ci:quick_disposition' case.id %}">
+                                            {% csrf_token %}
+                                            <input type="hidden" name="action" value="clear_scout">
+                                            <button type="submit" class="dropdown-item text-success">
+                                                <i class="fas fa-check-circle me-1"></i>{% translate "Clear (Verified Alt / Scout)" %}
+                                            </button>
+                                        </form>
+                                    </li>
+                                    <li>
+                                        <form method="post" action="{% url 'ci:quick_disposition' case.id %}">
+                                            {% csrf_token %}
+                                            <input type="hidden" name="action" value="clear_habitual">
+                                            <button type="submit" class="dropdown-item text-success">
+                                                <i class="fas fa-clock me-1"></i>{% translate "Clear (Habitual Logoff)" %}
+                                            </button>
+                                        </form>
+                                    </li>
+                                    <li>
+                                        <form method="post" action="{% url 'ci:quick_disposition' case.id %}">
+                                            {% csrf_token %}
+                                            <input type="hidden" name="action" value="clear_roster">
+                                            <button type="submit" class="dropdown-item text-success">
+                                                <i class="fas fa-clipboard me-1"></i>{% translate "Clear (Incomplete Roster)" %}
+                                            </button>
+                                        </form>
+                                    </li>
+                                    <li><hr class="dropdown-divider"></li>
+                                    <li>
+                                        <form method="post" action="{% url 'ci:quick_disposition' case.id %}">
+                                            {% csrf_token %}
+                                            <input type="hidden" name="action" value="escalate_senior">
+                                            <button type="submit" class="dropdown-item text-danger">
+                                                <i class="fas fa-exclamation-triangle me-1"></i>{% translate "Escalate for Senior Review" %}
+                                            </button>
+                                        </form>
+                                    </li>
+                                    <li>
+                                        <form method="post" action="{% url 'ci:quick_disposition' case.id %}">
+                                            {% csrf_token %}
+                                            <input type="hidden" name="action" value="dismiss">
+                                            <button type="submit" class="dropdown-item text-secondary">
+                                                <i class="fas fa-ban me-1"></i>{% translate "Dismiss (Non-Actionable)" %}
+                                            </button>
+                                        </form>
+                                    </li>
+                                </ul>
+                            </div>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="8" class="text-center text-muted py-4">
+                            {% translate "No investigation cases matching current filter." %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        {% if page_obj.has_other_pages %}
+        <nav aria-label="Page navigation">
+            <ul class="pagination justify-content-center">
+                {% if page_obj.has_previous %}
+                    <li class="page-item"><a class="page-link" href="?page={{ page_obj.previous_page_number }}&status={{ current_status }}">{% translate "Previous" %}</a></li>
+                {% endif %}
+                <li class="page-item disabled"><span class="page-link">{{ page_obj.number }} / {{ page_obj.paginator.num_pages }}</span></li>
+                {% if page_obj.has_next %}
+                    <li class="page-item"><a class="page-link" href="?page={{ page_obj.next_page_number }}&status={{ current_status }}">{% translate "Next" %}</a></li>
+                {% endif %}
+            </ul>
+        </nav>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

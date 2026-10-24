@@ -171,6 +171,14 @@ class TestDashboardViews(TestCase):
 
     def setUp(self):
         self.client = Client()
+        config = BigBrotherConfig.get_solo()
+        config.is_active = True
+        config.save()
+
+    def tearDown(self):
+        config = BigBrotherConfig.get_solo()
+        config.is_active = True
+        config.save()
 
     def test_index_access(self):
         # Anonymous users should be redirected to login

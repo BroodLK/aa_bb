@@ -1,0 +1,252 @@
+{% extends 'aa_bb/counterintel/base.html' %}
+{% load i18n %}
+
+{% block ci_content %}
+<div class="row mb-3">
+    <div class="col-md-12">
+        <div class="card bg-dark text-white">
+            <div class="card-body d-flex justify-content-between align-items-center">
+                <div>
+                    <h3 class="card-title mb-1">{{ operation.name }}</h3>
+                    <p class="mb-0 text-muted">
+                        <span class="badge bg-secondary me-2">{{ operation.operation_type }}</span>
+                        <span class="badge bg-info text-dark me-2">Secrecy: {{ operation.secrecy_level }}</span>
+                        <i class="far fa-clock me-1"></i>{{ operation.start_time|date:"Y-m-d H:i" }} - {% if operation.end_time %}{{ operation.end_time|date:"H:i" }} UTC{% else %}Open{% endif %}
+                        {% if operation.fleet_commander %} &bull; FC: <strong>{{ operation.fleet_commander.username }}</strong>{% endif %}
+                    </p>
+                </div>
+                <div>
+                    <button class="btn btn-outline-info btn-sm me-2" type="button" data-bs-toggle="collapse" data-bs-target="#quickRosterCollapse">
+                        <i class="fas fa-clipboard-list me-1"></i>{% translate "Paste Fleet Roster" %}
+                    </button>
+                    <form method="post" action="{% url 'ci:auto_detect_comms' operation.id %}" class="d-inline me-2">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-outline-success btn-sm" title="{% translate 'Zero admin: auto-detect attendees from active comms sessions' %}">
+                            <i class="fas fa-magic me-1"></i>{% translate "Auto-Detect Comms Fleet" %}
+                        </button>
+                    </form>
+                    <a href="{% url 'ci:operation_list' %}" class="btn btn-outline-light btn-sm">
+                        <i class="fas fa-arrow-left me-1"></i>{% translate "Back to Operations" %}
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Zero Overhead Quick Roster Ingest Collapse -->
+<div class="collapse mb-4" id="quickRosterCollapse">
+    <div class="card card-body bg-light border-info">
+        <h6 class="fw-bold mb-2"><i class="fas fa-paste me-2 text-info"></i>{% translate "Quick Fleet Roster Paste (Zero PAP/AFAT Setup Required)" %}</h6>
+        <p class="small text-muted mb-2">
+            {% translate "Paste character names, EVE fleet window members, or fleet chat text. The system automatically parses names and links accounts." %}
+        </p>
+        <form method="post" action="{% url 'ci:quick_roster_ingest' operation.id %}">
+            {% csrf_token %}
+            <div class="mb-2">
+                <textarea name="roster_text" class="form-control font-monospace small" rows="4" placeholder="Character Name 1&#10;Character Name 2&#10;[ 2026.10.22 21:05:00 ] FC Pilot > Fleet assembled..."></textarea>
+            </div>
+            <button type="submit" class="btn btn-primary btn-sm">
+                <i class="fas fa-check me-1"></i>{% translate "Ingest Fleet Roster" %}
+            </button>
+        </form>
+    </div>
+</div>
+
+<!-- Metrics summary cards -->
+<div class="row g-3 mb-4">
+    <div class="col-md-2 col-sm-4">
+        <div class="card text-center h-100">
+            <div class="card-body">
+                <div class="text-muted small">{% translate "FC Roster" %}</div>
+                <h4 class="mb-0 text-primary">{{ timeline.metrics.total_confirmed_participants }}</h4>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-2 col-sm-4">
+        <div class="card text-center h-100">
+            <div class="card-body">
+                <div class="text-muted small">{% translate "Comms Sessions" %}</div>
+                <h4 class="mb-0 text-info">{{ timeline.metrics.total_sessions }}</h4>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-2 col-sm-4">
+        <div class="card text-center h-100">
+            <div class="card-body">
+                <div class="text-muted small">{% translate "Total Events" %}</div>
+                <h4 class="mb-0 text-secondary">{{ timeline.metrics.total_events }}</h4>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-2 col-sm-4">
+        <div class="card text-center h-100">
+            <div class="card-body">
+                <div class="text-muted small">{% translate "Observed Users" %}</div>
+                <h4 class="mb-0 text-success">{{ timeline.metrics.unique_users_observed }}</h4>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-2 col-sm-4">
+        <div class="card text-center h-100">
+            <div class="card-body">
+                <div class="text-muted small">{% translate "Comms w/o PAP" %}</div>
+                <h4 class="mb-0 {% if timeline.metrics.comms_without_pap_count %}text-warning{% else %}text-muted{% endif %}">
+                    {{ timeline.metrics.comms_without_pap_count }}
+                </h4>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-2 col-sm-4">
+        <div class="card text-center h-100">
+            <div class="card-body">
+                <div class="text-muted small">{% translate "PAP w/o Comms" %}</div>
+                <h4 class="mb-0 text-muted">{{ timeline.metrics.pap_without_comms_count }}</h4>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <!-- Objectives & FC Participants Panel -->
+    <div class="col-lg-4 mb-4">
+        <div class="card mb-3">
+            <div class="card-header bg-secondary text-white">
+                <h6 class="mb-0"><i class="fas fa-bullseye me-2"></i>{% translate "Operation Objectives" %}</h6>
+            </div>
+            <div class="card-body">
+                {% if timeline.objectives %}
+                    <ul class="list-group list-group-flush">
+                    {% for obj in timeline.objectives %}
+                        <li class="list-group-item d-flex justify-content-between align-items-center">
+                            <div>
+                                <strong>{{ obj.name }}</strong><br>
+                                <small class="text-muted">Type: {{ obj.objective_type }}</small>
+                            </div>
+                            {% if obj.expected_roles %}
+                                <span>
+                                {% for role in obj.expected_roles %}
+                                    <span class="badge bg-dark">{{ role }}</span>
+                                {% endfor %}
+                                </span>
+                            {% endif %}
+                        </li>
+                    {% endfor %}
+                    </ul>
+                {% else %}
+                    <p class="text-muted small mb-0">{% translate "No specific objectives registered for this operation." %}</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header bg-secondary text-white">
+                <h6 class="mb-0"><i class="fas fa-clipboard-check me-2"></i>{% translate "FC Roster Participants" %} ({{ timeline.participants|length }})</h6>
+            </div>
+            <div class="card-body p-0" style="max-height: 400px; overflow-y: auto;">
+                <ul class="list-group list-group-flush">
+                    {% for p in timeline.participants %}
+                    <li class="list-group-item d-flex justify-content-between align-items-center py-2">
+                        <div>
+                            <a href="{% url 'ci:member_activity' p.user_id %}" class="fw-bold text-decoration-none">
+                                {{ p.username }}
+                            </a>
+                            <div class="mt-1">
+                                {% for role in p.role_context %}
+                                    <span class="badge bg-secondary me-1">{{ role }}</span>
+                                {% endfor %}
+                            </div>
+                            <small class="text-muted d-block">Char ID: {{ p.character_id }}</small>
+                        </div>
+                        <span class="badge bg-success"><i class="fas fa-check"></i></span>
+                    </li>
+                    {% empty %}
+                    <li class="list-group-item text-muted text-center py-3">
+                        {% translate "No FC roster entries recorded." %}
+                    </li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- Multi-source Timeline Stream -->
+    <div class="col-lg-8">
+        <div class="card">
+            <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+                <h6 class="mb-0"><i class="fas fa-stream me-2"></i>{% translate "Chronological Event Timeline" %}</h6>
+                <small class="text-muted">Window: {{ timeline.window_start|date:"H:i" }} - {{ timeline.window_end|date:"H:i" }} UTC</small>
+            </div>
+            <div class="card-body p-0" style="max-height: 650px; overflow-y: auto;">
+                <table class="table table-sm table-hover mb-0 align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>{% translate "Time (UTC)" %}</th>
+                            <th>{% translate "Source" %}</th>
+                            <th>{% translate "Member" %}</th>
+                            <th>{% translate "Details" %}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for ev in timeline.events %}
+                        <tr>
+                            <td class="text-nowrap font-monospace small">{{ ev.timestamp|date:"H:i:s" }}</td>
+                            <td>
+                                {% if ev.source == 'mumble' %}
+                                    <span class="badge bg-info text-dark">Mumble</span>
+                                {% elif ev.source == 'discord' %}
+                                    <span class="badge bg-primary">Discord</span>
+                                {% elif ev.source == 'zkill' %}
+                                    <span class="badge bg-danger">zKill</span>
+                                {% elif ev.source == 'pap' %}
+                                    <span class="badge bg-success">PAP</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">{{ ev.source }}</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if ev.user_id %}
+                                    <a href="{% url 'ci:member_activity' ev.user_id %}" class="text-decoration-none fw-bold">
+                                        {{ ev.username }}
+                                    </a>
+                                    {% if ev.role_context %}
+                                        <div class="mt-1">
+                                            {% for role in ev.role_context %}
+                                                <span class="badge bg-secondary me-1" style="font-size: 0.7rem;">{{ role }}</span>
+                                            {% endfor %}
+                                        </div>
+                                    {% endif %}
+                                {% else %}
+                                    <span class="text-muted">Unknown</span>
+                                {% endif %}
+                            </td>
+                            <td class="small">
+                                {% if ev.source == 'mumble' %}
+                                    Action: <strong>{{ ev.payload.action }}</strong>
+                                    {% if ev.payload.channel_name %}| Channel: <em>{{ ev.payload.channel_name }}</em>{% endif %}
+                                {% elif ev.source == 'discord' %}
+                                    Action: <strong>{{ ev.payload.action|default:"msg" }}</strong>
+                                    {% if ev.payload.channel_name %}| Voice: <em>{{ ev.payload.channel_name }}</em>{% endif %}
+                                {% elif ev.source == 'zkill' %}
+                                    Killmail: <strong>#{{ ev.payload.killmail_id }}</strong> | Sys: {{ ev.payload.solar_system_id }}
+                                {% elif ev.source == 'pap' %}
+                                    FC Roster credited | Char: {{ ev.payload.character_id }}
+                                {% else %}
+                                    {{ ev.source_event_id }}
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="4" class="text-center text-muted py-4">
+                                {% translate "No events recorded in operational window." %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

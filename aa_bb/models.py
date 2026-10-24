@@ -21,6 +21,18 @@ from allianceauth.eveonline.models import EveAllianceInfo, EveCorporationInfo
 from allianceauth.groupmanagement.models import AuthGroup
 from allianceauth.services.hooks import get_extension_logger
 
+from .counterintel.models import (  # noqa: F401
+    CICorrelation,
+    CIEvent,
+    CIIdentity,
+    CIInvestigation,
+    CIOperation,
+    CIOperationObjective,
+    CIOperationParticipant,
+    CIOverride,
+    CISession,
+)
+
 logger = get_extension_logger(__name__)
 
 AA_CONTACTS_INSTALLED = apps.is_installed("aa_contacts")
@@ -110,6 +122,15 @@ class General(models.Model):
             ("can_access_paps", _("Can access PAP Stats")),
             ("can_generate_paps", _("Can generate PAP Stats")),
             ("ticket_manager", _("Can manage compliance tickets")),
+            ("can_view_ci", _("Can view Counterintelligence information")),
+            (
+                "can_manage_ci",
+                _("Can manage Counterintelligence operations and baselines"),
+            ),
+            (
+                "can_review_ci",
+                _("Can review Counterintelligence investigations"),
+            ),
         )
 
 

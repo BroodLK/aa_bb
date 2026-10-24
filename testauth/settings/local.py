@@ -138,3 +138,45 @@ DEFAULT_FROM_EMAIL = ""
 #######################################
 # Add any custom settings below here. #
 #######################################
+
+try:
+    # Third Party
+    import redis
+
+    _r = redis.Redis(host="127.0.0.1", port=6379, socket_connect_timeout=0.2)
+    _r.ping()
+except Exception:
+    # Standard Library
+    from unittest.mock import MagicMock
+
+    # Third Party
+    import django_redis
+
+    # Alliance Auth
+    import allianceauth.utils.cache
+    from allianceauth.services.modules.discord.discord_client.client import (
+        DiscordClient,
+    )
+
+    _dummy_redis = MagicMock()
+    django_redis.get_redis_connection = lambda alias="default": _dummy_redis
+    allianceauth.utils.cache.get_redis_client = lambda: _dummy_redis
+    _orig_dc_init = DiscordClient.__init__
+
+    def _safe_dc_init(self, *args, **kwargs):
+        kwargs["redis"] = _dummy_redis
+        _orig_dc_init(self, *args, **kwargs)
+
+    DiscordClient.__init__ = _safe_dc_init
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "unique-snowflake",
+        }
+    }
+
+CELERY_ALWAYS_EAGER = True
+CELERY_TASK_ALWAYS_EAGER = True
+CELERY_TASK_EAGER_PROPAGATES = True
+BROKER_URL = "memory://"
+CELERY_BROKER_URL = "memory://"

@@ -10,6 +10,7 @@ from allianceauth.services.hooks import MenuItemHook, UrlHook
 # AA BigBrother
 # AA Example App
 from aa_bb import urls, urls_cb, urls_loa, urls_paps
+from aa_bb.counterintel import urls as urls_ci
 
 from .app_settings import afat_active
 from .models import BigBrotherConfig, LeaveRequest
@@ -251,3 +252,37 @@ def register_cogs():
     if discordbot_active():
         return ["aa_bb.tasks_bot"]
     return []
+
+
+class CounterintelMenuItem(MenuItemHook):
+    """Sidebar entry for counterintelligence officers."""
+
+    def __init__(self):
+        super().__init__(
+            _("Counterintelligence"),
+            "fas fa-satellite-dish",
+            "ci:index",
+            navactive=["ci:"],
+        )
+
+    def render(self, request):
+        if request.user.has_perm("aa_bb.can_view_ci"):
+            if request.user.has_perm("aa_bb.can_review_ci"):
+                # AA BigBrother
+                from aa_bb.counterintel.models import CIInvestigation
+
+                pending_cases = CIInvestigation.objects.filter(status="pending").count()
+                if pending_cases:
+                    self.count = pending_cases
+            return super().render(request)
+        return ""
+
+
+@hooks.register("menu_item_hook")
+def register_ci_menu():
+    return CounterintelMenuItem()
+
+
+@hooks.register("url_hook")
+def register_ci_urls():
+    return UrlHook(urls_ci, "ci", r"^ci/")

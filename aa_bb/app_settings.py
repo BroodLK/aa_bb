@@ -146,22 +146,26 @@ def _resolve_names_via_esi(ids: list[int]) -> dict[int, str]:
     ids = [i for i in ids if i]
     if not ids:  # Nothing to resolve when the caller supplied no IDs.
         return {}
-    rows = ESIHandler.post_universe_names(
-        ids,
-        operation_kwargs=esi_tenant_kwargs(DATASOURCE),
-        allow_not_modified=True,
-    )
-    if rows is None:
+    try:
         rows = ESIHandler.post_universe_names(
             ids,
             operation_kwargs=esi_tenant_kwargs(DATASOURCE),
-            use_etag=False,
+            allow_not_modified=True,
         )
-    return {
-        int(row.get("id")): row.get("name")
-        for row in (rows or [])
-        if row.get("id") is not None
-    }
+        if rows is None:
+            rows = ESIHandler.post_universe_names(
+                ids,
+                operation_kwargs=esi_tenant_kwargs(DATASOURCE),
+                use_etag=False,
+            )
+        return {
+            int(row.get("id")): row.get("name")
+            for row in (rows or [])
+            if row.get("id") is not None
+        }
+    except Exception as exc:
+        logger.warning("Failed to resolve names via ESI for ids %s: %s", ids, exc)
+        return {}
 
 
 # Owner-name cache (7d TTL)
@@ -1057,7 +1061,9 @@ def resolve_corporation_name(corp_id: int) -> str:
     # 2. Fetch from ESI
     try:
         name_map = _resolve_names_via_esi([corp_id])
-        corp_name = name_map.get(corp_id) or "Unresolvable"
+        corp_name = name_map.get(corp_id)
+        if not corp_name or corp_name == "Unresolvable":
+            return f"Corporation {corp_id}"
 
         # 3. Save or update the DB record
         with transaction.atomic():
@@ -1069,16 +1075,14 @@ def resolve_corporation_name(corp_id: int) -> str:
 
     except Exception as e:
         # 4. On error, log and fallback to stale if any
-        logger.exception(f"Failed to resolve name for corporation ID {corp_id}: {e}")
+        logger.warning(f"Failed to resolve name for corporation ID {corp_id}: {e}")
         try:
             stale = Corporation_names.objects.get(pk=corp_id)
             return stale.name
         except Corporation_names.DoesNotExist:
             pass
 
-        e_short = e.__class__.__name__
-        e_detail = getattr(e, "code", None) or getattr(e, "status", None) or str(e)
-        return f"Unresolvable eve map{e_short}{e_detail}"
+        return f"Corporation {corp_id}"
 
 
 def resolve_character_name(char_id: int) -> str:
@@ -1104,7 +1108,9 @@ def resolve_character_name(char_id: int) -> str:
     # 2. Fetch from ESI
     try:
         name_map = _resolve_names_via_esi([char_id])
-        char_name = name_map.get(char_id) or "Unresolvable"
+        char_name = name_map.get(char_id)
+        if not char_name or char_name == "Unresolvable":
+            return f"Character {char_id}"
 
         # 3. Save or update the DB record
         with transaction.atomic():
@@ -1116,16 +1122,14 @@ def resolve_character_name(char_id: int) -> str:
 
     except Exception as e:
         # 4. On error, log and fallback to stale if any
-        logger.exception(f"Failed to resolve name for character ID {char_id}: {e}")
+        logger.warning(f"Failed to resolve name for character ID {char_id}: {e}")
         try:
             stale = Character_names.objects.get(pk=char_id)
             return stale.name
         except Character_names.DoesNotExist:
             pass
 
-        e_short = e.__class__.__name__
-        e_detail = getattr(e, "code", None) or getattr(e, "status", None) or str(e)
-        return f"Unresolvable eve map{e_short}{e_detail}"
+        return f"Character {char_id}"
 
 
 def get_system_owner(system: dict) -> dict[str, str]:
@@ -2656,6 +2660,11 @@ def send_message(message, hook: str = None):
         cfg = BigBrotherConfig.get_solo()
         webhook_url = cfg.webhook
 
+    if not webhook_url:
+        if VERBOSE_WEBHOOK_LOGGING:
+            logger.debug("[WEBHOOK] No webhook URL configured, skipping message send.")
+        return None
+
     webhook_username = None
     if cfg:
         webhook_username = (cfg.webhook_app_name or "").strip()
@@ -2726,7 +2735,7 @@ def send_message(message, hook: str = None):
 
     def _post_with_retries(payload: dict):
         attempt = 0
-        while True:
+        while attempt < 3:
             attempt += 1
             _throttle()
 
@@ -2752,6 +2761,9 @@ def send_message(message, hook: str = None):
 
             except requests.exceptions.HTTPError:
                 if response.status_code == 429:
+                    if attempt >= 3:
+                        logger.warning("[WEBHOOK] 429 rate limit exceeded max retries.")
+                        return None
                     retry_after = response.headers.get("Retry-After")
                     try:
                         backoff = float(retry_after)
@@ -2770,7 +2782,7 @@ def send_message(message, hook: str = None):
                         response.status_code,
                         response.text,
                     )
-                    return
+                    return None
 
             except Exception as e:
                 logger.error(
@@ -2778,8 +2790,11 @@ def send_message(message, hook: str = None):
                     attempt,
                     e,
                 )
+                if attempt >= 3:
+                    return None
                 time.sleep(2.0)
                 continue
+        return None
 
     # ---- DISPATCH ----
 

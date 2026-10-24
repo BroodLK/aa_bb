@@ -1,0 +1,72 @@
+{% extends 'aa_bb/counterintel/base.html' %}
+{% load i18n %}
+
+{% block ci_content %}
+<div class="card">
+    <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="fas fa-users-cog me-2"></i>{% translate "Member Counterintelligence Directory" %}</h5>
+        <form method="get" class="d-flex">
+            <input type="text" name="q" class="form-control form-control-sm me-2" placeholder="{% translate 'Search member...' %}" value="{{ search_q }}">
+            <button type="submit" class="btn btn-sm btn-primary">{% translate "Search" %}</button>
+        </form>
+    </div>
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-striped table-hover align-middle">
+                <thead>
+                    <tr>
+                        <th>{% translate "Member" %}</th>
+                        <th>{% translate "Main Character" %}</th>
+                        <th>{% translate "Comms Sessions" %}</th>
+                        <th>{% translate "Fleet Participations" %}</th>
+                        <th>{% translate "Anomalies Flagged" %}</th>
+                        <th>{% translate "Action" %}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for u in page_obj %}
+                    <tr>
+                        <td><strong>{{ u.username }}</strong></td>
+                        <td>{{ u.profile.main_character.character_name|default:"-" }}</td>
+                        <td><span class="badge bg-info text-dark">{{ u.ci_sessions.count }}</span></td>
+                        <td><span class="badge bg-primary">{{ u.ci_participations.count }}</span></td>
+                        <td>
+                            {% if u.ci_correlations.count %}
+                                <span class="badge bg-warning text-dark">{{ u.ci_correlations.count }}</span>
+                            {% else %}
+                                <span class="badge bg-success">0</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <a href="{% url 'ci:member_activity' u.id %}" class="btn btn-sm btn-outline-primary">
+                                <i class="fas fa-user-shield me-1"></i>{% translate "View Activity" %}
+                            </a>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="6" class="text-center text-muted py-4">
+                            {% translate "No members found." %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        {% if page_obj.has_other_pages %}
+        <nav aria-label="Page navigation">
+            <ul class="pagination justify-content-center">
+                {% if page_obj.has_previous %}
+                    <li class="page-item"><a class="page-link" href="?page={{ page_obj.previous_page_number }}{% if search_q %}&q={{ search_q }}{% endif %}">{% translate "Previous" %}</a></li>
+                {% endif %}
+                <li class="page-item disabled"><span class="page-link">{{ page_obj.number }} / {{ page_obj.paginator.num_pages }}</span></li>
+                {% if page_obj.has_next %}
+                    <li class="page-item"><a class="page-link" href="?page={{ page_obj.next_page_number }}{% if search_q %}&q={{ search_q }}{% endif %}">{% translate "Next" %}</a></li>
+                {% endif %}
+            </ul>
+        </nav>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

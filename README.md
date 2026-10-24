@@ -27,6 +27,7 @@ All while invisible to the general membership unless you choose to expose it to 
   - [Automated Discord Messages](#automated-discord-messages)
   - [Recurring stats](#recurring-stats)
   - [AA-Contacts Integrations](#aa-contacts-integration)
+  - [Counterintelligence & Activity Correlation](#counterintelligence--activity-correlation)
 - [Permissions](#permissions)
 
 ## Core Requirements
@@ -424,6 +425,55 @@ BigBrother integrates directly with **aa-contacts** to provide continuous hostil
 - It does **not** delete or create contacts in game
 - It does **not** overwrite manually-added BigBrother contacts
 
+## Counterintelligence & Activity Correlation
+
+BigBrother provides an Operational Intelligence & Counterintelligence (CI) system that performs multi-source activity correlation across communication channels (Mumble, Discord), fleet operations (authoritative AFAT/FC rosters), and combat telemetry (zKillboard).
+
+### Capabilities
+
+- **Operational Timeline Reconstruction**: Synchronizes comms presence, fleet pings, and combat events across discrete operational windows.
+- **Authoritative AFAT / FC Fleet Ingestion**: Roster credit is strictly derived from FC submissions or AFAT/ESI fleet tracking—zero member self-reporting or compliance forms required.
+- **Behavioral Anomaly & Baseline Analysis**: Identifies statistical outliers (such as comms presence without roster credit or pre-contact disconnects) evaluated against 60-day historical baselines and assigned roles (e.g., scouting, logistics).
+- **Controlled AI Investigation Assistant**: Generates synthesized evidence timelines, evaluates alternative benign explanations (e.g., network volatility, time-zone habits), and prepares cases for human officer review.
+
+### Periodic Tasks & Celery Beat Schedule
+
+To automate background log ingestion, AFAT synchronization, and periodic correlation runs, add the following to `CELERYBEAT_SCHEDULE` in `local.py`:
+
+```python
+# Counterintelligence Periodic Tasks
+CELERYBEAT_SCHEDULE["BigBrother :: CI Sync Recent AFAT Fleets"] = {
+    "task": "aa_bb.tasks.sync_recent_afat_fleets_task",
+    "schedule": 300.0,  # Every 5 minutes
+    "options": {"queue": "aa_bb_ci"},
+}
+CELERYBEAT_SCHEDULE["BigBrother :: CI Ingest Mumble Logs"] = {
+    "task": "aa_bb.tasks.ingest_mumble_logs_task",
+    "schedule": 300.0,  # Every 5 minutes
+    "options": {"queue": "aa_bb_ci"},
+}
+CELERYBEAT_SCHEDULE["BigBrother :: CI Scheduled Correlation"] = {
+    "task": "aa_bb.tasks.run_scheduled_ci_correlation",
+    "schedule": 900.0,  # Every 15 minutes
+    "options": {"queue": "aa_bb_ci"},
+}
+```
+
+### Optional Settings (`local.py`)
+
+```python
+# Path to your Mumble authenticator or server log file for automatic ingestion
+MUMBLE_AUTHENTICATOR_LOG_PATH = "/var/log/mumble-authenticator.log"
+```
+
+### Dedicated Celery Queue Worker (Recommended)
+
+To prevent analytical replays from impacting standard audit latency, run a worker dedicated to the `aa_bb_ci` queue:
+
+```bash
+celery -A myauth worker -Q aa_bb_ci -l info -c 2
+```
+
 # Permissions
 
 Below is the full list of permissions exposed by the application:
@@ -442,6 +492,9 @@ Below is the full list of permissions exposed by the application:
 | **can_manage_loa**           | Can manage Leave Of Absence requests                                   |
 | **can_access_paps**          | Can access PAP Stats                                                   |
 | **can_generate_paps**        | Can generate PAP Stats                                                 |
+| **can_view_ci**              | Can view Counterintelligence operational timelines and member activity |
+| **can_manage_ci**            | Can manage operations, trigger correlations, and set overrides         |
+| **can_review_ci**            | Can access Counterintelligence Investigation Review Queue and cases    |
 
 > [!IMPORTANT]
 > Users who used this tool while it was private can safely upgrade but may run into a rare but serious complication where duplicate tasks are generated preventing the auth from starting.

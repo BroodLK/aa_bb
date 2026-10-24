@@ -1,0 +1,194 @@
+{% extends 'aa_bb/counterintel/base.html' %}
+{% load i18n %}
+
+{% block ci_content %}
+<div class="row mb-3">
+    <div class="col-md-12">
+        <div class="card bg-dark text-white">
+            <div class="card-body d-flex justify-content-between align-items-center">
+                <div>
+                    <h3 class="card-title mb-1"><i class="fas fa-user-shield me-2"></i>{{ subject_user.username }}</h3>
+                    <p class="mb-0 text-muted">
+                        Main Character: <strong>{{ subject_user.profile.main_character.character_name|default:"Unassigned" }}</strong>
+                        &bull; Joined: {{ subject_user.date_joined|date:"Y-m-d" }}
+                    </p>
+                </div>
+                <a href="{% url 'ci:member_list' %}" class="btn btn-outline-light btn-sm">
+                    <i class="fas fa-arrow-left me-1"></i>{% translate "Back to Directory" %}
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <!-- Identity Mappings & Overrides -->
+    <div class="col-lg-4 mb-4">
+        <div class="card mb-3">
+            <div class="card-header bg-secondary text-white">
+                <h6 class="mb-0"><i class="fas fa-id-card me-2"></i>{% translate "Historical Identity Mappings" %}</h6>
+            </div>
+            <div class="card-body p-0">
+                <ul class="list-group list-group-flush">
+                    {% for idn in identities %}
+                    <li class="list-group-item">
+                        <div class="d-flex justify-content-between">
+                            <strong>
+                                {% if idn.character_id %}Char: {{ idn.character_id }}{% endif %}
+                                {% if idn.discord_id %}Discord: {{ idn.discord_id }}{% endif %}
+                                {% if idn.mumble_username %}Mumble: {{ idn.mumble_username }}{% endif %}
+                            </strong>
+                            {% if idn.is_verified %}<span class="badge bg-success">Verified</span>{% endif %}
+                        </div>
+                        <small class="text-muted d-block">
+                            Effective: {{ idn.effective_from|date:"Y-m-d H:i" }} &rarr; {% if idn.effective_until %}{{ idn.effective_until|date:"Y-m-d H:i" }}{% else %}Present{% endif %}
+                        </small>
+                    </li>
+                    {% empty %}
+                    <li class="list-group-item text-muted text-center py-3">{% translate "No identity mappings recorded." %}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header bg-secondary text-white">
+                <h6 class="mb-0"><i class="fas fa-user-check me-2"></i>{% translate "Active Dispositions & Overrides" %}</h6>
+            </div>
+            <div class="card-body p-0">
+                <ul class="list-group list-group-flush">
+                    {% for ovr in overrides %}
+                    <li class="list-group-item">
+                        <strong>{{ ovr.reason }}</strong>
+                        <div class="mt-1">
+                            {% for ex in ovr.exempt_anomaly_types %}
+                                <span class="badge bg-info text-dark">{{ ex }}</span>
+                            {% endfor %}
+                        </div>
+                        <small class="text-muted d-block mt-1">Granted {{ ovr.created_at|date:"Y-m-d" }} by {{ ovr.created_by.username|default:"System" }}</small>
+                    </li>
+                    {% empty %}
+                    <li class="list-group-item text-muted text-center py-3">{% translate "No active exemptions or overrides." %}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Fleet Participations & Comms Sessions -->
+    <div class="col-lg-8">
+        <!-- Flagged Anomalies / Correlations -->
+        {% if correlations %}
+        <div class="card mb-4 border-warning">
+            <div class="card-header bg-warning text-dark">
+                <h6 class="mb-0"><i class="fas fa-exclamation-triangle me-2"></i>{% translate "Flagged Correlation Anomalies" %} ({{ correlations|length }})</h6>
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-sm table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>{% translate "Operation" %}</th>
+                            <th>{% translate "Anomaly Type" %}</th>
+                            <th>{% translate "Confidence" %}</th>
+                            <th>{% translate "Data Completeness" %}</th>
+                            <th>{% translate "Explanation" %}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for corr in correlations %}
+                        <tr>
+                            <td>
+                                <a href="{% url 'ci:operation_timeline' corr.operation.id %}">
+                                    {{ corr.operation.name }}
+                                </a>
+                            </td>
+                            <td><span class="badge bg-danger">{{ corr.anomaly_type }}</span></td>
+                            <td>{{ corr.confidence|floatformat:2 }}</td>
+                            <td>{{ corr.data_completeness|floatformat:2 }}</td>
+                            <td class="small">{{ corr.explanation }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+
+        <div class="card mb-4">
+            <div class="card-header bg-dark text-white">
+                <h6 class="mb-0"><i class="fas fa-clipboard-check me-2"></i>{% translate "Confirmed Fleet Participations (FC Rosters)" %}</h6>
+            </div>
+            <div class="card-body p-0" style="max-height: 300px; overflow-y: auto;">
+                <table class="table table-sm table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>{% translate "Operation" %}</th>
+                            <th>{% translate "Time (UTC)" %}</th>
+                            <th>{% translate "Character ID" %}</th>
+                            <th>{% translate "Status" %}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for part in participations %}
+                        <tr>
+                            <td>
+                                <a href="{% url 'ci:operation_timeline' part.operation.id %}">
+                                    {{ part.operation.name }}
+                                </a>
+                            </td>
+                            <td>{{ part.operation.start_time|date:"Y-m-d H:i" }}</td>
+                            <td>{{ part.character_id }}</td>
+                            <td><span class="badge bg-success">FC Confirmed</span></td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="4" class="text-center text-muted py-3">{% translate "No fleet participations recorded." %}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header bg-dark text-white">
+                <h6 class="mb-0"><i class="fas fa-headset me-2"></i>{% translate "Recent Communication Sessions (Mumble / Discord)" %}</h6>
+            </div>
+            <div class="card-body p-0" style="max-height: 300px; overflow-y: auto;">
+                <table class="table table-sm table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>{% translate "Source" %}</th>
+                            <th>{% translate "Start (UTC)" %}</th>
+                            <th>{% translate "End (UTC)" %}</th>
+                            <th>{% translate "Channel" %}</th>
+                            <th>{% translate "Reconnects" %}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for sess in sessions %}
+                        <tr>
+                            <td>
+                                {% if sess.source == 'mumble' %}
+                                    <span class="badge bg-info text-dark">Mumble</span>
+                                {% else %}
+                                    <span class="badge bg-primary">Discord</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ sess.start_time|date:"Y-m-d H:i:s" }}</td>
+                            <td>{% if sess.end_time %}{{ sess.end_time|date:"H:i:s" }}{% else %}<span class="badge bg-success">Active</span>{% endif %}</td>
+                            <td>{{ sess.channel_name|default:"-" }}</td>
+                            <td>{{ sess.reconnect_count }}</td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="5" class="text-center text-muted py-3">{% translate "No comms sessions recorded." %}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

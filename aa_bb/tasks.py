@@ -39,14 +39,21 @@ from .app_settings import (
     resolve_character_name,
     send_status_embed,
 )
+
+# Import sibling tasks to maintain module API surface
+from .counterintel.tasks import (  # noqa: F401
+    correlate_operation_task,
+    ingest_mumble_logs_task,
+    replay_historical_operation_task,
+    run_scheduled_ci_correlation,
+    sync_recent_afat_fleets_task,
+)
 from .models import (
     AA_CONTACTS_INSTALLED,
     BigBrotherConfig,
     TicketToolConfig,
     UserStatus,
 )
-
-# Import sibling tasks to maintain module API surface
 from .tasks_cb import (  # noqa: F401
     BB_daily_DB_cleanup,
     BB_send_daily_messages,
@@ -60,7 +67,10 @@ from .tasks_cb import (  # noqa: F401
     CB_update_single_corp,
     check_member_compliance,
 )
-from .tasks_ct import kickstart_stale_ct_modules  # noqa: F401
+from .tasks_ct import (  # noqa: F401
+    kickstart_stale_ct_modules,
+    run_ct_kicker,
+)
 from .tasks_other import BB_send_recurring_stats  # noqa: F401
 from .tasks_tickets import (  # noqa: F401
     hourly_compliance_check,

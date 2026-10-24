@@ -1,0 +1,38 @@
+{% extends 'allianceauth/base-bs5.html' %}
+{% load i18n %}
+
+{% block page_title %}
+    {{ title|default:_("Counterintelligence") }}
+{% endblock %}
+
+{% block header_nav_brand %}
+    {% translate "Big Brother - Counterintelligence" %}
+{% endblock header_nav_brand %}
+
+{% block content %}
+<div class="container-fluid mt-3">
+    <ul class="nav nav-pills mb-3">
+        <li class="nav-item">
+            <a class="nav-link {% if request.resolver_match.url_name == 'operation_list' or request.resolver_match.url_name == 'operation_timeline' or request.resolver_match.url_name == 'index' %}active{% endif %}" href="{% url 'ci:operation_list' %}">
+                <i class="fas fa-satellite-dish me-1"></i>{% translate "Operations" %}
+            </a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link {% if request.resolver_match.url_name == 'member_list' or request.resolver_match.url_name == 'member_activity' %}active{% endif %}" href="{% url 'ci:member_list' %}">
+                <i class="fas fa-users-cog me-1"></i>{% translate "Member Activity" %}
+            </a>
+        </li>
+        {% if perms.aa_bb.can_review_ci %}
+        <li class="nav-item">
+            <a class="nav-link {% if request.resolver_match.url_name == 'review_queue' or request.resolver_match.url_name == 'investigation_detail' %}active{% endif %}" href="{% url 'ci:review_queue' %}">
+                <i class="fas fa-shield-alt me-1"></i>{% translate "Investigation Queue" %}
+            </a>
+        </li>
+        {% endif %}
+    </ul>
+
+    <div class="ci-content">
+        {% block ci_content %}{% endblock %}
+    </div>
+</div>
+{% endblock %}

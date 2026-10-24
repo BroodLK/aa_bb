@@ -1,0 +1,201 @@
+{% extends 'aa_bb/counterintel/base.html' %}
+{% load i18n %}
+
+{% block ci_content %}
+<div class="row mb-3">
+    <div class="col-md-12">
+        <div class="card bg-dark text-white">
+            <div class="card-body d-flex justify-content-between align-items-center">
+                <div>
+                    <h3 class="card-title mb-1"><i class="fas fa-search me-2"></i>Investigation Case #{{ investigation.id }}</h3>
+                    <p class="mb-0 text-muted">
+                        Subject: <strong>{{ investigation.subject_user.username }}</strong>
+                        &bull; Operation: <strong>{{ investigation.operation.name|default:"General / Historical" }}</strong>
+                        &bull; Opened: {{ investigation.created_at|date:"Y-m-d H:i" }}
+                    </p>
+                </div>
+                <a href="{% url 'ci:review_queue' %}" class="btn btn-outline-light btn-sm">
+                    <i class="fas fa-arrow-left me-1"></i>{% translate "Back to Queue" %}
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <!-- Left Column: Findings & Synthesis -->
+    <div class="col-lg-8 mb-4">
+        <!-- Standardized Plausible Benign Explanations Box -->
+        <div class="card mb-4 border-success">
+            <div class="card-header bg-success text-white d-flex justify-content-between align-items-center">
+                <h6 class="mb-0"><i class="fas fa-balance-scale me-2"></i>{% translate "Standardized Plausible Benign Explanations" %}</h6>
+                <span class="badge bg-light text-dark">{% translate "Objective Evaluation" %}</span>
+            </div>
+            <div class="card-body">
+                {% if benign_explanations %}
+                    <div class="list-group list-group-flush">
+                        {% for b in benign_explanations %}
+                        <div class="list-group-item d-flex align-items-start px-0 py-2 border-0">
+                            <span class="badge {{ b.badge_class }} me-3 mt-1" style="min-width: 120px;">{{ b.badge }}</span>
+                            <div>
+                                <strong class="d-block text-dark">{{ b.category }}</strong>
+                                <span class="small text-muted">{{ b.text }}</span>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <p class="text-muted small mb-0">{% translate "No benign confounding factors flagged in current telemetry." %}</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="card mb-4 border-info">
+            <div class="card-header bg-info text-dark d-flex justify-content-between align-items-center">
+                <h6 class="mb-0"><i class="fas fa-robot me-2"></i>{% translate "AI Investigation Assistant - Synthesis & Draft Findings" %}</h6>
+                <span class="badge bg-dark text-white">Read-Only Evidence Synthesis</span>
+            </div>
+            <div class="card-body">
+                {% if investigation.agent_summary %}
+                    <div class="p-3 bg-light rounded font-monospace small" style="white-space: pre-wrap;">{{ investigation.agent_summary }}</div>
+                {% else %}
+                    <p class="text-muted mb-0">{% translate "No automated synthesis generated yet." %}</p>
+                {% endif %}
+            </div>
+        </div>
+
+        {% if correlations %}
+        <div class="card mb-4 border-warning">
+            <div class="card-header bg-warning text-dark">
+                <h6 class="mb-0"><i class="fas fa-exclamation-triangle me-2"></i>{% translate "Correlated Anomaly Details" %}</h6>
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-sm table-hover mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>{% translate "Anomaly Type" %}</th>
+                            <th>{% translate "Confidence" %}</th>
+                            <th>{% translate "Completeness" %}</th>
+                            <th>{% translate "Explanation" %}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for corr in correlations %}
+                        <tr>
+                            <td><span class="badge bg-danger">{{ corr.anomaly_type }}</span></td>
+                            <td>{{ corr.confidence|floatformat:2 }}</td>
+                            <td>{{ corr.data_completeness|floatformat:2 }}</td>
+                            <td class="small">{{ corr.explanation }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if timeline %}
+        <div class="card">
+            <div class="card-header bg-secondary text-white">
+                <h6 class="mb-0"><i class="fas fa-stream me-2"></i>{% translate "Operation Chronology" %}</h6>
+            </div>
+            <div class="card-body p-0" style="max-height: 350px; overflow-y: auto;">
+                <table class="table table-sm table-hover mb-0 align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>{% translate "Time" %}</th>
+                            <th>{% translate "Source" %}</th>
+                            <th>{% translate "User" %}</th>
+                            <th>{% translate "Details" %}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for ev in timeline.events %}
+                        <tr {% if ev.user_id == investigation.subject_user.id %}class="table-warning"{% endif %}>
+                            <td class="text-nowrap font-monospace small">{{ ev.timestamp|date:"H:i:s" }}</td>
+                            <td><span class="badge bg-secondary">{{ ev.source }}</span></td>
+                            <td><strong>{{ ev.username }}</strong></td>
+                            <td class="small">{{ ev.payload }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Right Column: Case Disposition & Reviewer Notes -->
+    <div class="col-lg-4">
+        <!-- One-Click Quick Dispositions Card -->
+        <div class="card mb-4 border-success">
+            <div class="card-header bg-success text-white">
+                <h6 class="mb-0"><i class="fas fa-bolt me-2"></i>{% translate "One-Click Quick Dispositions" %}</h6>
+            </div>
+            <div class="card-body d-grid gap-2">
+                <form method="post" action="{% url 'ci:quick_disposition' investigation.id %}">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="clear_scout">
+                    <button type="submit" class="btn btn-outline-success btn-sm w-100 text-start">
+                        <i class="fas fa-check-circle me-1"></i>{% translate "Clear (Verified Alt / Scout)" %}
+                    </button>
+                </form>
+                <form method="post" action="{% url 'ci:quick_disposition' investigation.id %}">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="clear_habitual">
+                    <button type="submit" class="btn btn-outline-success btn-sm w-100 text-start">
+                        <i class="fas fa-clock me-1"></i>{% translate "Clear (Routine Habitual Logoff)" %}
+                    </button>
+                </form>
+                <form method="post" action="{% url 'ci:quick_disposition' investigation.id %}">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="clear_roster">
+                    <button type="submit" class="btn btn-outline-success btn-sm w-100 text-start">
+                        <i class="fas fa-clipboard-check me-1"></i>{% translate "Clear (Incomplete Roster)" %}
+                    </button>
+                </form>
+                <form method="post" action="{% url 'ci:quick_disposition' investigation.id %}">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="escalate_senior">
+                    <button type="submit" class="btn btn-outline-danger btn-sm w-100 text-start">
+                        <i class="fas fa-exclamation-triangle me-1"></i>{% translate "Escalate for Senior Review" %}
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header bg-dark text-white">
+                <h6 class="mb-0"><i class="fas fa-user-check me-2"></i>{% translate "Manual Case Review" %}</h6>
+            </div>
+            <div class="card-body">
+                <form method="post">
+                    {% csrf_token %}
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">{% translate "Case Status" %}</label>
+                        <select name="status" class="form-select">
+                            {% for code, label in status_choices %}
+                            <option value="{{ code }}" {% if investigation.status == code %}selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">{% translate "Assigned Reviewer" %}</label>
+                        <input type="text" class="form-control" disabled value="{{ investigation.assigned_reviewer.username|default:request.user.username }}">
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">{% translate "Reviewer Notes / Findings" %}</label>
+                        <textarea name="reviewer_notes" class="form-control" rows="6" placeholder="{% translate 'Enter investigation findings, alternate explanations, or disposition rationale...' %}">{{ investigation.reviewer_notes }}</textarea>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="fas fa-save me-1"></i>{% translate "Save Case Review" %}
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
