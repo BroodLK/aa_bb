@@ -5,7 +5,7 @@
 
 # Set the default language versions for the hooks
 default_language_version:
-  python: python3  # Force all Python hooks to use Python 3
+  python: python3.11  # Force all Python hooks to use Python 3.11
   node: 22.13.1  # Force all Node hooks to use the latest Node LTS
 
 # https://pre-commit.ci/
