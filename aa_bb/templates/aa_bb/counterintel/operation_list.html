@@ -28,7 +28,15 @@
                         <td><strong>{{ op.name }}</strong></td>
                         <td><span class="badge bg-secondary">{{ op.operation_type }}</span></td>
                         <td>{{ op.start_time|date:"Y-m-d H:i" }}</td>
-                        <td>{% if op.end_time %}{{ op.end_time|date:"Y-m-d H:i" }}{% else %}<em>{% translate "Open" %}</em>{% endif %}</td>
+                        <td>
+                            {% if op.end_time %}
+                                {{ op.end_time|date:"Y-m-d H:i" }}
+                            {% elif op.is_active %}
+                                <span class="badge bg-success"><i class="fas fa-satellite-dish me-1"></i>{% translate "Active" %}</span>
+                            {% else %}
+                                <span class="badge bg-secondary">{% translate "Concluded" %}</span> <small class="text-muted">({% translate "Open" %})</small>
+                            {% endif %}
+                        </td>
                         <td>{{ op.fleet_commander.username|default:"-" }}</td>
                         <td><span class="badge bg-primary">{{ op.participants.count }}</span></td>
                         <td><span class="badge bg-info text-dark">{{ op.objectives.count }}</span></td>

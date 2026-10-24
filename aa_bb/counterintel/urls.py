@@ -18,6 +18,31 @@ urlpatterns = [
         name="operation_timeline",
     ),
     path(
+        "operations/<int:operation_id>/edit/",
+        views.edit_operation,
+        name="edit_operation",
+    ),
+    path(
+        "operations/<int:operation_id>/objectives/add/",
+        views.add_objective,
+        name="add_objective",
+    ),
+    path(
+        "operations/<int:operation_id>/objectives/<int:objective_id>/delete/",
+        views.delete_objective,
+        name="delete_objective",
+    ),
+    path(
+        "operations/<int:operation_id>/participants/add/",
+        views.add_participant,
+        name="add_participant",
+    ),
+    path(
+        "operations/<int:operation_id>/participants/<int:participant_id>/remove/",
+        views.remove_participant,
+        name="remove_participant",
+    ),
+    path(
         "operations/<int:operation_id>/quick-roster/",
         views.quick_roster_ingest,
         name="quick_roster_ingest",

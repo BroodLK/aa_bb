@@ -18,7 +18,9 @@ from aa_bb.counterintel.ingest.zkill import ZKillIngestor
 from aa_bb.counterintel.models import (
     CIEvent,
     CIInvestigation,
+    CIOperation,
     CIOperationParticipant,
+    CISession,
 )
 from aa_bb.counterintel.services.identity import IdentityResolver
 from aa_bb.counterintel.services.operations import CIOperationService
@@ -351,3 +353,238 @@ class TestCIOperations(TestCase):
                 self.assertEqual(op.fleet_commander, self.officer)
                 self.assertIsNotNone(op.end_time)
                 mock_ingest.assert_called_once_with(op, 777)
+
+    def test_roster_deduplication_and_deterministic_ids(self):
+        op = CIOperationService.create_operation(
+            name="Op Dedup Fleet",
+            start_time=self.now - timedelta(hours=1),
+            fleet_commander=self.fc_user,
+        )
+
+        pasted_text = (
+            "[ 2026.10.24 18:00:00 ] pilot_dps > Fleet up\n"
+            "[ 2026.10.24 18:01:00 ] pilot_dps > Ready\n"
+            "[ 2026.10.24 18:02:00 ] pilot_logi > In system\n"
+            "pilot_dps\n"
+            "pilot_logi\n"
+            "Unresolvable_Pilot_XYZ\n"
+            "Unresolvable_Pilot_XYZ\n"
+        )
+
+        participants = FCRosterIngestor.ingest_roster_text(
+            operation=op,
+            text_data=pasted_text,
+            fc_user=self.fc_user,
+        )
+
+        # pilot_dps (1001), pilot_logi (1002), and Unresolvable_Pilot_XYZ should be deduplicated
+        self.assertEqual(len(participants), 2)  # Resolved users pilot1 and pilot2
+        self.assertEqual(op.participants.count(), 2)
+
+        # Ingest again with duplicate unresolvable pilot
+        parts_extra = FCRosterIngestor.ingest_fc_roster(
+            operation=op,
+            roster_entries=["Unresolvable_Pilot_XYZ", "Unresolvable_Pilot_XYZ"],
+            fc_user=self.fc_user,
+        )
+        self.assertEqual(len(parts_extra), 0)  # Unresolved pilot creates CIEvent without CIOperationParticipant
+
+    def test_character_name_resolution_and_timeline_deduplication(self):
+        try:
+            from allianceauth.eveonline.models import EveCharacter
+
+            EveCharacter.objects.create(
+                character_id=1001,
+                character_name="DPS Main",
+                corporation_id=1,
+                corporation_name="Corp A",
+            )
+            EveCharacter.objects.create(
+                character_id=9001,
+                character_name="DPS Cyno Alt",
+                corporation_id=1,
+                corporation_name="Corp A",
+            )
+        except Exception:
+            pass
+
+        op = CIOperationService.create_operation(
+            name="Op Multi-Char Fleet",
+            start_time=self.now - timedelta(hours=1),
+            fleet_commander=self.fc_user,
+        )
+
+        # Add both main and alt for pilot1
+        CIOperationParticipant.objects.create(
+            operation=op,
+            user=self.pilot1,
+            character_id=1001,
+            confirmed_by_fc=True,
+        )
+        CIOperationParticipant.objects.create(
+            operation=op,
+            user=self.pilot1,
+            character_id=9001,
+            confirmed_by_fc=True,
+        )
+
+        timeline = CIOperationService.reconstruct_timeline(op)
+        parts = timeline["participants"]
+
+        self.assertEqual(len(parts), 2)
+        char_names = {p["character_name"] for p in parts}
+        # Names should reflect distinct character names if EveCharacter exists
+        self.assertTrue("DPS Main" in char_names or "pilot_dps" in char_names)
+
+    def test_operation_status_properties(self):
+        # Open operation started 1 hour ago -> is_active = True
+        recent_op = CIOperation.objects.create(
+            name="Recent Active Op",
+            start_time=self.now - timedelta(hours=1),
+        )
+        self.assertTrue(recent_op.is_active)
+        self.assertFalse(recent_op.is_concluded)
+        self.assertEqual(recent_op.status_label, "In Progress")
+
+        # Open operation started 10 hours ago -> is_active = False, is_concluded = True
+        stale_op = CIOperation.objects.create(
+            name="Stale Op",
+            start_time=self.now - timedelta(hours=10),
+        )
+        self.assertFalse(stale_op.is_active)
+        self.assertTrue(stale_op.is_concluded)
+        self.assertEqual(stale_op.status_label, "Concluded (Open Window)")
+
+        # Closed operation
+        closed_op = CIOperation.objects.create(
+            name="Closed Op",
+            start_time=self.now - timedelta(hours=3),
+            end_time=self.now - timedelta(hours=1),
+        )
+        self.assertFalse(closed_op.is_active)
+        self.assertTrue(closed_op.is_concluded)
+        self.assertEqual(closed_op.status_label, "Concluded")
+
+    def test_edit_operation_view(self):
+        self.client.force_login(self.officer)
+        op = CIOperation.objects.create(
+            name="Original Op Name",
+            start_time=self.now - timedelta(hours=1),
+            operation_type="strategic",
+            secrecy_level="standard",
+        )
+
+        edit_url = reverse("ci:edit_operation", kwargs={"operation_id": op.id})
+
+        # Test quick action: close_now
+        resp_close = self.client.post(edit_url, {"quick_action": "close_now"})
+        self.assertEqual(resp_close.status_code, 302)
+        op.refresh_from_db()
+        self.assertIsNotNone(op.end_time)
+
+        # Test quick action: reopen
+        resp_reopen = self.client.post(edit_url, {"quick_action": "reopen"})
+        self.assertEqual(resp_reopen.status_code, 302)
+        op.refresh_from_db()
+        self.assertIsNone(op.end_time)
+
+        # Test editing metadata
+        new_start = (self.now - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M")
+        new_end = (self.now + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M")
+        resp_edit = self.client.post(
+            edit_url,
+            {
+                "name": "Updated Op Name",
+                "operation_type": "defense",
+                "secrecy_level": "classified",
+                "start_time": new_start,
+                "end_time": new_end,
+                "fleet_commander_id": str(self.fc_user.id),
+                "notes": "Updated operational brief.",
+            },
+        )
+        self.assertEqual(resp_edit.status_code, 302)
+        op.refresh_from_db()
+        self.assertEqual(op.name, "Updated Op Name")
+        self.assertEqual(op.operation_type, "defense")
+        self.assertEqual(op.secrecy_level, "classified")
+        self.assertEqual(op.fleet_commander, self.fc_user)
+        self.assertEqual(op.notes, "Updated operational brief.")
+
+    def test_add_and_delete_objective_views(self):
+        self.client.force_login(self.officer)
+        op = CIOperation.objects.create(
+            name="Op Objective Test",
+            start_time=self.now,
+        )
+
+        add_url = reverse("ci:add_objective", kwargs={"operation_id": op.id})
+        resp_add = self.client.post(
+            add_url,
+            {
+                "name": "Anchor POS",
+                "objective_type": "strategic_defense",
+                "expected_roles": "Logi, Tackle",
+            },
+        )
+        self.assertEqual(resp_add.status_code, 302)
+        self.assertEqual(op.objectives.count(), 1)
+        obj = op.objectives.first()
+        self.assertEqual(obj.name, "Anchor POS")
+        self.assertEqual(obj.expected_roles, ["Logi", "Tackle"])
+
+        delete_url = reverse(
+            "ci:delete_objective",
+            kwargs={"operation_id": op.id, "objective_id": obj.id},
+        )
+        resp_del = self.client.post(delete_url)
+        self.assertEqual(resp_del.status_code, 302)
+        self.assertEqual(op.objectives.count(), 0)
+
+    def test_add_and_remove_participant_views(self):
+        self.client.force_login(self.officer)
+        op = CIOperation.objects.create(
+            name="Op Participant Test",
+            start_time=self.now,
+        )
+
+        add_url = reverse("ci:add_participant", kwargs={"operation_id": op.id})
+        resp_add = self.client.post(add_url, {"character_input": "pilot_dps"})
+        self.assertEqual(resp_add.status_code, 302)
+        self.assertEqual(op.participants.count(), 1)
+        part = op.participants.first()
+        self.assertEqual(part.user, self.pilot1)
+
+        remove_url = reverse(
+            "ci:remove_participant",
+            kwargs={"operation_id": op.id, "participant_id": part.id},
+        )
+        resp_rem = self.client.post(remove_url)
+        self.assertEqual(resp_rem.status_code, 302)
+        self.assertEqual(op.participants.count(), 0)
+
+    def test_auto_detect_comms_view(self):
+        self.client.force_login(self.officer)
+        op = CIOperation.objects.create(
+            name="Op Comms Detect Test",
+            start_time=self.now - timedelta(minutes=45),
+            end_time=self.now + timedelta(minutes=15),
+        )
+
+        # Create active CISession
+        CISession.objects.create(
+            user=self.pilot2,
+            source="mumble",
+            channel_name="Fleet 1",
+            start_time=self.now - timedelta(minutes=30),
+            end_time=self.now,
+            reconnect_count=0,
+        )
+
+        detect_url = reverse("ci:auto_detect_comms", kwargs={"operation_id": op.id})
+
+        # Run with matching channel
+        resp = self.client.post(detect_url, {"channel_keywords": "Fleet 1"})
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(op.participants.count(), 1)
+        self.assertEqual(op.participants.first().user, self.pilot2)

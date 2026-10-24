@@ -1215,12 +1215,23 @@ try:
                 or getattr(instance, "start_time", None)
                 or timezone.now()
             )
-            end_time = (
-                getattr(instance, "closed_at", None)
-                or getattr(instance, "closed", None)
-                or getattr(instance, "end_time", None)
-                or None
-            )
+            end_time = getattr(instance, "closed_at", None) or getattr(instance, "end_time", None)
+            if not end_time:
+                raw_closed = getattr(instance, "closed", None)
+                if hasattr(raw_closed, "strftime"):
+                    end_time = raw_closed
+                elif raw_closed is True:
+                    from datetime import timedelta
+                    end_time = (
+                        getattr(instance, "updated_at", None)
+                        or getattr(instance, "updated", None)
+                        or (start_time + timedelta(hours=2))
+                    )
+                elif hasattr(instance, "valid_until") and instance.valid_until and instance.valid_until <= timezone.now():
+                    end_time = instance.valid_until
+
+            if end_time and timezone.is_naive(end_time):
+                end_time = timezone.make_aware(end_time)
 
             fc_user = None
             if hasattr(instance, "character") and instance.character:

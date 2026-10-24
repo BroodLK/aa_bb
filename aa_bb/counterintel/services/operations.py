@@ -201,8 +201,19 @@ class CIOperationService:
         ]
 
         # FC confirmed participants & context role tagging
-        participants_qs = operation.participants.select_related("user").all()
+        participants_qs = operation.participants.select_related("user").all().order_by("recorded_at", "character_id")
         confirmed_user_ids = {p.user_id for p in participants_qs}
+        char_ids = [p.character_id for p in participants_qs]
+
+        # Batch resolve character names from EveCharacter / CIIdentity
+        char_names_map = {}
+        try:
+            from allianceauth.eveonline.models import EveCharacter
+
+            for ec in EveCharacter.objects.filter(character_id__in=char_ids):
+                char_names_map[ec.character_id] = ec.character_name
+        except Exception:
+            pass
 
         user_role_tags = {}
         for p in participants_qs:
@@ -218,17 +229,25 @@ class CIOperationService:
                 tags.append("Combat Fleet")
             user_role_tags[p.user_id] = list(dict.fromkeys(tags))
 
-        participants_list = [
-            {
-                "character_id": p.character_id,
-                "user_id": p.user_id,
-                "username": p.user.username,
-                "confirmed_by_fc": p.confirmed_by_fc,
-                "recorded_at": p.recorded_at,
-                "role_context": user_role_tags.get(p.user_id, ["Combat Fleet"]),
-            }
-            for p in participants_qs
-        ]
+        participants_list = []
+        seen_char_ids = set()
+        for p in participants_qs:
+            if p.character_id in seen_char_ids:
+                continue
+            seen_char_ids.add(p.character_id)
+            cname = char_names_map.get(p.character_id) or p.user.username
+            participants_list.append(
+                {
+                    "id": p.id,
+                    "character_id": p.character_id,
+                    "character_name": cname,
+                    "user_id": p.user_id,
+                    "username": p.user.username,
+                    "confirmed_by_fc": p.confirmed_by_fc,
+                    "recorded_at": p.recorded_at,
+                    "role_context": user_role_tags.get(p.user_id, ["Combat Fleet"]),
+                }
+            )
 
         # Enrich events with user role context tags
         for ev in events_list:
@@ -242,6 +261,17 @@ class CIOperationService:
         comms_without_pap_users = comms_user_ids - confirmed_user_ids
         pap_without_comms_users = confirmed_user_ids - comms_user_ids
 
+        # Extract all detected channel names from sessions and voice events
+        detected_channels = set()
+        for s in sessions_list:
+            if s.get("channel_name"):
+                detected_channels.add(s["channel_name"])
+        for ev in events_list:
+            payload = ev.get("payload") or {}
+            ch = payload.get("channel_name") or payload.get("channel")
+            if ch:
+                detected_channels.add(ch)
+
         return {
             "operation": {
                 "id": operation.id,
@@ -250,11 +280,15 @@ class CIOperationService:
                 "secrecy_level": operation.secrecy_level,
                 "start_time": operation.start_time,
                 "end_time": operation.end_time,
+                "is_active": operation.is_active,
+                "is_concluded": operation.is_concluded,
+                "status_label": operation.status_label,
                 "fleet_commander": (
                     operation.fleet_commander.username
                     if operation.fleet_commander
                     else None
                 ),
+                "fleet_commander_id": operation.fleet_commander_id,
                 "notes": operation.notes,
             },
             "window_start": window_start,
@@ -263,6 +297,7 @@ class CIOperationService:
             "events": events_list,
             "sessions": sessions_list,
             "participants": participants_list,
+            "detected_channels": sorted(list(detected_channels)),
             "metrics": {
                 "total_events": len(events_list),
                 "total_sessions": len(sessions_list),

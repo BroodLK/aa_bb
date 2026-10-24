@@ -3,6 +3,7 @@ Counterintelligence and Activity Correlation Data Models for aa_bb.
 """
 
 # Standard Library
+from datetime import timedelta
 import hashlib
 import json
 
@@ -94,6 +95,34 @@ class CIOperation(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.start_time:%Y-%m-%d %H:%M})"
+
+    @property
+    def is_active(self) -> bool:
+        """Returns True if the operation is currently ongoing."""
+        now = timezone.now()
+        if self.end_time:
+            return self.start_time <= now <= self.end_time
+        # Open operation without explicit end_time: consider active if started within the last 6 hours
+        return self.start_time <= now <= (self.start_time + timedelta(hours=6))
+
+    @property
+    def is_concluded(self) -> bool:
+        """Returns True if the operation has concluded or its open window has passed."""
+        return not self.is_active
+
+    @property
+    def status_label(self) -> str:
+        now = timezone.now()
+        if self.end_time:
+            if now < self.start_time:
+                return "Scheduled"
+            elif now > self.end_time:
+                return "Concluded"
+            return "Active"
+        else:
+            if self.is_active:
+                return "In Progress"
+            return "Concluded (Open Window)"
 
 
 class CIOperationObjective(models.Model):

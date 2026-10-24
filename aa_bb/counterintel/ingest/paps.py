@@ -3,11 +3,17 @@ Read-only FC-submitted PAP / AFAT fleet roster ingestion engine.
 Strictly authoritative FC rosters with zero member participation or self-reporting.
 """
 
+# Standard Library
+import hashlib
+import re
+from datetime import timedelta
+
 # Django
 from django.contrib.auth.models import User
+from django.db.models import Q
 from django.utils import timezone
 
-from ..models import CIEvent, CIOperation, CIOperationParticipant
+from ..models import CIEvent, CIOperation, CIOperationParticipant, CISession
 from ..services.identity import IdentityResolver
 
 
@@ -33,8 +39,26 @@ class FCRosterIngestor:
             ts = timezone.make_aware(ts)
 
         participants = []
+        seen_keys = set()
+        deduped_entries = []
 
+        # Deduplicate incoming roster entries preserving order
         for entry in roster_entries:
+            key = None
+            if isinstance(entry, int) or (isinstance(entry, str) and entry.isdigit()):
+                key = ("id", int(entry))
+            elif isinstance(entry, str):
+                key = ("str", entry.strip().lower())
+            elif isinstance(entry, dict):
+                key = ("dict", entry.get("character_id") or (entry.get("character_name") or "").lower())
+            else:
+                key = ("other", str(entry))
+
+            if key not in seen_keys:
+                seen_keys.add(key)
+                deduped_entries.append(entry)
+
+        for entry in deduped_entries:
             char_id = None
             char_name = None
 
@@ -79,8 +103,9 @@ class FCRosterIngestor:
                             char_id = profile.main_character.character_id
 
             if not char_id:
-                # If char_id is still unknown, generate deterministic pseudo ID for tracking
-                char_id = abs(hash(char_name or str(entry))) % (10**10)
+                # Deterministic pseudo ID for tracking unresolvable names across restarts
+                hash_input = (char_name or str(entry)).strip().lower().encode("utf-8")
+                char_id = int(hashlib.sha256(hash_input).hexdigest()[:10], 16) % (2**31 - 1)
 
             if resolved_user:
                 part, _ = CIOperationParticipant.objects.update_or_create(
@@ -92,7 +117,8 @@ class FCRosterIngestor:
                         "recorded_at": ts,
                     },
                 )
-                participants.append(part)
+                if part not in participants:
+                    participants.append(part)
 
             # Record idempotent CIEvent
             source_event_id = f"pap:{operation.id}:{char_id}:{ts.timestamp()}"
@@ -141,13 +167,11 @@ class FCRosterIngestor:
         chat channel member list, or comma/newline separated character names).
         Requires zero plugin dependencies or member action.
         """
-        # Standard Library
-        import re
-
         if not text_data or not text_data.strip():
             return []
 
         entries = []
+        seen = set()
         lines = text_data.strip().splitlines()
         for line in lines:
             line = line.strip()
@@ -158,7 +182,8 @@ class FCRosterIngestor:
             chat_match = re.match(r"^\[.*?\]\s*([^:>]+?)(?:\s*>.*)?$", line)
             if chat_match:
                 candidate = chat_match.group(1).strip()
-                if candidate:
+                if candidate and candidate.lower() not in seen:
+                    seen.add(candidate.lower())
                     entries.append(candidate)
                     continue
 
@@ -166,12 +191,14 @@ class FCRosterIngestor:
             parts = re.split(r"[\t,|]", line)
             if parts:
                 candidate = parts[0].strip()
-                # If first token is purely numeric or looks like a name
-                if candidate:
+                if candidate and candidate.lower() not in seen:
+                    seen.add(candidate.lower())
                     entries.append(candidate)
                     continue
 
-            entries.append(line)
+            if line.lower() not in seen:
+                seen.add(line.lower())
+                entries.append(line)
 
         return cls.ingest_fc_roster(
             operation=operation,
@@ -185,24 +212,19 @@ class FCRosterIngestor:
         cls,
         operation: CIOperation,
         channel_keywords: list = None,
-        min_duration_seconds: int = 60,
+        min_duration_seconds: int = 30,
     ) -> list[CIOperationParticipant]:
         """
         Automatically detect and confirm fleet participants from operational
         communication presence (Mumble, Discord) during the operation window.
         Provides zero-overhead roster generation for alliances not using PAP/AFAT.
         """
-        # Standard Library
-        from datetime import timedelta
-
-        # Django
-        from django.db.models import Q
-
-        from ..models import CISession
-
         op_start = operation.start_time
         op_end = operation.end_time or (op_start + timedelta(hours=2))
 
+        detected_users = set()
+
+        # 1. Query CISession overlapping [op_start, op_end]
         sessions_qs = (
             CISession.objects.filter(
                 start_time__lte=op_end,
@@ -214,14 +236,37 @@ class FCRosterIngestor:
         if channel_keywords:
             q_channel = Q()
             for kw in channel_keywords:
-                q_channel |= Q(channel_name__icontains=kw)
-            sessions_qs = sessions_qs.filter(q_channel)
+                if kw and str(kw).strip():
+                    q_channel |= Q(channel_name__icontains=str(kw).strip())
+            if q_channel:
+                sessions_qs = sessions_qs.filter(q_channel)
 
-        detected_users = set()
         for s in sessions_qs:
             dur = s.duration_seconds
             if dur is None or dur >= min_duration_seconds:
-                detected_users.add(s.user)
+                if s.user:
+                    detected_users.add(s.user)
+
+        # 2. Query CIEvent voice events during window [op_start, op_end]
+        events_qs = (
+            CIEvent.objects.filter(
+                source__in=["mumble", "discord"],
+                timestamp__gte=op_start,
+                timestamp__lte=op_end,
+                user__isnull=False,
+            )
+            .select_related("user")
+        )
+        if channel_keywords:
+            valid_kws = [str(kw).strip().lower() for kw in channel_keywords if kw and str(kw).strip()]
+            for ev in events_qs:
+                payload = ev.payload or {}
+                ch = str(payload.get("channel_name") or payload.get("channel") or "").lower()
+                if valid_kws and any(kw in ch for kw in valid_kws):
+                    detected_users.add(ev.user)
+        else:
+            for ev in events_qs:
+                detected_users.add(ev.user)
 
         participants = []
         for user in detected_users:
@@ -230,7 +275,8 @@ class FCRosterIngestor:
             if profile and profile.main_character:
                 char_id = profile.main_character.character_id
             else:
-                char_id = abs(hash(user.username)) % (10**10)
+                hash_input = user.username.strip().lower().encode("utf-8")
+                char_id = int(hashlib.sha256(hash_input).hexdigest()[:10], 16) % (2**31 - 1)
 
             part, _ = CIOperationParticipant.objects.update_or_create(
                 operation=operation,
@@ -241,7 +287,8 @@ class FCRosterIngestor:
                     "recorded_at": op_start,
                 },
             )
-            participants.append(part)
+            if part not in participants:
+                participants.append(part)
 
         return participants
 
@@ -373,12 +420,23 @@ class FCRosterIngestor:
                     or getattr(fl, "start_time", None)
                     or timezone.now()
                 )
-                end_time = (
-                    getattr(fl, "closed_at", None)
-                    or getattr(fl, "closed", None)
-                    or getattr(fl, "end_time", None)
-                    or None
-                )
+                # Check datetime closed attributes first
+                end_time = getattr(fl, "closed_at", None) or getattr(fl, "end_time", None)
+                if not end_time:
+                    raw_closed = getattr(fl, "closed", None)
+                    if hasattr(raw_closed, "strftime"):
+                        end_time = raw_closed
+                    elif raw_closed is True:
+                        end_time = (
+                            getattr(fl, "updated_at", None)
+                            or getattr(fl, "updated", None)
+                            or (start_time + timedelta(hours=2))
+                        )
+                    elif hasattr(fl, "valid_until") and fl.valid_until and fl.valid_until <= timezone.now():
+                        end_time = fl.valid_until
+
+                if end_time and timezone.is_naive(end_time):
+                    end_time = timezone.make_aware(end_time)
 
                 fc_user = None
                 if hasattr(fl, "character") and fl.character:

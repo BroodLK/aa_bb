@@ -5,31 +5,186 @@
 <div class="row mb-3">
     <div class="col-md-12">
         <div class="card bg-dark text-white">
-            <div class="card-body d-flex justify-content-between align-items-center">
+            <div class="card-body d-flex justify-content-between align-items-center flex-wrap gap-2">
                 <div>
-                    <h3 class="card-title mb-1">{{ operation.name }}</h3>
+                    <h3 class="card-title mb-1">
+                        {{ operation.name }}
+                        {% if operation.is_active %}
+                            <span class="badge bg-success ms-2 fs-6"><i class="fas fa-satellite-dish me-1"></i>{% translate "Active Fleet" %}</span>
+                        {% elif not operation.end_time %}
+                            <span class="badge bg-secondary ms-2 fs-6">{% translate "Concluded (Open Window)" %}</span>
+                        {% else %}
+                            <span class="badge bg-dark border ms-2 fs-6">{% translate "Concluded" %}</span>
+                        {% endif %}
+                    </h3>
                     <p class="mb-0 text-muted">
                         <span class="badge bg-secondary me-2">{{ operation.operation_type }}</span>
                         <span class="badge bg-info text-dark me-2">Secrecy: {{ operation.secrecy_level }}</span>
-                        <i class="far fa-clock me-1"></i>{{ operation.start_time|date:"Y-m-d H:i" }} - {% if operation.end_time %}{{ operation.end_time|date:"H:i" }} UTC{% else %}Open{% endif %}
+                        <i class="far fa-clock me-1"></i>{{ operation.start_time|date:"Y-m-d H:i" }} - {% if operation.end_time %}{{ operation.end_time|date:"H:i" }} UTC{% else %}Open Window{% endif %}
                         {% if operation.fleet_commander %} &bull; FC: <strong>{{ operation.fleet_commander.username }}</strong>{% endif %}
                     </p>
                 </div>
-                <div>
-                    <button class="btn btn-outline-info btn-sm me-2" type="button" data-bs-toggle="collapse" data-bs-target="#quickRosterCollapse">
-                        <i class="fas fa-clipboard-list me-1"></i>{% translate "Paste Fleet Roster" %}
+                <div class="d-flex flex-wrap gap-2 align-items-center">
+                    {% if not operation.end_time %}
+                        {% if operation.is_active %}
+                            <form method="post" action="{% url 'ci:edit_operation' operation.id %}" class="d-inline">
+                                {% csrf_token %}
+                                <input type="hidden" name="quick_action" value="close_now">
+                                <button type="submit" class="btn btn-warning btn-sm" title="{% translate 'Close active operation and record current time as end time' %}">
+                                    <i class="fas fa-stop-circle me-1"></i>{% translate "Close Fleet" %}
+                                </button>
+                            </form>
+                        {% else %}
+                            <form method="post" action="{% url 'ci:edit_operation' operation.id %}" class="d-inline">
+                                {% csrf_token %}
+                                <input type="hidden" name="quick_action" value="close_now">
+                                <button type="submit" class="btn btn-secondary btn-sm" title="{% translate 'Set end time and conclude open operational window' %}">
+                                    <i class="fas fa-check-circle me-1"></i>{% translate "Conclude Window" %}
+                                </button>
+                            </form>
+                        {% endif %}
+                    {% endif %}
+                    <button class="btn btn-outline-warning btn-sm" type="button" data-bs-toggle="modal" data-bs-target="#editOperationModal">
+                        <i class="fas fa-edit me-1"></i>{% translate "Edit Operation" %}
                     </button>
-                    <form method="post" action="{% url 'ci:auto_detect_comms' operation.id %}" class="d-inline me-2">
-                        {% csrf_token %}
-                        <button type="submit" class="btn btn-outline-success btn-sm" title="{% translate 'Zero admin: auto-detect attendees from active comms sessions' %}">
-                            <i class="fas fa-magic me-1"></i>{% translate "Auto-Detect Comms Fleet" %}
-                        </button>
-                    </form>
+                    <button class="btn btn-outline-info btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#quickRosterCollapse">
+                        <i class="fas fa-clipboard-list me-1"></i>{% translate "Paste Roster" %}
+                    </button>
+                    <button class="btn btn-outline-success btn-sm" type="button" data-bs-toggle="modal" data-bs-target="#autoDetectCommsModal" title="{% translate 'Auto-detect attendees from active comms channels' %}">
+                        <i class="fas fa-magic me-1"></i>{% translate "Auto-Detect Comms" %}
+                    </button>
                     <a href="{% url 'ci:operation_list' %}" class="btn btn-outline-light btn-sm">
-                        <i class="fas fa-arrow-left me-1"></i>{% translate "Back to Operations" %}
+                        <i class="fas fa-arrow-left me-1"></i>{% translate "Back" %}
                     </a>
                 </div>
             </div>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Operation Modal -->
+<div class="modal fade" id="editOperationModal" tabindex="-1" aria-labelledby="editOperationModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <form method="post" action="{% url 'ci:edit_operation' operation.id %}">
+                {% csrf_token %}
+                <div class="modal-header bg-dark text-white">
+                    <h5 class="modal-title" id="editOperationModalLabel">
+                        <i class="fas fa-edit me-2"></i>{% translate "Edit Operation Details" %}
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row g-3">
+                        <div class="col-md-8">
+                            <label class="form-label fw-bold">{% translate "Operation Name" %}</label>
+                            <input type="text" name="name" class="form-control form-control-sm" value="{{ operation.name }}" required>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-bold">{% translate "Operation Type" %}</label>
+                            <select name="operation_type" class="form-select form-select-sm">
+                                <option value="strategic" {% if operation.operation_type == "strategic" %}selected{% endif %}>{% translate "Strategic" %}</option>
+                                <option value="defense" {% if operation.operation_type == "defense" %}selected{% endif %}>{% translate "Defense / Home Defense" %}</option>
+                                <option value="cta" {% if operation.operation_type == "cta" %}selected{% endif %}>{% translate "CTA (Call to Arms)" %}</option>
+                                <option value="roam" {% if operation.operation_type == "roam" %}selected{% endif %}>{% translate "Roam / Patrol" %}</option>
+                                <option value="skirmish" {% if operation.operation_type == "skirmish" %}selected{% endif %}>{% translate "Skirmish" %}</option>
+                                <option value="recon" {% if operation.operation_type == "recon" %}selected{% endif %}>{% translate "Reconnaissance" %}</option>
+                                <option value="mining" {% if operation.operation_type == "mining" %}selected{% endif %}>{% translate "Mining / Industry" %}</option>
+                                <option value="training" {% if operation.operation_type == "training" %}selected{% endif %}>{% translate "Training" %}</option>
+                                <option value="other" {% if operation.operation_type == "other" %}selected{% endif %}>{% translate "Other" %}</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-bold">{% translate "Secrecy Level" %}</label>
+                            <select name="secrecy_level" class="form-select form-select-sm">
+                                <option value="standard" {% if operation.secrecy_level == "standard" %}selected{% endif %}>{% translate "Standard" %}</option>
+                                <option value="restricted" {% if operation.secrecy_level == "restricted" %}selected{% endif %}>{% translate "Restricted" %}</option>
+                                <option value="classified" {% if operation.secrecy_level == "classified" %}selected{% endif %}>{% translate "Classified" %}</option>
+                                <option value="top_secret" {% if operation.secrecy_level == "top_secret" %}selected{% endif %}>{% translate "Top Secret" %}</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-bold">{% translate "Start Time (UTC)" %}</label>
+                            <input type="datetime-local" name="start_time" class="form-control form-control-sm" value="{{ operation.start_time|date:'Y-m-d\TH:i' }}" required>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-bold">{% translate "End Time (UTC)" %}</label>
+                            <input type="datetime-local" name="end_time" class="form-control form-control-sm" value="{% if operation.end_time %}{{ operation.end_time|date:'Y-m-d\TH:i' }}{% endif %}" placeholder="Leave blank for open window">
+                            <small class="text-muted d-block">{% translate "Leave blank to keep open window." %}</small>
+                        </div>
+                        <div class="col-md-12">
+                            <label class="form-label fw-bold">{% translate "Fleet Commander (FC)" %}</label>
+                            <select name="fleet_commander_id" class="form-select form-select-sm">
+                                <option value="">-- {% translate "None / Unassigned" %} --</option>
+                                {% for u in fc_candidates %}
+                                    <option value="{{ u.id }}" {% if operation.fleet_commander_id == u.id %}selected{% endif %}>
+                                        {{ u.username }}{% if u.profile.main_character %} ({{ u.profile.main_character.character_name }}){% endif %}
+                                    </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-12">
+                            <label class="form-label fw-bold">{% translate "Operational Notes / Context" %}</label>
+                            <textarea name="notes" class="form-control form-control-sm" rows="3" placeholder="{% translate 'Add operational notes, briefing details, or strategic context...' %}">{{ operation.notes }}</textarea>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer bg-light">
+                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">{% translate "Cancel" %}</button>
+                    <button type="submit" class="btn btn-primary btn-sm"><i class="fas fa-save me-1"></i>{% translate "Save Changes" %}</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Auto-Detect Comms Modal -->
+<div class="modal fade" id="autoDetectCommsModal" tabindex="-1" aria-labelledby="autoDetectCommsModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="post" action="{% url 'ci:auto_detect_comms' operation.id %}">
+                {% csrf_token %}
+                <div class="modal-header bg-dark text-white">
+                    <h5 class="modal-title" id="autoDetectCommsModalLabel">
+                        <i class="fas fa-magic me-2 text-success"></i>{% translate "Auto-Detect Comms Fleet Roster" %}
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="small text-muted mb-3">
+                        {% translate "Scans Mumble and Discord voice activity during the operational window to automatically confirm fleet participants with zero administrative burden." %}
+                    </p>
+                    {% if timeline.detected_channels %}
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">{% translate "Active Voice Channels Detected in Window:" %}</label>
+                        <div class="d-flex flex-wrap gap-1">
+                            {% for ch in timeline.detected_channels %}
+                                <span class="badge bg-secondary cursor-pointer" style="cursor: pointer;" onclick="document.getElementById('channelKeywordsInput').value='{{ ch|escapejs }}';">
+                                    {{ ch }}
+                                </span>
+                            {% endfor %}
+                        </div>
+                        <small class="text-muted">{% translate "Click a channel badge to autofill keyword filter." %}</small>
+                    </div>
+                    {% endif %}
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">{% translate "Channel Name / Keywords (Optional)" %}</label>
+                        <input type="text" name="channel_keywords" id="channelKeywordsInput" class="form-control form-control-sm" placeholder="e.g. Fleet 1, Op Channel, CTA (leave empty to detect from all voice channels)">
+                        <small class="text-muted">{% translate "Leave blank to detect pilots across all voice channels active during the fleet." %}</small>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">{% translate "Minimum Voice Presence Duration (Seconds)" %}</label>
+                        <input type="number" name="min_duration_seconds" class="form-control form-control-sm" value="30" min="0" step="5">
+                        <small class="text-muted">{% translate "Pilots present for at least this duration will be registered." %}</small>
+                    </div>
+                </div>
+                <div class="modal-footer bg-light">
+                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">{% translate "Cancel" %}</button>
+                    <button type="submit" class="btn btn-success btn-sm">
+                        <i class="fas fa-search me-1"></i>{% translate "Run Voice Auto-Detection" %}
+                    </button>
+                </div>
+            </form>
         </div>
     </div>
 </div>
@@ -39,7 +194,7 @@
     <div class="card card-body bg-light border-info">
         <h6 class="fw-bold mb-2"><i class="fas fa-paste me-2 text-info"></i>{% translate "Quick Fleet Roster Paste (Zero PAP/AFAT Setup Required)" %}</h6>
         <p class="small text-muted mb-2">
-            {% translate "Paste character names, EVE fleet window members, or fleet chat text. The system automatically parses names and links accounts." %}
+            {% translate "Paste character names, EVE fleet window members, or fleet chat text. The system automatically parses names, deduplicates entries, and links accounts." %}
         </p>
         <form method="post" action="{% url 'ci:quick_roster_ingest' operation.id %}">
             {% csrf_token %}
@@ -110,26 +265,64 @@
 <div class="row">
     <!-- Objectives & FC Participants Panel -->
     <div class="col-lg-4 mb-4">
+        <!-- Objectives Card -->
         <div class="card mb-3">
-            <div class="card-header bg-secondary text-white">
+            <div class="card-header bg-secondary text-white d-flex justify-content-between align-items-center">
                 <h6 class="mb-0"><i class="fas fa-bullseye me-2"></i>{% translate "Operation Objectives" %}</h6>
+                <button class="btn btn-sm btn-light py-0 px-2" type="button" data-bs-toggle="collapse" data-bs-target="#addObjectiveCollapse" title="{% translate 'Add Objective' %}">
+                    <i class="fas fa-plus me-1"></i>{% translate "Add" %}
+                </button>
+            </div>
+            <div class="collapse p-3 bg-light border-bottom" id="addObjectiveCollapse">
+                <form method="post" action="{% url 'ci:add_objective' operation.id %}">
+                    {% csrf_token %}
+                    <div class="mb-2">
+                        <label class="form-label small fw-bold mb-1">{% translate "Objective Name" %}</label>
+                        <input type="text" name="name" class="form-control form-control-sm" placeholder="e.g. Structure Bash, Secondary Tackle" required>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label small fw-bold mb-1">{% translate "Type" %}</label>
+                        <select name="objective_type" class="form-select form-select-sm">
+                            <option value="combat">{% translate "Combat" %}</option>
+                            <option value="strategic_defense">{% translate "Strategic Defense" %}</option>
+                            <option value="capital">{% translate "Capital Fleet" %}</option>
+                            <option value="qrf">{% translate "QRF" %}</option>
+                            <option value="recon">{% translate "Reconnaissance" %}</option>
+                            <option value="logi">{% translate "Logistics" %}</option>
+                            <option value="briefing">{% translate "Briefing" %}</option>
+                        </select>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label small fw-bold mb-1">{% translate "Expected Roles (Comma-separated)" %}</label>
+                        <input type="text" name="expected_roles" class="form-control form-control-sm" placeholder="e.g. FC, Logi, Tackle, DPS">
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-sm w-100">
+                        <i class="fas fa-plus me-1"></i>{% translate "Create Objective" %}
+                    </button>
+                </form>
             </div>
             <div class="card-body">
                 {% if timeline.objectives %}
                     <ul class="list-group list-group-flush">
                     {% for obj in timeline.objectives %}
-                        <li class="list-group-item d-flex justify-content-between align-items-center">
+                        <li class="list-group-item d-flex justify-content-between align-items-center py-2">
                             <div>
                                 <strong>{{ obj.name }}</strong><br>
                                 <small class="text-muted">Type: {{ obj.objective_type }}</small>
+                                {% if obj.expected_roles %}
+                                    <div class="mt-1">
+                                    {% for role in obj.expected_roles %}
+                                        <span class="badge bg-dark" style="font-size: 0.7rem;">{{ role }}</span>
+                                    {% endfor %}
+                                    </div>
+                                {% endif %}
                             </div>
-                            {% if obj.expected_roles %}
-                                <span>
-                                {% for role in obj.expected_roles %}
-                                    <span class="badge bg-dark">{{ role }}</span>
-                                {% endfor %}
-                                </span>
-                            {% endif %}
+                            <form method="post" action="{% url 'ci:delete_objective' operation.id obj.id %}" class="d-inline" onsubmit="return confirm('{% translate 'Remove objective?' %}');">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-link btn-sm text-danger p-0" title="{% translate 'Delete Objective' %}">
+                                    <i class="fas fa-trash-alt"></i>
+                                </button>
+                            </form>
                         </li>
                     {% endfor %}
                     </ul>
@@ -139,26 +332,50 @@
             </div>
         </div>
 
+        <!-- FC Participants Card -->
         <div class="card">
-            <div class="card-header bg-secondary text-white">
+            <div class="card-header bg-secondary text-white d-flex justify-content-between align-items-center">
                 <h6 class="mb-0"><i class="fas fa-clipboard-check me-2"></i>{% translate "FC Roster Participants" %} ({{ timeline.participants|length }})</h6>
+                <button class="btn btn-sm btn-light py-0 px-2" type="button" data-bs-toggle="collapse" data-bs-target="#addParticipantCollapse" title="{% translate 'Add Individual Pilot' %}">
+                    <i class="fas fa-user-plus me-1"></i>{% translate "Add Pilot" %}
+                </button>
             </div>
-            <div class="card-body p-0" style="max-height: 400px; overflow-y: auto;">
+            <div class="collapse p-3 bg-light border-bottom" id="addParticipantCollapse">
+                <form method="post" action="{% url 'ci:add_participant' operation.id %}">
+                    {% csrf_token %}
+                    <div class="input-group input-group-sm">
+                        <input type="text" name="character_input" class="form-control" placeholder="{% translate 'Character Name or ID' %}" required>
+                        <button type="submit" class="btn btn-primary"><i class="fas fa-plus"></i></button>
+                    </div>
+                </form>
+            </div>
+            <div class="card-body p-0" style="max-height: 450px; overflow-y: auto;">
                 <ul class="list-group list-group-flush">
                     {% for p in timeline.participants %}
                     <li class="list-group-item d-flex justify-content-between align-items-center py-2">
                         <div>
                             <a href="{% url 'ci:member_activity' p.user_id %}" class="fw-bold text-decoration-none">
-                                {{ p.username }}
+                                {{ p.character_name }}
                             </a>
+                            {% if p.character_name != p.username %}
+                                <span class="badge bg-dark ms-1 small" style="font-size: 0.65rem;">User: {{ p.username }}</span>
+                            {% endif %}
                             <div class="mt-1">
                                 {% for role in p.role_context %}
-                                    <span class="badge bg-secondary me-1">{{ role }}</span>
+                                    <span class="badge bg-secondary me-1" style="font-size: 0.7rem;">{{ role }}</span>
                                 {% endfor %}
                             </div>
-                            <small class="text-muted d-block">Char ID: {{ p.character_id }}</small>
+                            <small class="text-muted d-block font-monospace" style="font-size: 0.75rem;">Char ID: {{ p.character_id }}</small>
                         </div>
-                        <span class="badge bg-success"><i class="fas fa-check"></i></span>
+                        <div class="d-flex align-items-center gap-2">
+                            <span class="badge bg-success" title="{% translate 'Confirmed FC Attendee' %}"><i class="fas fa-check"></i></span>
+                            <form method="post" action="{% url 'ci:remove_participant' operation.id p.id %}" class="d-inline" onsubmit="return confirm('{% translate 'Remove pilot from roster?' %}');">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-link btn-sm text-danger p-0 ms-1" title="{% translate 'Remove pilot from roster' %}">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </form>
+                        </div>
                     </li>
                     {% empty %}
                     <li class="list-group-item text-muted text-center py-3">
@@ -183,20 +400,20 @@
                 <div class="mb-3">
                     <div class="d-flex justify-content-between small text-muted mb-1">
                         <span><i class="fas fa-flag me-1 text-primary"></i><strong>{% translate "Track 1: Operational Window" %}</strong></span>
-                        <span>{{ operation.start_time|date:"H:i" }} - {% if operation.end_time %}{{ operation.end_time|date:"H:i" }} UTC{% else %}Active{% endif %}</span>
+                        <span>{{ operation.start_time|date:"H:i" }} - {% if operation.end_time %}{{ operation.end_time|date:"H:i" }} UTC{% elif operation.is_active %}<span class="text-success">Active</span>{% else %}<span class="text-secondary">Concluded</span>{% endif %}</span>
                     </div>
                     <div class="progress" style="height: 22px;">
-                        <div class="progress-bar bg-primary" role="progressbar" style="width: 100%;">
+                        <div class="progress-bar {% if operation.is_active %}bg-success{% else %}bg-primary{% endif %}" role="progressbar" style="width: 100%;">
                             {{ operation.name }} ({{ operation.operation_type }})
                         </div>
                     </div>
                 </div>
 
-                <!-- Track 2: Comms Sessions (Mumble) -->
+                <!-- Track 2: Comms Sessions (Mumble / Discord) -->
                 <div class="mb-3">
                     <div class="d-flex justify-content-between small text-muted mb-1">
                         <span><i class="fas fa-headset me-1 text-info"></i><strong>{% translate "Track 2: Voice Comms Activity" %}</strong> ({{ timeline.sessions|length }} {% translate "sessions" %})</span>
-                        <span class="badge bg-info text-dark">Mumble</span>
+                        <span class="badge bg-info text-dark">Comms</span>
                     </div>
                     <div class="p-2 border border-secondary rounded bg-secondary bg-opacity-25" style="min-height: 38px;">
                         {% for s in timeline.sessions|slice:":12" %}
