@@ -387,10 +387,13 @@ class TestCIOperations(TestCase):
             roster_entries=["Unresolvable_Pilot_XYZ", "Unresolvable_Pilot_XYZ"],
             fc_user=self.fc_user,
         )
-        self.assertEqual(len(parts_extra), 0)  # Unresolved pilot creates CIEvent without CIOperationParticipant
+        self.assertEqual(
+            len(parts_extra), 0
+        )  # Unresolved pilot creates CIEvent without CIOperationParticipant
 
     def test_character_name_resolution_and_timeline_deduplication(self):
         try:
+            # Alliance Auth
             from allianceauth.eveonline.models import EveCharacter
 
             EveCharacter.objects.create(

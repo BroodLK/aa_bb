@@ -201,13 +201,18 @@ class CIOperationService:
         ]
 
         # FC confirmed participants & context role tagging
-        participants_qs = operation.participants.select_related("user").all().order_by("recorded_at", "character_id")
+        participants_qs = (
+            operation.participants.select_related("user")
+            .all()
+            .order_by("recorded_at", "character_id")
+        )
         confirmed_user_ids = {p.user_id for p in participants_qs}
         char_ids = [p.character_id for p in participants_qs]
 
         # Batch resolve character names from EveCharacter / CIIdentity
         char_names_map = {}
         try:
+            # Alliance Auth
             from allianceauth.eveonline.models import EveCharacter
 
             for ec in EveCharacter.objects.filter(character_id__in=char_ids):

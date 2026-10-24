@@ -3,9 +3,9 @@ Counterintelligence and Activity Correlation Data Models for aa_bb.
 """
 
 # Standard Library
-from datetime import timedelta
 import hashlib
 import json
+from datetime import timedelta
 
 # Django
 from django.contrib.auth.models import User

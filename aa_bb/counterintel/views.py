@@ -573,6 +573,7 @@ def _parse_input_datetime(val: str):
     val = str(val).strip()
     dt = parse_datetime(val)
     if not dt:
+        # Standard Library
         from datetime import datetime
 
         for fmt in (
@@ -607,7 +608,9 @@ def edit_operation(request, operation_id: int):
         CorrelationEngine.correlate_operation(operation)
         messages.success(
             request,
-            _(f"Operation '{operation.name}' closed at {operation.end_time:%H:%M} UTC."),
+            _(
+                f"Operation '{operation.name}' closed at {operation.end_time:%H:%M} UTC."
+            ),
         )
         return redirect("ci:operation_timeline", operation_id=operation.id)
 
@@ -623,7 +626,8 @@ def edit_operation(request, operation_id: int):
         operation.name = name
 
     operation.operation_type = (
-        request.POST.get("operation_type", operation.operation_type).strip() or "strategic"
+        request.POST.get("operation_type", operation.operation_type).strip()
+        or "strategic"
     )
     operation.secrecy_level = (
         request.POST.get("secrecy_level", operation.secrecy_level).strip() or "standard"

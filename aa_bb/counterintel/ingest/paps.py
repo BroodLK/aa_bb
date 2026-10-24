@@ -50,7 +50,11 @@ class FCRosterIngestor:
             elif isinstance(entry, str):
                 key = ("str", entry.strip().lower())
             elif isinstance(entry, dict):
-                key = ("dict", entry.get("character_id") or (entry.get("character_name") or "").lower())
+                key = (
+                    "dict",
+                    entry.get("character_id")
+                    or (entry.get("character_name") or "").lower(),
+                )
             else:
                 key = ("other", str(entry))
 
@@ -105,7 +109,9 @@ class FCRosterIngestor:
             if not char_id:
                 # Deterministic pseudo ID for tracking unresolvable names across restarts
                 hash_input = (char_name or str(entry)).strip().lower().encode("utf-8")
-                char_id = int(hashlib.sha256(hash_input).hexdigest()[:10], 16) % (2**31 - 1)
+                char_id = int(hashlib.sha256(hash_input).hexdigest()[:10], 16) % (
+                    2**31 - 1
+                )
 
             if resolved_user:
                 part, _ = CIOperationParticipant.objects.update_or_create(
@@ -248,20 +254,23 @@ class FCRosterIngestor:
                     detected_users.add(s.user)
 
         # 2. Query CIEvent voice events during window [op_start, op_end]
-        events_qs = (
-            CIEvent.objects.filter(
-                source__in=["mumble", "discord"],
-                timestamp__gte=op_start,
-                timestamp__lte=op_end,
-                user__isnull=False,
-            )
-            .select_related("user")
-        )
+        events_qs = CIEvent.objects.filter(
+            source__in=["mumble", "discord"],
+            timestamp__gte=op_start,
+            timestamp__lte=op_end,
+            user__isnull=False,
+        ).select_related("user")
         if channel_keywords:
-            valid_kws = [str(kw).strip().lower() for kw in channel_keywords if kw and str(kw).strip()]
+            valid_kws = [
+                str(kw).strip().lower()
+                for kw in channel_keywords
+                if kw and str(kw).strip()
+            ]
             for ev in events_qs:
                 payload = ev.payload or {}
-                ch = str(payload.get("channel_name") or payload.get("channel") or "").lower()
+                ch = str(
+                    payload.get("channel_name") or payload.get("channel") or ""
+                ).lower()
                 if valid_kws and any(kw in ch for kw in valid_kws):
                     detected_users.add(ev.user)
         else:
@@ -276,7 +285,9 @@ class FCRosterIngestor:
                 char_id = profile.main_character.character_id
             else:
                 hash_input = user.username.strip().lower().encode("utf-8")
-                char_id = int(hashlib.sha256(hash_input).hexdigest()[:10], 16) % (2**31 - 1)
+                char_id = int(hashlib.sha256(hash_input).hexdigest()[:10], 16) % (
+                    2**31 - 1
+                )
 
             part, _ = CIOperationParticipant.objects.update_or_create(
                 operation=operation,
@@ -421,7 +432,9 @@ class FCRosterIngestor:
                     or timezone.now()
                 )
                 # Check datetime closed attributes first
-                end_time = getattr(fl, "closed_at", None) or getattr(fl, "end_time", None)
+                end_time = getattr(fl, "closed_at", None) or getattr(
+                    fl, "end_time", None
+                )
                 if not end_time:
                     raw_closed = getattr(fl, "closed", None)
                     if hasattr(raw_closed, "strftime"):
@@ -432,7 +445,11 @@ class FCRosterIngestor:
                             or getattr(fl, "updated", None)
                             or (start_time + timedelta(hours=2))
                         )
-                    elif hasattr(fl, "valid_until") and fl.valid_until and fl.valid_until <= timezone.now():
+                    elif (
+                        hasattr(fl, "valid_until")
+                        and fl.valid_until
+                        and fl.valid_until <= timezone.now()
+                    ):
                         end_time = fl.valid_until
 
                 if end_time and timezone.is_naive(end_time):
