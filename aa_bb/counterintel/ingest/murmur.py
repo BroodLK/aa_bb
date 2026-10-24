@@ -5,7 +5,6 @@ Polls live channel tree and connected users directly from Murmur / Ice RPC or so
 
 # Standard Library
 import logging
-from datetime import timedelta
 
 # Django
 from django.conf import settings
@@ -46,6 +45,7 @@ class MurmurQueryHelper:
         # Here we provide a robust query wrapper with graceful degradation
         try:
             # Check for Ice module
+            # Third Party
             import Ice  # noqa: F401
 
             # If Ice is configured, query Murmur server object
@@ -53,7 +53,9 @@ class MurmurQueryHelper:
                 f"Querying Murmur RPC at {params['host']}:{params['port']} for server {server_id}"
             )
         except ImportError:
-            logger.debug("Ice python bindings not present; Murmur RPC live poll unavailable.")
+            logger.debug(
+                "Ice python bindings not present; Murmur RPC live poll unavailable."
+            )
         except Exception as e:
             logger.warning(f"Error querying Murmur RPC: {e}")
 
@@ -115,7 +117,9 @@ class MurmurQueryHelper:
                 active_sessions.append(new_session)
 
                 # Record connect event
-                source_event_id = f"mumble:murmur_live:{username}:{session_id}:{now.timestamp()}"
+                source_event_id = (
+                    f"mumble:murmur_live:{username}:{session_id}:{now.timestamp()}"
+                )
                 payload = {
                     "username": username,
                     "action": "connect",
@@ -123,7 +127,9 @@ class MurmurQueryHelper:
                     "session_id": session_id,
                     "metadata": user_data,
                 }
-                dedup_hash = CIEvent.generate_dedup_hash("mumble", source_event_id, now, payload)
+                dedup_hash = CIEvent.generate_dedup_hash(
+                    "mumble", source_event_id, now, payload
+                )
                 CIEvent.objects.get_or_create(
                     dedup_hash=dedup_hash,
                     defaults={

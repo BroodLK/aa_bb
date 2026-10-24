@@ -3,11 +3,9 @@ Unit and integration tests for Counterintelligence enhancements across all 6 cor
 """
 
 # Standard Library
-import json
 import os
 import tempfile
 from datetime import timedelta
-from unittest.mock import MagicMock, patch
 
 # Django
 from django.contrib.auth.models import Permission, User
@@ -21,6 +19,7 @@ from django.utils import timezone
 from allianceauth.authentication.models import CharacterOwnership, State, UserProfile
 from allianceauth.eveonline.models import EveCharacter
 
+# AA BigBrother
 from aa_bb.counterintel.ingest.mumble import MumbleLogIngestor
 from aa_bb.counterintel.ingest.murmur import MurmurQueryHelper
 from aa_bb.counterintel.ingest.zkill import ZKillIngestor
@@ -60,9 +59,15 @@ class CIEnhancementsTests(TestCase):
         cfg.save()
 
         # Users
-        cls.user1 = User.objects.create_user(username="pilot_alpha", password="password")
-        cls.user2 = User.objects.create_user(username="pilot_bravo", password="password")
-        cls.reviewer = User.objects.create_user(username="ci_auditor", password="password")
+        cls.user1 = User.objects.create_user(
+            username="pilot_alpha", password="password"
+        )
+        cls.user2 = User.objects.create_user(
+            username="pilot_bravo", password="password"
+        )
+        cls.reviewer = User.objects.create_user(
+            username="ci_auditor", password="password"
+        )
 
         # Assign permissions
         content_type = ContentType.objects.get_for_model(General)
@@ -93,7 +98,9 @@ class CIEnhancementsTests(TestCase):
         cls.user1.profile.main_character = cls.char1
         cls.user1.profile.state = cls.member_state
         cls.user1.profile.save()
-        UserProfile.objects.filter(pk=cls.user1.profile.pk).update(state=cls.member_state)
+        UserProfile.objects.filter(pk=cls.user1.profile.pk).update(
+            state=cls.member_state
+        )
 
         UserStatus.objects.create(
             user=cls.user1,
@@ -114,7 +121,9 @@ class CIEnhancementsTests(TestCase):
         cls.user2.profile.main_character = cls.char2
         cls.user2.profile.state = cls.member_state
         cls.user2.profile.save()
-        UserProfile.objects.filter(pk=cls.user2.profile.pk).update(state=cls.member_state)
+        UserProfile.objects.filter(pk=cls.user2.profile.pk).update(
+            state=cls.member_state
+        )
 
         cls.char_rev = EveCharacter.objects.create(
             character_id=1003,
@@ -130,7 +139,9 @@ class CIEnhancementsTests(TestCase):
         cls.reviewer.profile.main_character = cls.char_rev
         cls.reviewer.profile.state = cls.member_state
         cls.reviewer.profile.save()
-        UserProfile.objects.filter(pk=cls.reviewer.profile.pk).update(state=cls.member_state)
+        UserProfile.objects.filter(pk=cls.reviewer.profile.pk).update(
+            state=cls.member_state
+        )
 
         CIIdentity.objects.create(
             user=cls.user1, character_id=1001, mumble_username="pilot_alpha"
@@ -169,7 +180,11 @@ class CIEnhancementsTests(TestCase):
 
         findings = CorrelationEngine.correlate_operation(op)
         hostile_finding = next(
-            (f for f in findings if f.anomaly_type == "alt_in_hostile_entity" and f.user == self.user1),
+            (
+                f
+                for f in findings
+                if f.anomaly_type == "alt_in_hostile_entity" and f.user == self.user1
+            ),
             None,
         )
         self.assertIsNotNone(hostile_finding)
@@ -209,7 +224,12 @@ class CIEnhancementsTests(TestCase):
 
         findings = CorrelationEngine.correlate_operation(op)
         prox_finding = next(
-            (f for f in findings if f.anomaly_type == "alt_operational_proximity" and f.user == self.user1),
+            (
+                f
+                for f in findings
+                if f.anomaly_type == "alt_operational_proximity"
+                and f.user == self.user1
+            ),
             None,
         )
         self.assertIsNotNone(prox_finding)
@@ -303,7 +323,9 @@ class CIEnhancementsTests(TestCase):
             end_time=now,
         )
 
-        baseline = BaselineEngine.calculate_personal_baseline(self.user1, reference_time=now)
+        baseline = BaselineEngine.calculate_personal_baseline(
+            self.user1, reference_time=now
+        )
         self.assertIn("circadian_grid", baseline)
         self.assertEqual(len(baseline["circadian_grid"]), 7)
         self.assertEqual(len(baseline["circadian_grid"][0]), 24)
@@ -330,10 +352,16 @@ class CIEnhancementsTests(TestCase):
             end_time=now - timedelta(days=5) + timedelta(hours=2),
         )
         CICorrelation.objects.create(
-            operation=op1, user=self.user1, anomaly_type="pre_contact_disconnect", confidence=0.85
+            operation=op1,
+            user=self.user1,
+            anomaly_type="pre_contact_disconnect",
+            confidence=0.85,
         )
         CICorrelation.objects.create(
-            operation=op1, user=self.user2, anomaly_type="pre_contact_disconnect", confidence=0.85
+            operation=op1,
+            user=self.user2,
+            anomaly_type="pre_contact_disconnect",
+            confidence=0.85,
         )
 
         op2 = CIOperation.objects.create(
@@ -353,14 +381,22 @@ class CIEnhancementsTests(TestCase):
 
         drop_time = combat_time - timedelta(minutes=5)
         CISession.objects.create(
-            user=self.user1, source="mumble", start_time=op2.start_time, end_time=drop_time
+            user=self.user1,
+            source="mumble",
+            start_time=op2.start_time,
+            end_time=drop_time,
         )
         CISession.objects.create(
-            user=self.user2, source="mumble", start_time=op2.start_time, end_time=drop_time
+            user=self.user2,
+            source="mumble",
+            start_time=op2.start_time,
+            end_time=drop_time,
         )
 
         findings = CorrelationEngine.correlate_operation(op2)
-        ring_findings = [f for f in findings if f.anomaly_type == "co_occurring_disconnect_ring"]
+        ring_findings = [
+            f for f in findings if f.anomaly_type == "co_occurring_disconnect_ring"
+        ]
         self.assertGreaterEqual(len(ring_findings), 2)
 
     # -------------------------------------------------------------
@@ -414,9 +450,7 @@ class CIEnhancementsTests(TestCase):
 
     def test_export_investigation_dossier_endpoint(self):
         """Verify export endpoint returns JSON download with valid signature."""
-        inv = CIInvestigation.objects.create(
-            subject_user=self.user1, status="pending"
-        )
+        inv = CIInvestigation.objects.create(subject_user=self.user1, status="pending")
         self.client.force_login(self.reviewer)
         url = reverse("ci:export_investigation_dossier", args=[inv.id])
         response = self.client.get(url)
