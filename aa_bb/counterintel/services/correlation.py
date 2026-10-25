@@ -47,7 +47,11 @@ class CorrelationEngine:
         timeline = CIOperationService.reconstruct_timeline(operation)
         findings = []
 
-        confirmed_user_ids = {p["user_id"] for p in timeline["participants"]}
+        # The timeline also displays comms-only users for officer review. Only
+        # FC-confirmed rows count as fleet participation for correlation.
+        confirmed_user_ids = {
+            p["user_id"] for p in timeline["participants"] if p.get("confirmed_by_fc")
+        }
 
         # 1. Comms presence without PAP credit
         findings.extend(

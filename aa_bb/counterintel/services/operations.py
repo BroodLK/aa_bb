@@ -543,7 +543,9 @@ class CIOperationService:
             "metrics": {
                 "total_events": len(events_list),
                 "total_sessions": len(sessions_list),
-                "total_confirmed_participants": len(participants_list),
+                "total_confirmed_participants": sum(
+                    1 for p in participants_list if p["confirmed_by_fc"]
+                ),
                 "unique_users_observed": len(unique_users_seen),
                 "comms_without_pap_count": len(comms_without_pap_users),
                 "pap_without_comms_count": len(pap_without_comms_users),
