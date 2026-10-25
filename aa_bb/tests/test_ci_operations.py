@@ -591,3 +591,77 @@ class TestCIOperations(TestCase):
         self.assertEqual(resp.status_code, 302)
         self.assertEqual(op.participants.count(), 1)
         self.assertEqual(op.participants.first().user, self.pilot2)
+
+    def test_find_or_create_and_deduplicate_operations(self):
+        # 1. Create initial in-progress operation
+        op1, created1 = CIOperationService.find_or_create_operation(
+            name="FIGL Standing",
+            start_time=self.now,
+            end_time=None,
+            operation_type="strategic",
+            fleet_commander=self.fc_user,
+            external_tag="AFAT FatLink #101",
+        )
+        self.assertTrue(created1)
+
+        # 2. Subsequent sync with exact external tag updates end_time rather than duplicating
+        op2, created2 = CIOperationService.find_or_create_operation(
+            name="FIGL Standing",
+            start_time=self.now + timedelta(seconds=12),
+            end_time=self.now + timedelta(minutes=21),
+            operation_type="strategic",
+            fleet_commander=self.fc_user,
+            external_tag="AFAT FatLink #101",
+        )
+        self.assertFalse(created2)
+        self.assertEqual(op1.id, op2.id)
+        op1.refresh_from_db()
+        self.assertIsNotNone(op1.end_time)
+
+        # 3. Simulate split creation without tag but within 2-hour window
+        op_dup = CIOperation.objects.create(
+            name="FIGL Standing",
+            start_time=self.now + timedelta(minutes=5),
+            end_time=None,
+        )
+        CIOperationParticipant.objects.create(
+            operation=op_dup,
+            character_id=99001,
+            user=self.pilot1,
+            confirmed_by_fc=True,
+            recorded_at=self.now,
+        )
+
+        merged_count = CIOperationService.deduplicate_operations()
+        self.assertEqual(merged_count, 1)
+        self.assertFalse(CIOperation.objects.filter(id=op_dup.id).exists())
+        self.assertTrue(op1.participants.filter(character_id=99001).exists())
+
+    def test_delete_operation_view(self):
+        self.client.force_login(self.officer)
+        op = CIOperation.objects.create(
+            name="Op To Delete",
+            start_time=self.now,
+        )
+        delete_url = reverse("ci:delete_operation", kwargs={"operation_id": op.id})
+        resp = self.client.post(delete_url)
+        self.assertEqual(resp.status_code, 302)
+        self.assertFalse(CIOperation.objects.filter(id=op.id).exists())
+
+    def test_deduplicate_operations_view(self):
+        self.client.force_login(self.officer)
+        op1 = CIOperation.objects.create(
+            name="Duplicate Patrol",
+            start_time=self.now,
+            end_time=self.now + timedelta(hours=1),
+        )
+        op2 = CIOperation.objects.create(
+            name="Duplicate Patrol",
+            start_time=self.now + timedelta(minutes=10),
+            end_time=None,
+        )
+        dedup_url = reverse("ci:deduplicate_operations")
+        resp = self.client.post(dedup_url)
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(CIOperation.objects.filter(id=op1.id).exists())
+        self.assertFalse(CIOperation.objects.filter(id=op2.id).exists())

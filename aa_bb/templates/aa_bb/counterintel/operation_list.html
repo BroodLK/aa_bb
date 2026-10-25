@@ -3,8 +3,18 @@
 
 {% block ci_content %}
 <div class="card">
-    <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+    <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center flex-wrap gap-2">
         <h5 class="mb-0"><i class="fas fa-satellite-dish me-2"></i>{% translate "Operational Windows & Fleets" %}</h5>
+        {% if perms.aa_bb.can_manage_ci %}
+        <div class="d-flex gap-2">
+            <form method="post" action="{% url 'ci:deduplicate_operations' %}" class="d-inline">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-sm btn-outline-light" title="{% translate 'Merge and clean up duplicate fleet entries sharing the same time window' %}">
+                    <i class="fas fa-layer-group me-1"></i>{% translate "Deduplicate Fleets" %}
+                </button>
+            </form>
+        </div>
+        {% endif %}
     </div>
     <div class="card-body">
         <div class="table-responsive">
@@ -13,13 +23,14 @@
                     <tr>
                         <th>{% translate "Operation" %}</th>
                         <th>{% translate "Type" %}</th>
+                        <th>{% translate "Status" %}</th>
                         <th>{% translate "Start Time (UTC)" %}</th>
                         <th>{% translate "End Time (UTC)" %}</th>
                         <th>{% translate "FC" %}</th>
                         <th>{% translate "Participants" %}</th>
                         <th>{% translate "Objectives" %}</th>
                         <th>{% translate "Anomalies" %}</th>
-                        <th>{% translate "Action" %}</th>
+                        <th class="text-end">{% translate "Action" %}</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -27,14 +38,21 @@
                     <tr>
                         <td><strong>{{ op.name }}</strong></td>
                         <td><span class="badge bg-secondary">{{ op.operation_type }}</span></td>
+                        <td>
+                            {% if op.is_active %}
+                                <span class="badge bg-success"><i class="fas fa-satellite-dish me-1"></i>{% translate "Active" %}</span>
+                            {% elif op.end_time %}
+                                <span class="badge bg-secondary">{% translate "Concluded" %}</span>
+                            {% else %}
+                                <span class="badge bg-dark border text-muted">{% translate "Open Window" %}</span>
+                            {% endif %}
+                        </td>
                         <td>{{ op.start_time|date:"Y-m-d H:i" }}</td>
                         <td>
                             {% if op.end_time %}
                                 {{ op.end_time|date:"Y-m-d H:i" }}
-                            {% elif op.is_active %}
-                                <span class="badge bg-success"><i class="fas fa-satellite-dish me-1"></i>{% translate "Active" %}</span>
                             {% else %}
-                                <span class="badge bg-secondary">{% translate "Concluded" %}</span> <small class="text-muted">({% translate "Open" %})</small>
+                                <span class="text-muted fst-italic">{% translate "Open Window" %}</span>
                             {% endif %}
                         </td>
                         <td>{{ op.fleet_commander.username|default:"-" }}</td>
@@ -47,15 +65,25 @@
                                 <span class="badge bg-success">0</span>
                             {% endif %}
                         </td>
-                        <td>
-                            <a href="{% url 'ci:operation_timeline' op.id %}" class="btn btn-sm btn-outline-primary">
-                                <i class="fas fa-stream me-1"></i>{% translate "View Timeline" %}
-                            </a>
+                        <td class="text-end">
+                            <div class="btn-group btn-group-sm">
+                                <a href="{% url 'ci:operation_timeline' op.id %}" class="btn btn-outline-primary">
+                                    <i class="fas fa-stream me-1"></i>{% translate "Timeline" %}
+                                </a>
+                                {% if perms.aa_bb.can_manage_ci %}
+                                <form method="post" action="{% url 'ci:delete_operation' op.id %}" class="d-inline" onsubmit="return confirm('{% translate "Are you sure you want to delete operation" %} \'{{ op.name|escapejs }}\'?');">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn btn-outline-danger" title="{% translate 'Delete Operation' %}">
+                                        <i class="fas fa-trash-alt"></i>
+                                    </button>
+                                </form>
+                                {% endif %}
+                            </div>
                         </td>
                     </tr>
                     {% empty %}
                     <tr>
-                        <td colspan="9" class="text-center text-muted py-4">
+                        <td colspan="10" class="text-center text-muted py-4">
                             {% translate "No operations recorded yet." %}
                         </td>
                     </tr>

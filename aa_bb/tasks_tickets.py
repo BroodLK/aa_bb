@@ -256,28 +256,15 @@ def discord_inactivity_check(user):
 
     from .models import UserStatus
 
-    status_data = (
-        UserStatus.objects.filter(user=user).values("last_discord_message_at").first()
-    )
+    last_discord_message_at = UserStatus.get_last_discord_message_at_for_user(user)
 
-    if not status_data:
-        # If no status recorded, initialize one to avoid mass ticketing on feature activation.
-        try:
-            get_discord_user_id(user)
-            UserStatus.objects.create(user=user, last_discord_message_at=timezone.now())
-        except Exception:
-            pass
-        return True
-
-    last_discord_message_at = status_data.get("last_discord_message_at")
     if not last_discord_message_at:
-        try:
-            get_discord_user_id(user)
-            UserStatus.objects.filter(user=user).update(
-                last_discord_message_at=timezone.now()
-            )
-        except Exception:
-            pass
+        # User has never sent a Discord message or none has been recorded yet.
+        # Evaluate against account registration date to provide a grace period without falsifying message records.
+        user_joined = getattr(user, "date_joined", None) or timezone.now()
+        days_since_joined = (timezone.now() - user_joined).days
+        if days_since_joined >= tcfg.discord_inactivity_days:
+            return False
         return True
 
     days_since = (timezone.now() - last_discord_message_at).days

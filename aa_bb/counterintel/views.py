@@ -15,7 +15,7 @@ from django.utils.translation import gettext_lazy as _
 from django.views.decorators.http import require_POST
 
 # AA BigBrother
-from aa_bb.models import BigBrotherConfig
+from aa_bb.models import BigBrotherConfig, UserStatus
 
 from .ingest.paps import FCRosterIngestor
 from .models import (
@@ -152,7 +152,7 @@ def member_activity(request, user_id: int):
     from aa_bb.models import UserStatus
 
     user_status = UserStatus.objects.filter(user=subject_user).first()
-    last_discord_chat = getattr(user_status, "last_discord_message_at", None)
+    last_discord_chat = UserStatus.get_last_discord_message_at_for_user(subject_user)
 
     return render(
         request,
@@ -387,7 +387,7 @@ def risk_matrix(request):
             continue
 
         main_char = getattr(getattr(u, "profile", None), "main_character", None)
-        u_status = getattr(u, "userstatus", None)
+        last_discord = UserStatus.get_last_discord_message_at_for_user(u)
 
         all_members_data.append(
             {
@@ -398,7 +398,7 @@ def risk_matrix(request):
                 "risk_tier": tier,
                 "risk_class": tier_class,
                 "anomaly_count": anomaly_count,
-                "last_discord": u_status.last_discord_message_at if u_status else None,
+                "last_discord": last_discord,
                 "factors": factors,
             }
         )
@@ -803,3 +803,35 @@ def auto_detect_comms(request, operation_id: int):
             ),
         )
     return redirect("ci:operation_timeline", operation_id=operation.id)
+
+
+@permission_required("aa_bb.can_manage_ci")
+@require_POST
+def delete_operation(request, operation_id: int):
+    """
+    Delete an operational window and cascade-clean its associated participants, objectives, and correlations.
+    """
+    operation = get_object_or_404(CIOperation, id=operation_id)
+    op_name = operation.name
+    operation.delete()
+    messages.success(request, _(f"Operation '{op_name}' was successfully deleted."))
+    return redirect("ci:operation_list")
+
+
+@permission_required("aa_bb.can_manage_ci")
+@require_POST
+def deduplicate_operations_view(request):
+    """
+    Scans and merges duplicate operations sharing the same name and time window.
+    """
+    merged_count = CIOperationService.deduplicate_operations()
+    if merged_count:
+        messages.success(
+            request,
+            _(
+                f"Successfully cleaned up and merged {merged_count} duplicate operation(s)."
+            ),
+        )
+    else:
+        messages.info(request, _("No duplicate operations found."))
+    return redirect("ci:operation_list")

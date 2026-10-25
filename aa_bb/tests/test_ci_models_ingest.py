@@ -4,6 +4,7 @@ Unit and integration tests for CI Models, Identity Resolution, and Event Ingesti
 
 # Standard Library
 from datetime import timedelta
+from unittest.mock import patch
 
 # Django
 from django.contrib.auth.models import User
@@ -355,3 +356,68 @@ class TestCIModelsAndIngest(TestCase):
         sessions = CISession.objects.filter(user=self.user1, source="mumble")
         self.assertEqual(sessions.count(), 1)
         self.assertIsNotNone(sessions.first().end_time)
+
+    @patch("aa_bb.tasks_tickets.discordbot_active", return_value=True)
+    def test_discord_last_message_resolution_and_fallback(self, mock_bot_active):
+        # AA BigBrother
+        from aa_bb.models import BigBrotherConfig, TicketToolConfig, UserStatus
+        from aa_bb.tasks_tickets import discord_inactivity_check
+
+        discord_uid = 998877665544332211
+        IdentityResolver.register_identity(
+            user=self.user1,
+            discord_id=discord_uid,
+            effective_from=self.now - timedelta(days=10),
+            is_verified=True,
+        )
+
+        # 1. Initially no message recorded
+        self.assertIsNone(UserStatus.get_last_discord_message_at_for_user(self.user1))
+
+        # 2. Ingest message through CIEvent
+        msg_time_1 = self.now - timedelta(days=2)
+        DiscordIngestor.ingest_message_event(
+            discord_user_id=discord_uid,
+            channel_id=111,
+            message_id=222,
+            timestamp=msg_time_1,
+            content_length=10,
+        )
+        resolved_ts = UserStatus.get_last_discord_message_at_for_user(self.user1)
+        self.assertEqual(resolved_ts, msg_time_1)
+
+        # 3. Out-of-order older message should not overwrite newer timestamp
+        older_msg_time = self.now - timedelta(days=5)
+        DiscordIngestor.ingest_message_event(
+            discord_user_id=discord_uid,
+            channel_id=111,
+            message_id=221,
+            timestamp=older_msg_time,
+            content_length=10,
+        )
+        resolved_ts = UserStatus.get_last_discord_message_at_for_user(self.user1)
+        self.assertEqual(resolved_ts, msg_time_1)
+
+        # 4. Fallback recovery: Delete UserStatus record, verify fallback to CIEvent restores it
+        UserStatus.objects.filter(user=self.user1).delete()
+        fallback_ts = UserStatus.get_last_discord_message_at_for_user(self.user1)
+        self.assertEqual(fallback_ts, msg_time_1)
+        self.assertTrue(UserStatus.objects.filter(user=self.user1).exists())
+
+        # 5. Inactivity check evaluation
+        tcfg = TicketToolConfig.get_solo()
+        bbcfg = BigBrotherConfig.get_solo()
+        tcfg.discord_inactivity_enabled = True
+        tcfg.discord_inactivity_days = 7
+        tcfg.save()
+        bbcfg.discord_message_tracking = True
+        bbcfg.save()
+
+        # Recent message (2 days ago < 7 days limit) -> returns True (Active)
+        self.assertTrue(discord_inactivity_check(self.user1))
+
+        # Stale message (10 days ago >= 7 days limit) -> returns False (Inactive)
+        UserStatus.objects.filter(user=self.user1).update(
+            last_discord_message_at=self.now - timedelta(days=10)
+        )
+        self.assertFalse(discord_inactivity_check(self.user1))

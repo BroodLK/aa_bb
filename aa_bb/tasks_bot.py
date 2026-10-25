@@ -800,7 +800,7 @@ class TicketCommands(commands.Cog):
             )
 
     async def _track_activity(self, message: discord.Message):
-        """Update last_discord_message_at for the author, throttled to 1h."""
+        """Update last_discord_message_at for the author, throttled to 5 minutes."""
         uid = message.author.id
         cache_key = f"aa_bb_discord_activity_{uid}"
 
@@ -809,15 +809,37 @@ class TicketCommands(commands.Cog):
             from allianceauth.services.modules.discord.models import DiscordUser
 
             # AA BigBrother
+            from aa_bb.counterintel.services.identity import IdentityResolver
             from aa_bb.models import UserStatus
 
             try:
-                du = await sync_to_async(
-                    DiscordUser.objects.select_related("user").get
-                )(uid=uid)
-                await sync_to_async(UserStatus.objects.update_or_create)(
-                    user=du.user, defaults={"last_discord_message_at": timezone.now()}
+                msg_ts = getattr(message, "created_at", None) or timezone.now()
+                if timezone.is_naive(msg_ts):
+                    msg_ts = timezone.make_aware(msg_ts)
+
+                user = await sync_to_async(IdentityResolver.resolve_user_by_discord)(
+                    uid, at_time=msg_ts
                 )
+                if not user:
+                    du = await sync_to_async(
+                        DiscordUser.objects.filter(uid=uid).select_related("user").first
+                    )()
+                    if du and du.user:
+                        user = du.user
+
+                if user:
+
+                    def _update_status():
+                        status, _ = UserStatus.objects.get_or_create(user=user)
+                        if (
+                            not status.last_discord_message_at
+                            or msg_ts > status.last_discord_message_at
+                        ):
+                            status.last_discord_message_at = msg_ts
+                            status.save(update_fields=["last_discord_message_at"])
+
+                    await sync_to_async(_update_status)()
+
                 try:
                     # AA BigBrother
                     from aa_bb.counterintel.ingest.discord import DiscordIngestor
@@ -826,16 +848,13 @@ class TicketCommands(commands.Cog):
                         discord_user_id=uid,
                         channel_id=getattr(message.channel, "id", 0),
                         message_id=getattr(message, "id", 0),
-                        timestamp=timezone.now(),
+                        timestamp=msg_ts,
                         content_length=len(getattr(message, "content", "") or ""),
                     )
                 except Exception:
                     pass
-                # Cache for 1 hour to avoid excessive DB writes
-                cache.set(cache_key, True, 3600)
-            except DiscordUser.DoesNotExist:
-                # Not a linked user, ignore
-                pass
+                # Cache for 5 minutes (300s) to avoid excessive DB writes while maintaining freshness
+                cache.set(cache_key, True, 300)
             except Exception:
                 logger.exception("Failed to track Discord activity for UID %s", uid)
 

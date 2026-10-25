@@ -56,6 +56,164 @@ class CIOperationService:
         )
 
     @classmethod
+    def find_or_create_operation(
+        cls,
+        name: str,
+        start_time,
+        end_time=None,
+        operation_type: str = "strategic",
+        fleet_commander: User = None,
+        secrecy_level: str = "standard",
+        notes: str = "",
+        external_tag: str = "",
+    ) -> tuple[CIOperation, bool]:
+        """
+        Finds an existing matching operation or creates a new one, preventing duplicate
+        operations created by differing sync sources, signal handlers, or microsecond clock jitter.
+        """
+        if timezone.is_naive(start_time):
+            start_time = timezone.make_aware(start_time)
+        if end_time and timezone.is_naive(end_time):
+            end_time = timezone.make_aware(end_time)
+
+        cleaned_name = name.strip()
+        op = None
+
+        # 1. Match by external tag in notes if provided (e.g. "AFAT FatLink #123")
+        if external_tag:
+            op = CIOperation.objects.filter(notes__icontains=external_tag).first()
+
+        # 2. Match by case-insensitive name within a 2-hour window of start_time
+        if not op:
+            window_start = start_time - timedelta(hours=2)
+            window_end = start_time + timedelta(hours=2)
+            candidates = CIOperation.objects.filter(
+                name__iexact=cleaned_name,
+                start_time__gte=window_start,
+                start_time__lte=window_end,
+            ).order_by("id")
+
+            if candidates.exists():
+                op = candidates.first()
+
+        # 3. If found, update attributes if new information is provided
+        if op:
+            updated_fields = []
+            if end_time and op.end_time != end_time:
+                op.end_time = end_time
+                updated_fields.append("end_time")
+            if fleet_commander and not op.fleet_commander:
+                op.fleet_commander = fleet_commander
+                updated_fields.append("fleet_commander")
+            if external_tag and external_tag not in op.notes:
+                op.notes = f"{op.notes}\n{external_tag}".strip()
+                updated_fields.append("notes")
+            if updated_fields:
+                op.save(update_fields=updated_fields)
+            return op, False
+
+        # 4. Otherwise create a new operation
+        op = CIOperation.objects.create(
+            name=cleaned_name,
+            start_time=start_time,
+            end_time=end_time,
+            operation_type=operation_type,
+            fleet_commander=fleet_commander,
+            secrecy_level=secrecy_level,
+            notes=notes or external_tag,
+        )
+        return op, True
+
+    @classmethod
+    def deduplicate_operations(cls) -> int:
+        """
+        Scans for duplicate operations (matching name within a 2-hour window) and merges
+        participants, objectives, and correlations into a single authoritative record,
+        pruning orphan duplicate operations.
+        Returns the count of merged/deleted duplicate operations.
+        """
+        from .correlation import CorrelationEngine
+
+        all_ops = list(CIOperation.objects.all().order_by("start_time", "id"))
+        merged_count = 0
+        seen_op_ids = set()
+
+        for op in all_ops:
+            if op.id in seen_op_ids:
+                continue
+
+            window_start = op.start_time - timedelta(hours=2)
+            window_end = op.start_time + timedelta(hours=2)
+
+            duplicates = [
+                dup
+                for dup in all_ops
+                if dup.id != op.id
+                and dup.id not in seen_op_ids
+                and dup.name.strip().lower() == op.name.strip().lower()
+                and window_start <= dup.start_time <= window_end
+            ]
+
+            if not duplicates:
+                continue
+
+            # Pick the best primary record: prefer one with end_time, then most participants, then lowest id
+            cluster = [op] + duplicates
+            primary = max(
+                cluster,
+                key=lambda o: (
+                    1 if o.end_time else 0,
+                    o.participants.count(),
+                    -o.id,
+                ),
+            )
+
+            for other in cluster:
+                if other.id == primary.id:
+                    continue
+
+                seen_op_ids.add(other.id)
+
+                # Merge end_time
+                if not primary.end_time and other.end_time:
+                    primary.end_time = other.end_time
+
+                # Merge FC
+                if not primary.fleet_commander and other.fleet_commander:
+                    primary.fleet_commander = other.fleet_commander
+
+                # Merge participants
+                for p in other.participants.all():
+                    if not primary.participants.filter(
+                        character_id=p.character_id
+                    ).exists():
+                        p.operation = primary
+                        p.save(update_fields=["operation"])
+
+                # Merge objectives
+                for obj in other.objectives.all():
+                    obj.operation = primary
+                    obj.save(update_fields=["operation"])
+
+                # Merge correlations
+                for corr in other.correlations.all():
+                    corr.operation = primary
+                    corr.save(update_fields=["operation"])
+
+                # Merge notes
+                if other.notes and other.notes not in primary.notes:
+                    primary.notes = f"{primary.notes}\n{other.notes}".strip()
+
+                other.delete()
+                merged_count += 1
+
+            primary.save()
+            CorrelationEngine.correlate_operation(primary)
+            seen_op_ids.add(primary.id)
+
+        return merged_count
+
+    @classmethod
     def add_objective(
         cls,
         operation: CIOperation,

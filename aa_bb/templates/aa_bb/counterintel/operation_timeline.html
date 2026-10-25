@@ -53,6 +53,11 @@
                     <button class="btn btn-outline-success btn-sm" type="button" data-bs-toggle="modal" data-bs-target="#autoDetectCommsModal" title="{% translate 'Auto-detect attendees from active comms channels' %}">
                         <i class="fas fa-magic me-1"></i>{% translate "Auto-Detect Comms" %}
                     </button>
+                    {% if perms.aa_bb.can_manage_ci %}
+                    <button class="btn btn-outline-danger btn-sm" type="button" onclick="if(confirm('{% translate "Are you sure you want to permanently delete this operation and all its findings?" %}')) { document.getElementById('deleteOperationForm').submit(); }" title="{% translate 'Delete Operation' %}">
+                        <i class="fas fa-trash-alt me-1"></i>{% translate "Delete" %}
+                    </button>
+                    {% endif %}
                     <a href="{% url 'ci:operation_list' %}" class="btn btn-outline-light btn-sm">
                         <i class="fas fa-arrow-left me-1"></i>{% translate "Back" %}
                     </a>
@@ -61,6 +66,12 @@
         </div>
     </div>
 </div>
+
+{% if perms.aa_bb.can_manage_ci %}
+<form id="deleteOperationForm" method="post" action="{% url 'ci:delete_operation' operation.id %}" class="d-none">
+    {% csrf_token %}
+</form>
+{% endif %}
 
 <!-- Edit Operation Modal -->
 <div class="modal fade" id="editOperationModal" tabindex="-1" aria-labelledby="editOperationModalLabel" aria-hidden="true">
@@ -129,9 +140,18 @@
                         </div>
                     </div>
                 </div>
-                <div class="modal-footer bg-light">
-                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">{% translate "Cancel" %}</button>
-                    <button type="submit" class="btn btn-primary btn-sm"><i class="fas fa-save me-1"></i>{% translate "Save Changes" %}</button>
+                <div class="modal-footer bg-light d-flex justify-content-between">
+                    <div>
+                        {% if perms.aa_bb.can_manage_ci %}
+                        <button type="button" class="btn btn-outline-danger btn-sm" onclick="if(confirm('{% translate "Are you sure you want to permanently delete this operation and all its findings?" %}')) { document.getElementById('deleteOperationForm').submit(); }">
+                            <i class="fas fa-trash-alt me-1"></i>{% translate "Delete Operation" %}
+                        </button>
+                        {% endif %}
+                    </div>
+                    <div>
+                        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">{% translate "Cancel" %}</button>
+                        <button type="submit" class="btn btn-primary btn-sm"><i class="fas fa-save me-1"></i>{% translate "Save Changes" %}</button>
+                    </div>
                 </div>
             </form>
         </div>

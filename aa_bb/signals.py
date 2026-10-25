@@ -1202,9 +1202,9 @@ try:
         try:
             # AA BigBrother
             from aa_bb.counterintel.ingest.paps import FCRosterIngestor
-            from aa_bb.counterintel.models import CIOperation
             from aa_bb.counterintel.services.correlation import CorrelationEngine
             from aa_bb.counterintel.services.identity import IdentityResolver
+            from aa_bb.counterintel.services.operations import CIOperationService
 
             fleet_name = (
                 getattr(instance, "fleet", None) or f"AFAT Fleet #{instance.id}"
@@ -1251,19 +1251,15 @@ try:
             elif hasattr(instance, "creator") and instance.creator:
                 fc_user = instance.creator
 
-            op, _ = CIOperation.objects.get_or_create(
+            op, _ = CIOperationService.find_or_create_operation(
                 name=str(fleet_name),
                 start_time=start_time,
-                defaults={
-                    "end_time": end_time,
-                    "operation_type": "strategic",
-                    "fleet_commander": fc_user,
-                    "notes": f"Synced automatically from AFAT FatLink #{instance.id}",
-                },
+                end_time=end_time,
+                operation_type="strategic",
+                fleet_commander=fc_user,
+                notes=f"Synced automatically from AFAT FatLink #{instance.id}",
+                external_tag=f"AFAT FatLink #{instance.id}",
             )
-            if end_time and op.end_time != end_time:
-                op.end_time = end_time
-                op.save(update_fields=["end_time"])
 
             FCRosterIngestor.ingest_afat_fleet(op, instance.id)
             CorrelationEngine.correlate_operation(op)
@@ -1291,26 +1287,20 @@ try:
         try:
             # AA BigBrother
             from aa_bb.counterintel.ingest.paps import FCRosterIngestor
-            from aa_bb.counterintel.models import CIOperation
             from aa_bb.counterintel.services.correlation import CorrelationEngine
+            from aa_bb.counterintel.services.operations import CIOperationService
 
-            op, _ = CIOperation.objects.get_or_create(
+            op, _ = CIOperationService.find_or_create_operation(
                 name=instance.fleet_name or f"AFAT Fleet #{instance.id}",
                 start_time=instance.start_time,
-                defaults={
-                    "end_time": getattr(instance, "end_time", None),
-                    "operation_type": "strategic",
-                    "fleet_commander": (
-                        instance.fleet_commander.user
-                        if instance.fleet_commander
-                        else None
-                    ),
-                    "notes": f"Synced automatically from AFAT Fleet #{instance.id}",
-                },
+                end_time=getattr(instance, "end_time", None),
+                operation_type="strategic",
+                fleet_commander=(
+                    instance.fleet_commander.user if instance.fleet_commander else None
+                ),
+                notes=f"Synced automatically from AFAT Fleet #{instance.id}",
+                external_tag=f"AFAT Fleet #{instance.id}",
             )
-            if getattr(instance, "end_time", None) and op.end_time != instance.end_time:
-                op.end_time = instance.end_time
-                op.save(update_fields=["end_time"])
 
             FCRosterIngestor.ingest_afat_fleet(op, instance.id)
             CorrelationEngine.correlate_operation(op)

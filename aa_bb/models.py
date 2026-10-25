@@ -257,6 +257,43 @@ class UserStatus(models.Model):
     last_discord_message_at = models.DateTimeField(null=True, blank=True)
     updated = models.DateTimeField(auto_now=True)
 
+    @classmethod
+    def get_last_discord_message_at_for_user(cls, user):
+        """
+        Returns the timestamp of the last Discord message sent by the user,
+        checking UserStatus and falling back to CIEvent records if needed.
+        """
+        if not user:
+            return None
+        status = cls.objects.filter(user=user).first()
+        if status and status.last_discord_message_at:
+            return status.last_discord_message_at
+
+        # Fallback to CIEvent records
+        try:
+            last_event = (
+                CIEvent.objects.filter(
+                    user=user,
+                    source="discord",
+                    source_event_id__startswith="discord:msg:",
+                )
+                .order_by("-timestamp")
+                .first()
+            )
+            if last_event:
+                if status:
+                    status.last_discord_message_at = last_event.timestamp
+                    status.save(update_fields=["last_discord_message_at"])
+                else:
+                    cls.objects.create(
+                        user=user, last_discord_message_at=last_event.timestamp
+                    )
+                return last_event.timestamp
+        except Exception:
+            pass
+
+        return None
+
     class Meta:
         verbose_name = _("User Status")
         verbose_name_plural = _("User Statuses")

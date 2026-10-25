@@ -109,10 +109,13 @@ class DiscordIngestor:
                 # AA BigBrother
                 from aa_bb.models import UserStatus
 
-                UserStatus.objects.update_or_create(
-                    user=user,
-                    defaults={"last_discord_message_at": ts},
-                )
+                status, _ = UserStatus.objects.get_or_create(user=user)
+                if (
+                    not status.last_discord_message_at
+                    or ts > status.last_discord_message_at
+                ):
+                    status.last_discord_message_at = ts
+                    status.save(update_fields=["last_discord_message_at"])
             except Exception:
                 pass
 

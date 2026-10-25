@@ -151,19 +151,20 @@ class BaselineEngine:
         )
 
         # 2. Discord Chat Inactivity factor (weight: 0.20)
-        user_status = getattr(user, "userstatus", None)
+        # AA BigBrother
+        from aa_bb.models import UserStatus
+
+        last_discord = UserStatus.get_last_discord_message_at_for_user(user)
         discord_factor = 0.0
-        if user_status and user_status.last_discord_message_at:
-            days_since_msg = (
-                timezone.now() - user_status.last_discord_message_at
-            ).total_seconds() / 86400.0
+        if last_discord:
+            days_since_msg = (timezone.now() - last_discord).total_seconds() / 86400.0
             if days_since_msg >= 30:
                 discord_factor = 0.8
             elif days_since_msg >= 14:
                 discord_factor = 0.5
             elif days_since_msg >= 7:
                 discord_factor = 0.25
-        elif user_status:
+        else:
             # Never sent a message
             discord_factor = 0.6
 

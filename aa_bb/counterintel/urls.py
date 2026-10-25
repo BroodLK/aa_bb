@@ -23,6 +23,16 @@ urlpatterns = [
         name="edit_operation",
     ),
     path(
+        "operations/<int:operation_id>/delete/",
+        views.delete_operation,
+        name="delete_operation",
+    ),
+    path(
+        "operations/deduplicate/",
+        views.deduplicate_operations_view,
+        name="deduplicate_operations",
+    ),
+    path(
         "operations/<int:operation_id>/objectives/add/",
         views.add_objective,
         name="add_objective",

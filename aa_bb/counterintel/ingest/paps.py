@@ -15,6 +15,7 @@ from django.utils import timezone
 
 from ..models import CIEvent, CIOperation, CIOperationParticipant, CISession
 from ..services.identity import IdentityResolver
+from ..services.operations import CIOperationService
 
 
 class FCRosterIngestor:
@@ -465,22 +466,19 @@ class FCRosterIngestor:
                 elif hasattr(fl, "creator") and fl.creator:
                     fc_user = fl.creator
 
-                op, _ = CIOperation.objects.get_or_create(
+                op, _ = CIOperationService.find_or_create_operation(
                     name=str(fleet_name),
                     start_time=start_time,
-                    defaults={
-                        "end_time": end_time,
-                        "operation_type": "strategic",
-                        "fleet_commander": fc_user,
-                        "notes": f"Synced automatically from AFAT FatLink #{fl.id}",
-                    },
+                    end_time=end_time,
+                    operation_type="strategic",
+                    fleet_commander=fc_user,
+                    notes=f"Synced automatically from AFAT FatLink #{fl.id}",
+                    external_tag=f"AFAT FatLink #{fl.id}",
                 )
-                if end_time and op.end_time != end_time:
-                    op.end_time = end_time
-                    op.save(update_fields=["end_time"])
 
                 cls.ingest_afat_fleet(op, fl.id)
-                synced_ops.append(op)
+                if op not in synced_ops:
+                    synced_ops.append(op)
         except Exception:
             pass
 
@@ -491,21 +489,24 @@ class FCRosterIngestor:
 
             recent_fleets = AFATFleet.objects.filter(start_time__gte=cutoff)
             for f in recent_fleets:
-                op, _ = CIOperation.objects.get_or_create(
+                op, _ = CIOperationService.find_or_create_operation(
                     name=f.fleet_name or f"AFAT Fleet #{f.id}",
                     start_time=f.start_time,
-                    defaults={
-                        "end_time": getattr(f, "end_time", None),
-                        "operation_type": "strategic",
-                        "fleet_commander": (
-                            f.fleet_commander.user if f.fleet_commander else None
-                        ),
-                        "notes": f"Synced automatically from AFAT Fleet #{f.id}",
-                    },
+                    end_time=getattr(f, "end_time", None),
+                    operation_type="strategic",
+                    fleet_commander=(
+                        f.fleet_commander.user if f.fleet_commander else None
+                    ),
+                    notes=f"Synced automatically from AFAT Fleet #{f.id}",
+                    external_tag=f"AFAT Fleet #{f.id}",
                 )
                 cls.ingest_afat_fleet(op, f.id)
-                synced_ops.append(op)
+                if op not in synced_ops:
+                    synced_ops.append(op)
         except Exception:
             pass
+
+        # Auto-deduplicate any legacy or concurrently created duplicate operations
+        CIOperationService.deduplicate_operations()
 
         return synced_ops

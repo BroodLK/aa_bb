@@ -130,34 +130,34 @@ class CIAgentService:
             # AA BigBrother
             from aa_bb.models import UserStatus
 
-            status = UserStatus.objects.filter(user=user).first()
-            if status and status.last_discord_message_at:
+            last_msg_at = UserStatus.get_last_discord_message_at_for_user(user)
+            if last_msg_at:
                 if operation and operation.start_time:
                     op_start = operation.start_time - timedelta(hours=2)
                     op_end = (operation.end_time or operation.start_time) + timedelta(
                         hours=2
                     )
-                    if op_start <= status.last_discord_message_at <= op_end:
+                    if op_start <= last_msg_at <= op_end:
                         explanations.append(
                             {
                                 "category": "Text Communication Presence",
                                 "badge": "Active Discord Chat",
                                 "badge_class": "bg-success text-white",
-                                "text": f"Member was active in Discord text chat near this operational window ({status.last_discord_message_at:%Y-%m-%d %H:%M} UTC), indicating continued organizational engagement.",
+                                "text": f"Member was active in Discord text chat near this operational window ({last_msg_at:%Y-%m-%d %H:%M} UTC), indicating continued organizational engagement.",
                             }
                         )
                 else:
-                    days_ago = (timezone.now() - status.last_discord_message_at).days
+                    days_ago = (timezone.now() - last_msg_at).days
                     if days_ago <= 7:
                         explanations.append(
                             {
                                 "category": "Text Communication Presence",
                                 "badge": "Recent Discord Activity",
                                 "badge_class": "bg-info text-dark",
-                                "text": f"Member has recent Discord text activity ({status.last_discord_message_at:%Y-%m-%d %H:%M} UTC), confirming active text communication.",
+                                "text": f"Member has recent Discord text activity ({last_msg_at:%Y-%m-%d %H:%M} UTC), confirming active text communication.",
                             }
                         )
-            elif status and not status.last_discord_message_at:
+            else:
                 explanations.append(
                     {
                         "category": "Communication Profile",
@@ -258,10 +258,10 @@ class CIAgentService:
             # AA BigBrother
             from aa_bb.models import UserStatus
 
-            status = UserStatus.objects.filter(user=user).first()
-            if status and status.last_discord_message_at:
+            last_msg_at = UserStatus.get_last_discord_message_at_for_user(user)
+            if last_msg_at:
                 lines.append(
-                    f"- Discord Text Chat Activity: Last message sent `{status.last_discord_message_at:%Y-%m-%d %H:%M:%S UTC}`"
+                    f"- Discord Text Chat Activity: Last message sent `{last_msg_at:%Y-%m-%d %H:%M:%S UTC}`"
                 )
             else:
                 lines.append(
@@ -373,8 +373,10 @@ class CIAgentService:
             )
 
         # UserStatus / Discord activity
-        user_status = getattr(subject_user, "userstatus", None)
-        last_discord = user_status.last_discord_message_at if user_status else None
+        # AA BigBrother
+        from aa_bb.models import UserStatus
+
+        last_discord = UserStatus.get_last_discord_message_at_for_user(subject_user)
 
         # Overall composite risk score
         risk_score, factors = BaselineEngine.calculate_user_risk_score(
