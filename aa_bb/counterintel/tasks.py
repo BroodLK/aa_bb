@@ -53,7 +53,7 @@ def run_counterintel_pipeline_task(hours: int = 48):
     correlates the complete recent window.
     """
     afat_result = sync_recent_afat_fleets_task(hours=hours)
-    eve_activity_count = EveActivityIngestor.ingest_latest_logoffs()
+    eve_activity_count = EveActivityIngestor.ingest_latest_activity()
     mumble_result = ingest_mumble_logs_task()
     correlation_result = run_scheduled_ci_correlation(hours=hours)
     return {

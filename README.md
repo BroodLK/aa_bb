@@ -429,6 +429,15 @@ BigBrother integrates directly with **aa-contacts** to provide continuous hostil
 
 BigBrother provides an Operational Intelligence & Counterintelligence (CI) system that performs multi-source activity correlation across communication channels (Mumble, Discord), fleet operations (authoritative AFAT/FC rosters), and combat telemetry (zKillboard).
 
+#### Discord activity prerequisite
+
+Counterintel Discord message activity depends on **Discord Message Activity
+Tracking** being enabled under the main BigBrother settings. When enabled,
+the Discord bot records privacy-preserving message metadata (timestamp,
+channel, message ID, and content length) for correlation; message content is
+not stored. Discord voice presence requires the bot voice-state integration as
+well as this setting.
+
 ### Capabilities
 
 - **Operational Timeline Reconstruction**: Synchronizes comms presence, fleet pings, and combat events across discrete operational windows.

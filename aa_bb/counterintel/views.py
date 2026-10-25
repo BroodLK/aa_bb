@@ -20,6 +20,7 @@ from aa_bb.models import BigBrotherConfig, UserStatus
 from .ingest.paps import FCRosterIngestor
 from .models import (
     CICorrelation,
+    CIEvent,
     CIIdentity,
     CIInvestigation,
     CIOperation,
@@ -136,6 +137,9 @@ def member_activity(request, user_id: int):
         "-effective_from"
     )
     sessions = CISession.objects.filter(user=subject_user).order_by("-start_time")[:50]
+    eve_activity = CIEvent.objects.filter(
+        user=subject_user, source="eve_activity"
+    ).order_by("-timestamp")[:50]
     participations = (
         CIOperationParticipant.objects.filter(user=subject_user)
         .select_related("operation")
@@ -161,6 +165,7 @@ def member_activity(request, user_id: int):
             "subject_user": subject_user,
             "identities": identities,
             "sessions": sessions,
+            "eve_activity": eve_activity,
             "participations": participations,
             "correlations": correlations,
             "overrides": overrides,

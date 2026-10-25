@@ -26,8 +26,8 @@ class CIOperationService:
     and operational timeline reconstruction across all intelligence sources.
     """
 
-    DEFAULT_PRE_WINDOW_MINUTES = 30
-    DEFAULT_POST_WINDOW_MINUTES = 30
+    DEFAULT_PRE_WINDOW_MINUTES = 15
+    DEFAULT_POST_WINDOW_MINUTES = 15
 
     @classmethod
     def create_operation(
@@ -307,6 +307,18 @@ class CIOperationService:
         for ev in events_qs:
             if ev.user:
                 unique_users_seen.add(ev.user_id)
+            main_character = getattr(
+                getattr(getattr(ev.user, "profile", None), "main_character", None),
+                "character_name",
+                None,
+            )
+            tracked_character = (ev.payload or {}).get("character_name")
+            member_label = main_character or (
+                ev.user.username if ev.user else "Unknown"
+            )
+            if tracked_character and tracked_character != main_character:
+                member_label = f"{member_label} ({tracked_character})"
+
             events_list.append(
                 {
                     "id": ev.id,
@@ -314,7 +326,7 @@ class CIOperationService:
                     "source_event_id": ev.source_event_id,
                     "timestamp": ev.timestamp,
                     "user_id": ev.user_id,
-                    "username": ev.user.username if ev.user else "Unknown",
+                    "username": member_label,
                     "payload": ev.payload,
                 }
             )
@@ -332,12 +344,17 @@ class CIOperationService:
         sessions_list = []
         for s in sessions_qs:
             unique_users_seen.add(s.user_id)
+            main_character = getattr(
+                getattr(getattr(s.user, "profile", None), "main_character", None),
+                "character_name",
+                None,
+            )
             sessions_list.append(
                 {
                     "id": s.id,
                     "source": s.source,
                     "user_id": s.user_id,
-                    "username": s.user.username,
+                    "username": main_character or s.user.username,
                     "start_time": s.start_time,
                     "end_time": s.end_time,
                     "channel_name": s.channel_name,
@@ -399,6 +416,31 @@ class CIOperationService:
                 continue
             seen_char_ids.add(p.character_id)
             cname = char_names_map.get(p.character_id) or p.user.username
+            login_events = [
+                ev
+                for ev in events_list
+                if ev["source"] == "eve_activity"
+                and ev["payload"].get("character_id") == p.character_id
+                and ev["payload"].get("activity_type") == "login"
+            ]
+            logoff_events = [
+                ev
+                for ev in events_list
+                if ev["source"] == "eve_activity"
+                and ev["payload"].get("character_id") == p.character_id
+                and ev["payload"].get("activity_type") == "logoff"
+            ]
+            member_sessions = [s for s in sessions_list if s["user_id"] == p.user_id]
+            killmail_events = [
+                ev
+                for ev in events_list
+                if ev["source"] == "zkill"
+                and (
+                    p.character_id
+                    in (ev["payload"].get("attacker_character_ids") or [])
+                    or ev["payload"].get("victim_character_id") == p.character_id
+                )
+            ]
             participants_list.append(
                 {
                     "id": p.id,
@@ -409,6 +451,43 @@ class CIOperationService:
                     "confirmed_by_fc": p.confirmed_by_fc,
                     "recorded_at": p.recorded_at,
                     "role_context": user_role_tags.get(p.user_id, ["Combat Fleet"]),
+                    "logged_in_near_fleet": bool(login_events),
+                    "logged_off_near_fleet": bool(logoff_events),
+                    "joined_comms": bool(member_sessions),
+                    "joined_fleet": True,
+                    "on_killmail": bool(killmail_events),
+                }
+            )
+
+        # Add comms-only users to the roster summary so officers can see them
+        # without confusing them with FC-confirmed fleet participants.
+        participant_user_ids = {p["user_id"] for p in participants_list}
+        for session in sessions_list:
+            if session["user_id"] in participant_user_ids:
+                continue
+            user = (
+                User.objects.filter(id=session["user_id"])
+                .select_related("profile__main_character")
+                .first()
+            )
+            if not user:
+                continue
+            main = getattr(user.profile.main_character, "character_name", None)
+            participants_list.append(
+                {
+                    "id": None,
+                    "character_id": None,
+                    "character_name": main or user.username,
+                    "user_id": user.id,
+                    "username": user.username,
+                    "confirmed_by_fc": False,
+                    "recorded_at": session["start_time"],
+                    "role_context": ["Comms only"],
+                    "logged_in_near_fleet": False,
+                    "logged_off_near_fleet": False,
+                    "joined_comms": True,
+                    "joined_fleet": False,
+                    "on_killmail": False,
                 }
             )
 

@@ -385,16 +385,23 @@
                                     <span class="badge bg-secondary me-1" style="font-size: 0.7rem;">{{ role }}</span>
                                 {% endfor %}
                             </div>
+                            <div class="mt-1">
+                                {% if p.logged_in_near_fleet %}<span class="badge bg-warning text-dark" title="Logged in within the 15-minute pre/post fleet window">Login near fleet</span>{% endif %}
+                                {% if p.logged_off_near_fleet %}<span class="badge bg-secondary" title="Logged off within the 15-minute pre/post fleet window">Logoff near fleet</span>{% endif %}
+                                {% if p.joined_comms %}<span class="badge bg-info text-dark">Comms</span>{% else %}<span class="badge bg-light text-dark">No comms</span>{% endif %}
+                                {% if p.on_killmail %}<span class="badge bg-danger">Killmail</span>{% else %}<span class="badge bg-light text-dark">No killmail</span>{% endif %}
+                            </div>
                             <small class="text-muted d-block font-monospace" style="font-size: 0.75rem;">Char ID: {{ p.character_id }}</small>
                         </div>
                         <div class="d-flex align-items-center gap-2">
-                            <span class="badge bg-success" title="{% translate 'Confirmed FC Attendee' %}"><i class="fas fa-check"></i></span>
-                            <form method="post" action="{% url 'ci:remove_participant' operation.id p.id %}" class="d-inline" onsubmit="return confirm('{% translate 'Remove pilot from roster?' %}');">
+                            {% if p.joined_fleet and p.joined_comms == False %}<span class="badge bg-warning text-dark">Fleet, no comms</span>{% endif %}
+                            {% if p.confirmed_by_fc %}<span class="badge bg-success" title="{% translate 'Confirmed FC Attendee' %}"><i class="fas fa-check"></i></span>{% endif %}
+                            {% if p.id %}<form method="post" action="{% url 'ci:remove_participant' operation.id p.id %}" class="d-inline" onsubmit="return confirm('{% translate 'Remove pilot from roster?' %}');">
                                 {% csrf_token %}
                                 <button type="submit" class="btn btn-link btn-sm text-danger p-0 ms-1" title="{% translate 'Remove pilot from roster' %}">
                                     <i class="fas fa-times"></i>
                                 </button>
-                            </form>
+                            </form>{% endif %}
                         </div>
                     </li>
                     {% empty %}
@@ -495,6 +502,8 @@
                                     <span class="badge bg-danger">zKill</span>
                                 {% elif ev.source == 'pap' %}
                                     <span class="badge bg-success">PAP</span>
+                                {% elif ev.source == 'eve_activity' %}
+                                    <span class="badge bg-warning text-dark">EVE Activity</span>
                                 {% else %}
                                     <span class="badge bg-secondary">{{ ev.source }}</span>
                                 {% endif %}
@@ -526,6 +535,8 @@
                                     Killmail: <strong>#{{ ev.payload.killmail_id }}</strong> | Sys: {{ ev.payload.solar_system_id }}
                                 {% elif ev.source == 'pap' %}
                                     FC Roster credited | Char: {{ ev.payload.character_id }}
+                                {% elif ev.source == 'eve_activity' %}
+                                    <strong>{{ ev.payload.activity_type|title }}</strong> observed | Character: {{ ev.payload.character_name|default:ev.payload.character_id }}
                                 {% else %}
                                     {{ ev.source_event_id }}
                                 {% endif %}

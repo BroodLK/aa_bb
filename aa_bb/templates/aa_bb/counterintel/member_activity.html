@@ -35,6 +35,31 @@
         <!-- Discord Chat Activity Card -->
         <div class="card mb-3">
             <div class="card-header bg-dark text-white">
+                <h6 class="mb-0"><i class="fas fa-gamepad me-2"></i>{% translate "EVE Login Activity" %}</h6>
+            </div>
+            <div class="card-body p-0" style="max-height: 260px; overflow-y: auto;">
+                <table class="table table-sm table-hover mb-0">
+                    <thead class="table-light">
+                        <tr><th>{% translate "Activity" %}</th><th>{% translate "Character" %}</th><th>{% translate "Time (UTC)" %}</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for event in eve_activity %}
+                        <tr>
+                            <td><span class="badge bg-success">{{ event.payload.activity_type|title }} observed</span></td>
+                            <td>{{ event.payload.character_name|default:event.payload.character_id }}</td>
+                            <td>{{ event.timestamp|date:"Y-m-d H:i:s" }}</td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="3" class="text-center text-muted py-3">{% translate "No EVE activity snapshots recorded." %}</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                <small class="text-muted d-block px-3 pb-2">{% translate "These timestamps come from CorpTools CharacterAudit refreshes and represent the latest observed login or logoff for each character." %}</small>
+            </div>
+        </div>
+
+        <div class="card mb-3">
+            <div class="card-header bg-dark text-white">
                 <h6 class="mb-0"><i class="fab fa-discord me-2"></i>{% translate "Discord Text Activity" %}</h6>
             </div>
             <div class="card-body">
