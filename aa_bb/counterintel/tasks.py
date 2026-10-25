@@ -43,6 +43,24 @@ def sync_recent_afat_fleets_task(hours: int = 48):
     return f"Synced {len(synced_ops)} AFAT fleets."
 
 
+@shared_task(time_limit=3600)
+def run_counterintel_pipeline_task(hours: int = 48):
+    """Refresh live telemetry sources and rebuild recent correlations.
+
+    Discord events are written by the Discord bot as they happen. This task
+    consumes those normalized events after refreshing AFAT and Mumble, then
+    correlates the complete recent window.
+    """
+    afat_result = sync_recent_afat_fleets_task(hours=hours)
+    mumble_result = ingest_mumble_logs_task()
+    correlation_result = run_scheduled_ci_correlation(hours=hours)
+    return {
+        "afat": afat_result,
+        "mumble": mumble_result,
+        "correlation": correlation_result,
+    }
+
+
 @shared_task(time_limit=1800)
 def ingest_mumble_logs_task(log_file_path: str = None):
     """
@@ -154,11 +172,11 @@ def replay_historical_operation_task(
 
 
 @shared_task(time_limit=1800)
-def run_scheduled_ci_correlation():
+def run_scheduled_ci_correlation(hours: int = 48):
     """
     Periodic job checking recent operations within the last 48 hours and triggering correlation.
     """
-    cutoff = timezone.now() - timedelta(hours=48)
+    cutoff = timezone.now() - timedelta(hours=hours)
     recent_ops = CIOperation.objects.filter(start_time__gte=cutoff)
     processed = 0
     for op in recent_ops:

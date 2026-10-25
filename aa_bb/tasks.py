@@ -45,6 +45,7 @@ from .counterintel.tasks import (  # noqa: F401
     correlate_operation_task,
     ingest_mumble_logs_task,
     replay_historical_operation_task,
+    run_counterintel_pipeline_task,
     run_scheduled_ci_correlation,
     sync_recent_afat_fleets_task,
 )

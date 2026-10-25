@@ -9,6 +9,11 @@ prefer static CELERY_BEAT_SCHEDULE definitions can reuse this module.
 from celery.schedules import crontab
 
 CELERY_BEAT_SCHEDULE = {
+    "CI-refresh-and-correlate-live-telemetry": {
+        "task": "aa_bb.counterintel.tasks.run_counterintel_pipeline_task",
+        "schedule": crontab(minute="*/5"),
+        "kwargs": {"hours": 48},
+    },
     "BB-run-regular-updates-every-hour": {
         "task": "aa_bb.tasks.BB_run_regular_updates",
         "schedule": crontab(minute=0, hour="*"),  # Every hour on the hour
