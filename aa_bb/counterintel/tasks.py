@@ -14,6 +14,7 @@ from celery import shared_task
 from django.conf import settings
 from django.utils import timezone
 
+from .ingest.eve_activity import EveActivityIngestor
 from .ingest.mumble import MumbleLogIngestor
 from .ingest.paps import FCRosterIngestor
 from .ingest.zkill import ZKillIngestor
@@ -52,10 +53,12 @@ def run_counterintel_pipeline_task(hours: int = 48):
     correlates the complete recent window.
     """
     afat_result = sync_recent_afat_fleets_task(hours=hours)
+    eve_activity_count = EveActivityIngestor.ingest_latest_logoffs()
     mumble_result = ingest_mumble_logs_task()
     correlation_result = run_scheduled_ci_correlation(hours=hours)
     return {
         "afat": afat_result,
+        "eve_activity_events": eve_activity_count,
         "mumble": mumble_result,
         "correlation": correlation_result,
     }
