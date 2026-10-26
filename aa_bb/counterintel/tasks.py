@@ -77,6 +77,7 @@ def ingest_mumble_logs_task(log_file_path: str = None):
     # Configured settings
     for setting_key in [
         "MUMBLE_AUTHENTICATOR_LOG_PATH",
+        "MUMBLE_SERVER_LOG_PATH",
         "MUMBLE_LOG_PATH",
         "MUMBLE_LOG_FILE",
     ]:
@@ -87,7 +88,12 @@ def ingest_mumble_logs_task(log_file_path: str = None):
     # Standard Alliance Auth installation paths
     base_dir = getattr(settings, "BASE_DIR", "")
     if base_dir:
-        for fname in ["mumble_authenticator.log", "mumble.log", "authenticator.log"]:
+        for fname in [
+            "mumble_authenticator.log",
+            "mumble-server.log",
+            "mumble.log",
+            "authenticator.log",
+        ]:
             p = os.path.join(base_dir, "log", fname)
             if p not in candidate_paths:
                 candidate_paths.append(p)

@@ -24,6 +24,17 @@ class MumbleLogIngestor:
 
     # Regex patterns for various Mumble authenticator/server log lines
     PATTERNS = [
+        # Alliance Auth / Python logging format:
+        # [25/Oct/2026 19:31:50] INFO [mumble_authenticator:599] User authenticated: [FIGL] Vaximillian 1000000500
+        # Authentication is the connect-side signal. Disconnects are normally
+        # emitted by Murmur's server log, not by the authenticator callback.
+        re.compile(
+            r"^\[(?P<timestamp>\d{1,2}/[A-Za-z]{3}/\d{4}\s+\d{2}:\d{2}:\d{2})\]\s*"
+            r"(?:\[?(?:INFO|WARN|WARNING|ERROR|DEBUG|CRITICAL)\]?\s*)?"
+            r"(?:\[(?P<logger>[^\]]+)\]\s*)?"
+            r"User\s+authenticated\s*:\s*(?P<username>.+?)\s+(?P<session_id>\d+)\s*$",
+            re.IGNORECASE,
+        ),
         # 1. Bracketed timestamp / structured format:
         # [2026-10-22T20:30:15Z] Username AUTHENTICATE session=1234 channel="Fleet 1"
         # [2026-10-23 18:22:01] INFO [authenticator] userConnected: 12 (John Doe)
@@ -79,6 +90,7 @@ class MumbleLogIngestor:
                         parsed_dt = datetime.fromisoformat(cleaned_ts)
                     except Exception:
                         for fmt in (
+                            "%d/%b/%Y %H:%M:%S",
                             "%Y-%m-%d %H:%M:%S.%f",
                             "%Y-%m-%d %H:%M:%S",
                             "%Y-%m-%dT%H:%M:%SZ",
