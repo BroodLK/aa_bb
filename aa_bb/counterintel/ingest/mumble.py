@@ -118,6 +118,20 @@ class MumbleLogIngestor:
                 else:
                     action = "info"
 
+                # Some Murmur/authenticator formats put the useful action in a
+                # free-form message group. Preserve connection semantics even
+                # when the regex matched the line through its broad fallback.
+                if action == "info":
+                    line_lower = line.lower()
+                    if "disconnect" in line_lower or "connection closed" in line_lower:
+                        action = "disconnect"
+                    elif "authenticated" in line_lower or "userconnected" in line_lower:
+                        action = "connect"
+                    elif "connected" in line_lower:
+                        action = "connect"
+                    elif "channel" in line_lower or "moved" in line_lower:
+                        action = "channel_move"
+
                 username = (data.get("username") or data.get("username2") or "").strip()
 
                 session_id = (

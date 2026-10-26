@@ -140,6 +140,9 @@ def member_activity(request, user_id: int):
     eve_activity = CIEvent.objects.filter(
         user=subject_user, source="eve_activity"
     ).order_by("-timestamp")[:50]
+    mumble_events = CIEvent.objects.filter(user=subject_user, source="mumble").order_by(
+        "-timestamp"
+    )[:50]
     participations = (
         CIOperationParticipant.objects.filter(user=subject_user)
         .select_related("operation")
@@ -166,6 +169,7 @@ def member_activity(request, user_id: int):
             "identities": identities,
             "sessions": sessions,
             "eve_activity": eve_activity,
+            "mumble_events": mumble_events,
             "participations": participations,
             "correlations": correlations,
             "overrides": overrides,
