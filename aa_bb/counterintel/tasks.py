@@ -113,6 +113,11 @@ def ingest_mumble_logs_task(log_file_path: str = None):
             candidate_paths.append(sp)
 
     found_paths = [p for p in candidate_paths if os.path.exists(p)]
+    logger.info(
+        "Mumble ingestion candidates=%s; readable existing paths=%s",
+        candidate_paths,
+        found_paths,
+    )
     target_paths = (
         found_paths
         if found_paths
@@ -129,6 +134,25 @@ def ingest_mumble_logs_task(log_file_path: str = None):
         total_events += len(events)
         if events:
             logger.info(f"Ingested {len(events)} Mumble events from {path}.")
+        elif os.path.exists(path):
+            try:
+                file_size = os.path.getsize(path)
+            except OSError:
+                file_size = "unknown"
+            logger.warning(
+                "Mumble log produced no events: path=%s size=%s. "
+                "The file may be empty, already consumed by its ingest offset, "
+                "or contain a format not recognized by the parser.",
+                path,
+                file_size,
+            )
+
+    if not found_paths:
+        logger.error(
+            "No configured Mumble log exists on this Celery worker. "
+            "Verify the path is mounted/readable by the worker process: %s",
+            candidate_paths,
+        )
 
     # Run correlation on recent operations
     (
