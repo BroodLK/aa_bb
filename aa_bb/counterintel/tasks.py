@@ -65,52 +65,21 @@ def run_counterintel_pipeline_task(hours: int = 48):
 
 
 @shared_task(time_limit=1800)
-def ingest_mumble_logs_task(log_file_path: str = None):
+def ingest_mumble_logs_task():
     """
     Periodic or on-demand task pulling Mumble authenticator/server logs from disk,
     updating session intervals, and running operational correlation.
     """
-    candidate_paths = []
-    if log_file_path:
-        candidate_paths.append(log_file_path)
-
-    # Configured settings
-    for setting_key in [
-        "MUMBLE_AUTHENTICATOR_LOG_PATH",
-        "MUMBLE_SERVER_LOG_PATH",
-        "MUMBLE_LOG_PATH",
-        "MUMBLE_LOG_FILE",
-    ]:
-        val = getattr(settings, setting_key, None)
-        if val and val not in candidate_paths:
-            candidate_paths.append(val)
-
-    # Standard Alliance Auth installation paths
-    base_dir = getattr(settings, "BASE_DIR", "")
-    if base_dir:
-        for fname in [
-            "mumble_authenticator.log",
-            "mumble-server.log",
-            "mumble.log",
-            "authenticator.log",
-        ]:
-            p = os.path.join(base_dir, "log", fname)
-            if p not in candidate_paths:
-                candidate_paths.append(p)
-
-    # Common system / server paths
-    system_paths = [
-        "/home/allianceserver/myauth/log/mumble_authenticator.log",
-        "/home/allianceserver/myauth/log/mumble.log",
-        "/var/log/mumble_authenticator.log",
-        "/var/log/mumble-authenticator.log",
-        "/var/log/mumble/mumble-server.log",
-        "/var/log/murmur/mumble-server.log",
-        "/var/log/mumble-server.log",
+    # Only ingest the two explicitly configured active log files. Do not add
+    # BASE_DIR, legacy setting aliases, directories, or system-path fallbacks.
+    candidate_paths = [
+        path
+        for path in (
+            getattr(settings, "MUMBLE_AUTHENTICATOR_LOG_PATH", None),
+            getattr(settings, "MUMBLE_SERVER_LOG_PATH", None),
+        )
+        if path
     ]
-    for sp in system_paths:
-        if sp not in candidate_paths:
-            candidate_paths.append(sp)
 
     found_paths = [p for p in candidate_paths if os.path.exists(p)]
     logger.info(
@@ -118,15 +87,7 @@ def ingest_mumble_logs_task(log_file_path: str = None):
         candidate_paths,
         found_paths,
     )
-    target_paths = (
-        found_paths
-        if found_paths
-        else (
-            [candidate_paths[0]]
-            if candidate_paths
-            else ["/home/allianceserver/myauth/log/mumble_authenticator.log"]
-        )
-    )
+    target_paths = found_paths
 
     total_events = 0
     for path in target_paths:
