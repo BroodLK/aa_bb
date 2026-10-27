@@ -484,7 +484,8 @@ findings are capped at medium confidence.
 To discard previously ingested Mumble data and rebuild it with the current parser:
 
 ```bash
-python manage.py ci_reset_mumble --dry-run   # show what would be deleted
+# Show what would be deleted
+python manage.py ci_reset_mumble --dry-run
 python manage.py ci_reset_mumble --yes
 ```
 
