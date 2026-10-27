@@ -15,27 +15,29 @@ from django.conf import settings
 from django.utils import timezone
 
 from .ingest.eve_activity import EveActivityIngestor
-from .ingest.mumble import MumbleLogIngestor
+from .ingest.mumble import MumbleLogIngestor, MumblePresenceIngestor
 from .ingest.paps import FCRosterIngestor
 from .ingest.zkill import ZKillIngestor
 from .models import CIEvent, CIOperation
+from .services.agent import CIAgentService
 from .services.correlation import CorrelationEngine
+from .services.operations import CIOperationService
 
 logger = logging.getLogger(__name__)
 
+# Give zKillboard time to receive killmails after an operation's window closes
+ZKILL_SCAN_DELAY_MINUTES = 30
+
 
 @shared_task(time_limit=1800)
-def sync_recent_afat_fleets_task(hours: int = 48):
+def sync_recent_afat_fleets_task(hours: int = 48, correlate: bool = True):
     """
-    Periodic job syncing recent AFAT and ESI fleet rosters directly into CIOperations,
-    running completed operation zKill combat enrichments, and triggering correlation calculations.
+    Periodic job syncing recent AFAT and ESI fleet rosters directly into CIOperations
+    and optionally triggering correlation calculations.
     """
     synced_ops = FCRosterIngestor.sync_recent_afat_fleets(hours=hours)
-    for op in synced_ops:
+    for op in synced_ops if correlate else []:
         try:
-            # Only run zKill analysis if operation has concluded
-            if op.end_time:
-                ZKillIngestor.analyze_completed_operation(op)
             CorrelationEngine.correlate_operation(op)
         except Exception as e:
             logger.error(f"Error auto-correlating synced AFAT operation {op.id}: {e}")
@@ -52,32 +54,60 @@ def run_counterintel_pipeline_task(hours: int = 48):
     consumes those normalized events after refreshing AFAT and Mumble, then
     correlates the complete recent window.
     """
-    afat_result = sync_recent_afat_fleets_task(hours=hours)
+    afat_result = sync_recent_afat_fleets_task(hours=hours, correlate=False)
     eve_activity_count = EveActivityIngestor.ingest_latest_activity()
-    mumble_result = ingest_mumble_logs_task()
+    mumble_result = ingest_mumble_logs_task(correlate=False)
+    zkill_scanned_ops = scan_concluded_operations_combat(hours=hours)
     correlation_result = run_scheduled_ci_correlation(hours=hours)
     return {
         "afat": afat_result,
         "eve_activity_events": eve_activity_count,
         "mumble": mumble_result,
+        "zkill_scanned_operations": zkill_scanned_ops,
         "correlation": correlation_result,
     }
 
 
 @shared_task(time_limit=1800)
-def ingest_mumble_logs_task():
+def scan_concluded_operations_combat(hours: int = 48, limit: int = 5) -> list[int]:
     """
-    Periodic or on-demand task pulling Mumble authenticator/server logs from disk,
-    updating session intervals, and running operational correlation.
+    Scan zKillboard for recent operations whose operational window closed at least
+    ZKILL_SCAN_DELAY_MINUTES ago and have not been scanned yet.
+    Returns the IDs of operations that were scanned.
     """
-    # Only ingest the two explicitly configured active log files. Do not add
-    # BASE_DIR, legacy setting aliases, directories, or system-path fallbacks.
+    now = timezone.now()
+    ready_before = now - timedelta(minutes=ZKILL_SCAN_DELAY_MINUTES)
+    candidates = CIOperation.objects.filter(
+        start_time__gte=now - timedelta(hours=hours),
+        combat_scanned_at__isnull=True,
+    ).order_by("start_time")
+
+    scanned = []
+    for op in candidates:
+        if len(scanned) >= limit:
+            break
+        _window_start, window_end = CIOperationService.get_operational_window(op)
+        if window_end > ready_before:
+            continue
+        try:
+            ZKillIngestor.scan_operation(op)
+        except Exception:
+            logger.exception(f"zKill scan failed for operation {op.id}")
+            continue
+        scanned.append(op.id)
+    return scanned
+
+
+@shared_task(time_limit=1800)
+def ingest_mumble_logs_task(correlate: bool = True):
+    """
+    Pull Mumble authentications from the AA authenticator log, poll Alliance Auth's
+    MumbleUser connect/disconnect timestamps, rebuild session intervals, and
+    optionally run operational correlation.
+    """
     candidate_paths = [
         path
-        for path in (
-            getattr(settings, "MUMBLE_AUTHENTICATOR_LOG_PATH", None),
-            getattr(settings, "MUMBLE_SERVER_LOG_PATH", None),
-        )
+        for path in (getattr(settings, "MUMBLE_AUTHENTICATOR_LOG_PATH", None),)
         if path
     ]
 
@@ -108,20 +138,25 @@ def ingest_mumble_logs_task():
                 file_size,
             )
 
-    if not found_paths:
+    if candidate_paths and not found_paths:
         logger.error(
-            "No configured Mumble log exists on this Celery worker. "
+            "Configured Mumble authenticator log does not exist on this Celery worker. "
             "Verify the path is mounted/readable by the worker process: %s",
             candidate_paths,
         )
 
-    # Run correlation on recent operations
-    (
+    presence_events = MumblePresenceIngestor.poll()
+    if presence_events:
+        logger.info(
+            f"Ingested {len(presence_events)} Mumble presence events from MumbleUser."
+        )
+
+    if correlate:
         run_scheduled_ci_correlation.delay()
-        if hasattr(run_scheduled_ci_correlation, "delay")
-        else run_scheduled_ci_correlation()
+    return (
+        f"Ingested {total_events} log events from {target_paths} and "
+        f"{len(presence_events)} presence events."
     )
-    return f"Ingested {total_events} events from {target_paths}."
 
 
 @shared_task(time_limit=1800)
@@ -173,11 +208,23 @@ def run_scheduled_ci_correlation(hours: int = 48):
     cutoff = timezone.now() - timedelta(hours=hours)
     recent_ops = CIOperation.objects.filter(start_time__gte=cutoff)
     processed = 0
+    triaged = 0
     for op in recent_ops:
-        CorrelationEngine.correlate_operation(op)
+        try:
+            if op.is_concluded:
+                # Correlates and opens review cases for flagged members
+                triaged += len(CIAgentService.auto_triage_operation(op))
+            else:
+                CorrelationEngine.correlate_operation(op)
+        except Exception:
+            logger.exception(f"CI correlation failed for operation {op.id}")
+            continue
         processed += 1
 
-    return f"Processed CI correlation for {processed} operations."
+    return (
+        f"Processed CI correlation for {processed} operations; "
+        f"{triaged} investigation case(s) triaged."
+    )
 
 
 @shared_task(time_limit=1800)

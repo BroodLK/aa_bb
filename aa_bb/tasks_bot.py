@@ -850,6 +850,10 @@ class TicketCommands(commands.Cog):
                         message_id=getattr(message, "id", 0),
                         timestamp=msg_ts,
                         content_length=len(getattr(message, "content", "") or ""),
+                        discord_username=getattr(message.author, "name", "") or "",
+                        discord_display_name=getattr(message.author, "display_name", "")
+                        or "",
+                        channel_name=getattr(message.channel, "name", "") or "",
                     )
                 except Exception:
                     pass

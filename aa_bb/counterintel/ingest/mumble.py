@@ -1,192 +1,215 @@
 """
-Idempotent Mumble log ingestor and session tracker.
+Idempotent Mumble ingestion and session tracking.
+
+Two sources feed Mumble presence. The Alliance Auth authenticator log
+(``MUMBLE_AUTHENTICATOR_LOG_PATH``) records every successful and failed
+authentication with second precision. Alliance Auth's ``MumbleUser.last_connect``
+/ ``last_disconnect`` columns are updated by the authenticator from Murmur's ICE
+callbacks and are the only source of disconnects, since the authenticator never
+logs them.
+
+Sessions are derived from the stored events by replaying them chronologically,
+so events arriving out of order from the two sources still produce correct
+session intervals.
 """
 
 # Standard Library
+import logging
+import os
 import re
 from datetime import datetime, timedelta
 
 # Django
+from django.contrib.auth.models import User
+from django.db.models import Q
 from django.utils import timezone
-from django.utils.dateparse import parse_datetime
 
 from ..models import CIEvent, CILogIngestState, CISession
 from ..services.identity import IdentityResolver
 
+logger = logging.getLogger(__name__)
+
+DEFAULT_MUMBLE_ID_OFFSET = 1000000000
+
 
 class MumbleLogIngestor:
     """
-    Parses Mumble authenticator and server logs into normalized CIEvents
-    and manages contiguous CISession records.
+    Parses Alliance Auth Mumble authenticator logs into normalized CIEvents
+    and maintains contiguous CISession records.
     """
 
     RECONNECT_THRESHOLD_SECONDS = 300  # 5 minutes
+    # A log connect and a presence-poll connect for the same login are the same event
+    CONNECT_MERGE_SECONDS = 60
+    SESSION_ACTIONS = ("connect", "disconnect", "channel_move")
 
-    # Regex patterns for various Mumble authenticator/server log lines
+    TIMESTAMP_FORMAT = "%d/%b/%Y %H:%M:%S"
+
+    # [26/Oct/2026 07:40:09] INFO [mumble_authenticator:599] <message>
+    _PREFIX = (
+        r"^\[(?P<timestamp>\d{1,2}/[A-Za-z]{3}/\d{4}\s+\d{2}:\d{2}:\d{2})\]\s+"
+        r"\w+\s+\[[^\]]+\]\s+"
+    )
+
+    # (action, id_kind, pattern). id_kind tells how to read the trailing number:
+    #   "uid"      -> AA user pk + MumbleServerServer.offset
+    #   "temp_uid" -> TempUser pk + 2 * offset (no AA user)
+    #   "user_pk"  -> AA user pk without offset (failed auth lines)
     PATTERNS = [
-        # Alliance Auth / Python logging format:
-        # [25/Oct/2026 19:31:50] INFO [mumble_authenticator:599] User authenticated: [FIGL] Vaximillian 1000000500
-        # Authentication is the connect-side signal. Disconnects are normally
-        # emitted by Murmur's server log, not by the authenticator callback.
-        re.compile(
-            r"^\[(?P<timestamp>\d{1,2}/[A-Za-z]{3}/\d{4}\s+\d{2}:\d{2}:\d{2})\]\s*"
-            r"(?:\[?(?:INFO|WARN|WARNING|ERROR|DEBUG|CRITICAL)\]?\s*)?"
-            r"(?:\[(?P<logger>[^\]]+)\]\s*)?"
-            r"User\s+authenticated\s*:\s*(?P<username>.+?)\s+(?P<session_id>\d+)\s*$",
-            re.IGNORECASE,
+        (
+            "connect",
+            "temp_uid",
+            re.compile(
+                _PREFIX
+                + r"TEMP User authenticated:\s*(?P<name>.+?)\s+(?P<number>\d+)\s*$"
+            ),
         ),
-        # 1. Bracketed timestamp / structured format:
-        # [2026-10-22T20:30:15Z] Username AUTHENTICATE session=1234 channel="Fleet 1"
-        # [2026-10-23 18:22:01] INFO [authenticator] userConnected: 12 (John Doe)
-        re.compile(
-            r"^\[(?P<timestamp>[^\]]+)\]\s*(?:\[?(?:INFO|WARN|WARNING|ERROR|DEBUG|CRITICAL)\]?\s*)?(?:\[(?P<logger>[^\]]+)\]\s*)?(?:(?P<username>[^<>\(\)\s]+)\s+)?(?P<action>AUTHENTICATE|DISCONNECT|CHANNEL_MOVE|userConnected|userDisconnected|connected|disconnected)(?:\s*[:=]?\s*(?P<session_id>\d+))?(?:\s*\((?P<username2>[^\)]+)\))?(?:\s+session=(?P<session_id2>\S+))?(?:\s+channel=[\"'](?P<channel>[^\"']+)[\"'])?",
-            re.IGNORECASE,
+        (
+            "connect",
+            "uid",
+            re.compile(
+                _PREFIX + r"User authenticated:\s*(?P<name>.+?)\s+(?P<number>\d+)\s*$"
+            ),
         ),
-        # 2. Murmur native server log:
-        # <W>2026-10-22 20:30:15.123 1 => <1234:Username(-1)> Authenticated
-        # <W>2026-10-22 20:30:15.123 1 => <1234:Username(-1)> Connection closed: [-1]
-        # <W>2026-10-22 20:30:15.123 1 => <1234:(-1)> Connection closed: [-1]
-        re.compile(
-            r"^<[A-Z]>(?P<timestamp>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?)\s+\d+\s+=>\s+<(?P<session_id>\d+):(?:(?P<username>[^>\(]+)(?:\(-?\d+\))?|\(-?\d+\))>\s+(?P<action>Authenticated|Connection closed|Moved to channel:\s*(?P<channel>[^$]+)|[^\n]+)",
-            re.IGNORECASE,
+        (
+            "auth_failed",
+            "temp_uid",
+            re.compile(
+                _PREFIX + r"Failed authentication attempt for TEMP user:\s*"
+                r"(?P<name>.+?)\s+(?P<number>\d+)\s*$"
+            ),
         ),
-        # 3. Python Authenticator callback format:
-        # 2026-10-23 18:22:01,123 - authenticator - INFO - userConnected: 12 (John Doe)
-        # 2026-10-23 18:22:01,123 - authenticator - INFO - userDisconnected: 12 (John Doe)
-        # 2026-10-23 18:22:01,123 - authenticator - INFO - userDisconnected: 12
-        # 2026-10-23 18:22:01,123 - authenticator - INFO - userAuthenticate: John Doe -> 1
-        # 2026-10-23 18:22:01,123 - authenticator - INFO - Authenticating user: John Doe
-        # 2026-10-23 18:22:01,123 - authenticator - INFO - Authenticated John Doe
-        re.compile(
-            r"^(?P<timestamp>\d{4}-\d{2}-\d{2}[\sT]\d{2}:\d{2}:\d{2}(?:[,\.]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\s*(?:-\s*[\w\.]+\s*)?[-:]?\s*\[?(?:INFO|WARN|WARNING|ERROR|DEBUG|CRITICAL)?\]?\s*[-:]?\s*(?P<action>userConnected|userDisconnected|userAuthenticate|Authenticating user|Authenticated|Authenticate)\s*[:=]?\s*(?:session\s*(?P<session_id>\d+)\s*(?:for\s*)?)?(?:(?P<session_id_pre>\d+)\s*(?:\((?P<username>[^\)]+)\))?|['\"]?(?P<username2>[^'\"<>\n]+?)['\"]?(?:\s*->\s*(?P<session_id_post>\d+))?)$",
-            re.IGNORECASE,
-        ),
-        # 4. Standard user connected / disconnected / channel move format:
-        # 2026-10-22 20:30:15 - [INFO] User 'Username' connected (session 1234)
-        # 2026-10-22 20:30:15,123 [INFO] User Username joined channel 'Fleet 1'
-        # 2026-10-23 18:22:01,123 - authenticator - INFO - User John Doe moved to channel Fleet 1
-        re.compile(
-            r"^(?P<timestamp>\d{4}-\d{2}-\d{2}[\sT]\d{2}:\d{2}:\d{2}(?:[,\.]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)\s*(?:-\s*[\w\.]+\s*)?[-:]?\s*\[?(?:INFO|WARN|WARNING|ERROR|DEBUG|CRITICAL)?\]?\s*[-:]?\s*(?:User\s+)?['\"]?(?P<username>[^'\"<>\n:]+?)['\"]?\s+(?P<action>connected|disconnected|joined channel\s+['\"]?(?P<channel>[^'\"]+)['\"]?|moved to channel\s*[:]?\s*['\"]?(?P<channel2>[^'\"]+)['\"]?)(?:.*session\s*[:=]?\s*(?P<session_id>\d+))?",
-            re.IGNORECASE,
+        (
+            "auth_failed",
+            "user_pk",
+            re.compile(
+                _PREFIX + r"Failed authentication attempt for user:\s*"
+                r"(?P<name>.+?)\s+(?P<number>\d+)\s*$"
+            ),
         ),
     ]
 
     @classmethod
+    def get_id_offset(cls) -> int:
+        """Mumble user id offset configured on the AA Mumble server."""
+        try:
+            # Alliance Auth
+            from allianceauth.services.modules.mumble.models import (
+                MumbleServerServer,
+            )
+
+            server = MumbleServerServer.objects.order_by("pk").first()
+            if server and server.offset:
+                return int(server.offset)
+        except Exception:
+            pass
+        return DEFAULT_MUMBLE_ID_OFFSET
+
+    @classmethod
     def parse_log_line(cls, line: str) -> dict | None:
+        """
+        Parse a single authenticator log line. Lines that carry no presence
+        information (group memberships, debug output, ICE housekeeping) return None.
+        """
         line = line.strip()
         if not line:
             return None
 
-        for pattern in cls.PATTERNS:
-            m = pattern.search(line)
-            if m:
-                data = m.groupdict()
-                raw_ts = data["timestamp"].strip()
-                parsed_dt = parse_datetime(raw_ts)
-                if not parsed_dt:
-                    try:
-                        # Try standard formats
-                        cleaned_ts = raw_ts.replace(",", ".")
-                        parsed_dt = datetime.fromisoformat(cleaned_ts)
-                    except Exception:
-                        for fmt in (
-                            "%d/%b/%Y %H:%M:%S",
-                            "%Y-%m-%d %H:%M:%S.%f",
-                            "%Y-%m-%d %H:%M:%S",
-                            "%Y-%m-%dT%H:%M:%SZ",
-                            "%Y-%m-%dT%H:%M:%S%z",
-                        ):
-                            try:
-                                parsed_dt = datetime.strptime(
-                                    raw_ts.replace(",", "."), fmt
-                                )
-                                break
-                            except Exception:
-                                pass
-                if not parsed_dt:
-                    continue
-                if timezone.is_naive(parsed_dt):
-                    parsed_dt = timezone.make_aware(parsed_dt)
+        for action, id_kind, pattern in cls.PATTERNS:
+            m = pattern.match(line)
+            if not m:
+                continue
 
-                action_raw = data.get("action", "").lower()
-                if "disconnect" in action_raw or "close" in action_raw:
-                    action = "disconnect"
-                elif "auth" in action_raw or "connect" in action_raw:
-                    action = "connect"
-                elif "channel" in action_raw or "move" in action_raw:
-                    action = "channel_move"
-                else:
-                    action = "info"
+            try:
+                parsed_dt = datetime.strptime(
+                    m.group("timestamp"), cls.TIMESTAMP_FORMAT
+                )
+            except ValueError:
+                return None
+            if timezone.is_naive(parsed_dt):
+                parsed_dt = timezone.make_aware(parsed_dt)
 
-                # Some Murmur/authenticator formats put the useful action in a
-                # free-form message group. Preserve connection semantics even
-                # when the regex matched the line through its broad fallback.
-                if action == "info":
-                    line_lower = line.lower()
-                    if "disconnect" in line_lower or "connection closed" in line_lower:
-                        action = "disconnect"
-                    elif "authenticated" in line_lower or "userconnected" in line_lower:
-                        action = "connect"
-                    elif "connected" in line_lower:
-                        action = "connect"
-                    elif "channel" in line_lower or "moved" in line_lower:
-                        action = "channel_move"
-
-                username = (data.get("username") or data.get("username2") or "").strip()
-
-                session_id = (
-                    data.get("session_id")
-                    or data.get("session_id_pre")
-                    or data.get("session_id_post")
-                    or data.get("session_id2")
-                    or ""
-                ).strip()
-
-                channel = (data.get("channel") or data.get("channel2") or "").strip()
-
-                return {
-                    "timestamp": parsed_dt,
-                    "username": username,
-                    "action": action,
-                    "session_id": session_id,
-                    "channel": channel,
-                }
+            return {
+                "timestamp": parsed_dt,
+                "username": m.group("name").strip(),
+                "action": action,
+                "id_kind": id_kind,
+                "number": int(m.group("number")),
+            }
 
         return None
 
     @classmethod
-    def ingest_log_line(cls, line: str) -> CIEvent | None:
+    def resolve_parsed_user(cls, parsed: dict, offset: int = None) -> User | None:
+        id_kind = parsed.get("id_kind")
+        number = parsed.get("number")
+        username = parsed.get("username", "")
+
+        if id_kind == "temp_uid":
+            return None
+
+        user = None
+        if number is not None:
+            if id_kind == "uid":
+                offset = cls.get_id_offset() if offset is None else offset
+                user_pk = number - offset
+            else:
+                user_pk = number
+            if user_pk > 0:
+                user = User.objects.filter(pk=user_pk).first()
+
+        if not user and username:
+            user = IdentityResolver.resolve_user_by_mumble(
+                username, at_time=parsed["timestamp"]
+            )
+        return user
+
+    @classmethod
+    def ingest_log_line(
+        cls, line: str, offset: int = None, rebuild_sessions: bool = True
+    ) -> CIEvent | None:
         parsed = cls.parse_log_line(line)
         if not parsed:
             return None
 
+        mumble_user_id = (
+            str(parsed["number"]) if parsed["id_kind"] in ("uid", "temp_uid") else ""
+        )
         return cls.ingest_raw_event(
             username=parsed["username"],
             action=parsed["action"],
             timestamp=parsed["timestamp"],
-            channel_name=parsed.get("channel", ""),
-            session_id=parsed.get("session_id", ""),
-            metadata={"raw_line": line},
+            user=cls.resolve_parsed_user(parsed, offset=offset),
+            mumble_user_id=mumble_user_id,
+            temp_user=parsed["id_kind"] == "temp_uid",
+            metadata={"raw_line": line.strip(), "source": "authenticator_log"},
+            rebuild_sessions=rebuild_sessions,
         )
 
     @classmethod
     def ingest_log_text(cls, text: str) -> list[CIEvent]:
+        return cls._ingest_lines(text.splitlines())
+
+    @classmethod
+    def _ingest_lines(cls, lines) -> list[CIEvent]:
+        offset = cls.get_id_offset()
         events = []
-        for line in text.splitlines():
-            ev = cls.ingest_log_line(line)
-            if ev:
-                events.append(ev)
+        rebuild_from = {}
+        for line in lines:
+            ev = cls.ingest_log_line(line, offset=offset, rebuild_sessions=False)
+            if not ev:
+                continue
+            events.append(ev)
+            cls._track_rebuild(rebuild_from, ev)
+        cls.rebuild_sessions_for(rebuild_from)
         return events
 
     @classmethod
     def ingest_log_file(cls, file_path: str, use_offsets: bool = True) -> list[CIEvent]:
         """
-        Reads and ingests a Mumble log file directly from disk idempotently
+        Reads and ingests a Mumble authenticator log from disk idempotently,
         using incremental seek offsets to minimize disk I/O and RAM usage.
         """
-        # Standard Library
-        import os
-
         if not os.path.exists(file_path):
             return []
 
@@ -218,18 +241,15 @@ class MumbleLogIngestor:
                 else:
                     start_offset = state.last_offset
             except Exception:
+                logger.exception("Could not load ingest offset for %s", file_path)
                 start_offset = 0
 
-        events = []
         try:
             with open(file_path, encoding="utf-8", errors="replace") as f:
                 if start_offset > 0:
                     f.seek(start_offset)
 
-                for line in f:
-                    ev = cls.ingest_log_line(line)
-                    if ev:
-                        events.append(ev)
+                events = cls._ingest_lines(f)
 
                 if state:
                     state.last_offset = f.tell()
@@ -239,6 +259,7 @@ class MumbleLogIngestor:
                         update_fields=["last_offset", "last_inode", "last_ingested_at"]
                     )
         except Exception:
+            logger.exception("Failed to ingest Mumble log %s", file_path)
             return []
         return events
 
@@ -249,40 +270,53 @@ class MumbleLogIngestor:
         action: str,
         timestamp,
         channel_name: str = "",
-        session_id: str = "",
+        user: User = None,
+        mumble_user_id: str = "",
+        temp_user: bool = False,
         metadata: dict = None,
+        source_event_id: str = None,
+        rebuild_sessions: bool = True,
     ) -> CIEvent:
+        """
+        Store a normalized Mumble event. ``event.ci_created`` reports whether a new
+        row was written. Sessions are rebuilt immediately unless the caller batches
+        the rebuild itself (``rebuild_sessions=False``).
+        """
         if timezone.is_naive(timestamp):
             timestamp = timezone.make_aware(timestamp)
 
-        resolved_user = None
-        if username:
-            resolved_user = IdentityResolver.resolve_user_by_mumble(
-                username, at_time=timestamp
-            )
+        if user is None and username and not temp_user:
+            user = IdentityResolver.resolve_user_by_mumble(username, at_time=timestamp)
 
-        # Fallback if username missing or not resolved directly (e.g. disconnect by session_id only)
-        if not resolved_user and session_id:
-            prev_event = (
+        # The authenticator log and the presence poll both observe each login.
+        if action == "connect" and user:
+            window = timedelta(seconds=cls.CONNECT_MERGE_SECONDS)
+            existing = (
                 CIEvent.objects.filter(
                     source="mumble",
-                    payload__session_id=str(session_id),
+                    user=user,
+                    payload__action="connect",
+                    timestamp__gte=timestamp - window,
+                    timestamp__lte=timestamp + window,
                 )
-                .exclude(user__isnull=True)
-                .order_by("-timestamp")
+                .order_by("timestamp")
                 .first()
             )
-            if prev_event:
-                resolved_user = prev_event.user
-                if not username and prev_event.payload:
-                    username = prev_event.payload.get("username", "")
+            if existing:
+                existing.ci_created = False
+                return existing
 
-        source_event_id = f"mumble:{username or 'unknown'}:{session_id or '0'}:{action}:{timestamp.timestamp()}"
+        identity_key = user.id if user else (username or "unknown")
+        source_event_id = (
+            source_event_id
+            or f"mumble:{action}:{identity_key}:{int(timestamp.timestamp())}"
+        )
         payload = {
             "username": username,
             "action": action,
             "channel_name": channel_name,
-            "session_id": str(session_id or ""),
+            "mumble_user_id": str(mumble_user_id or ""),
+            "temp_user": temp_user,
             "metadata": metadata or {},
         }
         dedup_hash = CIEvent.generate_dedup_hash(
@@ -295,93 +329,177 @@ class MumbleLogIngestor:
                 "source": "mumble",
                 "source_event_id": source_event_id,
                 "timestamp": timestamp,
-                "user": resolved_user,
+                "user": user,
                 "payload": payload,
             },
         )
+        event.ci_created = created
 
-        # Update or create session if user resolved and event was freshly created
-        if created and resolved_user:
-            cls._update_session(resolved_user, action, timestamp, channel_name)
+        if created and user and rebuild_sessions and action in cls.SESSION_ACTIONS:
+            cls.rebuild_user_sessions(user, since=timestamp)
 
         return event
 
     @classmethod
-    def _update_session(cls, user, action: str, timestamp, channel_name: str = ""):
-        if action == "connect":
-            # Check for recent active or recently ended session within threshold (reconnect)
-            cutoff = timestamp - timedelta(seconds=cls.RECONNECT_THRESHOLD_SECONDS)
-            recent_session = (
-                CISession.objects.filter(
-                    user=user,
-                    source="mumble",
-                    start_time__lte=timestamp,
-                )
-                .order_by("-start_time")
-                .first()
-            )
+    def _track_rebuild(cls, rebuild_from: dict, event: CIEvent):
+        if not getattr(event, "ci_created", False) or not event.user_id:
+            return
+        if (event.payload or {}).get("action") not in cls.SESSION_ACTIONS:
+            return
+        current = rebuild_from.get(event.user_id)
+        if current is None or event.timestamp < current:
+            rebuild_from[event.user_id] = event.timestamp
 
-            if (
-                recent_session
-                and recent_session.end_time
-                and recent_session.end_time >= cutoff
-            ):
-                # Reconnection after brief drop
-                recent_session.end_time = None
-                recent_session.reconnect_count += 1
-                if channel_name:
-                    recent_session.channel_name = channel_name
-                recent_session.save(
-                    update_fields=["end_time", "reconnect_count", "channel_name"]
-                )
-            elif recent_session and not recent_session.end_time:
-                # Session was already marked open
-                if channel_name:
-                    recent_session.channel_name = channel_name
-                    recent_session.save(update_fields=["channel_name"])
-            else:
-                CISession.objects.create(
-                    user=user,
-                    source="mumble",
-                    start_time=timestamp,
-                    channel_name=channel_name,
-                    reconnect_count=0,
-                )
+    @classmethod
+    def rebuild_sessions_for(cls, rebuild_from: dict):
+        for user_id, since in rebuild_from.items():
+            user = User.objects.filter(id=user_id).first()
+            if user:
+                cls.rebuild_user_sessions(user, since=since)
 
-        elif action == "disconnect":
-            active_session = (
-                CISession.objects.filter(
-                    user=user,
-                    source="mumble",
-                    end_time__isnull=True,
-                    start_time__lte=timestamp,
-                )
-                .order_by("-start_time")
-                .first()
-            )
-            if active_session:
-                active_session.end_time = timestamp
-                active_session.save(update_fields=["end_time"])
+    @classmethod
+    def rebuild_user_sessions(cls, user: User, since=None):
+        """
+        Re-derive a user's Mumble sessions from stored events at or after ``since``
+        by replaying connect / disconnect / channel_move events in order.
+        """
+        threshold = timedelta(seconds=cls.RECONNECT_THRESHOLD_SECONDS)
+        sessions = CISession.objects.filter(user=user, source="mumble")
 
-        elif action == "channel_move":
-            active_session = (
-                CISession.objects.filter(
-                    user=user,
-                    source="mumble",
-                    end_time__isnull=True,
-                    start_time__lte=timestamp,
-                )
-                .order_by("-start_time")
-                .first()
+        anchor = since
+        if anchor is not None:
+            anchor = anchor - threshold
+            covering_starts = list(
+                sessions.filter(start_time__lte=anchor)
+                .filter(Q(end_time__isnull=True) | Q(end_time__gte=anchor))
+                .values_list("start_time", flat=True)
             )
-            if active_session:
-                active_session.channel_name = channel_name
-                active_session.save(update_fields=["channel_name"])
-            else:
-                CISession.objects.create(
-                    user=user,
-                    source="mumble",
-                    start_time=timestamp,
-                    channel_name=channel_name,
-                    reconnect_count=0,
+            if covering_starts:
+                anchor = min(covering_starts)
+            sessions.filter(start_time__gte=anchor).delete()
+            previous = (
+                sessions.filter(start_time__lt=anchor).order_by("-start_time").first()
+            )
+        else:
+            sessions.delete()
+            previous = None
+
+        events = CIEvent.objects.filter(
+            source="mumble",
+            user=user,
+            payload__action__in=cls.SESSION_ACTIONS,
+        )
+        if anchor is not None:
+            events = events.filter(timestamp__gte=anchor)
+
+        current = previous if previous and previous.end_time is None else None
+        last_closed = previous if previous and previous.end_time else None
+
+        for ev in events.order_by("timestamp", "id"):
+            action = ev.payload.get("action")
+            channel_name = ev.payload.get("channel_name") or ""
+            ts = ev.timestamp
+
+            if action == "connect":
+                if current:
+                    if channel_name:
+                        current.channel_name = channel_name
+                        current.save(update_fields=["channel_name"])
+                elif last_closed and ts - last_closed.end_time <= threshold:
+                    # Reconnection after brief drop
+                    last_closed.end_time = None
+                    last_closed.reconnect_count += 1
+                    if channel_name:
+                        last_closed.channel_name = channel_name
+                    last_closed.save(
+                        update_fields=["end_time", "reconnect_count", "channel_name"]
+                    )
+                    current, last_closed = last_closed, None
+                else:
+                    current = CISession.objects.create(
+                        user=user,
+                        source="mumble",
+                        start_time=ts,
+                        channel_name=channel_name,
+                        reconnect_count=0,
+                    )
+
+            elif action == "disconnect":
+                if current:
+                    current.end_time = ts
+                    current.save(update_fields=["end_time"])
+                    current, last_closed = None, current
+
+            elif action == "channel_move":
+                if current:
+                    current.channel_name = channel_name
+                    current.save(update_fields=["channel_name"])
+                else:
+                    current = CISession.objects.create(
+                        user=user,
+                        source="mumble",
+                        start_time=ts,
+                        channel_name=channel_name,
+                        reconnect_count=0,
+                    )
+
+
+class MumblePresenceIngestor:
+    """
+    Polls Alliance Auth's ``MumbleUser.last_connect`` / ``last_disconnect`` columns,
+    which the AA authenticator maintains from Murmur ICE callbacks, and turns them
+    into connect / disconnect CIEvents.
+    """
+
+    @classmethod
+    def get_mumble_users(cls):
+        try:
+            # Alliance Auth
+            from allianceauth.services.modules.mumble.models import MumbleUser
+
+            return (
+                MumbleUser.objects.select_related("user")
+                .exclude(last_connect__isnull=True, last_disconnect__isnull=True)
+                .iterator()
+            )
+        except Exception:
+            logger.debug("Alliance Auth Mumble service not installed; skipping poll.")
+            return []
+
+    @classmethod
+    def poll(cls, mumble_users=None) -> list[CIEvent]:
+        """
+        Ingest connect/disconnect observations. ``mumble_users`` defaults to all
+        MumbleUser rows with a recorded connection; returns newly created events.
+        """
+        if mumble_users is None:
+            mumble_users = cls.get_mumble_users()
+
+        events = []
+        rebuild_from = {}
+        for mu in mumble_users:
+            observations = [
+                (ts, action)
+                for ts, action in (
+                    (mu.last_connect, "connect"),
+                    (mu.last_disconnect, "disconnect"),
                 )
+                if ts
+            ]
+            for ts, action in sorted(observations):
+                ev = MumbleLogIngestor.ingest_raw_event(
+                    username=mu.username,
+                    action=action,
+                    timestamp=ts,
+                    user=mu.user,
+                    source_event_id=(
+                        f"mumble:presence:{mu.user_id}:{action}:{ts.timestamp()}"
+                    ),
+                    metadata={"source": "mumble_user_presence"},
+                    rebuild_sessions=False,
+                )
+                events.append(ev)
+                MumbleLogIngestor._track_rebuild(rebuild_from, ev)
+
+        MumbleLogIngestor.rebuild_sessions_for(rebuild_from)
+        return [ev for ev in events if getattr(ev, "ci_created", False)]

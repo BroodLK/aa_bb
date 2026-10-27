@@ -81,6 +81,8 @@ class CIOperation(models.Model):
     )
     secrecy_level = models.CharField(max_length=32, default="standard")
     notes = models.TextField(blank=True)
+    # When zKillboard was last fully scanned for this operation's window
+    combat_scanned_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

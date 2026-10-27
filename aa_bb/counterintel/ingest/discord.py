@@ -75,6 +75,9 @@ class DiscordIngestor:
         message_id: str | int,
         timestamp=None,
         content_length: int = 0,
+        discord_username: str = "",
+        discord_display_name: str = "",
+        channel_name: str = "",
     ) -> CIEvent:
         ts = timestamp or timezone.now()
         if timezone.is_naive(ts):
@@ -82,10 +85,14 @@ class DiscordIngestor:
 
         user = IdentityResolver.resolve_user_by_discord(discord_user_id, at_time=ts)
         source_event_id = f"discord:msg:{discord_user_id}:{channel_id}:{message_id}"
-        # Privacy guardrail: store only event metadata and length, no message content
+        # Privacy guardrail: store only event metadata and length, no message content.
+        # Author names identify members who have not linked Discord to Auth.
         payload = {
             "discord_user_id": discord_user_id,
+            "discord_username": discord_username or "",
+            "discord_display_name": discord_display_name or "",
             "channel_id": str(channel_id),
+            "channel_name": channel_name or "",
             "message_id": str(message_id),
             "content_length": content_length,
         }

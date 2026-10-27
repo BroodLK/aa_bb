@@ -39,7 +39,10 @@
 
 <div class="card bg-dark text-light border-secondary mb-3">
     <div class="card-header border-secondary d-flex justify-content-between align-items-center flex-wrap gap-2">
-        <h5 class="mb-0"><i class="fas fa-chart-line me-2"></i>{% translate "Alliance Member Risk Matrix" %}</h5>
+        <div>
+            <h5 class="mb-0"><i class="fas fa-chart-line me-2"></i>{% translate "Alliance Member Risk Matrix" %}</h5>
+            <small class="text-muted">{% blocktranslate %}Highest risk among findings from operations in the last {{ lookback_days }} days, excluding overridden anomaly types and cleared/dismissed cases.{% endblocktranslate %}</small>
+        </div>
         <div class="d-flex align-items-center gap-2">
             <div class="btn-group btn-group-sm" role="group">
                 <a href="?q={{ search_q }}" class="btn {% if not tier_filter %}btn-primary{% else %}btn-outline-secondary{% endif %}">{% translate "All" %}</a>
@@ -65,6 +68,8 @@
                     <th>{% translate "Risk Index" %}</th>
                     <th>{% translate "Risk Tier" %}</th>
                     <th>{% translate "Anomalies Flagged" %}</th>
+                    <th>{% translate "Last Finding" %}</th>
+                    <th>{% translate "Open Cases" %}</th>
                     <th>{% translate "Discord Text Activity" %}</th>
                     <th class="text-end">{% translate "Actions" %}</th>
                 </tr>
@@ -90,8 +95,27 @@
                     <td>
                         {% if item.anomaly_count > 0 %}
                         <span class="badge bg-danger">{{ item.anomaly_count }} {% translate "finding(s)" %}</span>
+                        <div class="mt-1">
+                            {% for anomaly in item.top_anomalies %}
+                            <span class="badge bg-secondary me-1" style="font-size: 0.7rem;">{{ anomaly }}</span>
+                            {% endfor %}
+                        </div>
                         {% else %}
                         <span class="badge bg-success">0</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if item.last_finding_at %}
+                        <small>{{ item.last_finding_at|date:"Y-m-d H:i" }} UTC</small>
+                        {% else %}
+                        <small class="text-muted">-</small>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if item.open_cases %}
+                        <a href="{% url 'ci:review_queue' %}" class="badge bg-warning text-dark text-decoration-none">{{ item.open_cases }}</a>
+                        {% else %}
+                        <small class="text-muted">0</small>
                         {% endif %}
                     </td>
                     <td>
@@ -114,7 +138,7 @@
                 </tr>
                 {% empty %}
                 <tr>
-                    <td colspan="7" class="text-center py-4 text-muted">
+                    <td colspan="9" class="text-center py-4 text-muted">
                         {% translate "No members matching the current criteria." %}
                     </td>
                 </tr>

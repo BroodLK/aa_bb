@@ -21,7 +21,6 @@ from allianceauth.eveonline.models import EveCharacter
 
 # AA BigBrother
 from aa_bb.counterintel.ingest.mumble import MumbleLogIngestor
-from aa_bb.counterintel.ingest.murmur import MurmurQueryHelper
 from aa_bb.counterintel.ingest.zkill import ZKillIngestor
 from aa_bb.counterintel.models import (
     CICorrelation,
@@ -241,7 +240,12 @@ class CIEnhancementsTests(TestCase):
     def test_mumble_log_ingest_state_seek_offsets(self):
         """Verify incremental seek-offset tracking during log parsing."""
         with tempfile.NamedTemporaryFile("w+", delete=False, encoding="utf-8") as tmp:
-            tmp.write("[2026-10-24 10:00:00] userConnected: 1 (pilot_alpha)\n")
+            tmp.write(
+                "[24/Oct/2026 10:00:00] INFO [mumble_authenticator:599] "
+                f"User authenticated: pilot_alpha {self.user1.pk + 1000000000}\n"
+                "[24/Oct/2026 10:00:00] INFO [mumble_authenticator:600] "
+                "Group memberships: ['Member']\n"
+            )
             tmp.flush()
             tmp_path = tmp.name
 
@@ -259,27 +263,16 @@ class CIEnhancementsTests(TestCase):
 
             # Append new line
             with open(tmp_path, "a", encoding="utf-8") as f:
-                f.write("[2026-10-24 10:05:00] userDisconnected: 1 (pilot_alpha)\n")
+                f.write(
+                    "[24/Oct/2026 10:05:00] INFO [mumble_authenticator:607] "
+                    f"Failed authentication attempt for user: pilot_alpha {self.user1.pk}\n"
+                )
 
             events_pass3 = MumbleLogIngestor.ingest_log_file(tmp_path, use_offsets=True)
             self.assertEqual(len(events_pass3), 1)
         finally:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
-
-    def test_murmur_live_snapshot_ingest(self):
-        """Verify live snapshot ingestion into CISession records."""
-        snapshot = [
-            {
-                "session_id": "555",
-                "username": "pilot_bravo",
-                "channel_name": "Fleet Comms 1",
-            }
-        ]
-        sessions = MurmurQueryHelper.ingest_live_snapshot(snapshot)
-        self.assertEqual(len(sessions), 1)
-        self.assertEqual(sessions[0].user, self.user2)
-        self.assertEqual(sessions[0].channel_name, "Fleet Comms 1")
 
     def test_zkill_analysis_only_on_completed_operation(self):
         """Verify zKill analysis is strictly deferred until operation end_time is populated."""

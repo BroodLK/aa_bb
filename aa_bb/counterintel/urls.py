@@ -62,6 +62,11 @@ urlpatterns = [
         views.auto_detect_comms,
         name="auto_detect_comms",
     ),
+    path(
+        "operations/<int:operation_id>/rescan-combat/",
+        views.rescan_combat,
+        name="rescan_combat",
+    ),
     path("members/", views.member_list, name="member_list"),
     path("members/<int:user_id>/", views.member_activity, name="member_activity"),
     path("members/<int:user_id>/dossier/", views.member_dossier, name="member_dossier"),

@@ -74,6 +74,7 @@
                                 {% if event.payload.action == 'connect' %}<span class="badge bg-success">{% translate "Connected" %}</span>
                                 {% elif event.payload.action == 'disconnect' %}<span class="badge bg-secondary">{% translate "Disconnected" %}</span>
                                 {% elif event.payload.action == 'channel_move' %}<span class="badge bg-info text-dark">{% translate "Channel moved" %}</span>
+                                {% elif event.payload.action == 'auth_failed' %}<span class="badge bg-danger">{% translate "Failed authentication" %}</span>
                                 {% else %}<span class="badge bg-light text-dark">{{ event.payload.action|default:"Info"|title }}</span>{% endif %}
                             </td>
                             <td>{{ event.payload.channel_name|default:"-" }}</td>

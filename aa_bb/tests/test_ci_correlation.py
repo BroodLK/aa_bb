@@ -4,6 +4,7 @@ Unit and integration tests for CI Correlation Engine, Baseline Analytics, and Hi
 
 # Standard Library
 from datetime import timedelta
+from unittest.mock import patch
 
 # Django
 from django.contrib.auth.models import User
@@ -16,13 +17,17 @@ from aa_bb.counterintel.ingest.paps import FCRosterIngestor
 from aa_bb.counterintel.ingest.zkill import ZKillIngestor
 from aa_bb.counterintel.models import (
     CICorrelation,
+    CIInvestigation,
     CIOverride,
     CISession,
 )
 from aa_bb.counterintel.services.correlation import CorrelationEngine
 from aa_bb.counterintel.services.identity import IdentityResolver
 from aa_bb.counterintel.services.operations import CIOperationService
-from aa_bb.counterintel.tasks import replay_historical_operation_task
+from aa_bb.counterintel.tasks import (
+    replay_historical_operation_task,
+    run_scheduled_ci_correlation,
+)
 
 
 class TestCICorrelation(TestCase):
@@ -300,3 +305,118 @@ class TestCICorrelation(TestCase):
         self.assertEqual(result["findings_count"], 1)
         self.assertEqual(result["algorithm_version"], "1.0.0")
         self.assertEqual(CICorrelation.objects.filter(operation=op).count(), 1)
+
+    def _spy_on_comms(self, op_start, channel_name="Fleet 1"):
+        MumbleLogIngestor.ingest_raw_event(
+            "pilot_spy",
+            "connect",
+            op_start + timedelta(minutes=5),
+            channel_name=channel_name,
+        )
+        MumbleLogIngestor.ingest_raw_event(
+            "pilot_spy",
+            "disconnect",
+            op_start + timedelta(minutes=50),
+            channel_name=channel_name,
+        )
+
+    def test_comms_without_pap_capped_without_channel_data(self):
+        op = CIOperationService.create_operation(
+            name="Op No Channels",
+            start_time=self.now,
+            end_time=self.now + timedelta(hours=2),
+        )
+        self._spy_on_comms(self.now, channel_name="")
+
+        corr = CorrelationEngine.correlate_operation(op)
+        spy = [c for c in corr if c.user == self.pilot_spy]
+        self.assertEqual(len(spy), 1)
+        self.assertLessEqual(
+            spy[0].confidence, CorrelationEngine.NO_CHANNEL_CONFIDENCE_CAP
+        )
+
+    def test_idle_all_day_presence_not_flagged(self):
+        op = CIOperationService.create_operation(
+            name="Op Idle Check",
+            start_time=self.now,
+            end_time=self.now + timedelta(hours=1),
+        )
+        # Connected six hours before the op and never left
+        MumbleLogIngestor.ingest_raw_event(
+            "pilot_spy", "connect", self.now - timedelta(hours=6)
+        )
+
+        corr = CorrelationEngine.correlate_operation(op)
+        self.assertFalse([c for c in corr if c.anomaly_type == "comms_without_pap"])
+
+    def test_stale_correlations_pruned_unless_investigated(self):
+        op = CIOperationService.create_operation(
+            name="Op Prune",
+            start_time=self.now,
+            end_time=self.now + timedelta(hours=2),
+        )
+        self._spy_on_comms(self.now)
+        CorrelationEngine.correlate_operation(op)
+        self.assertEqual(CICorrelation.objects.filter(operation=op).count(), 1)
+
+        # Spy's sessions turn out to be bad data; the finding should disappear
+        CISession.objects.filter(user=self.pilot_spy).delete()
+        CorrelationEngine.correlate_operation(op)
+        self.assertEqual(CICorrelation.objects.filter(operation=op).count(), 0)
+
+        # A finding backing an investigation is preserved
+        MumbleLogIngestor.rebuild_user_sessions(self.pilot_spy)
+        CorrelationEngine.correlate_operation(op)
+        self.assertEqual(CICorrelation.objects.filter(operation=op).count(), 1)
+        CIInvestigation.objects.create(subject_user=self.pilot_spy, operation=op)
+        CISession.objects.filter(user=self.pilot_spy).delete()
+        CorrelationEngine.correlate_operation(op)
+        self.assertEqual(CICorrelation.objects.filter(operation=op).count(), 1)
+
+    @patch.object(CorrelationEngine, "notify_high_confidence_finding")
+    def test_high_confidence_alert_sent_once(self, mock_notify):
+        op = CIOperationService.create_operation(
+            name="Op Alert Once",
+            start_time=self.now,
+            end_time=self.now + timedelta(hours=2),
+        )
+        # 100 minutes on a named fleet channel -> confidence above the alert threshold
+        MumbleLogIngestor.ingest_raw_event(
+            "pilot_spy",
+            "connect",
+            self.now + timedelta(minutes=5),
+            channel_name="Fleet 1",
+        )
+        MumbleLogIngestor.ingest_raw_event(
+            "pilot_spy",
+            "disconnect",
+            self.now + timedelta(minutes=110),
+            channel_name="Fleet 1",
+        )
+
+        CorrelationEngine.correlate_operation(op)
+        CorrelationEngine.correlate_operation(op)
+        self.assertEqual(mock_notify.call_count, 1)
+
+    def test_scheduled_correlation_triages_concluded_operations(self):
+        op = CIOperationService.create_operation(
+            name="Op Concluded",
+            start_time=self.now - timedelta(hours=4),
+            end_time=self.now - timedelta(hours=2),
+        )
+        self._spy_on_comms(op.start_time)
+
+        run_scheduled_ci_correlation(hours=48)
+        self.assertTrue(
+            CIInvestigation.objects.filter(
+                subject_user=self.pilot_spy, operation=op, status="pending"
+            ).exists()
+        )
+
+        # A case the reviewer closed is not reopened or rewritten
+        CIInvestigation.objects.filter(operation=op).update(
+            status="cleared", agent_summary="reviewed"
+        )
+        run_scheduled_ci_correlation(hours=48)
+        case = CIInvestigation.objects.get(subject_user=self.pilot_spy, operation=op)
+        self.assertEqual((case.status, case.agent_summary), ("cleared", "reviewed"))

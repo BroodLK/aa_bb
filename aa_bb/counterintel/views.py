@@ -2,11 +2,16 @@
 Counterintelligence views and dashboards.
 """
 
+# Standard Library
+from collections import Counter
+from datetime import timedelta
+
 # Django
 from django.contrib import messages
 from django.contrib.auth.decorators import permission_required
 from django.contrib.auth.models import User
 from django.core.paginator import Paginator
+from django.db.models import Prefetch
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -15,9 +20,10 @@ from django.utils.translation import gettext_lazy as _
 from django.views.decorators.http import require_POST
 
 # AA BigBrother
-from aa_bb.models import BigBrotherConfig, UserStatus
+from aa_bb.models import BigBrotherConfig
 
 from .ingest.paps import FCRosterIngestor
+from .ingest.zkill import ZKillIngestor
 from .models import (
     CICorrelation,
     CIEvent,
@@ -30,7 +36,6 @@ from .models import (
     CISession,
 )
 from .services.agent import CIAgentService
-from .services.baseline import BaselineEngine
 from .services.correlation import CorrelationEngine
 from .services.operations import CIOperationService
 
@@ -337,18 +342,34 @@ def member_dossier(request, user_id: int):
     )
 
 
+RISK_MATRIX_LOOKBACK_DAYS = 30
+
+
 @permission_required("aa_bb.can_view_ci")
 def risk_matrix(request):
     """
-    Alliance-wide Member Risk Matrix Dashboard displaying composite risk index,
-    anomaly count, fleet attendance, and communication engagement.
+    Alliance-wide Member Risk Matrix Dashboard. A member's risk index is the highest
+    risk score among their recent findings, ignoring anomaly types exempted by a
+    CIOverride and findings whose investigation was cleared or dismissed.
     """
     cfg = BigBrotherConfig.get_solo()
     member_states = cfg.bb_member_states.all()
+    lookback = timezone.now() - timedelta(days=RISK_MATRIX_LOOKBACK_DAYS)
+
+    recent_correlations = CICorrelation.objects.filter(
+        operation__start_time__gte=lookback
+    ).select_related("operation")
     users_qs = (
         User.objects.filter(is_active=True, profile__state__in=member_states)
-        .select_related("profile__main_character", "userstatus")
-        .prefetch_related("ci_correlations")
+        .select_related("profile__main_character", "profile__state", "userstatus")
+        .prefetch_related(
+            Prefetch(
+                "ci_correlations",
+                queryset=recent_correlations,
+                to_attr="recent_correlations",
+            ),
+            Prefetch("ci_overrides", to_attr="override_list"),
+        )
         .distinct()
     )
 
@@ -358,26 +379,35 @@ def risk_matrix(request):
     if search_q:
         users_qs = users_qs.filter(username__icontains=search_q)
 
-    # Calculate summaries
+    resolved_cases = set(
+        CIInvestigation.objects.filter(status__in=("cleared", "dismissed")).values_list(
+            "subject_user_id", "operation_id"
+        )
+    )
+    open_case_counts = Counter(
+        CIInvestigation.objects.filter(status__in=("pending", "in_review")).values_list(
+            "subject_user_id", flat=True
+        )
+    )
+
     all_members_data = []
     high_risk_count = 0
     med_risk_count = 0
     low_risk_count = 0
 
     for u in users_qs:
-        corrs = list(u.ci_correlations.all())
-        anomaly_count = len(corrs)
-        max_corr_risk = max([c.risk_score for c in corrs], default=0.0)
-
-        # Baseline & factors
-        risk_score, factors = BaselineEngine.calculate_user_risk_score(
-            u,
-            findings=[
-                {"anomaly_type": c.anomaly_type, "confidence": c.confidence}
-                for c in corrs
-            ],
-        )
-        effective_risk = max(risk_score, max_corr_risk)
+        exempt_types = {
+            anomaly_type
+            for ovr in u.override_list
+            for anomaly_type in (ovr.exempt_anomaly_types or [])
+        }
+        corrs = [
+            c
+            for c in u.recent_correlations
+            if c.anomaly_type not in exempt_types
+            and (u.id, c.operation_id) not in resolved_cases
+        ]
+        effective_risk = max((c.risk_score for c in corrs), default=0.0)
 
         if effective_risk >= 0.70:
             tier = "HIGH"
@@ -395,20 +425,29 @@ def risk_matrix(request):
         if tier_filter and tier != tier_filter:
             continue
 
-        main_char = getattr(getattr(u, "profile", None), "main_character", None)
-        last_discord = UserStatus.get_last_discord_message_at_for_user(u)
+        profile = getattr(u, "profile", None)
+        user_status = getattr(u, "userstatus", None)
 
         all_members_data.append(
             {
                 "user": u,
-                "main_character": main_char,
-                "state": getattr(getattr(u, "profile", None), "state", None),
+                "main_character": getattr(profile, "main_character", None),
+                "state": getattr(profile, "state", None),
                 "risk_score": round(effective_risk, 2),
                 "risk_tier": tier,
                 "risk_class": tier_class,
-                "anomaly_count": anomaly_count,
-                "last_discord": last_discord,
-                "factors": factors,
+                "anomaly_count": len(corrs),
+                "top_anomalies": [
+                    anomaly_type.replace("_", " ")
+                    for anomaly_type, _count in Counter(
+                        c.anomaly_type for c in corrs
+                    ).most_common(3)
+                ],
+                "last_finding_at": max(
+                    (c.operation.start_time for c in corrs), default=None
+                ),
+                "open_cases": open_case_counts.get(u.id, 0),
+                "last_discord": getattr(user_status, "last_discord_message_at", None),
             }
         )
 
@@ -430,7 +469,8 @@ def risk_matrix(request):
             "high_risk_count": high_risk_count,
             "med_risk_count": med_risk_count,
             "low_risk_count": low_risk_count,
-            "total_members": len(all_members_data),
+            "total_members": high_risk_count + med_risk_count + low_risk_count,
+            "lookback_days": RISK_MATRIX_LOOKBACK_DAYS,
             "title": _("Counterintelligence - Member Risk Matrix"),
         },
     )
@@ -613,7 +653,9 @@ def edit_operation(request, operation_id: int):
 
     if quick_action == "close_now":
         operation.end_time = timezone.now()
-        operation.save(update_fields=["end_time"])
+        # The window changed, so zKillboard must be scanned again
+        operation.combat_scanned_at = None
+        operation.save(update_fields=["end_time", "combat_scanned_at"])
         CorrelationEngine.correlate_operation(operation)
         messages.success(
             request,
@@ -625,7 +667,8 @@ def edit_operation(request, operation_id: int):
 
     if quick_action == "reopen":
         operation.end_time = None
-        operation.save(update_fields=["end_time"])
+        operation.combat_scanned_at = None
+        operation.save(update_fields=["end_time", "combat_scanned_at"])
         CorrelationEngine.correlate_operation(operation)
         messages.success(request, _(f"Operation '{operation.name}' reopened."))
         return redirect("ci:operation_timeline", operation_id=operation.id)
@@ -633,6 +676,7 @@ def edit_operation(request, operation_id: int):
     name = request.POST.get("name", "").strip()
     if name:
         operation.name = name
+    previous_window = (operation.start_time, operation.end_time)
 
     operation.operation_type = (
         request.POST.get("operation_type", operation.operation_type).strip()
@@ -667,6 +711,8 @@ def edit_operation(request, operation_id: int):
         operation.fleet_commander = None
 
     operation.notes = request.POST.get("notes", "").strip()
+    if (operation.start_time, operation.end_time) != previous_window:
+        operation.combat_scanned_at = None
 
     operation.save()
     CorrelationEngine.correlate_operation(operation)
@@ -674,6 +720,31 @@ def edit_operation(request, operation_id: int):
     messages.success(
         request, _(f"Operation '{operation.name}' details updated successfully.")
     )
+    return redirect("ci:operation_timeline", operation_id=operation.id)
+
+
+@permission_required("aa_bb.can_manage_ci")
+@require_POST
+def rescan_combat(request, operation_id: int):
+    """
+    Re-scan zKillboard for the operation's window immediately and re-correlate.
+    """
+    operation = get_object_or_404(CIOperation, id=operation_id)
+    events = ZKillIngestor.scan_operation(operation)
+    CorrelationEngine.correlate_operation(operation)
+    if operation.combat_scanned_at:
+        messages.success(
+            request,
+            _(f"zKillboard scan complete: {len(events)} killmail(s) in window."),
+        )
+    else:
+        messages.warning(
+            request,
+            _(
+                "zKillboard scan was incomplete (rate limit or outage); "
+                "it will be retried automatically."
+            ),
+        )
     return redirect("ci:operation_timeline", operation_id=operation.id)
 
 

@@ -447,40 +447,45 @@ well as this setting.
 
 ### Periodic Tasks & Celery Beat Schedule
 
-To automate background log ingestion, AFAT synchronization, and periodic correlation runs, add the following to `CELERYBEAT_SCHEDULE` in `local.py`:
+A single pipeline task refreshes AFAT fleets, EVE activity and Mumble presence,
+then correlates operations from the last 48 hours and opens review cases for
+concluded operations with findings. Run `python manage.py sync_counterintel_tasks`
+to create it in django-celery-beat, or add it to `CELERYBEAT_SCHEDULE` in `local.py`:
 
 ```python
-# Counterintelligence Periodic Tasks
-CELERYBEAT_SCHEDULE["BigBrother :: CI Sync Recent AFAT Fleets"] = {
-    "task": "aa_bb.tasks.sync_recent_afat_fleets_task",
+CELERYBEAT_SCHEDULE["BigBrother :: CI Pipeline"] = {
+    "task": "aa_bb.counterintel.tasks.run_counterintel_pipeline_task",
     "schedule": 300.0,  # Every 5 minutes
-    "options": {"queue": "aa_bb_ci"},
-}
-CELERYBEAT_SCHEDULE["BigBrother :: CI Ingest Mumble Logs"] = {
-    "task": "aa_bb.tasks.ingest_mumble_logs_task",
-    "schedule": 300.0,  # Every 5 minutes
-    "options": {"queue": "aa_bb_ci"},
-}
-CELERYBEAT_SCHEDULE["BigBrother :: CI Scheduled Correlation"] = {
-    "task": "aa_bb.tasks.run_scheduled_ci_correlation",
-    "schedule": 900.0,  # Every 15 minutes
-    "options": {"queue": "aa_bb_ci"},
+    "kwargs": {"hours": 48},
 }
 ```
 
-### Optional Settings (`local.py`)
+### Mumble Presence
 
-```python
-# Path to your Mumble authenticator or server log file for automatic ingestion
-MUMBLE_AUTHENTICATOR_LOG_PATH = "/var/log/mumble-authenticator.log"
-```
+Mumble presence comes from two Alliance Auth sources, so the AA Mumble
+authenticator must be running:
 
-### Dedicated Celery Queue Worker (Recommended)
+- **Authenticator log** (optional, recommended): every successful and failed
+  authentication, with users resolved via the Mumble id offset. Set the path in `local.py`:
 
-To prevent analytical replays from impacting standard audit latency, run a worker dedicated to the `aa_bb_ci` queue:
+  ```python
+  MUMBLE_AUTHENTICATOR_LOG_PATH = "/var/log/mumble-authenticator.log"
+  ```
+
+  The file must be readable by the Celery worker. Timestamps are read in Django's `TIME_ZONE`.
+
+- **`MumbleUser.last_connect` / `last_disconnect`**: maintained by the authenticator
+  from Murmur callbacks and polled on every pipeline run. This is the only source
+  of disconnects.
+
+Murmur does not report channel names through either source, so comms-presence
+findings are capped at medium confidence.
+
+To discard previously ingested Mumble data and rebuild it with the current parser:
 
 ```bash
-celery -A myauth worker -Q aa_bb_ci -l info -c 2
+python manage.py ci_reset_mumble --dry-run   # show what would be deleted
+python manage.py ci_reset_mumble --yes
 ```
 
 # Permissions

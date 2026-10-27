@@ -437,7 +437,16 @@ class CIAgentService:
         triaged_cases = []
 
         flagged_users = {c.user for c in correlations if c.confidence >= 0.50}
+        # Leave cases a reviewer has already resolved untouched
+        resolved_user_ids = set(
+            CIInvestigation.objects.filter(
+                operation=operation,
+                status__in=("cleared", "dismissed", "escalated"),
+            ).values_list("subject_user_id", flat=True)
+        )
         for u in flagged_users:
+            if u.id in resolved_user_ids:
+                continue
             case = cls.create_or_update_investigation(
                 subject_user=u,
                 operation=operation,

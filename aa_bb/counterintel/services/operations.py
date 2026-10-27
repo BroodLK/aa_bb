@@ -101,7 +101,9 @@ class CIOperationService:
             updated_fields = []
             if end_time and op.end_time != end_time:
                 op.end_time = end_time
-                updated_fields.append("end_time")
+                # The window changed, so zKillboard must be scanned again
+                op.combat_scanned_at = None
+                updated_fields.extend(["end_time", "combat_scanned_at"])
             if fleet_commander and not op.fleet_commander:
                 op.fleet_commander = fleet_commander
                 updated_fields.append("fleet_commander")
@@ -312,9 +314,16 @@ class CIOperationService:
                 "character_name",
                 None,
             )
-            tracked_character = (ev.payload or {}).get("character_name")
+            payload = ev.payload or {}
+            tracked_character = payload.get("character_name")
+            # Unlinked members are labelled with whatever name the source reported
+            external_name = (
+                payload.get("discord_display_name")
+                or payload.get("discord_username")
+                or payload.get("username")
+            )
             member_label = main_character or (
-                ev.user.username if ev.user else "Unknown"
+                ev.user.username if ev.user else (external_name or "Unknown")
             )
             if tracked_character and tracked_character != main_character:
                 member_label = f"{member_label} ({tracked_character})"

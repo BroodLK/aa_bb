@@ -8,12 +8,14 @@ from datetime import timedelta
 
 # Django
 from django.contrib.auth.models import User
+from django.utils import timezone
 
 # AA BigBrother
 from aa_bb.models import BigBrotherConfig
 
 from ..models import (
     CICorrelation,
+    CIInvestigation,
     CIOperation,
     CIOperationParticipant,
     CIOverride,
@@ -34,6 +36,10 @@ class CorrelationEngine:
     ALGORITHM_VERSION = "1.2.0"
     ALERT_CONFIDENCE_THRESHOLD = 0.85
     ALERT_RISK_THRESHOLD = 0.80
+    # Non-fleet sessions that began this long before the op are idle presence
+    IDLE_PRESENCE_HOURS = 2
+    # Without channel names we only know someone was on the server, not in fleet comms
+    NO_CHANNEL_CONFIDENCE_CAP = 0.60
 
     @classmethod
     def correlate_operation(
@@ -62,7 +68,9 @@ class CorrelationEngine:
 
         # 2. Pre-contact disconnect detection
         findings.extend(
-            cls._detect_pre_contact_disconnects(operation, timeline, algorithm_version)
+            cls._detect_pre_contact_disconnects(
+                operation, timeline, confirmed_user_ids, algorithm_version
+            )
         )
 
         # 3. Briefing attendance without deployment
@@ -95,7 +103,7 @@ class CorrelationEngine:
         # 6. Co-occurrence & Fleet Leak Ring Detection
         findings.extend(
             cls._detect_co_occurring_disconnect_rings(
-                operation, timeline, algorithm_version
+                operation, timeline, confirmed_user_ids, algorithm_version
             )
         )
 
@@ -132,6 +140,11 @@ class CorrelationEngine:
                 user, operation=operation, findings=user_findings
             )
 
+            previous = CICorrelation.objects.filter(
+                operation=operation, user=user, anomaly_type=anomaly_type
+            ).first()
+            was_alerting = previous is not None and cls._is_alerting(previous)
+
             corr, created = CICorrelation.objects.update_or_create(
                 operation=operation,
                 user=user,
@@ -148,14 +161,47 @@ class CorrelationEngine:
             )
             persisted_findings.append(corr)
 
-            # Trigger automated webhook notification for high-confidence anomalies
-            if (
-                corr.confidence >= cls.ALERT_CONFIDENCE_THRESHOLD
-                or corr.risk_score >= cls.ALERT_RISK_THRESHOLD
-            ):
+            # Alert once, when a finding first crosses the high-confidence threshold
+            if cls._is_alerting(corr) and not was_alerting:
                 cls.notify_high_confidence_finding(corr)
 
+        cls._prune_stale_correlations(operation, persisted_findings)
         return persisted_findings
+
+    @classmethod
+    def _is_alerting(cls, corr: CICorrelation) -> bool:
+        return (
+            corr.confidence >= cls.ALERT_CONFIDENCE_THRESHOLD
+            or corr.risk_score >= cls.ALERT_RISK_THRESHOLD
+        )
+
+    @classmethod
+    def _prune_stale_correlations(
+        cls, operation: CIOperation, persisted: list[CICorrelation]
+    ):
+        """
+        Remove findings this run no longer produces (data corrected, override added),
+        keeping any that back an investigation case.
+        """
+        investigated_user_ids = CIInvestigation.objects.filter(
+            operation=operation
+        ).values_list("subject_user_id", flat=True)
+        CICorrelation.objects.filter(operation=operation).exclude(
+            id__in=[c.id for c in persisted]
+        ).exclude(user_id__in=investigated_user_ids).delete()
+
+    @classmethod
+    def _is_operational_session(
+        cls, session: dict, operation: CIOperation, confirmed_user_ids: set
+    ) -> bool:
+        """
+        A session counts towards the op if its user was on the FC roster, or it
+        began close enough to the op to be more than all-day idle presence.
+        """
+        if session["user_id"] in confirmed_user_ids:
+            return True
+        idle_cutoff = operation.start_time - timedelta(hours=cls.IDLE_PRESENCE_HOURS)
+        return session["start_time"] >= idle_cutoff
 
     @classmethod
     def _detect_comms_without_pap(
@@ -166,20 +212,36 @@ class CorrelationEngine:
         algorithm_version: str,
     ) -> list[dict]:
         findings = []
+        op_start, op_end = CIOperationService.get_operational_window(operation, 0, 0)
+        now = timezone.now()
         user_sessions = {}
         for s in timeline["sessions"]:
+            if not cls._is_operational_session(s, operation, confirmed_user_ids):
+                continue
             uid = s["user_id"]
             user_sessions.setdefault(uid, []).append(s)
 
         for uid, sessions in user_sessions.items():
             if uid not in confirmed_user_ids:
-                total_duration = sum(s["duration_seconds"] for s in sessions)
+                # Only time spent inside the operation window counts
+                total_duration = sum(
+                    max(
+                        0.0,
+                        (
+                            min(op_end, s["end_time"] or now)
+                            - max(op_start, s["start_time"])
+                        ).total_seconds(),
+                    )
+                    for s in sessions
+                )
                 # Significant presence threshold: > 5 minutes
                 if total_duration >= 300:
                     user = User.objects.filter(id=uid).first()
                     if not user:
                         continue
                     confidence = min(0.95, 0.4 + (total_duration / 3600.0) * 0.5)
+                    if not any(s["channel_name"] for s in sessions):
+                        confidence = min(confidence, cls.NO_CHANNEL_CONFIDENCE_CAP)
                     source_ids = [f"session:{s['id']}" for s in sessions]
                     channels = (
                         ", ".join(filter(None, {s["channel_name"] for s in sessions}))
@@ -207,6 +269,7 @@ class CorrelationEngine:
         cls,
         operation: CIOperation,
         timeline: dict,
+        confirmed_user_ids: set,
         algorithm_version: str,
     ) -> list[dict]:
         findings = []
@@ -219,6 +282,8 @@ class CorrelationEngine:
         critical_window_start = first_contact - timedelta(minutes=15)
 
         for s in timeline["sessions"]:
+            if not cls._is_operational_session(s, operation, confirmed_user_ids):
+                continue
             end_time = s["end_time"]
             if end_time and critical_window_start <= end_time <= first_contact:
                 user = User.objects.filter(id=s["user_id"]).first()
@@ -550,6 +615,7 @@ class CorrelationEngine:
         cls,
         operation: CIOperation,
         timeline: dict,
+        confirmed_user_ids: set,
         algorithm_version: str,
     ) -> list[dict]:
         """
@@ -567,6 +633,8 @@ class CorrelationEngine:
         # Users who disconnected in the critical window for this op
         curr_op_disconnect_uids = set()
         for s in timeline["sessions"]:
+            if not cls._is_operational_session(s, operation, confirmed_user_ids):
+                continue
             end_time = s["end_time"]
             if end_time and critical_window_start <= end_time <= first_contact:
                 curr_op_disconnect_uids.add(s["user_id"])

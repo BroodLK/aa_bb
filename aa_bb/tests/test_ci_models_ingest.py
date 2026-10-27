@@ -4,6 +4,7 @@ Unit and integration tests for CI Models, Identity Resolution, and Event Ingesti
 
 # Standard Library
 from datetime import timedelta
+from types import SimpleNamespace
 from unittest.mock import patch
 
 # Django
@@ -14,7 +15,11 @@ from django.utils import timezone
 
 # AA BigBrother
 from aa_bb.counterintel.ingest.discord import DiscordIngestor
-from aa_bb.counterintel.ingest.mumble import MumbleLogIngestor
+from aa_bb.counterintel.ingest.mumble import (
+    DEFAULT_MUMBLE_ID_OFFSET,
+    MumbleLogIngestor,
+    MumblePresenceIngestor,
+)
 from aa_bb.counterintel.models import (
     CICorrelation,
     CIEvent,
@@ -149,39 +154,68 @@ class TestCIModelsAndIngest(TestCase):
                 dedup_hash=hash1,
             )
 
-    def test_mumble_log_ingestor_parsing_and_sessions(self):
-        IdentityResolver.register_identity(
-            user=self.user1,
-            mumble_username="pilot_alpha",
-            effective_from=self.now - timedelta(days=1),
-            is_verified=True,
+    def _auth_line(self, ts, message):
+        return (
+            f"[{ts.strftime('%d/%b/%Y %H:%M:%S')}] INFO "
+            f"[mumble_authenticator:599] {message}"
         )
 
-        t_conn = self.now - timedelta(minutes=30)
-        t_move = self.now - timedelta(minutes=20)
-        t_disc = self.now - timedelta(minutes=5)
+    def test_mumble_authenticator_log_real_lines(self):
+        t_fail = (self.now - timedelta(minutes=30)).replace(microsecond=0)
+        t_auth = t_fail + timedelta(seconds=20)
+        uid = self.user1.pk + DEFAULT_MUMBLE_ID_OFFSET
 
-        log_lines = f"""
-        [{t_conn.isoformat()}] pilot_alpha AUTHENTICATE session=101 channel="Lobby"
-        [{t_move.isoformat()}] pilot_alpha CHANNEL_MOVE session=101 channel="Fleet Alpha"
-        [{t_disc.isoformat()}] pilot_alpha DISCONNECT session=101 channel="Fleet Alpha"
-        """
+        log_lines = "\n".join(
+            [
+                self._auth_line(
+                    t_fail,
+                    f"Failed authentication attempt for user: Pilot_Alpha {self.user1.pk}",
+                ),
+                f"[{t_auth.strftime('%d/%b/%Y %H:%M:%S')}] DEBUG "
+                "[mumble_authenticator:596] checking password with hash function: "
+                "bcrypt-sha256",
+                self._auth_line(
+                    t_auth, f"User authenticated: [FIGL] Pilot Alpha {uid}"
+                ),
+                self._auth_line(
+                    t_auth, "Group memberships: ['Member', 'Alliance-Flying-Dangerous']"
+                ),
+                f"[{t_auth.strftime('%d/%b/%Y %H:%M:%S')}] DEBUG "
+                "[mumbletagger.signals:24] New / updated mumble tags for Pilot Alpha",
+                self._auth_line(t_auth, "Attaching Murmur Meta Callback"),
+            ]
+        )
 
         events = MumbleLogIngestor.ingest_log_text(log_lines)
-        self.assertEqual(len(events), 3)
+        self.assertEqual(
+            [ev.payload["action"] for ev in events], ["auth_failed", "connect"]
+        )
+        for ev in events:
+            self.assertEqual(ev.user, self.user1)
+        self.assertEqual(events[1].payload["username"], "[FIGL] Pilot Alpha")
+        self.assertEqual(events[1].payload["mumble_user_id"], str(uid))
+        self.assertEqual(events[1].timestamp, t_auth)
 
         # Idempotent replay: running again should not duplicate events
-        events_replay = MumbleLogIngestor.ingest_log_text(log_lines)
-        self.assertEqual(len(events_replay), 3)
-        self.assertEqual(CIEvent.objects.filter(source="mumble").count(), 3)
+        MumbleLogIngestor.ingest_log_text(log_lines)
+        self.assertEqual(CIEvent.objects.filter(source="mumble").count(), 2)
 
-        # Session verification
+        # Authentication opens a session; the log never reports disconnects
         sessions = CISession.objects.filter(user=self.user1, source="mumble")
         self.assertEqual(sessions.count(), 1)
-        sess = sessions.first()
-        self.assertEqual(sess.channel_name, "Fleet Alpha")
-        self.assertIsNotNone(sess.end_time)
-        self.assertGreater(sess.duration_seconds, 0)
+        self.assertEqual(sessions.first().start_time, t_auth)
+        self.assertIsNone(sessions.first().end_time)
+
+    def test_mumble_temp_user_authentication_has_no_auth_user(self):
+        ts = (self.now - timedelta(minutes=5)).replace(microsecond=0)
+        temp_uid = 7 + 2 * DEFAULT_MUMBLE_ID_OFFSET
+        events = MumbleLogIngestor.ingest_log_text(
+            self._auth_line(ts, f"TEMP User authenticated: Guest Pilot {temp_uid}")
+        )
+        self.assertEqual(len(events), 1)
+        self.assertIsNone(events[0].user)
+        self.assertTrue(events[0].payload["temp_user"])
+        self.assertEqual(events[0].payload["username"], "Guest Pilot")
 
     def test_mumble_reconnect_clustering(self):
         IdentityResolver.register_identity(
@@ -307,55 +341,103 @@ class TestCIModelsAndIngest(TestCase):
         )
         self.assertIn("comms_without_pap", str(ovr))
 
-    def test_mumble_authenticator_log_formats(self):
-        IdentityResolver.register_identity(
+    def test_mumble_presence_poll_closes_sessions(self):
+        t_conn = (self.now - timedelta(minutes=40)).replace(microsecond=0)
+        t_disc = self.now - timedelta(minutes=10)
+        uid = self.user1.pk + DEFAULT_MUMBLE_ID_OFFSET
+
+        MumbleLogIngestor.ingest_log_text(
+            self._auth_line(t_conn, f"User authenticated: Pilot Alpha {uid}")
+        )
+        mumble_user = SimpleNamespace(
             user=self.user1,
-            mumble_username="pilot_alpha",
-            effective_from=self.now - timedelta(days=1),
-            is_verified=True,
+            user_id=self.user1.pk,
+            username="Pilot_Alpha",
+            # The ICE callback fires a moment after the authenticator logs the login
+            last_connect=t_conn + timedelta(milliseconds=700),
+            last_disconnect=t_disc,
         )
 
-        log_lines = """
-        2026-10-23 18:22:01,123 - authenticator - INFO - Authenticating user: pilot_alpha
-        2026-10-23 18:22:02,456 - authenticator - INFO - userConnected: 42 (pilot_alpha)
-        2026-10-23 18:45:00,789 - authenticator - INFO - User pilot_alpha moved to channel Fleet 1
-        2026-10-23 19:10:00,123 - authenticator - INFO - userDisconnected: 42 (pilot_alpha)
-        """
-        events = MumbleLogIngestor.ingest_log_text(log_lines)
-        self.assertEqual(len(events), 4)
-
-        # Check all resolved to user1
-        for ev in events:
-            self.assertEqual(ev.user, self.user1)
+        created = MumblePresenceIngestor.poll([mumble_user])
+        self.assertEqual([ev.payload["action"] for ev in created], ["disconnect"])
+        self.assertEqual(
+            CIEvent.objects.filter(source="mumble", payload__action="connect").count(),
+            1,
+        )
 
         sessions = CISession.objects.filter(user=self.user1, source="mumble")
         self.assertEqual(sessions.count(), 1)
-        sess = sessions.first()
-        self.assertEqual(sess.channel_name, "Fleet 1")
-        self.assertIsNotNone(sess.end_time)
-        self.assertGreater(sess.duration_seconds, 0)
+        self.assertEqual(sessions.first().start_time, t_conn)
+        self.assertEqual(sessions.first().end_time, t_disc)
 
-    def test_mumble_disconnect_by_session_id_resolution(self):
-        IdentityResolver.register_identity(
-            user=self.user1,
-            mumble_username="pilot_alpha",
-            effective_from=self.now - timedelta(days=1),
-            is_verified=True,
+        # Polling unchanged timestamps again is a no-op
+        self.assertEqual(MumblePresenceIngestor.poll([mumble_user]), [])
+        self.assertEqual(CIEvent.objects.filter(source="mumble").count(), 2)
+
+    def test_mumble_out_of_order_disconnect_splits_sessions(self):
+        uid = self.user1.pk + DEFAULT_MUMBLE_ID_OFFSET
+        t0 = (self.now - timedelta(hours=2)).replace(microsecond=0)
+        t1 = t0 + timedelta(minutes=30)
+        t2 = t0 + timedelta(minutes=60)
+
+        # Both logins are in the log before the poll observes the disconnect between them
+        MumbleLogIngestor.ingest_log_text(
+            "\n".join(
+                [
+                    self._auth_line(t0, f"User authenticated: Pilot Alpha {uid}"),
+                    self._auth_line(t2, f"User authenticated: Pilot Alpha {uid}"),
+                ]
+            )
+        )
+        MumblePresenceIngestor.poll(
+            [
+                SimpleNamespace(
+                    user=self.user1,
+                    user_id=self.user1.pk,
+                    username="Pilot_Alpha",
+                    last_connect=t2,
+                    last_disconnect=t1,
+                )
+            ]
         )
 
-        # First line connects with session id 88, second disconnects with session id only
-        log_lines = """
-        2026-10-23 18:22:01,123 - authenticator - INFO - userConnected: 88 (pilot_alpha)
-        2026-10-23 18:35:00,456 - authenticator - INFO - userDisconnected: 88
-        """
-        events = MumbleLogIngestor.ingest_log_text(log_lines)
-        self.assertEqual(len(events), 2)
-        self.assertEqual(events[0].user, self.user1)
-        self.assertEqual(events[1].user, self.user1)
+        sessions = list(
+            CISession.objects.filter(user=self.user1, source="mumble").order_by(
+                "start_time"
+            )
+        )
+        self.assertEqual(
+            [(sess.start_time, sess.end_time) for sess in sessions],
+            [(t0, t1), (t2, None)],
+        )
 
-        sessions = CISession.objects.filter(user=self.user1, source="mumble")
-        self.assertEqual(sessions.count(), 1)
-        self.assertIsNotNone(sessions.first().end_time)
+    def test_discord_unlinked_author_name_in_timeline(self):
+        op = CIOperation.objects.create(
+            name="Discord Label Op",
+            start_time=self.now - timedelta(minutes=30),
+            end_time=self.now + timedelta(minutes=30),
+        )
+        ev = DiscordIngestor.ingest_message_event(
+            discord_user_id=111222333444555666,
+            channel_id=42,
+            message_id=99,
+            timestamp=self.now,
+            content_length=12,
+            discord_username="spy_account",
+            discord_display_name="Totally Friendly",
+            channel_name="fleet-chat",
+        )
+        self.assertIsNone(ev.user)
+        self.assertEqual(ev.payload["discord_username"], "spy_account")
+        self.assertEqual(ev.payload["channel_name"], "fleet-chat")
+        self.assertNotIn("content", ev.payload)
+
+        # AA BigBrother
+        from aa_bb.counterintel.services.operations import CIOperationService
+
+        timeline = CIOperationService.reconstruct_timeline(op)
+        labels = [e["username"] for e in timeline["events"] if e["id"] == ev.id]
+        self.assertEqual(labels, ["Totally Friendly"])
 
     @patch("aa_bb.tasks_tickets.discordbot_active", return_value=True)
     def test_discord_last_message_resolution_and_fallback(self, mock_bot_active):

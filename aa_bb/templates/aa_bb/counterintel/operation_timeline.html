@@ -457,7 +457,22 @@
                 <div>
                     <div class="d-flex justify-content-between small text-muted mb-1">
                         <span><i class="fas fa-crosshairs me-1 text-danger"></i><strong>{% translate "Track 3: Combat Engagements & Killmails" %}</strong></span>
-                        <span class="badge bg-danger">zKillboard</span>
+                        <span class="d-flex align-items-center gap-2">
+                            {% if operation.combat_scanned_at %}
+                                <span title="{% translate 'Last zKillboard scan of this window' %}">{% translate "Combat scanned" %}: {{ operation.combat_scanned_at|date:"Y-m-d H:i" }} UTC</span>
+                            {% else %}
+                                <span>{% translate "Pending zKillboard scan (30 min after the window closes)" %}</span>
+                            {% endif %}
+                            {% if perms.aa_bb.can_manage_ci %}
+                            <form method="post" action="{% url 'ci:rescan_combat' operation.id %}" class="d-inline">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-sm btn-outline-danger py-0" title="{% translate 'Rescan zKillboard now' %}">
+                                    <i class="fas fa-sync-alt"></i>
+                                </button>
+                            </form>
+                            {% endif %}
+                            <span class="badge bg-danger">zKillboard</span>
+                        </span>
                     </div>
                     <div class="p-2 border border-secondary rounded bg-secondary bg-opacity-25" style="min-height: 38px;">
                         {% for ev in timeline.events %}
@@ -521,16 +536,32 @@
                                         </div>
                                     {% endif %}
                                 {% else %}
-                                    <span class="text-muted">Unknown</span>
+                                    <span class="text-muted">{{ ev.username }}</span>
+                                    {% if ev.username != "Unknown" %}
+                                        <span class="badge bg-secondary ms-1" title="{% translate 'Not linked to an Auth account' %}">{% translate "unlinked" %}</span>
+                                    {% endif %}
                                 {% endif %}
                             </td>
                             <td class="small">
                                 {% if ev.source == 'mumble' %}
-                                    Action: <strong>{{ ev.payload.action }}</strong>
+                                    {% if ev.payload.action == 'connect' %}
+                                        <strong>{% translate "Connected" %}</strong>
+                                    {% elif ev.payload.action == 'disconnect' %}
+                                        <strong>{% translate "Disconnected" %}</strong>
+                                    {% elif ev.payload.action == 'auth_failed' %}
+                                        <strong class="text-danger">{% translate "Failed authentication" %}</strong>
+                                    {% else %}
+                                        <strong>{{ ev.payload.action }}</strong>
+                                    {% endif %}
+                                    {% if ev.payload.temp_user %}<span class="badge bg-warning text-dark ms-1">{% translate "temp link" %}</span>{% endif %}
                                     {% if ev.payload.channel_name %}| Channel: <em>{{ ev.payload.channel_name }}</em>{% endif %}
                                 {% elif ev.source == 'discord' %}
-                                    Action: <strong>{{ ev.payload.action|default:"msg" }}</strong>
-                                    {% if ev.payload.channel_name %}| Voice: <em>{{ ev.payload.channel_name }}</em>{% endif %}
+                                    {% if ev.payload.message_id %}
+                                        {% translate "Message" %}{% if ev.payload.channel_name %} in <em>#{{ ev.payload.channel_name }}</em>{% endif %}
+                                    {% else %}
+                                        Voice: <strong>{{ ev.payload.action }}</strong>
+                                        {% if ev.payload.channel_name %}| <em>{{ ev.payload.channel_name }}</em>{% endif %}
+                                    {% endif %}
                                 {% elif ev.source == 'zkill' %}
                                     Killmail: <strong>#{{ ev.payload.killmail_id }}</strong> | Sys: {{ ev.payload.solar_system_id }}
                                 {% elif ev.source == 'pap' %}
