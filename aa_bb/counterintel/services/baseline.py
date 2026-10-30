@@ -11,6 +11,7 @@ from django.core.cache import cache
 from django.utils import timezone
 
 from ..models import CIOperationParticipant, CISession
+from ..scoring import scoring
 
 
 class BaselineEngine:
@@ -23,16 +24,6 @@ class BaselineEngine:
     CACHE_TTL_SECONDS = 21600  # 6 hours
     # Fewer recorded disconnects than this cannot establish a logoff habit
     MIN_BASELINE_DISCONNECTS = 5
-    # Composite risk score weights; they sum to 1.0
-    RISK_WEIGHTS = {
-        "comms": 0.25,
-        "discord": 0.10,
-        "alt": 0.20,
-        "deviation": 0.10,
-        "bb_signals": 0.20,
-        "leak": 0.10,
-        "accountability": 0.05,
-    }
 
     @classmethod
     def has_disconnect_baseline(cls, user: User, reference_time=None) -> bool:
@@ -216,16 +207,17 @@ class BaselineEngine:
         # 7. Flying characters hidden from corptools auditing
         accountability_factor = max_confidence(("unaudited_fleet_character",))
 
+        weights = scoring().risk_weights()
         raw_score = sum(
             weight * factor
             for weight, factor in (
-                (cls.RISK_WEIGHTS["comms"], comms_factor),
-                (cls.RISK_WEIGHTS["discord"], discord_factor),
-                (cls.RISK_WEIGHTS["alt"], alt_factor),
-                (cls.RISK_WEIGHTS["deviation"], deviation_factor),
-                (cls.RISK_WEIGHTS["bb_signals"], bb_factor),
-                (cls.RISK_WEIGHTS["leak"], leak_factor),
-                (cls.RISK_WEIGHTS["accountability"], accountability_factor),
+                (weights["comms"], comms_factor),
+                (weights["discord"], discord_factor),
+                (weights["alt"], alt_factor),
+                (weights["deviation"], deviation_factor),
+                (weights["bb_signals"], bb_factor),
+                (weights["leak"], leak_factor),
+                (weights["accountability"], accountability_factor),
             )
         )
 

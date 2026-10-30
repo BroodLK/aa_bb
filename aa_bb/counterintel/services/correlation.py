@@ -21,6 +21,7 @@ from ..models import (
     CIOperationParticipant,
     CIOverride,
 )
+from ..scoring import scoring
 from .baseline import BaselineEngine
 from .bb_signals import BBSignals
 from .operations import CIOperationService
@@ -35,18 +36,13 @@ class CorrelationEngine:
     correlation findings and composite risk indices.
     """
 
+    # Confidences, thresholds and weights are admin-editable scoring settings
+    # (aa_bb.counterintel.scoring); the constants here are structural.
     ALGORITHM_VERSION = "1.2.0"
-    ALERT_CONFIDENCE_THRESHOLD = 0.85
-    ALERT_RISK_THRESHOLD = 0.80
     # Non-fleet sessions that began this long before the op are idle presence
     IDLE_PRESENCE_HOURS = 2
-    # Without channel names we only know someone was on the server, not in fleet comms
-    NO_CHANNEL_CONFIDENCE_CAP = 0.60
     # Briefing attendees are expected to deploy within this many days
     BRIEFING_DEPLOYMENT_DAYS = 7
-    # Confidence for a pre-contact disconnect by a member without enough history
-    # to tell habit from anomaly; kept below the alert threshold
-    INSUFFICIENT_BASELINE_CONFIDENCE = 0.45
 
     @classmethod
     def correlate_operation(
@@ -202,9 +198,9 @@ class CorrelationEngine:
 
     @classmethod
     def _is_alerting(cls, corr: CICorrelation) -> bool:
+        cfg = scoring()
         return (
-            corr.confidence >= cls.ALERT_CONFIDENCE_THRESHOLD
-            or corr.risk_score >= cls.ALERT_RISK_THRESHOLD
+            corr.confidence >= cfg.alert_confidence or corr.risk_score >= cfg.alert_risk
         )
 
     @classmethod
@@ -244,6 +240,7 @@ class CorrelationEngine:
         algorithm_version: str,
     ) -> list[dict]:
         findings = []
+        cfg = scoring()
         op_start, op_end = CIOperationService.get_operational_window(operation, 0, 0)
         now = timezone.now()
         user_sessions = {}
@@ -271,9 +268,13 @@ class CorrelationEngine:
                     user = User.objects.filter(id=uid).first()
                     if not user:
                         continue
-                    confidence = min(0.95, 0.4 + (total_duration / 3600.0) * 0.5)
+                    # Rises with time spent: +0.5 per hour above the base
+                    confidence = min(
+                        cfg.comms_max,
+                        cfg.comms_base + (total_duration / 3600.0) * 0.5,
+                    )
                     if not any(s["channel_name"] for s in sessions):
-                        confidence = min(confidence, cls.NO_CHANNEL_CONFIDENCE_CAP)
+                        confidence = min(confidence, cfg.comms_no_channel_cap)
                     source_ids = [f"session:{s['id']}" for s in sessions]
                     channels = (
                         ", ".join(filter(None, {s["channel_name"] for s in sessions}))
@@ -305,6 +306,7 @@ class CorrelationEngine:
         algorithm_version: str,
     ) -> list[dict]:
         findings = []
+        cfg = scoring()
         combat_events = [e for e in timeline["events"] if e["source"] == "zkill"]
         if not combat_events:
             return findings
@@ -329,19 +331,21 @@ class CorrelationEngine:
 
                 # Calibrate confidence based on historical habit
                 if not BaselineEngine.has_disconnect_baseline(user, end_time):
-                    confidence = cls.INSUFFICIENT_BASELINE_CONFIDENCE
+                    confidence = cfg.conf_pre_contact_no_history
                     explanation = (
                         f"User {user.username} disconnected {minutes_before}m prior to hostile contact. "
                         f"There is not enough comms history to tell whether this is habitual."
                     )
                 elif is_typical:
-                    confidence = 0.25  # Low confidence: habit explains logoff
+                    # Low confidence: habit explains logoff
+                    confidence = cfg.conf_pre_contact_habitual
                     explanation = (
                         f"User {user.username} disconnected {minutes_before}m prior to hostile contact, "
                         f"matching their habitual daily logoff schedule ({int(habit_prob * 100)}% historical frequency)."
                     )
                 else:
-                    confidence = 0.85  # High confidence: statistical outlier
+                    # High confidence: statistical outlier
+                    confidence = cfg.conf_pre_contact_outlier
                     explanation = (
                         f"User {user.username} disconnected {minutes_before}m prior to hostile contact. "
                         f"This logoff is an outlier relative to their historical activity baseline."
@@ -418,7 +422,7 @@ class CorrelationEngine:
                 {
                     "user": user,
                     "anomaly_type": "briefing_without_deployment",
-                    "confidence": 0.70,
+                    "confidence": scoring().confidence("briefing_without_deployment"),
                     "data_completeness": 0.85,
                     "source_event_ids": [f"session:{s['id']}"],
                     "explanation": (
@@ -472,7 +476,7 @@ class CorrelationEngine:
                 {
                     "user": user,
                     "anomaly_type": "combat_absence_unexplained",
-                    "confidence": 0.45,
+                    "confidence": scoring().confidence("combat_absence_unexplained"),
                     "data_completeness": 0.80,
                     "source_event_ids": [f"op:{operation.id}"],
                     "explanation": (
@@ -544,7 +548,9 @@ class CorrelationEngine:
                         {
                             "user": user,
                             "anomaly_type": "alt_operational_proximity",
-                            "confidence": 0.85,
+                            "confidence": scoring().confidence(
+                                "alt_operational_proximity"
+                            ),
                             "data_completeness": 0.90,
                             "source_event_ids": [f"zkill:{ev.get('id', '')}"],
                             "explanation": (
@@ -618,7 +624,7 @@ class CorrelationEngine:
                         {
                             "user": user,
                             "anomaly_type": "alt_in_hostile_entity",
-                            "confidence": 0.90,
+                            "confidence": scoring().confidence("alt_in_hostile_entity"),
                             "data_completeness": 0.95,
                             "source_event_ids": [f"char:{char.character_id}"],
                             "explanation": (
@@ -665,7 +671,9 @@ class CorrelationEngine:
                         {
                             "user": u,
                             "anomaly_type": "alt_shared_mumble_identity",
-                            "confidence": 0.85,
+                            "confidence": scoring().confidence(
+                                "alt_shared_mumble_identity"
+                            ),
                             "data_completeness": 0.90,
                             "source_event_ids": [f"mumble:{uname}"],
                             "explanation": (
@@ -728,7 +736,7 @@ class CorrelationEngine:
                 {
                     "user": user,
                     "anomaly_type": "uncredited_alt_online",
-                    "confidence": 0.40,
+                    "confidence": scoring().confidence("uncredited_alt_online"),
                     "data_completeness": 0.80,
                     "source_event_ids": [
                         f"event:{ev['id']}" for _name, ev in alts.values()
@@ -786,7 +794,7 @@ class CorrelationEngine:
                 {
                     "user": user,
                     "anomaly_type": "eve_logoff_before_contact",
-                    "confidence": 0.45,
+                    "confidence": scoring().confidence("eve_logoff_before_contact"),
                     "data_completeness": 0.80,
                     "source_event_ids": [f"event:{ev['id']}" for ev in logoffs],
                     "explanation": (
@@ -825,6 +833,7 @@ class CorrelationEngine:
             if flags[0]["severity"] >= cls.BB_SIGNAL_MIN_SEVERITY
         }
         users = User.objects.in_bulk(list(signals))
+        cfg = scoring()
         findings = []
         for uid, flags in signals.items():
             user = users.get(uid)
@@ -835,7 +844,14 @@ class CorrelationEngine:
                 {
                     "user": user,
                     "anomaly_type": "bb_flagged_in_sensitive_op",
-                    "confidence": round(0.4 + 0.5 * flags[0]["severity"], 2),
+                    "confidence": round(
+                        min(
+                            1.0,
+                            cfg.bb_sensitive_base
+                            + cfg.bb_sensitive_scale * flags[0]["severity"],
+                        ),
+                        2,
+                    ),
                     "data_completeness": 0.90,
                     "source_event_ids": [f"bb:{f['flag']}" for f in flags],
                     "explanation": (
@@ -847,9 +863,6 @@ class CorrelationEngine:
         return findings
 
     LEAK_LOOKBACK_DAYS = 90
-    LEAK_MIN_LEAKED_OPS = 2
-    LEAK_MIN_RATE = 0.5
-    LEAK_MIN_LIFT = 2.0
     LEAK_EXPOSURE_CACHE_SECONDS = 6 * 3600
     EXPOSURE_CACHE_VERSION_KEY = "ci:exposure_version"
 
@@ -886,6 +899,7 @@ class CorrelationEngine:
         if not operation.leaked:
             return []
 
+        cfg = scoring()
         since = timezone.now() - timedelta(days=cls.LEAK_LOOKBACK_DAYS)
         ops = [
             op
@@ -894,7 +908,7 @@ class CorrelationEngine:
         ]
         leaked_ops = [op for op in ops if op.leaked]
         clean_ops = [op for op in ops if not op.leaked]
-        if len(leaked_ops) < cls.LEAK_MIN_LEAKED_OPS:
+        if len(leaked_ops) < cfg.leak_min_ops:
             return []
 
         exposure = {op.id: cls._cached_exposure(op) for op in ops}
@@ -914,13 +928,20 @@ class CorrelationEngine:
             clean_rate = (clean_seen + 1) / (len(clean_ops) + 1)
             lift = leak_rate / clean_rate
             if (
-                a < cls.LEAK_MIN_LEAKED_OPS
-                or leak_rate < cls.LEAK_MIN_RATE
-                or lift < cls.LEAK_MIN_LIFT
+                a < cfg.leak_min_ops
+                or leak_rate < cfg.leak_min_rate
+                or lift < cfg.leak_min_lift
             ):
                 continue
 
-            confidence = min(0.9, 0.40 + 0.10 * (a - 2) + 0.08 * (min(lift, 5.0) - 2.0))
+            # +0.10 per extra leak attended, +0.08 per unit of lift (capped at 5)
+            confidence = min(
+                cfg.leak_max,
+                cfg.leak_base
+                + 0.10 * (a - cfg.leak_min_ops)
+                + 0.08 * (min(lift, 5.0) - cfg.leak_min_lift),
+            )
+            confidence = max(cfg.leak_base, confidence)
             findings.append(
                 {
                     "user": user,
@@ -964,8 +985,7 @@ class CorrelationEngine:
                 {
                     "user": user,
                     "anomaly_type": "unaudited_fleet_character",
-                    # Below the auto-triage threshold: a mark, not a case on its own
-                    "confidence": 0.35,
+                    "confidence": scoring().confidence("unaudited_fleet_character"),
                     "data_completeness": 1.0,
                     "source_event_ids": [
                         f"participant:{p['id']}" for p in participants if p["id"]
@@ -1051,7 +1071,9 @@ class CorrelationEngine:
                     {
                         "user": u,
                         "anomaly_type": "co_occurring_disconnect_ring",
-                        "confidence": 0.88,
+                        "confidence": scoring().confidence(
+                            "co_occurring_disconnect_ring"
+                        ),
                         "data_completeness": 0.90,
                         "source_event_ids": [f"op:{operation.id}"],
                         "explanation": (

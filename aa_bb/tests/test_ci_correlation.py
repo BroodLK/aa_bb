@@ -21,6 +21,7 @@ from aa_bb.counterintel.models import (
     CIOverride,
     CISession,
 )
+from aa_bb.counterintel.scoring import scoring
 from aa_bb.counterintel.services.correlation import CorrelationEngine
 from aa_bb.counterintel.services.identity import IdentityResolver
 from aa_bb.counterintel.services.operations import CIOperationService
@@ -256,9 +257,7 @@ class TestCICorrelation(TestCase):
             for c in correlations
             if c.user == self.pilot_logi and c.anomaly_type == "pre_contact_disconnect"
         )
-        self.assertLess(
-            new_corr.confidence, CorrelationEngine.ALERT_CONFIDENCE_THRESHOLD
-        )
+        self.assertLess(new_corr.confidence, scoring().alert_confidence)
         self.assertIn("not enough comms history", new_corr.explanation)
         # Only the disconnect finding matters here (they are also off the roster)
         notified_users = {
@@ -415,6 +414,80 @@ class TestCICorrelation(TestCase):
                 "eve_activity", source_event_id, timestamp, payload
             ),
         )
+
+    # ---- Admin-editable scoring settings ----
+
+    def _save_scoring(self, **values):
+        # AA BigBrother
+        from aa_bb.counterintel.models import CIScoringConfig
+        from aa_bb.counterintel.scoring import invalidate_scoring_cache
+
+        # The cache outlives the test transaction; never leak values into other tests
+        self.addCleanup(invalidate_scoring_cache)
+        config = CIScoringConfig.get_solo()
+        for name, value in values.items():
+            setattr(config, name, value)
+        with patch(
+            "aa_bb.counterintel.tasks.rescore_recent_operations_task.delay"
+        ) as mock_delay:
+            with self.captureOnCommitCallbacks(execute=True):
+                config.save()
+        return config, mock_delay
+
+    def test_scoring_defaults_without_settings_row(self):
+        # AA BigBrother
+        from aa_bb.counterintel.scoring import DEFAULTS, invalidate_scoring_cache
+
+        invalidate_scoring_cache()
+        cfg = scoring()
+        self.assertEqual(cfg.alert_confidence, DEFAULTS["alert_confidence"])
+        self.assertEqual(cfg.confidence("uncredited_alt_online"), 0.40)
+        self.assertAlmostEqual(sum(cfg.risk_weights().values()), 1.0)
+        self.assertEqual(cfg.secrecy_multiplier("standard"), 1.0)
+
+    def test_changed_confidence_applies_and_queues_rescore(self):
+        _config, mock_delay = self._save_scoring(conf_uncredited_alt=0.33)
+        mock_delay.assert_called_once_with()
+
+        op = CIOperationService.create_operation(
+            name="Op Tuned",
+            start_time=self.now - timedelta(hours=2),
+            end_time=self.now - timedelta(hours=1),
+        )
+        FCRosterIngestor.ingest_fc_roster(
+            operation=op, roster_entries=[2001], recorded_at=op.start_time
+        )
+        self._eve_activity(
+            self.pilot_dps, 2999, "login", op.start_time + timedelta(minutes=20)
+        )
+        found = [
+            c
+            for c in CorrelationEngine.correlate_operation(op)
+            if c.anomaly_type == "uncredited_alt_online"
+        ]
+        self.assertEqual([c.confidence for c in found], [0.33])
+
+    def test_scoring_validation(self):
+        # Django
+        from django.core.exceptions import ValidationError
+
+        # AA BigBrother
+        from aa_bb.counterintel.models import CIScoringConfig
+
+        config = CIScoringConfig(weight_comms=0.15)  # weights now total 90%
+        with self.assertRaises(ValidationError) as ctx:
+            config.clean()
+        self.assertIn("90.0", str(ctx.exception))
+
+        config = CIScoringConfig(secrecy_classified=1.1)  # below Restricted (1.2)
+        with self.assertRaises(ValidationError):
+            config.clean()
+
+        config = CIScoringConfig(alert_confidence=0.4)  # below case opening (0.5)
+        with self.assertRaises(ValidationError):
+            config.clean()
+
+        CIScoringConfig().clean()  # defaults are valid
 
     def test_uncredited_alt_login_during_operation(self):
         op = CIOperationService.create_operation(
@@ -752,9 +825,7 @@ class TestCICorrelation(TestCase):
         corr = CorrelationEngine.correlate_operation(op)
         spy = [c for c in corr if c.user == self.pilot_spy]
         self.assertEqual(len(spy), 1)
-        self.assertLessEqual(
-            spy[0].confidence, CorrelationEngine.NO_CHANNEL_CONFIDENCE_CAP
-        )
+        self.assertLessEqual(spy[0].confidence, scoring().comms_no_channel_cap)
 
     def test_idle_all_day_presence_not_flagged(self):
         op = CIOperationService.create_operation(

@@ -30,6 +30,7 @@ from .counterintel.models import (  # noqa: F401
     CIOperationObjective,
     CIOperationParticipant,
     CIOverride,
+    CIScoringConfig,
     CISession,
 )
 

@@ -24,6 +24,7 @@ from django.db.models import (
 from django.db.models.functions import Coalesce
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.utils.translation import gettext_lazy as _
@@ -45,6 +46,7 @@ from .models import (
     CIOverride,
     CISession,
 )
+from .scoring import RISK_MATRIX_LOOKBACK_DAYS, scoring
 from .services.agent import CIAgentService
 from .services.baseline import BaselineEngine
 from .services.bb_signals import BBSignals
@@ -114,10 +116,7 @@ def _sort_context(request, sort_key: str, descending: bool) -> dict:
 
 def _secrecy_levels() -> list:
     """(value, label) choices for the operation secrecy select."""
-    return [
-        (value, label)
-        for value, (label, _multiplier) in CIOperation.SECRECY_LEVELS.items()
-    ]
+    return list(CIOperation.SECRECY_LEVELS.items())
 
 
 @permission_required("aa_bb.can_view_ci")
@@ -192,7 +191,7 @@ def create_operation_view(request):
 def ci_help(request):
     """
     How Counterintelligence works and how to run it. Thresholds and weights are
-    read from the code so the page cannot drift from actual behaviour.
+    read from the live scoring settings so the page cannot drift from behaviour.
     """
     # AA BigBrother
     from aa_bb.management.commands.sync_counterintel_tasks import TASKS
@@ -214,40 +213,47 @@ def ci_help(request):
         "leak": _("Repeated exposure to leaked operations"),
         "accountability": _("Flying characters without a corptools audit"),
     }
+    cfg = scoring()
     risk_weights = [
         (risk_factor_labels.get(key, key), round(weight * 100))
-        for key, weight in BaselineEngine.RISK_WEIGHTS.items()
+        for key, weight in cfg.risk_weights().items()
     ]
     engine = CorrelationEngine
     return render(
         request,
         "aa_bb/counterintel/help.html",
         {
-            "alert_confidence": engine.ALERT_CONFIDENCE_THRESHOLD,
-            "alert_risk": engine.ALERT_RISK_THRESHOLD,
-            "no_channel_cap": engine.NO_CHANNEL_CONFIDENCE_CAP,
-            "insufficient_baseline_confidence": engine.INSUFFICIENT_BASELINE_CONFIDENCE,
+            "cfg": cfg,
+            "alert_confidence": cfg.alert_confidence,
+            "alert_risk": cfg.alert_risk,
+            "no_channel_cap": cfg.comms_no_channel_cap,
+            "insufficient_baseline_confidence": cfg.conf_pre_contact_no_history,
             "idle_presence_hours": engine.IDLE_PRESENCE_HOURS,
             "briefing_days": engine.BRIEFING_DEPLOYMENT_DAYS,
             "leak_lookback_days": engine.LEAK_LOOKBACK_DAYS,
-            "leak_min_ops": engine.LEAK_MIN_LEAKED_OPS,
-            "leak_min_rate_pct": round(engine.LEAK_MIN_RATE * 100),
-            "leak_min_lift": engine.LEAK_MIN_LIFT,
-            "auto_triage_confidence": CIAgentService.AUTO_TRIAGE_CONFIDENCE,
-            "auto_override_days": CIOverride.AUTO_OVERRIDE_DAYS,
+            "leak_min_ops": cfg.leak_min_ops,
+            "leak_min_rate_pct": round(cfg.leak_min_rate * 100),
+            "leak_min_lift": cfg.leak_min_lift,
+            "auto_triage_confidence": cfg.auto_triage_confidence,
+            "auto_override_days": cfg.override_days,
             "never_auto_exempt": CIOverride.NEVER_AUTO_EXEMPT,
             "risk_weights": risk_weights,
             "secrecy_levels": [
-                (label, multiplier)
-                for label, multiplier in CIOperation.SECRECY_LEVELS.values()
+                (label, cfg.secrecy_multiplier(value))
+                for value, label in CIOperation.SECRECY_LEVELS.items()
             ],
+            "scoring_admin_url": (
+                reverse("admin:aa_bb_ciscoringconfig_change")
+                if request.user.is_superuser
+                else None
+            ),
             "open_window_min_hours": int(
                 CIOperation.OPEN_WINDOW_MIN.total_seconds() // 3600
             ),
             "open_window_max_hours": int(
                 CIOperation.OPEN_WINDOW_MAX.total_seconds() // 3600
             ),
-            "bb_flags": list(BBSignals.FLAG_SEVERITIES.values()),
+            "bb_flags": BBSignals.flag_severities(),
             "pre_window_minutes": CIOperationService.DEFAULT_PRE_WINDOW_MINUTES,
             "zkill_delay_minutes": ZKILL_SCAN_DELAY_MINUTES,
             "afat_debounce_seconds": AFAT_SYNC_DEBOUNCE_SECONDS,
@@ -586,7 +592,7 @@ def investigation_detail(request, investigation_id: int):
             "benign_explanations": benign_explanations,
             "status_choices": CIInvestigation.STATUS_CHOICES,
             "resolution_choices": CIInvestigation.RESOLUTION_CHOICES,
-            "auto_override_days": CIOverride.AUTO_OVERRIDE_DAYS,
+            "auto_override_days": scoring().override_days,
             "title": f"Investigation - {investigation.subject_user.username}",
         },
     )
@@ -631,9 +637,6 @@ def member_dossier(request, user_id: int):
             "title": f"Dossier - {user.username}",
         },
     )
-
-
-RISK_MATRIX_LOOKBACK_DAYS = 30
 
 
 @permission_required("aa_bb.can_view_ci")

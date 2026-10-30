@@ -21,6 +21,7 @@ from .ingest.mumble import MumbleLogIngestor, MumblePresenceIngestor
 from .ingest.paps import FCRosterIngestor
 from .ingest.zkill import ZKillIngestor
 from .models import CIEvent, CIOperation
+from .scoring import RISK_MATRIX_LOOKBACK_DAYS
 from .services.agent import CIAgentService
 from .services.correlation import CorrelationEngine
 from .services.operations import CIOperationService
@@ -194,6 +195,27 @@ def rescan_operation_combat_task(operation_id: int) -> int:
         return 0
     CorrelationEngine.correlate_operation(op)
     return len(events)
+
+
+@shared_task(time_limit=3600)
+def rescore_recent_operations_task() -> int:
+    """
+    Re-correlate operations inside the risk matrix lookback after the scoring
+    settings changed, so findings and risk scores reflect the new values.
+    """
+    since = timezone.now() - timedelta(days=RISK_MATRIX_LOOKBACK_DAYS)
+    processed = 0
+    for op in CIOperation.objects.filter(start_time__gte=since):
+        try:
+            CorrelationEngine.correlate_operation(op)
+        except Exception:
+            logger.exception(f"Re-scoring failed for operation {op.id}")
+            continue
+        processed += 1
+    # Leaked operations outside the lookback still feed leak exposure
+    recompute_leak_exposure_task()
+    logger.info(f"Re-scored {processed} operation(s) after a scoring change.")
+    return processed
 
 
 @shared_task(time_limit=1800)

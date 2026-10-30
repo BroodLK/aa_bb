@@ -18,6 +18,9 @@ from django.utils.html import format_html_join
 from django.utils.safestring import mark_safe
 
 from .app_settings import afat_active, charlink_active, discordbot_active
+
+# Counterintel registers its own models (operations, overrides, scoring settings)
+from .counterintel import admin as counterintel_admin  # noqa: F401
 from .models import (
     AA_CONTACTS_INSTALLED,
     AdminLogEntry,

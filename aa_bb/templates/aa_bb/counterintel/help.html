@@ -285,14 +285,14 @@
                         <tr>
                             <td><code>comms_without_pap</code></td>
                             <td>{% translate "In comms for 5+ minutes inside the operation without being on the roster." %}</td>
-                            <td>{% blocktrans trimmed with cap=no_channel_cap %}0.4–0.95 with time spent; capped at {{ cap }} when no channel is known{% endblocktrans %}</td>
+                            <td>{% blocktrans trimmed with base=cfg.comms_base max=cfg.comms_max cap=no_channel_cap %}{{ base }}–{{ max }} with time spent; capped at {{ cap }} when no channel is known{% endblocktrans %}</td>
                             <td>{% translate "Were they in a different channel? Is the roster complete?" %}</td>
                         </tr>
                         <tr>
                             <td><code>pre_contact_disconnect</code></td>
                             <td>{% translate "Left comms in the 15 minutes before the first killmail." %}</td>
-                            <td>{% blocktrans trimmed with low=insufficient_baseline_confidence n=min_baseline_disconnects %}
-                                0.25 if it matches their usual logoff time; 0.85 if it breaks an established habit; {{ low }} if they have fewer
+                            <td>{% blocktrans trimmed with habit=cfg.conf_pre_contact_habitual outlier=cfg.conf_pre_contact_outlier low=insufficient_baseline_confidence n=min_baseline_disconnects %}
+                                {{ habit }} if it matches their usual logoff time; {{ outlier }} if it breaks an established habit; {{ low }} if they have fewer
                                 than {{ n }} recorded disconnects
                             {% endblocktrans %}</td>
                             <td>{% translate "Their usual logoff time; did they say why?" %}</td>
@@ -300,67 +300,67 @@
                         <tr>
                             <td><code>co_occurring_disconnect_ring</code></td>
                             <td>{% translate "Two or more members left comms before contact together, and the same pair did so in another op in the last 30 days." %}</td>
-                            <td>0.88</td>
+                            <td>{{ cfg.conf_disconnect_ring }}</td>
                             <td>{% translate "Are they friends in the same timezone or corp?" %}</td>
                         </tr>
                         <tr>
                             <td><code>eve_logoff_before_contact</code></td>
                             <td>{% translate "A roster character logged off in-game in the 15 minutes before the first killmail." %}</td>
-                            <td>0.45</td>
+                            <td>{{ cfg.conf_eve_logoff }}</td>
                             <td>{% translate "Did the fleet stand down? Late at night for them?" %}</td>
                         </tr>
                         <tr>
                             <td><code>briefing_without_deployment</code></td>
                             <td>{% blocktrans trimmed with days=briefing_days %}Attended a sensitive briefing for 10+ minutes and joined no fleet in the following {{ days }} days. Only judged once those days have passed.{% endblocktrans %}</td>
-                            <td>0.70</td>
+                            <td>{{ cfg.conf_briefing }}</td>
                             <td>{% translate "Were they on leave or busy?" %}</td>
                         </tr>
                         <tr>
                             <td><code>combat_absence_unexplained</code></td>
                             <td>{% translate "On the roster of an op with 3+ killmails but on none of them." %}</td>
-                            <td>0.45</td>
+                            <td>{{ cfg.conf_combat_absence }}</td>
                             <td>{% translate "Logi, scouts, ECM and tackle rarely appear on killmails. Add roles to objectives." %}</td>
                         </tr>
                         <tr>
                             <td><code>alt_operational_proximity</code></td>
                             <td>{% translate "An alt not on the roster appears on a killmail of the operation." %}</td>
-                            <td>0.85</td>
+                            <td>{{ cfg.conf_alt_proximity }}</td>
                             <td>{% translate "Was it a known scout or cyno alt left off the roster?" %}</td>
                         </tr>
                         <tr>
                             <td><code>alt_in_hostile_entity</code></td>
                             <td>{% translate "One of their characters is in a configured hostile corp or alliance." %}</td>
-                            <td>0.90</td>
+                            <td>{{ cfg.conf_alt_hostile }}</td>
                             <td>{% translate "Sanctioned spy alt? Recently left that corp?" %}</td>
                         </tr>
                         <tr>
                             <td><code>alt_shared_mumble_identity</code></td>
                             <td>{% translate "Several Auth accounts used the same Mumble name in the window." %}</td>
-                            <td>0.85</td>
+                            <td>{{ cfg.conf_shared_mumble }}</td>
                             <td>{% translate "Shared computer or a mis-linked account?" %}</td>
                         </tr>
                         <tr>
                             <td><code>uncredited_alt_online</code></td>
                             <td>{% translate "A member logged in a character that is not on the roster during the op." %}</td>
-                            <td>0.40</td>
+                            <td>{{ cfg.conf_uncredited_alt }}</td>
                             <td>{% translate "Common for scouts, cynos and haulers. Matters together with other findings." %}</td>
                         </tr>
                         <tr>
                             <td><code>unaudited_fleet_character</code></td>
                             <td>{% translate "Flew a roster character that has no corptools audit." %}</td>
-                            <td>0.35</td>
+                            <td>{{ cfg.conf_unaudited }}</td>
                             <td>{% translate "Ask them to add the character to corptools." %}</td>
                         </tr>
                         <tr>
                             <td><code>bb_flagged_in_sensitive_op</code></td>
                             <td>{% translate "A member with Big Brother hostile-tie flags had access to a sensitive operation." %}</td>
-                            <td>{% translate "0.4 + half the highest flag severity (0.65–0.9)" %}</td>
+                            <td>{% blocktrans trimmed with base=cfg.bb_sensitive_base scale=cfg.bb_sensitive_scale %}{{ base }} + {{ scale }} &times; the highest flag severity{% endblocktrans %}</td>
                             <td>{% translate "Review the member's Big Brother page." %}</td>
                         </tr>
                         <tr>
                             <td><code>leak_exposure</code></td>
                             <td>{% translate "Knew about leaked operations far more often than clean ones. See section 9." %}</td>
-                            <td>0.40–0.90</td>
+                            <td>{{ cfg.leak_base }}–{{ cfg.leak_max }}</td>
                             <td>{% translate "Are they simply one of the most active members?" %}</td>
                         </tr>
                     </tbody>
@@ -378,6 +378,16 @@
                     Each finding also carries the member's <strong>risk score</strong> (0–100%): a weighted combination of their findings
                     on that operation and their standing signals, multiplied by the operation's secrecy level and capped at 100%.
                 {% endblocktrans %}</p>
+                <div class="alert alert-secondary py-2 small">
+                    <i class="fas fa-sliders-h me-1"></i>
+                    {% blocktrans trimmed %}
+                        All weights, finding confidences, thresholds, secrecy multipliers and flag severities on this page are live values from
+                        <strong>Django admin → Counterintel scoring</strong>. Saving there re-scores the last 30 days of operations in the background.
+                        To re-score particular operations, select them under <strong>Django admin → CI Operations</strong> and run the
+                        <em>Re-score selected operations</em> action.
+                    {% endblocktrans %}
+                    {% if scoring_admin_url %}<a href="{{ scoring_admin_url }}" class="ms-1">{% translate "Edit scoring settings" %}</a>{% endif %}
+                </div>
                 <div class="row">
                     <div class="col-md-7">
                         <table class="table table-sm align-middle">

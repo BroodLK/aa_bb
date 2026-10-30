@@ -7,9 +7,14 @@ import hashlib
 import json
 from datetime import timedelta
 
+# Third Party
+from solo.models import SingletonModel
+
 # Django
 from django.contrib.auth.models import User
-from django.db import models
+from django.core.exceptions import ValidationError
+from django.core.validators import MaxValueValidator, MinValueValidator
+from django.db import models, transaction
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
@@ -73,12 +78,13 @@ class CIOperation(models.Model):
     OPEN_WINDOW_MIN = timedelta(hours=2)
     OPEN_WINDOW_MAX = timedelta(hours=6)
 
-    # Secrecy level -> (label, risk multiplier); anything above standard is sensitive
+    # Secrecy level -> label; anything above standard is sensitive. Risk
+    # multipliers are scoring settings (aa_bb.counterintel.scoring)
     SECRECY_LEVELS = {
-        "standard": (_("Standard"), 1.0),
-        "restricted": (_("Restricted"), 1.2),
-        "classified": (_("Classified"), 1.4),
-        "top_secret": (_("Top Secret"), 1.6),
+        "standard": _("Standard"),
+        "restricted": _("Restricted"),
+        "classified": _("Classified"),
+        "top_secret": _("Top Secret"),
     }
 
     name = models.CharField(max_length=255)
@@ -143,12 +149,15 @@ class CIOperation(models.Model):
     @property
     def secrecy_multiplier(self) -> float:
         """Risk multiplier for this operation's secrecy level (1.0 if unknown)."""
-        level = self.SECRECY_LEVELS.get(str(self.secrecy_level).lower())
-        return level[1] if level else 1.0
+        # AA BigBrother
+        from aa_bb.counterintel.scoring import scoring
+
+        return scoring().secrecy_multiplier(self.secrecy_level)
 
     @property
     def is_sensitive(self) -> bool:
-        return self.secrecy_multiplier > 1.0
+        level = str(self.secrecy_level).lower()
+        return level in self.SECRECY_LEVELS and level != "standard"
 
     @property
     def is_active(self) -> bool:
@@ -506,8 +515,8 @@ class CIOverride(models.Model):
     Documented exemption or disposition override for specific anomaly types.
     """
 
-    # Overrides created by clearing/dismissing a case expire after this long
-    AUTO_OVERRIDE_DAYS = 14
+    # Overrides created by clearing/dismissing a case expire after the
+    # scoring setting ``override_days``.
     # Hostile ties and multi-operation patterns that one case review cannot
     # explain away; only a deliberate (admin) override may exempt them
     NEVER_AUTO_EXEMPT = (
@@ -567,13 +576,261 @@ class CIOverride(models.Model):
         )
         if not exempt_types:
             return None
+        # AA BigBrother
+        from aa_bb.counterintel.scoring import scoring
+
         override, _created = cls.objects.get_or_create(
             user=investigation.subject_user,
             reason=reason,
             defaults={
                 "exempt_anomaly_types": exempt_types,
                 "created_by": created_by,
-                "expires_at": timezone.now() + timedelta(days=cls.AUTO_OVERRIDE_DAYS),
+                "expires_at": timezone.now() + timedelta(days=scoring().override_days),
             },
         )
         return override
+
+
+def _scoring_field(field_class, name, verbose_name, help_text, **validators):
+    """Scoring setting field defaulting to the code default in scoring.py."""
+    # AA BigBrother
+    from aa_bb.counterintel.scoring import DEFAULTS
+
+    return field_class(
+        verbose_name=verbose_name,
+        default=DEFAULTS[name],
+        help_text=help_text,
+        validators=list(validators.values()),
+    )
+
+
+def _fraction(name, verbose_name, help_text=""):
+    return _scoring_field(
+        models.FloatField,
+        name,
+        verbose_name,
+        help_text,
+        min=MinValueValidator(0.0),
+        max=MaxValueValidator(1.0),
+    )
+
+
+def _multiplier(name, verbose_name, help_text=""):
+    return _scoring_field(
+        models.FloatField,
+        name,
+        verbose_name,
+        help_text,
+        min=MinValueValidator(1.0),
+        max=MaxValueValidator(5.0),
+    )
+
+
+class CIScoringConfig(SingletonModel):
+    """
+    Admin-editable Counterintel scoring: risk factor weights, finding
+    confidences, alert/triage/leak thresholds, secrecy multipliers, Big Brother
+    flag severities and the case-disposition override length.
+    """
+
+    # Risk score factor weights
+    weight_comms = _fraction(
+        "weight_comms",
+        _("Comms & in-game presence"),
+        _("Comms without fleet credit, comms or in-game logoff before contact."),
+    )
+    weight_discord = _fraction("weight_discord", _("Discord text inactivity"))
+    weight_alt = _fraction(
+        "weight_alt",
+        _("Alts"),
+        _(
+            "Alt near the fight, alt in a hostile entity, shared Mumble name, uncredited alt online."
+        ),
+    )
+    weight_deviation = _fraction(
+        "weight_deviation", _("Logoff against the member's own habit")
+    )
+    weight_bb_signals = _fraction(
+        "weight_bb_signals", _("Big Brother hostile-tie flags")
+    )
+    weight_leak = _fraction("weight_leak", _("Repeated exposure to leaked operations"))
+    weight_accountability = _fraction(
+        "weight_accountability", _("Flying characters without a corptools audit")
+    )
+
+    # Fixed confidence per finding type
+    conf_pre_contact_habitual = _fraction(
+        "conf_pre_contact_habitual",
+        _("Pre-contact disconnect: matches habit"),
+    )
+    conf_pre_contact_outlier = _fraction(
+        "conf_pre_contact_outlier",
+        _("Pre-contact disconnect: breaks an established habit"),
+    )
+    conf_pre_contact_no_history = _fraction(
+        "conf_pre_contact_no_history",
+        _("Pre-contact disconnect: too little history"),
+    )
+    conf_briefing = _fraction("conf_briefing", _("Briefing without deployment"))
+    conf_combat_absence = _fraction(
+        "conf_combat_absence", _("On the roster but on no killmail")
+    )
+    conf_alt_proximity = _fraction(
+        "conf_alt_proximity", _("Uncredited alt on the operation's killmails")
+    )
+    conf_alt_hostile = _fraction("conf_alt_hostile", _("Alt in a hostile entity"))
+    conf_shared_mumble = _fraction(
+        "conf_shared_mumble", _("Several accounts sharing a Mumble name")
+    )
+    conf_disconnect_ring = _fraction(
+        "conf_disconnect_ring", _("Recurring disconnect ring")
+    )
+    conf_uncredited_alt = _fraction(
+        "conf_uncredited_alt", _("Uncredited alt logged in during the operation")
+    )
+    conf_eve_logoff = _fraction(
+        "conf_eve_logoff", _("In-game logoff shortly before contact")
+    )
+    conf_unaudited = _fraction(
+        "conf_unaudited", _("Roster character without a corptools audit")
+    )
+
+    # Bounds of calculated confidences
+    comms_base = _fraction(
+        "comms_base",
+        _("Comms without fleet credit: base confidence"),
+        _("Confidence after 5 minutes in comms; it rises with time spent."),
+    )
+    comms_max = _fraction(
+        "comms_max", _("Comms without fleet credit: maximum confidence")
+    )
+    comms_no_channel_cap = _fraction(
+        "comms_no_channel_cap",
+        _("Comms without fleet credit: cap without channel data"),
+    )
+    bb_sensitive_base = _fraction(
+        "bb_sensitive_base", _("Big Brother flag in a sensitive op: base")
+    )
+    bb_sensitive_scale = _fraction(
+        "bb_sensitive_scale",
+        _("Big Brother flag in a sensitive op: share of flag severity added"),
+    )
+    leak_base = _fraction("leak_base", _("Leak exposure: base confidence"))
+    leak_max = _fraction("leak_max", _("Leak exposure: maximum confidence"))
+
+    # Alerts and triage
+    alert_confidence = _fraction(
+        "alert_confidence",
+        _("Alert at confidence"),
+        _("Findings at or above this send a Discord alert."),
+    )
+    alert_risk = _fraction(
+        "alert_risk",
+        _("Alert at risk score"),
+        _("Findings whose member risk score reaches this send a Discord alert."),
+    )
+    auto_triage_confidence = _fraction(
+        "auto_triage_confidence",
+        _("Open a case at confidence"),
+        _("Findings at or above this open an investigation case."),
+    )
+
+    # Leak cross-check
+    leak_min_ops = _scoring_field(
+        models.PositiveIntegerField,
+        "leak_min_ops",
+        _("Minimum leaked operations"),
+        _("Leaked ops required, and leaked ops a member must have known about."),
+        min=MinValueValidator(2),
+    )
+    leak_min_rate = _fraction(
+        "leak_min_rate",
+        _("Minimum share of leaked ops known about"),
+    )
+    leak_min_lift = _scoring_field(
+        models.FloatField,
+        "leak_min_lift",
+        _("Minimum lift"),
+        _("How many times more often the member knew about leaked than clean ops."),
+        min=MinValueValidator(1.0),
+    )
+
+    # Secrecy multipliers
+    secrecy_restricted = _multiplier("secrecy_restricted", _("Restricted"))
+    secrecy_classified = _multiplier("secrecy_classified", _("Classified"))
+    secrecy_top_secret = _multiplier("secrecy_top_secret", _("Top Secret"))
+
+    # Big Brother flag severities
+    sev_alliance_blacklist = _fraction(
+        "sev_alliance_blacklist", _("Alliance blacklist")
+    )
+    sev_coalition_blacklist = _fraction(
+        "sev_coalition_blacklist", _("Coalition blacklist")
+    )
+    sev_awox = _fraction("sev_awox", _("Awox kills"))
+    sev_hostile_clones = _fraction("sev_hostile_clones", _("Hostile clones"))
+    sev_sus_contacts = _fraction("sev_sus_contacts", _("Suspicious contacts"))
+    sev_sus_contracts = _fraction("sev_sus_contracts", _("Suspicious contracts"))
+    sev_sus_mails = _fraction("sev_sus_mails", _("Suspicious mails"))
+    sev_hostile_assets = _fraction("sev_hostile_assets", _("Hostile assets"))
+    sev_sus_trans = _fraction("sev_sus_trans", _("Suspicious transactions"))
+
+    # Case dispositions
+    override_days = _scoring_field(
+        models.PositiveIntegerField,
+        "override_days",
+        _("Disposition override length (days)"),
+        _("How long clearing or dismissing a case exempts the member."),
+        min=MinValueValidator(1),
+        max=MaxValueValidator(365),
+    )
+
+    class Meta:
+        app_label = "aa_bb"
+        verbose_name = _("Counterintel scoring")
+
+    def __str__(self):
+        return str(_("Counterintel scoring"))
+
+    def clean(self):
+        # AA BigBrother
+        from aa_bb.counterintel.scoring import RISK_WEIGHT_FIELDS
+
+        errors = {}
+        total = sum(getattr(self, field) or 0 for field in RISK_WEIGHT_FIELDS.values())
+        if abs(total - 1.0) > 0.005:
+            errors["weight_comms"] = _(
+                "The risk score weights must add up to 100%% (currently %(total)s%%)."
+            ) % {"total": round(total * 100, 1)}
+        if not (
+            self.secrecy_restricted
+            <= self.secrecy_classified
+            <= self.secrecy_top_secret
+        ):
+            errors["secrecy_top_secret"] = _(
+                "Secrecy multipliers must not decrease: Restricted ≤ Classified ≤ Top Secret."
+            )
+        if self.alert_confidence < self.auto_triage_confidence:
+            errors["alert_confidence"] = _(
+                "The alert confidence must not be below the case-opening confidence."
+            )
+        for base, maximum in (("comms_base", "comms_max"), ("leak_base", "leak_max")):
+            if getattr(self, base) > getattr(self, maximum):
+                errors[base] = _("The base confidence must not exceed the maximum.")
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        # AA BigBrother
+        from aa_bb.counterintel.scoring import invalidate_scoring_cache
+
+        invalidate_scoring_cache()
+        transaction.on_commit(_queue_rescore)
+
+
+def _queue_rescore():
+    # AA BigBrother
+    from aa_bb.counterintel.tasks import rescore_recent_operations_task
+
+    rescore_recent_operations_task.delay()

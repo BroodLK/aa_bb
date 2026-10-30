@@ -2,8 +2,15 @@
 Django Admin integration for counterintelligence models.
 """
 
+# Standard Library
+import logging
+
+# Third Party
+from solo.admin import SingletonModelAdmin
+
 # Django
-from django.contrib import admin
+from django.contrib import admin, messages
+from django.utils.translation import gettext_lazy as _
 
 from .models import (
     CICorrelation,
@@ -14,8 +21,132 @@ from .models import (
     CIOperationObjective,
     CIOperationParticipant,
     CIOverride,
+    CIScoringConfig,
     CISession,
 )
+
+logger = logging.getLogger(__name__)
+
+
+@admin.register(CIScoringConfig)
+class CIScoringConfigAdmin(SingletonModelAdmin):
+    fieldsets = (
+        (
+            _("Risk score weights"),
+            {
+                "description": _(
+                    "How much each factor counts towards a member's risk score. "
+                    "They must add up to 1.00 (100%)."
+                ),
+                "fields": (
+                    "weight_comms",
+                    "weight_discord",
+                    "weight_alt",
+                    "weight_deviation",
+                    "weight_bb_signals",
+                    "weight_leak",
+                    "weight_accountability",
+                ),
+            },
+        ),
+        (
+            _("Finding confidence"),
+            {
+                "description": _(
+                    "Confidence (0–1) each finding is reported with. At or above the "
+                    "case-opening confidence a case opens; at or above the alert "
+                    "confidence Discord is alerted."
+                ),
+                "fields": (
+                    "conf_pre_contact_habitual",
+                    "conf_pre_contact_outlier",
+                    "conf_pre_contact_no_history",
+                    "conf_briefing",
+                    "conf_combat_absence",
+                    "conf_alt_proximity",
+                    "conf_alt_hostile",
+                    "conf_shared_mumble",
+                    "conf_disconnect_ring",
+                    "conf_uncredited_alt",
+                    "conf_eve_logoff",
+                    "conf_unaudited",
+                ),
+            },
+        ),
+        (
+            _("Calculated confidence bounds"),
+            {
+                "description": _(
+                    "Findings whose confidence is calculated from the evidence."
+                ),
+                "fields": (
+                    "comms_base",
+                    "comms_max",
+                    "comms_no_channel_cap",
+                    "bb_sensitive_base",
+                    "bb_sensitive_scale",
+                    "leak_base",
+                    "leak_max",
+                ),
+            },
+        ),
+        (
+            _("Alerts and cases"),
+            {"fields": ("alert_confidence", "alert_risk", "auto_triage_confidence")},
+        ),
+        (
+            _("Leak cross-check"),
+            {"fields": ("leak_min_ops", "leak_min_rate", "leak_min_lift")},
+        ),
+        (
+            _("Secrecy multipliers"),
+            {
+                "description": _(
+                    "Risk multiplier per secrecy level; Standard is always 1.0. "
+                    "Must not decrease from Restricted to Top Secret."
+                ),
+                "fields": (
+                    "secrecy_restricted",
+                    "secrecy_classified",
+                    "secrecy_top_secret",
+                ),
+            },
+        ),
+        (
+            _("Big Brother flag severities"),
+            {
+                "description": _(
+                    "How strongly each Big Brother flag counts (0–1). Several flags "
+                    "add up."
+                ),
+                "fields": (
+                    "sev_alliance_blacklist",
+                    "sev_coalition_blacklist",
+                    "sev_awox",
+                    "sev_hostile_clones",
+                    "sev_sus_contacts",
+                    "sev_sus_contracts",
+                    "sev_sus_mails",
+                    "sev_hostile_assets",
+                    "sev_sus_trans",
+                ),
+            },
+        ),
+        (_("Case dispositions"), {"fields": ("override_days",)}),
+    )
+
+    def has_change_permission(self, request, obj=None):
+        return request.user.is_superuser or request.user.has_perm("aa_bb.can_manage_ci")
+
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        messages.info(
+            request,
+            _(
+                "Recent operations are being re-scored in the background; findings "
+                "update as each operation finishes."
+            ),
+        )
 
 
 @admin.register(CIOperation)
@@ -30,6 +161,41 @@ class CIOperationAdmin(admin.ModelAdmin):
     )
     list_filter = ("operation_type", "secrecy_level", "start_time")
     search_fields = ("name", "notes", "fleet_commander__username")
+    actions = ("rescore_selected",)
+
+    @admin.action(
+        description=_("Re-score selected operations with the current scoring settings"),
+        permissions=("rescore",),
+    )
+    def rescore_selected(self, request, queryset):
+        # AA BigBrother
+        from aa_bb.counterintel.services.correlation import CorrelationEngine
+
+        rescored, failed = 0, []
+        for operation in queryset:
+            try:
+                CorrelationEngine.correlate_operation(operation)
+            except Exception:
+                logger.exception(f"Re-scoring failed for operation {operation.id}")
+                failed.append(operation.name)
+                continue
+            rescored += 1
+        if rescored:
+            self.message_user(
+                request,
+                _("Re-scored %(count)d operation(s).") % {"count": rescored},
+                messages.SUCCESS,
+            )
+        if failed:
+            self.message_user(
+                request,
+                _("Re-scoring failed for: %(names)s. See the server log.")
+                % {"names": ", ".join(failed)},
+                messages.ERROR,
+            )
+
+    def has_rescore_permission(self, request):
+        return request.user.is_superuser or request.user.has_perm("aa_bb.can_manage_ci")
 
 
 @admin.register(CIOperationObjective)

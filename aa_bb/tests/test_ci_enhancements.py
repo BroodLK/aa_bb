@@ -33,6 +33,7 @@ from aa_bb.counterintel.models import (
     CIOverride,
     CISession,
 )
+from aa_bb.counterintel.scoring import scoring
 from aa_bb.counterintel.services.agent import CIAgentService
 from aa_bb.counterintel.services.baseline import BaselineEngine
 from aa_bb.counterintel.services.correlation import CorrelationEngine
@@ -470,9 +471,7 @@ class CIEnhancementsTests(TestCase):
         self.client.force_login(self.reviewer)
         url = reverse("ci:investigation_detail", args=[inv.id])
         # The form states the real exemption length
-        self.assertContains(
-            self.client.get(url), f"for {CIOverride.AUTO_OVERRIDE_DAYS} days"
-        )
+        self.assertContains(self.client.get(url), f"for {scoring().override_days} days")
         response = self.client.post(
             url,
             {
@@ -492,7 +491,7 @@ class CIEnhancementsTests(TestCase):
         self.assertIsNotNone(override)
         self.assertIn("comms_without_pap", override.exempt_anomaly_types)
         self.assertNotIn("alt_in_hostile_entity", override.exempt_anomaly_types)
-        expected_expiry = timezone.now() + timedelta(days=CIOverride.AUTO_OVERRIDE_DAYS)
+        expected_expiry = timezone.now() + timedelta(days=scoring().override_days)
         self.assertLess(
             abs((override.expires_at - expected_expiry).total_seconds()), 60
         )

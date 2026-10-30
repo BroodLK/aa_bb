@@ -22,6 +22,7 @@ from aa_bb.counterintel.models import (
     CIOperationParticipant,
     CISession,
 )
+from aa_bb.counterintel.scoring import scoring
 from aa_bb.counterintel.services.identity import IdentityResolver
 from aa_bb.counterintel.services.operations import CIOperationService
 
@@ -815,10 +816,59 @@ class TestCIOperations(TestCase):
         # Window bar times no longer use the dark monospace style
         self.assertNotIn('class="font-monospace fw-bold" title="Start"', content)
 
-    def test_help_page(self):
+    def test_scoring_admin_page(self):
+        admin_user = User.objects.create_superuser(
+            username="ci_superuser", email="su@example.com", password="x"
+        )
+        self.client.force_login(admin_user)
+        response = self.client.get(reverse("admin:aa_bb_ciscoringconfig_change"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Risk score weights")
+        self.assertContains(response, 'name="conf_alt_hostile"')
+        # The other counterintel models are reachable in admin too
+        self.assertEqual(
+            self.client.get(reverse("admin:aa_bb_cioverride_changelist")).status_code,
+            200,
+        )
+
+    def test_admin_rescore_selected_operations(self):
+        # Standard Library
+        from unittest.mock import patch
+
         # AA BigBrother
         from aa_bb.counterintel.services.correlation import CorrelationEngine
 
+        ops = [
+            CIOperation.objects.create(
+                name=f"Op Rescore {idx}", start_time=self.now - timedelta(hours=3)
+            )
+            for idx in range(3)
+        ]
+        admin_user = User.objects.create_superuser(
+            username="ci_rescore_admin", email="ra@example.com", password="x"
+        )
+        self.client.force_login(admin_user)
+        changelist = reverse("admin:aa_bb_cioperation_changelist")
+        self.assertContains(self.client.get(changelist), "rescore_selected")
+
+        with patch.object(
+            CorrelationEngine, "correlate_operation", return_value=[]
+        ) as mock_correlate:
+            response = self.client.post(
+                changelist,
+                {
+                    "action": "rescore_selected",
+                    "_selected_action": [ops[0].id, ops[2].id],
+                },
+                follow=True,
+            )
+        self.assertEqual(
+            {call.args[0].id for call in mock_correlate.call_args_list},
+            {ops[0].id, ops[2].id},
+        )
+        self.assertContains(response, "Re-scored 2 operation(s).")
+
+    def test_help_page(self):
         url = reverse("ci:help")
         self.client.force_login(self.pilot4)
         self.assertEqual(self.client.get(url).status_code, 302)
@@ -829,7 +879,25 @@ class TestCIOperations(TestCase):
         content = response.content.decode()
         for anchor in ("what-and-why", "getting-fleets-in", "findings", "leaks"):
             self.assertIn(f'id="{anchor}"', content)
-        self.assertIn(str(CorrelationEngine.ALERT_CONFIDENCE_THRESHOLD), content)
+        self.assertIn(str(scoring().alert_confidence), content)
+
+        # The page shows the live settings, not the code defaults
+        # Standard Library
+        from unittest.mock import patch
+
+        # AA BigBrother
+        from aa_bb.counterintel.models import CIScoringConfig
+        from aa_bb.counterintel.scoring import invalidate_scoring_cache
+
+        self.addCleanup(invalidate_scoring_cache)
+        config = CIScoringConfig.get_solo()
+        config.weight_comms, config.weight_discord = 0.30, 0.05
+        config.conf_alt_hostile = 0.93
+        with patch("aa_bb.counterintel.tasks.rescore_recent_operations_task.delay"):
+            config.save()
+        content = self.client.get(url).content.decode()
+        self.assertIn("<td>30%</td>", content)
+        self.assertIn("<td>0.93</td>", content)
         self.assertIn("Top Secret", content)
         # No raw escapes leaking into rendered text
         self.assertNotIn('\\"', content)

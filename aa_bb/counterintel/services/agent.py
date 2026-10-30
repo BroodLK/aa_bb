@@ -17,6 +17,7 @@ from ..models import (
     CIOverride,
     CISession,
 )
+from ..scoring import scoring
 from .baseline import BaselineEngine
 from .bb_signals import BBSignals
 from .correlation import CorrelationEngine
@@ -30,9 +31,6 @@ class CIAgentService:
     explanations, evaluates data completeness, and drafts findings for human review.
     Zero automated punitive actions.
     """
-
-    # Findings at or above this confidence open an investigation case
-    AUTO_TRIAGE_CONFIDENCE = 0.50
 
     @classmethod
     def create_or_update_investigation(
@@ -436,14 +434,13 @@ class CIAgentService:
     def auto_triage_operation(cls, operation: CIOperation) -> list[CIInvestigation]:
         """
         Run correlation on an operation and automatically triage cases for members
-        with anomalies at or above AUTO_TRIAGE_CONFIDENCE.
+        with anomalies at or above the auto-triage confidence setting.
         """
         correlations = CorrelationEngine.correlate_operation(operation)
         triaged_cases = []
 
-        flagged_users = {
-            c.user for c in correlations if c.confidence >= cls.AUTO_TRIAGE_CONFIDENCE
-        }
+        threshold = scoring().auto_triage_confidence
+        flagged_users = {c.user for c in correlations if c.confidence >= threshold}
         # Leave cases a reviewer has already resolved untouched
         resolved_user_ids = set(
             CIInvestigation.objects.filter(
