@@ -688,10 +688,10 @@
                                     {% if ev.payload.channel_name %}| Channel: <em>{{ ev.payload.channel_name }}</em>{% endif %}
                                 {% elif ev.source == 'discord' %}
                                     {% if ev.payload.message_id %}
-                                        {% translate "Message" %}{% if ev.payload.channel_name %} in <em>#{{ ev.payload.channel_name }}</em>{% endif %}
+                                        {% translate "Message" %}{% if ev.payload.channel_hidden %} <span class="text-muted fst-italic">{% translate "in a hidden channel" %}</span>{% elif ev.payload.channel_name %} in <em>#{{ ev.payload.channel_name }}</em>{% endif %}
                                     {% else %}
                                         Voice: <strong>{{ ev.payload.action }}</strong>
-                                        {% if ev.payload.channel_name %}| <em>{{ ev.payload.channel_name }}</em>{% endif %}
+                                        {% if ev.payload.channel_hidden %}| <span class="text-muted fst-italic">{% translate "hidden channel" %}</span>{% elif ev.payload.channel_name %}| <em>{{ ev.payload.channel_name }}</em>{% endif %}
                                     {% endif %}
                                 {% elif ev.source == 'zkill' %}
                                     Killmail:

@@ -461,6 +461,61 @@ class CIOperationService:
         return combat
 
     @classmethod
+    def redact_for_display(cls, timeline: dict) -> dict:
+        """
+        Copy of a reconstructed timeline for display. When the privacy setting
+        is on, Discord channel/thread names are blanked; detection always runs
+        on the unredacted timeline, so scores are unaffected.
+        """
+        # AA BigBrother
+        from aa_bb.counterintel.scoring import scoring
+
+        if not scoring().hide_discord_channel_names:
+            return timeline
+
+        def strip_payload(payload: dict) -> dict:
+            payload = dict(payload or {})
+            for key in (
+                "channel_name",
+                "channel",
+                "thread_name",
+                "parent_channel_name",
+            ):
+                payload.pop(key, None)
+            payload["channel_hidden"] = True
+            return payload
+
+        events = [
+            (
+                {**ev, "payload": strip_payload(ev["payload"])}
+                if ev["source"] == "discord"
+                else ev
+            )
+            for ev in timeline["events"]
+        ]
+        sessions = [
+            {**s, "channel_name": ""} if s["source"] == "discord" else s
+            for s in timeline["sessions"]
+        ]
+        detected_channels = {s["channel_name"] for s in sessions if s["channel_name"]}
+        for ev in events:
+            payload = ev.get("payload") or {}
+            channel = payload.get("channel_name") or payload.get("channel")
+            if channel:
+                detected_channels.add(channel)
+
+        return {
+            **timeline,
+            "events": events,
+            "sessions": sessions,
+            "comms_summary": cls._summarize_comms(
+                sessions, timeline["window_start"], timeline["window_end"]
+            ),
+            "detected_channels": sorted(detected_channels),
+            "discord_channels_hidden": True,
+        }
+
+    @classmethod
     def reconstruct_timeline(
         cls,
         operation: CIOperation,

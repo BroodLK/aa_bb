@@ -276,10 +276,19 @@ class CorrelationEngine:
                     if not any(s["channel_name"] for s in sessions):
                         confidence = min(confidence, cfg.comms_no_channel_cap)
                     source_ids = [f"session:{s['id']}" for s in sessions]
-                    channels = (
-                        ", ".join(filter(None, {s["channel_name"] for s in sessions}))
-                        or "General Comms"
-                    )
+                    # Explanations are stored and posted to Discord alerts, so
+                    # respect the privacy setting for Discord channel names
+                    channel_labels = {
+                        (
+                            "Discord voice"
+                            if s["source"] == "discord"
+                            and cfg.hide_discord_channel_names
+                            else s["channel_name"]
+                        )
+                        for s in sessions
+                        if s["channel_name"]
+                    }
+                    channels = ", ".join(sorted(channel_labels)) or "General Comms"
                     explanation = (
                         f"User {user.username} observed in operational comms ({channels}) for "
                         f"{int(total_duration // 60)} minutes without confirmed FC fleet credit."

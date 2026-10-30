@@ -270,7 +270,9 @@ def operation_timeline(request, operation_id: int):
     Detailed operational timeline dashboard reconciling comms, roster, and combat.
     """
     operation = get_object_or_404(CIOperation, id=operation_id)
-    timeline = CIOperationService.reconstruct_timeline(operation)
+    timeline = CIOperationService.redact_for_display(
+        CIOperationService.reconstruct_timeline(operation)
+    )
 
     if (
         request.headers.get("x-requested-with") == "XMLHttpRequest"
@@ -419,6 +421,7 @@ def member_activity(request, user_id: int):
             "user_status": user_status,
             "last_discord_chat": last_discord_chat,
             "bb_signals": BBSignals.for_user(subject_user.id),
+            "hide_discord_channels": scoring().hide_discord_channel_names,
             "title": f"{subject_user.username} - {_('Member Activity History')}",
         },
     )
@@ -578,7 +581,9 @@ def investigation_detail(request, investigation_id: int):
             operation=investigation.operation,
             user=investigation.subject_user,
         )
-        timeline = CIOperationService.reconstruct_timeline(investigation.operation)
+        timeline = CIOperationService.redact_for_display(
+            CIOperationService.reconstruct_timeline(investigation.operation)
+        )
 
     benign_explanations = CIAgentService.get_benign_explanations(investigation)
 

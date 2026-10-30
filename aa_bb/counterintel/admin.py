@@ -133,6 +133,7 @@ class CIScoringConfigAdmin(SingletonModelAdmin):
             },
         ),
         (_("Case dispositions"), {"fields": ("override_days",)}),
+        (_("Privacy"), {"fields": ("hide_discord_channel_names",)}),
     )
 
     def has_change_permission(self, request, obj=None):

@@ -71,6 +71,8 @@ DEFAULTS = {
     "sev_sus_trans": 0.5,
     # Case dispositions
     "override_days": 14,
+    # Display / privacy
+    "hide_discord_channel_names": False,
 }
 
 # Risk factor key -> settings field

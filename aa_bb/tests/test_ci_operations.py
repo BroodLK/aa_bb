@@ -816,6 +816,88 @@ class TestCIOperations(TestCase):
         # Window bar times no longer use the dark monospace style
         self.assertNotIn('class="font-monospace fw-bold" title="Start"', content)
 
+    def test_hide_discord_channel_names(self):
+        # Standard Library
+        from unittest.mock import patch
+
+        # AA BigBrother
+        from aa_bb.counterintel.models import CIScoringConfig
+        from aa_bb.counterintel.scoring import invalidate_scoring_cache
+        from aa_bb.counterintel.services.correlation import CorrelationEngine
+
+        secret = "secret-ops-planning"
+        op = CIOperationService.create_operation(
+            name="Op Quiet Channel",
+            start_time=self.now - timedelta(hours=2),
+            end_time=self.now - timedelta(hours=1),
+        )
+        # pilot_spy sits in a Discord voice channel without being on the roster
+        CISession.objects.create(
+            user=self.pilot4,
+            source="discord",
+            start_time=op.start_time,
+            end_time=op.start_time + timedelta(minutes=40),
+            channel_name=secret,
+        )
+        payload = {"channel_name": secret, "message_id": "1", "channel_id": "9"}
+        CIEvent.objects.create(
+            source="discord",
+            source_event_id="discord:msg:1",
+            timestamp=op.start_time + timedelta(minutes=5),
+            user=self.pilot4,
+            payload=payload,
+            dedup_hash=CIEvent.generate_dedup_hash(
+                "discord", "discord:msg:1", op.start_time, payload
+            ),
+        )
+
+        def spy_finding():
+            return next(
+                c
+                for c in CorrelationEngine.correlate_operation(op)
+                if c.user == self.pilot4 and c.anomaly_type == "comms_without_pap"
+            )
+
+        shown = spy_finding()
+        self.assertIn(secret, shown.explanation)
+
+        self.addCleanup(invalidate_scoring_cache)
+        config = CIScoringConfig.get_solo()
+        config.hide_discord_channel_names = True
+        with patch("aa_bb.counterintel.tasks.rescore_recent_operations_task.delay"):
+            config.save()
+
+        hidden = spy_finding()
+        self.assertNotIn(secret, hidden.explanation)
+        self.assertIn("Discord voice", hidden.explanation)
+        # Detection still sees the channel, so the score is unchanged
+        self.assertEqual(hidden.confidence, shown.confidence)
+
+        self.client.force_login(self.officer)
+        url = reverse("ci:operation_timeline", args=[op.id])
+        page = self.client.get(url).content.decode()
+        self.assertNotIn(secret, page)
+        self.assertIn("hidden channel", page)
+        self.assertNotIn(
+            secret, self.client.get(url, {"format": "json"}).content.decode()
+        )
+
+        # The member's session history masks it too
+        # Alliance Auth
+        from allianceauth.authentication.models import State, UserProfile
+
+        # AA BigBrother
+        from aa_bb.models import BigBrotherConfig
+
+        member_state = State.objects.get(name="Member")
+        BigBrotherConfig.get_solo().bb_member_states.set([member_state])
+        UserProfile.objects.filter(user=self.pilot4).update(state=member_state)
+        member_page = self.client.get(
+            reverse("ci:member_activity", args=[self.pilot4.id])
+        )
+        self.assertEqual(member_page.status_code, 200)
+        self.assertNotIn(secret, member_page.content.decode())
+
     def test_scoring_admin_page(self):
         admin_user = User.objects.create_superuser(
             username="ci_superuser", email="su@example.com", password="x"

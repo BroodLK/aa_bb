@@ -292,7 +292,13 @@
                             </td>
                             <td>{{ sess.start_time|date:"Y-m-d H:i:s" }}</td>
                             <td>{% if sess.end_time %}{{ sess.end_time|date:"H:i:s" }}{% else %}<span class="badge bg-success">Active</span>{% endif %}</td>
-                            <td>{{ sess.channel_name|default:"-" }}</td>
+                            <td>
+                                {% if hide_discord_channels and sess.source == 'discord' %}
+                                    <span class="text-muted fst-italic" title="{% translate 'Discord channel names are hidden by the Counterintel privacy setting' %}">{% translate "hidden" %}</span>
+                                {% else %}
+                                    {{ sess.channel_name|default:"-" }}
+                                {% endif %}
+                            </td>
                             <td>{{ sess.reconnect_count }}</td>
                         </tr>
                         {% empty %}

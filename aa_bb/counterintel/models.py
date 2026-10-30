@@ -785,6 +785,19 @@ class CIScoringConfig(SingletonModel):
         max=MaxValueValidator(365),
     )
 
+    # Display / privacy
+    hide_discord_channel_names = _scoring_field(
+        models.BooleanField,
+        "hide_discord_channel_names",
+        _("Hide Discord channel and thread names"),
+        _(
+            "Mask Discord channel and thread names wherever Counterintel shows them "
+            "(timelines, cases, member pages, finding explanations and alerts). "
+            "Detection still uses them, so scores do not change. Explanations "
+            "written before this was enabled update when their operation is re-scored."
+        ),
+    )
+
     class Meta:
         app_label = "aa_bb"
         verbose_name = _("Counterintel scoring")
