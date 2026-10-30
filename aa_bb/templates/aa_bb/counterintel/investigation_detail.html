@@ -196,7 +196,7 @@
                             <option value="{{ code }}" {% if investigation.resolution_tag == code %}selected{% endif %}>{{ label }}</option>
                             {% endfor %}
                         </select>
-                        <small class="text-muted d-block mt-1">{% translate "Selecting a resolution tag for cleared/dismissed cases automatically creates scoped CIOverrides to prevent future false-positive alerts." %}</small>
+                        <small class="text-muted d-block mt-1">{% blocktrans trimmed with days=auto_override_days %}Clearing or dismissing with a resolution tag exempts the member from this operation's finding types for {{ days }} days. Hostile-alt, shared Mumble identity, Big Brother flag, leak and disconnect-ring findings are never exempted this way.{% endblocktrans %}</small>
                     </div>
 
                     <div class="mb-3">

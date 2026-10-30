@@ -1,0 +1,546 @@
+{% extends 'aa_bb/counterintel/base.html' %}
+{% load i18n %}
+
+{% block ci_content %}
+<div class="row">
+    <!-- Table of contents -->
+    <div class="col-lg-3 mb-3">
+        <div class="card position-sticky" style="top: 1rem;">
+            <div class="card-header bg-dark text-white">
+                <h6 class="mb-0"><i class="fas fa-book me-2"></i>{% translate "Contents" %}</h6>
+            </div>
+            <div class="list-group list-group-flush small">
+                <a class="list-group-item list-group-item-action" href="#what-and-why">{% translate "1. What it is and why" %}</a>
+                <a class="list-group-item list-group-item-action" href="#permissions">{% translate "2. Permissions" %}</a>
+                <a class="list-group-item list-group-item-action" href="#setup">{% translate "3. Setup and running it" %}</a>
+                <a class="list-group-item list-group-item-action" href="#data-sources">{% translate "4. Where the data comes from" %}</a>
+                <a class="list-group-item list-group-item-action" href="#getting-fleets-in">{% translate "5. Getting fleets in" %}</a>
+                <a class="list-group-item list-group-item-action" href="#reading-timeline">{% translate "6. Reading an operation" %}</a>
+                <a class="list-group-item list-group-item-action" href="#findings">{% translate "7. Findings reference" %}</a>
+                <a class="list-group-item list-group-item-action" href="#risk-score">{% translate "8. Risk score" %}</a>
+                <a class="list-group-item list-group-item-action" href="#leaks">{% translate "9. Leaked operations" %}</a>
+                <a class="list-group-item list-group-item-action" href="#members">{% translate "10. Member pages and risk matrix" %}</a>
+                <a class="list-group-item list-group-item-action" href="#reviewing">{% translate "11. Reviewing cases" %}</a>
+                <a class="list-group-item list-group-item-action" href="#rollout">{% translate "12. Rolling it out" %}</a>
+                <a class="list-group-item list-group-item-action" href="#limitations">{% translate "13. Known limitations" %}</a>
+                <a class="list-group-item list-group-item-action" href="#troubleshooting">{% translate "14. Troubleshooting" %}</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-9">
+        <!-- 1 -->
+        <div class="card mb-3" id="what-and-why">
+            <div class="card-header bg-dark text-white">
+                <h5 class="mb-0"><i class="fas fa-user-secret me-2"></i>{% translate "1. What Counterintelligence is and why it exists" %}</h5>
+            </div>
+            <div class="card-body">
+                <p>{% blocktrans trimmed %}
+                    Counterintelligence (CI) helps officers find members whose behaviour around fleets matches the patterns of a spy:
+                    listening in on comms without flying, dropping off comms or logging off just before a fight, keeping alts in hostile
+                    entities, sharing voice identities, or repeatedly knowing about operations that turned out to be leaked.
+                {% endblocktrans %}</p>
+                <p>{% blocktrans trimmed %}
+                    It does this by lining up data the alliance already has (AFAT fleet rosters, Mumble and Discord presence, zKillboard
+                    killmails, in-game login/logoff times from corptools, and Big Brother's own checks) on a single timeline per operation,
+                    then running a set of detectors over it.
+                {% endblocktrans %}</p>
+                <div class="alert alert-warning mb-0">
+                    <strong>{% translate "Findings are leads, not verdicts." %}</strong>
+                    {% blocktrans trimmed %}
+                        Every detector has innocent explanations: scouts, cyno alts, people going to bed, a bad internet connection.
+                        Each finding shows the evidence it is based on so an officer can judge it. Never act against a member on a finding alone;
+                        talk to them, check the evidence, and record your decision in the case. Keep CI information to people with CI permissions.
+                    {% endblocktrans %}
+                </div>
+            </div>
+        </div>
+
+        <!-- 2 -->
+        <div class="card mb-3" id="permissions">
+            <div class="card-header bg-dark text-white">
+                <h5 class="mb-0"><i class="fas fa-key me-2"></i>{% translate "2. Permissions" %}</h5>
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-sm mb-0 align-middle">
+                    <thead class="table-light"><tr><th>{% translate "Permission" %}</th><th>{% translate "Grants" %}</th></tr></thead>
+                    <tbody>
+                        <tr><td><code>aa_bb.can_view_ci</code></td><td>{% translate "Operations, operation timelines, member activity, the risk matrix and this help page." %}</td></tr>
+                        <tr><td><code>aa_bb.can_manage_ci</code></td><td>{% translate "Create, edit, close, delete and deduplicate operations; edit rosters and objectives; mark leaks; rescan zKillboard." %}</td></tr>
+                        <tr><td><code>aa_bb.can_review_ci</code></td><td>{% translate "The investigation queue, case details and dispositions." %}</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- 3 -->
+        <div class="card mb-3" id="setup">
+            <div class="card-header bg-dark text-white">
+                <h5 class="mb-0"><i class="fas fa-cogs me-2"></i>{% translate "3. Setup and running it" %}</h5>
+            </div>
+            <div class="card-body">
+                <h6>{% translate "Install" %}</h6>
+                <ol>
+                    <li>{% translate "Apply migrations:" %} <code>python manage.py migrate aa_bb</code></li>
+                    <li>{% translate "Create the scheduled tasks:" %} <code>python manage.py sync_counterintel_tasks</code> {% translate "(safe to re-run; it overwrites the CI tasks)" %}</li>
+                    <li>{% translate "Make sure a Celery worker and Celery beat are running. AFAT syncs, zKillboard rescans and leak recalculations run as background tasks." %}</li>
+                </ol>
+
+                <h6>{% translate "Prerequisites" %}</h6>
+                <ul>
+                    <li><strong>AFAT</strong> — {% translate "for automatic fleets and rosters." %}</li>
+                    <li><strong><code>MUMBLE_AUTHENTICATOR_LOG_PATH</code></strong> — {% translate "set in your Alliance Auth settings, pointing at the Mumble authenticator log. The file must be readable by the Celery worker, not just the web server." %}</li>
+                    <li><strong>corptools</strong> — {% translate "character audits supply in-game login/logoff times and the Audit indicator." %}</li>
+                    <li><strong>{% translate "Big Brother Discord bot" %}</strong> — {% translate "records Discord voice and message activity." %}</li>
+                    <li><strong>{% translate "Hostile corporations and alliances" %}</strong> — {% translate "configured in Big Brother settings; used by the hostile-alt detector." %}</li>
+                    <li><strong>{% translate "Alerts" %}</strong> — {% translate "high-confidence findings are posted to the main Big Brother webhook." %}</li>
+                </ul>
+
+                <h6>{% translate "Scheduled tasks" %}</h6>
+                <table class="table table-sm align-middle">
+                    <thead class="table-light"><tr><th>{% translate "Task" %}</th><th>{% translate "Schedule (UTC cron)" %}</th><th>{% translate "Enabled by default" %}</th></tr></thead>
+                    <tbody>
+                        {% for task in scheduled_tasks %}
+                        <tr>
+                            <td>{{ task.name }}</td>
+                            <td class="font-monospace small">{{ task.minute|default:"*" }} {{ task.hour|default:"*" }} * * *</td>
+                            <td>{% if task.enabled %}<span class="badge bg-success">{% translate "Yes" %}</span>{% else %}<span class="badge bg-secondary">{% translate "No" %}</span>{% endif %}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                <p class="small text-muted mb-0">{% blocktrans trimmed %}
+                    "Refresh And Correlate Live Telemetry" is the main pipeline: it syncs AFAT, EVE activity and Mumble, scans zKillboard
+                    for finished operations, and correlates the last 48 hours. The disabled tasks are its individual steps and only need
+                    enabling if you want to run them on separate schedules. Overlapping pipeline runs are skipped automatically.
+                {% endblocktrans %}</p>
+            </div>
+        </div>
+
+        <!-- 4 -->
+        <div class="card mb-3" id="data-sources">
+            <div class="card-header bg-dark text-white">
+                <h5 class="mb-0"><i class="fas fa-database me-2"></i>{% translate "4. Where the data comes from" %}</h5>
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-sm mb-0 align-middle">
+                    <thead class="table-light"><tr><th>{% translate "Source" %}</th><th>{% translate "What it provides" %}</th><th>{% translate "Notes" %}</th></tr></thead>
+                    <tbody>
+                        <tr>
+                            <td><span class="badge bg-success">AFAT</span></td>
+                            <td>{% translate "Fleets, FCs and FC-confirmed rosters." %}</td>
+                            <td>{% blocktrans trimmed with seconds=afat_debounce_seconds %}
+                                New FATs are batched and synced about {{ seconds }} seconds later. An ESI fleet is closed automatically when it
+                                is disbanded or the FC leaves it; the close time is when Counterintel sees that.
+                            {% endblocktrans %}</td>
+                        </tr>
+                        <tr>
+                            <td><span class="badge bg-info text-dark">Mumble</span></td>
+                            <td>{% translate "Comms sessions: who was connected, from when to when." %}</td>
+                            <td>{% translate "From the authenticator log and Alliance Auth's Mumble connect/disconnect times. Channel names are usually not available." %}</td>
+                        </tr>
+                        <tr>
+                            <td><span class="badge bg-primary">Discord</span></td>
+                            <td>{% translate "Voice activity and text messages." %}</td>
+                            <td>{% translate "Written by the Big Brother Discord bot as it happens." %}</td>
+                        </tr>
+                        <tr>
+                            <td><span class="badge bg-danger">zKillboard</span></td>
+                            <td>{% translate "Kills and losses involving roster characters during the window." %}</td>
+                            <td>{% blocktrans trimmed with minutes=zkill_delay_minutes %}
+                                Scanned {{ minutes }} minutes after the window closes so zKillboard has the killmails. zKillboard only allows
+                                looking back 7 days.
+                            {% endblocktrans %}</td>
+                        </tr>
+                        <tr>
+                            <td><span class="badge bg-warning text-dark">EVE activity</span></td>
+                            <td>{% translate "Latest in-game login and logoff time for every character, including alts." %}</td>
+                            <td>{% translate "Taken from corptools audits; only as fresh as corptools' last refresh." %}</td>
+                        </tr>
+                        <tr>
+                            <td><span class="badge bg-dark">Big Brother</span></td>
+                            <td>{% translate "Per-member flags: blacklists, awox, hostile clones/assets, suspicious contacts/contracts/mails/transactions." %}</td>
+                            <td>{% translate "Read from Big Brother's cached member status." %}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- 5 -->
+        <div class="card mb-3" id="getting-fleets-in">
+            <div class="card-header bg-dark text-white">
+                <h5 class="mb-0"><i class="fas fa-satellite-dish me-2"></i>{% translate "5. Getting fleets in" %}</h5>
+            </div>
+            <div class="card-body">
+                <h6>{% translate "Automatically from AFAT" %}</h6>
+                <p>{% blocktrans trimmed %}
+                    Every AFAT FAT link becomes an operation with its roster. Nothing needs doing; it appears under Operations within a
+                    minute or two. Duplicate operations with the same name close together are merged, but two different AFAT fleets are
+                    never merged even if they share a name.
+                {% endblocktrans %}</p>
+
+                <h6>{% translate "By hand: New Operation" %}</h6>
+                <p>{% blocktrans trimmed %}
+                    For briefings, strategic ops or fleets not run through AFAT, a manager can click <strong>New Operation</strong> on the
+                    Operations page and give it a name, type, secrecy level, start time and optional end time. Leave the end time blank
+                    while the fleet is running and close it later.
+                {% endblocktrans %}</p>
+
+                <h6>{% translate "Building the roster" %}</h6>
+                <ul>
+                    <li><strong>{% translate "Paste Roster" %}</strong> — {% translate "paste the in-game fleet window, a chat channel member list, or a comma/newline separated list of names." %}</li>
+                    <li><strong>{% translate "Add Pilot" %}</strong> — {% translate "add one character by name or ID." %}</li>
+                    <li><strong>{% translate "Auto-Detect Comms" %}</strong> — {% translate "adds everyone who was in comms during the window, optionally only channels matching keywords. Use with care: this makes listeners look like fleet members." %}</li>
+                </ul>
+
+                <h6>{% translate "Objectives" %}</h6>
+                <ul>
+                    <li>{% translate "Expected roles such as logi, scout, recon, cyno or hauler tell the combat check not to expect those pilots on killmails." %}</li>
+                    <li>{% translate "A briefing-type objective makes the operation sensitive and enables the briefing check." %}</li>
+                    <li>{% translate "The disclosure time is when members were told about the op (the ping). Leak exposure counts comms presence from that time." %}</li>
+                </ul>
+
+                <h6>{% translate "Secrecy level" %}</h6>
+                <p>{% translate "Higher secrecy makes the same behaviour count for more, and anything above Standard enables the briefing and Big Brother sensitive-op checks. AFAT operations start as Standard; raise them by editing the operation." %}</p>
+                <table class="table table-sm w-auto">
+                    <thead class="table-light"><tr><th>{% translate "Level" %}</th><th>{% translate "Risk multiplier" %}</th></tr></thead>
+                    <tbody>
+                        {% for label, multiplier in secrecy_levels %}
+                        <tr><td>{{ label }}</td><td>&times;{{ multiplier }}</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+
+                <h6>{% translate "Closing, editing and cleaning up" %}</h6>
+                <ul>
+                    <li><strong>{% translate "Close Fleet / Conclude Window" %}</strong> — {% translate "sets the end time to now." %}</li>
+                    <li>{% blocktrans trimmed with min=open_window_min_hours max=open_window_max_hours %}
+                        An open operation's window grows with the fleet: at least {{ min }} hours, at most {{ max }} hours after it started.
+                    {% endblocktrans %}</li>
+                    <li><strong>{% translate "Edit Operation" %}</strong> — {% translate "changing the start or end time recalculates comms, combat and findings for the new window, queues a zKillboard rescan once the window has finished, and locks the window (“Manual window” badge) so AFAT will not overwrite it." %}</li>
+                    <li><strong>{% translate "Deduplicate Fleets" %}</strong> — {% translate "on the Operations page, merges duplicates across all history." %}</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- 6 -->
+        <div class="card mb-3" id="reading-timeline">
+            <div class="card-header bg-dark text-white">
+                <h5 class="mb-0"><i class="fas fa-layer-group me-2"></i>{% translate "6. Reading an operation" %}</h5>
+            </div>
+            <div class="card-body">
+                <p>{% blocktrans trimmed with pre=pre_window_minutes %}
+                    Everything on the operation page is measured against the <strong>window</strong>: the operation's start and end,
+                    plus {{ pre }} minutes either side.
+                {% endblocktrans %}</p>
+                <dl class="row mb-0">
+                    <dt class="col-sm-3">{% translate "Header badges" %}</dt>
+                    <dd class="col-sm-9">
+                        <span class="badge bg-success">{% translate "Active Fleet" %}</span>
+                        <span class="badge bg-warning text-dark"><i class="fas fa-lock me-1"></i>{% translate "Manual window" %}</span>
+                        <span class="badge bg-danger"><i class="fas fa-user-secret me-1"></i>{% translate "Leaked" %}</span>
+                    </dd>
+                    <dt class="col-sm-3">{% translate "Operational window bar" %}</dt>
+                    <dd class="col-sm-9">{% translate "Start time on the left, end time on the right (or Active/Open)." %}</dd>
+                    <dt class="col-sm-3">{% translate "Voice comms" %}</dt>
+                    <dd class="col-sm-9">{% translate "One row per member: total time in comms inside the window, first login and last logoff. Login shows n/a if they were already connected before the window; logoff shows n/a if they stayed past it or are still connected. Hover a name to see channels when known." %}</dd>
+                    <dt class="col-sm-3">{% translate "Combat engagements" %}</dt>
+                    <dd class="col-sm-9">{% translate "Every killmail in the window, in time order. Loss = the victim was on the roster; Kill = anything else. The time links to zKillboard." %}</dd>
+                    <dt class="col-sm-3">{% translate "Roster" %}</dt>
+                    <dd class="col-sm-9">
+                        {% translate "FC-confirmed pilots, followed by members who were only in comms (“Comms only”). Badges per pilot:" %}
+                        <ul class="mb-0">
+                            <li><span class="badge bg-warning text-dark">Login near fleet</span> / <span class="badge bg-secondary">Logoff near fleet</span> — {% translate "an in-game login/logoff inside the window." %}</li>
+                            <li><span class="badge bg-info text-dark">Comms</span> / <span class="badge bg-light text-dark">No comms</span>, <span class="badge bg-warning text-dark">Fleet, no comms</span></li>
+                            <li><span class="badge bg-danger">Killmail</span> / <span class="badge bg-light text-dark">No killmail</span> — {% translate "on any killmail as attacker or victim." %}</li>
+                            <li><span class="badge bg-success">Audit</span> / <span class="badge bg-danger">No audit</span> — {% translate "whether the character has a corptools audit. No audit counts against the member." %}</li>
+                        </ul>
+                    </dd>
+                    <dt class="col-sm-3">{% translate "Chronological events" %}</dt>
+                    <dd class="col-sm-9">{% translate "Every raw event in the window. Filter by user, character name or event type (for example only Mumble disconnects, or only EVE logoffs)." %}</dd>
+                </dl>
+            </div>
+        </div>
+
+        <!-- 7 -->
+        <div class="card mb-3" id="findings">
+            <div class="card-header bg-dark text-white">
+                <h5 class="mb-0"><i class="fas fa-search me-2"></i>{% translate "7. Findings reference" %}</h5>
+            </div>
+            <div class="card-body">
+                <p>{% blocktrans trimmed with triage=auto_triage_confidence alert=alert_confidence risk=alert_risk %}
+                    Each finding has a <strong>confidence</strong> (how strongly the evidence points at a problem). At
+                    {{ triage }} or above it opens an investigation case. At {{ alert }} confidence or above, or when the member's risk
+                    score reaches {{ risk }}, an alert is posted to Discord. Lower findings still show on the member and count towards
+                    their risk score.
+                {% endblocktrans %}</p>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-sm table-striped mb-0 align-middle small">
+                    <thead class="table-light">
+                        <tr><th>{% translate "Finding" %}</th><th>{% translate "Triggered when" %}</th><th>{% translate "Confidence" %}</th><th>{% translate "Check before acting" %}</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>comms_without_pap</code></td>
+                            <td>{% translate "In comms for 5+ minutes inside the operation without being on the roster." %}</td>
+                            <td>{% blocktrans trimmed with cap=no_channel_cap %}0.4–0.95 with time spent; capped at {{ cap }} when no channel is known{% endblocktrans %}</td>
+                            <td>{% translate "Were they in a different channel? Is the roster complete?" %}</td>
+                        </tr>
+                        <tr>
+                            <td><code>pre_contact_disconnect</code></td>
+                            <td>{% translate "Left comms in the 15 minutes before the first killmail." %}</td>
+                            <td>{% blocktrans trimmed with low=insufficient_baseline_confidence n=min_baseline_disconnects %}
+                                0.25 if it matches their usual logoff time; 0.85 if it breaks an established habit; {{ low }} if they have fewer
+                                than {{ n }} recorded disconnects
+                            {% endblocktrans %}</td>
+                            <td>{% translate "Their usual logoff time; did they say why?" %}</td>
+                        </tr>
+                        <tr>
+                            <td><code>co_occurring_disconnect_ring</code></td>
+                            <td>{% translate "Two or more members left comms before contact together, and the same pair did so in another op in the last 30 days." %}</td>
+                            <td>0.88</td>
+                            <td>{% translate "Are they friends in the same timezone or corp?" %}</td>
+                        </tr>
+                        <tr>
+                            <td><code>eve_logoff_before_contact</code></td>
+                            <td>{% translate "A roster character logged off in-game in the 15 minutes before the first killmail." %}</td>
+                            <td>0.45</td>
+                            <td>{% translate "Did the fleet stand down? Late at night for them?" %}</td>
+                        </tr>
+                        <tr>
+                            <td><code>briefing_without_deployment</code></td>
+                            <td>{% blocktrans trimmed with days=briefing_days %}Attended a sensitive briefing for 10+ minutes and joined no fleet in the following {{ days }} days. Only judged once those days have passed.{% endblocktrans %}</td>
+                            <td>0.70</td>
+                            <td>{% translate "Were they on leave or busy?" %}</td>
+                        </tr>
+                        <tr>
+                            <td><code>combat_absence_unexplained</code></td>
+                            <td>{% translate "On the roster of an op with 3+ killmails but on none of them." %}</td>
+                            <td>0.45</td>
+                            <td>{% translate "Logi, scouts, ECM and tackle rarely appear on killmails. Add roles to objectives." %}</td>
+                        </tr>
+                        <tr>
+                            <td><code>alt_operational_proximity</code></td>
+                            <td>{% translate "An alt not on the roster appears on a killmail of the operation." %}</td>
+                            <td>0.85</td>
+                            <td>{% translate "Was it a known scout or cyno alt left off the roster?" %}</td>
+                        </tr>
+                        <tr>
+                            <td><code>alt_in_hostile_entity</code></td>
+                            <td>{% translate "One of their characters is in a configured hostile corp or alliance." %}</td>
+                            <td>0.90</td>
+                            <td>{% translate "Sanctioned spy alt? Recently left that corp?" %}</td>
+                        </tr>
+                        <tr>
+                            <td><code>alt_shared_mumble_identity</code></td>
+                            <td>{% translate "Several Auth accounts used the same Mumble name in the window." %}</td>
+                            <td>0.85</td>
+                            <td>{% translate "Shared computer or a mis-linked account?" %}</td>
+                        </tr>
+                        <tr>
+                            <td><code>uncredited_alt_online</code></td>
+                            <td>{% translate "A member logged in a character that is not on the roster during the op." %}</td>
+                            <td>0.40</td>
+                            <td>{% translate "Common for scouts, cynos and haulers. Matters together with other findings." %}</td>
+                        </tr>
+                        <tr>
+                            <td><code>unaudited_fleet_character</code></td>
+                            <td>{% translate "Flew a roster character that has no corptools audit." %}</td>
+                            <td>0.35</td>
+                            <td>{% translate "Ask them to add the character to corptools." %}</td>
+                        </tr>
+                        <tr>
+                            <td><code>bb_flagged_in_sensitive_op</code></td>
+                            <td>{% translate "A member with Big Brother hostile-tie flags had access to a sensitive operation." %}</td>
+                            <td>{% translate "0.4 + half the highest flag severity (0.65–0.9)" %}</td>
+                            <td>{% translate "Review the member's Big Brother page." %}</td>
+                        </tr>
+                        <tr>
+                            <td><code>leak_exposure</code></td>
+                            <td>{% translate "Knew about leaked operations far more often than clean ones. See section 9." %}</td>
+                            <td>0.40–0.90</td>
+                            <td>{% translate "Are they simply one of the most active members?" %}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- 8 -->
+        <div class="card mb-3" id="risk-score">
+            <div class="card-header bg-dark text-white">
+                <h5 class="mb-0"><i class="fas fa-tachometer-alt me-2"></i>{% translate "8. Risk score" %}</h5>
+            </div>
+            <div class="card-body">
+                <p>{% blocktrans trimmed %}
+                    Each finding also carries the member's <strong>risk score</strong> (0–100%): a weighted combination of their findings
+                    on that operation and their standing signals, multiplied by the operation's secrecy level and capped at 100%.
+                {% endblocktrans %}</p>
+                <div class="row">
+                    <div class="col-md-7">
+                        <table class="table table-sm align-middle">
+                            <thead class="table-light"><tr><th>{% translate "Factor" %}</th><th>{% translate "Weight" %}</th></tr></thead>
+                            <tbody>
+                                {% for label, pct in risk_weights %}
+                                <tr><td>{{ label }}</td><td>{{ pct }}%</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="col-md-5">
+                        <table class="table table-sm align-middle">
+                            <thead class="table-light"><tr><th>{% translate "Big Brother flag" %}</th><th>{% translate "Severity" %}</th></tr></thead>
+                            <tbody>
+                                {% for label, severity in bb_flags %}
+                                <tr><td>{{ label }}</td><td>{{ severity }}</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                        <p class="small text-muted">{% translate "Several flags add up rather than only the worst one counting." %}</p>
+                    </div>
+                </div>
+                <p class="mb-0">{% translate "Member dossiers rate the overall score: 70% or above is High, 40% or above is Medium, below that is Low." %}</p>
+            </div>
+        </div>
+
+        <!-- 9 -->
+        <div class="card mb-3" id="leaks">
+            <div class="card-header bg-dark text-white">
+                <h5 class="mb-0"><i class="fas fa-user-secret me-2"></i>{% translate "9. Leaked operations" %}</h5>
+            </div>
+            <div class="card-body">
+                <p>{% blocktrans trimmed %}
+                    When hostiles were clearly forewarned (waiting on the target grid, forming a counter before the ping, a structure
+                    timer suddenly defended), a manager should click <strong>Mark Leaked</strong> on the operation and write down why.
+                {% endblocktrans %}</p>
+                <p>{% blocktrans trimmed with pre=pre_window_minutes %}
+                    A member "knew about" an operation if they were on its roster, or were in comms between its disclosure time (or
+                    {{ pre }} minutes before the start, if no disclosure time is set) and its start.
+                {% endblocktrans %}</p>
+                <p>{% blocktrans trimmed with days=leak_lookback_days ops=leak_min_ops rate=leak_min_rate_pct lift=leak_min_lift %}
+                    Looking back {{ days }} days, a member is flagged only when at least {{ ops }} operations are marked leaked, they knew
+                    about at least {{ ops }} of them and at least {{ rate }}% of all leaked ones, and they knew about leaked operations at
+                    least {{ lift }}&times; as often as about clean ones.
+                {% endblocktrans %}</p>
+                <div class="alert alert-info">
+                    <strong>{% translate "Example." %}</strong>
+                    {% blocktrans trimmed %}
+                        Of 8 operations, 3 were marked leaked. Pilot A was in comms for all 3 leaked ones and none of the 5 clean ones, and is
+                        flagged. Pilot B attends everything (all 8), so their attendance says nothing and they are not flagged.
+                    {% endblocktrans %}
+                </div>
+                <ul class="mb-0">
+                    <li>{% translate "A single leak can never identify anyone; it takes several." %}</li>
+                    <li>{% translate "Only mark leaks you are confident about. Each wrong mark adds noise for everyone who attended." %}</li>
+                    <li>{% translate "Clear Leak removes the mark and its findings; all numbers are recalculated in the background." %}</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- 10 -->
+        <div class="card mb-3" id="members">
+            <div class="card-header bg-dark text-white">
+                <h5 class="mb-0"><i class="fas fa-users-cog me-2"></i>{% translate "10. Member pages and risk matrix" %}</h5>
+            </div>
+            <div class="card-body">
+                <ul class="mb-0">
+                    <li><strong>{% translate "Member Activity" %}</strong> — {% translate "per member: Big Brother flags, EVE login/logoff history, identities (Discord, Mumble, characters), comms sessions, fleets attended, findings and overrides." %}</li>
+                    <li><strong>{% translate "Dossier" %}</strong> — {% translate "a hashed, exportable summary of everything CI holds on a member, for case records." %}</li>
+                    <li><strong>{% translate "Risk Matrix" %}</strong> — {% translate "every member's highest risk from operations in the last 30 days, excluding overridden finding types and cleared or dismissed cases. Start here to see who to look at." %}</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- 11 -->
+        <div class="card mb-3" id="reviewing">
+            <div class="card-header bg-dark text-white">
+                <h5 class="mb-0"><i class="fas fa-shield-alt me-2"></i>{% translate "11. Reviewing cases" %}</h5>
+            </div>
+            <div class="card-body">
+                <p>{% translate "Cases open automatically for findings at or above the triage threshold, one per member per operation. Open a case to see the evidence, the plausible innocent explanations and the member's history, then pick a disposition:" %}</p>
+                <table class="table table-sm align-middle">
+                    <thead class="table-light"><tr><th>{% translate "Disposition" %}</th><th>{% translate "Use when" %}</th></tr></thead>
+                    <tbody>
+                        <tr><td>{% translate "Clear (Verified Alt / Scout)" %}</td><td>{% translate "The activity was a known support role." %}</td></tr>
+                        <tr><td>{% translate "Clear (Habitual Logoff)" %}</td><td>{% translate "The logoff matches the member's normal routine." %}</td></tr>
+                        <tr><td>{% translate "Clear (Incomplete Roster)" %}</td><td>{% translate "The FC left them off the roster." %}</td></tr>
+                        <tr><td>{% translate "Escalate for Senior Review" %}</td><td>{% translate "Needs senior CI leadership." %}</td></tr>
+                        <tr><td>{% translate "Dismiss (Non-Actionable)" %}</td><td>{% translate "Noise." %}</td></tr>
+                    </tbody>
+                </table>
+                <div class="alert alert-warning mb-0">
+                    <strong>{% translate "Clearing and dismissing creates a temporary exemption." %}</strong>
+                    {% blocktrans trimmed with days=auto_override_days %}
+                        Clear and Dismiss exempt the member from the finding types they had on that operation, on all operations, for
+                        {{ days }} days. After that the detectors flag them again. Prefer Escalate when unsure.
+                    {% endblocktrans %}
+                    <div class="mt-2">{% translate "These finding types are never exempted by a case disposition:" %}
+                        {% for anomaly_type in never_auto_exempt %}<code class="me-1">{{ anomaly_type }}</code>{% endfor %}
+                    </div>
+                    <div class="mt-2 small">{% translate "A deliberate or permanent exemption (for example a sanctioned spy alt in a hostile alliance) is made by an administrator under CI Overrides in the Django admin. The member's activity page shows every override and when it expires." %}</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 12 -->
+        <div class="card mb-3" id="rollout">
+            <div class="card-header bg-dark text-white">
+                <h5 class="mb-0"><i class="fas fa-flag-checkered me-2"></i>{% translate "12. Rolling it out" %}</h5>
+            </div>
+            <div class="card-body">
+                <ol class="mb-0">
+                    <li>{% translate "Run the first 1–2 weeks as a trial with a small group of officers." %}</li>
+                    <li>{% translate "Review every case it opens and note which ones were noise and why." %}</li>
+                    <li>{% translate "Add expected roles to objectives and raise secrecy on sensitive operations as you go; both cut noise." %}</li>
+                    <li>{% translate "Report recurring false positives so the thresholds can be tuned on real data." %}</li>
+                </ol>
+            </div>
+        </div>
+
+        <!-- 13 -->
+        <div class="card mb-3" id="limitations">
+            <div class="card-header bg-dark text-white">
+                <h5 class="mb-0"><i class="fas fa-exclamation-triangle me-2"></i>{% translate "13. Known limitations" %}</h5>
+            </div>
+            <div class="card-body">
+                <ol class="mb-0">
+                    <li><strong>{% translate "Comms means “on the Mumble server”, not “in the fleet channel”." %}</strong> {% translate "Mumble data usually carries no channel, so comms-based findings are capped." %}</li>
+                    <li><strong>{% translate "In-game login/logoff is coarse." %}</strong> {% translate "Only the latest value at each corptools refresh is seen; short sessions in between are missed." %}</li>
+                    <li><strong>{% translate "Support pilots rarely appear on killmails." %}</strong> {% translate "Logi, scouts and ECM get a low “no combat” mark unless objectives list their roles." %}</li>
+                    <li><strong>{% translate "Leak detection depends on managers marking leaks" %}</strong> {% translate "and only becomes reliable after several leaked and clean operations." %}</li>
+                    <li><strong>{% translate "AFAT operations start as Standard secrecy," %}</strong> {% translate "so the briefing and sensitive-operation checks only run once a manager raises the level." %}</li>
+                    <li><strong>{% translate "One case per member per operation." %}</strong> {% translate "A flagged member attending many sensitive operations gets several cases." %}</li>
+                    <li><strong>{% translate "Thresholds are starting points," %}</strong> {% translate "not calibrated on real data yet." %}</li>
+                </ol>
+            </div>
+        </div>
+
+        <!-- 14 -->
+        <div class="card mb-3" id="troubleshooting">
+            <div class="card-header bg-dark text-white">
+                <h5 class="mb-0"><i class="fas fa-tools me-2"></i>{% translate "14. Troubleshooting" %}</h5>
+            </div>
+            <div class="card-body">
+                <dl class="mb-0">
+                    <dt>{% translate "No Mumble data appears" %}</dt>
+                    <dd>{% translate "Check that MUMBLE_AUTHENTICATOR_LOG_PATH is set and the file is readable by the Celery worker (mounted into its container if you use Docker). The worker log says so if it is not." %}</dd>
+                    <dt>{% translate "An operation stays “Active”" %}</dt>
+                    <dd>{% translate "AFAT has not reported the fleet as closed (clickable FAT links never close). Use Close Fleet, or Edit Operation to set the end time." %}</dd>
+                    <dt>{% translate "“Pending zKillboard scan” or scan incomplete" %}</dt>
+                    <dd>{% translate "The scan runs 30 minutes after the window closes and retries automatically when zKillboard rate-limits it. Managers can force it with the rescan button." %}</dd>
+                    <dt>{% translate "No killmails on an older operation" %}</dt>
+                    <dd>{% translate "zKillboard only allows looking back 7 days, so operations older than that cannot be scanned." %}</dd>
+                    <dt>{% translate "AFAT keeps changing my times" %}</dt>
+                    <dd>{% translate "It cannot once you have edited the window (“Manual window” badge)." %}</dd>
+                    <dt>{% translate "The same fleet appears twice" %}</dt>
+                    <dd>{% translate "Use Deduplicate Fleets on the Operations page." %}</dd>
+                    <dt>{% translate "A finding looks wrong" %}</dt>
+                    <dd class="mb-0">{% blocktrans trimmed with days=auto_override_days %}Check the evidence on the case. If it is genuinely noise, dismiss it; that member is exempt from those finding types for {{ days }} days.{% endblocktrans %}</dd>
+                </dl>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

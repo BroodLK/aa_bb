@@ -36,8 +36,33 @@ from .models import (
     CISession,
 )
 from .services.agent import CIAgentService
+from .services.baseline import BaselineEngine
+from .services.bb_signals import BBSignals
 from .services.correlation import CorrelationEngine
 from .services.operations import CIOperationService
+from .tasks import (
+    ZKILL_SCAN_DELAY_MINUTES,
+    recompute_leak_exposure_task,
+    rescan_operation_combat_task,
+)
+
+
+def _fc_candidates():
+    """Active members who can be selected as an operation's fleet commander."""
+    member_states = BigBrotherConfig.get_solo().bb_member_states.all()
+    return (
+        User.objects.filter(is_active=True, profile__state__in=member_states)
+        .select_related("profile__main_character")
+        .order_by("username")[:200]
+    )
+
+
+def _secrecy_levels() -> list:
+    """(value, label) choices for the operation secrecy select."""
+    return [
+        (value, label)
+        for value, (label, _multiplier) in CIOperation.SECRECY_LEVELS.items()
+    ]
 
 
 @permission_required("aa_bb.can_view_ci")
@@ -53,12 +78,127 @@ def operation_list(request):
     page_number = request.GET.get("page")
     page_obj = paginator.get_page(page_number)
 
+    context = {
+        "page_obj": page_obj,
+        "title": _("Counterintelligence - Operations"),
+    }
+    if request.user.has_perm("aa_bb.can_manage_ci"):
+        context.update(fc_candidates=_fc_candidates(), secrecy_levels=_secrecy_levels())
+    return render(request, "aa_bb/counterintel/operation_list.html", context)
+
+
+@permission_required("aa_bb.can_manage_ci")
+@require_POST
+def create_operation_view(request):
+    """
+    Create an operation by hand, for fleets, briefings or strategic activity not
+    tracked in AFAT.
+    """
+    name = request.POST.get("name", "").strip()
+    start_time = _parse_input_datetime(request.POST.get("start_time"))
+    end_time = _parse_input_datetime(request.POST.get("end_time"))
+    secrecy_level = request.POST.get("secrecy_level", "standard").strip()
+
+    if not name or not start_time:
+        messages.error(request, _("An operation needs a name and a start time."))
+        return redirect("ci:operation_list")
+    if end_time and end_time < start_time:
+        messages.error(
+            request, _("The end time cannot be earlier than the start time.")
+        )
+        return redirect("ci:operation_list")
+    if secrecy_level not in CIOperation.SECRECY_LEVELS:
+        secrecy_level = "standard"
+
+    fleet_commander = None
+    fc_id = request.POST.get("fleet_commander_id")
+    if fc_id and fc_id.isdigit():
+        fleet_commander = User.objects.filter(id=int(fc_id)).first()
+
+    operation = CIOperationService.create_operation(
+        name=name,
+        start_time=start_time,
+        end_time=end_time,
+        operation_type=request.POST.get("operation_type", "").strip() or "strategic",
+        fleet_commander=fleet_commander,
+        secrecy_level=secrecy_level,
+        notes=request.POST.get("notes", "").strip(),
+    )
+    if end_time:
+        # The manager set the window; fleet syncs must not overwrite it
+        operation.window_locked = True
+        operation.save(update_fields=["window_locked"])
+
+    messages.success(request, _(f"Operation '{operation.name}' created."))
+    return redirect("ci:operation_timeline", operation_id=operation.id)
+
+
+@permission_required("aa_bb.can_view_ci")
+def ci_help(request):
+    """
+    How Counterintelligence works and how to run it. Thresholds and weights are
+    read from the code so the page cannot drift from actual behaviour.
+    """
+    # AA BigBrother
+    from aa_bb.management.commands.sync_counterintel_tasks import TASKS
+
+    from .tasks import AFAT_SYNC_DEBOUNCE_SECONDS
+
+    risk_factor_labels = {
+        "comms": _(
+            "Comms & in-game presence: comms without fleet credit, comms or "
+            "in-game logoff before contact"
+        ),
+        "discord": _("Discord text inactivity"),
+        "alt": _(
+            "Alts: alt near the fight, alt in a hostile entity, shared Mumble "
+            "name, uncredited alt online"
+        ),
+        "deviation": _("Logoff against the member's own habit"),
+        "bb_signals": _("Big Brother hostile-tie flags (any operation)"),
+        "leak": _("Repeated exposure to leaked operations"),
+        "accountability": _("Flying characters without a corptools audit"),
+    }
+    risk_weights = [
+        (risk_factor_labels.get(key, key), round(weight * 100))
+        for key, weight in BaselineEngine.RISK_WEIGHTS.items()
+    ]
+    engine = CorrelationEngine
     return render(
         request,
-        "aa_bb/counterintel/operation_list.html",
+        "aa_bb/counterintel/help.html",
         {
-            "page_obj": page_obj,
-            "title": _("Counterintelligence - Operations"),
+            "alert_confidence": engine.ALERT_CONFIDENCE_THRESHOLD,
+            "alert_risk": engine.ALERT_RISK_THRESHOLD,
+            "no_channel_cap": engine.NO_CHANNEL_CONFIDENCE_CAP,
+            "insufficient_baseline_confidence": engine.INSUFFICIENT_BASELINE_CONFIDENCE,
+            "idle_presence_hours": engine.IDLE_PRESENCE_HOURS,
+            "briefing_days": engine.BRIEFING_DEPLOYMENT_DAYS,
+            "leak_lookback_days": engine.LEAK_LOOKBACK_DAYS,
+            "leak_min_ops": engine.LEAK_MIN_LEAKED_OPS,
+            "leak_min_rate_pct": round(engine.LEAK_MIN_RATE * 100),
+            "leak_min_lift": engine.LEAK_MIN_LIFT,
+            "auto_triage_confidence": CIAgentService.AUTO_TRIAGE_CONFIDENCE,
+            "auto_override_days": CIOverride.AUTO_OVERRIDE_DAYS,
+            "never_auto_exempt": CIOverride.NEVER_AUTO_EXEMPT,
+            "risk_weights": risk_weights,
+            "secrecy_levels": [
+                (label, multiplier)
+                for label, multiplier in CIOperation.SECRECY_LEVELS.values()
+            ],
+            "open_window_min_hours": int(
+                CIOperation.OPEN_WINDOW_MIN.total_seconds() // 3600
+            ),
+            "open_window_max_hours": int(
+                CIOperation.OPEN_WINDOW_MAX.total_seconds() // 3600
+            ),
+            "bb_flags": list(BBSignals.FLAG_SEVERITIES.values()),
+            "pre_window_minutes": CIOperationService.DEFAULT_PRE_WINDOW_MINUTES,
+            "zkill_delay_minutes": ZKILL_SCAN_DELAY_MINUTES,
+            "afat_debounce_seconds": AFAT_SYNC_DEBOUNCE_SECONDS,
+            "min_baseline_disconnects": BaselineEngine.MIN_BASELINE_DISCONNECTS,
+            "scheduled_tasks": TASKS,
+            "title": _("Counterintelligence - Help"),
         },
     )
 
@@ -77,21 +217,14 @@ def operation_timeline(request, operation_id: int):
     ):
         return JsonResponse(timeline, safe=False)
 
-    cfg = BigBrotherConfig.get_solo()
-    member_states = cfg.bb_member_states.all()
-    fc_candidates = (
-        User.objects.filter(is_active=True, profile__state__in=member_states)
-        .select_related("profile__main_character")
-        .order_by("username")[:200]
-    )
-
     return render(
         request,
         "aa_bb/counterintel/operation_timeline.html",
         {
             "operation": operation,
             "timeline": timeline,
-            "fc_candidates": fc_candidates,
+            "fc_candidates": _fc_candidates(),
+            "secrecy_levels": _secrecy_levels(),
             "title": f"{operation.name} - {_('Operation Timeline')}",
         },
     )
@@ -180,6 +313,7 @@ def member_activity(request, user_id: int):
             "overrides": overrides,
             "user_status": user_status,
             "last_discord_chat": last_discord_chat,
+            "bb_signals": BBSignals.for_user(subject_user.id),
             "title": f"{subject_user.username} - {_('Member Activity History')}",
         },
     )
@@ -243,31 +377,16 @@ def investigation_detail(request, investigation_id: int):
         if not investigation.assigned_reviewer:
             investigation.assigned_reviewer = request.user
 
-        # False-Positive Feedback Loop: auto-create scoped CIOverride if cleared/dismissed with tag
+        # False-Positive Feedback Loop: time-limited CIOverride if cleared/dismissed with tag
         if (
             investigation.status in ("cleared", "dismissed")
             and investigation.resolution_tag
         ):
-            exempt_types = (
-                list(
-                    CICorrelation.objects.filter(
-                        user=investigation.subject_user,
-                        operation=investigation.operation,
-                    ).values_list("anomaly_type", flat=True)
-                )
-                if investigation.operation
-                else []
+            CIOverride.create_from_disposition(
+                investigation,
+                created_by=request.user,
+                reason=f"Auto-generated from Investigation #{investigation.id} ({investigation.get_resolution_tag_display()})",
             )
-
-            if exempt_types:
-                CIOverride.objects.get_or_create(
-                    user=investigation.subject_user,
-                    reason=f"Auto-generated from Investigation #{investigation.id} ({investigation.get_resolution_tag_display()})",
-                    defaults={
-                        "exempt_anomaly_types": exempt_types,
-                        "created_by": request.user,
-                    },
-                )
 
         investigation.save()
         investigation.update_dossier_hash()
@@ -296,6 +415,7 @@ def investigation_detail(request, investigation_id: int):
             "benign_explanations": benign_explanations,
             "status_choices": CIInvestigation.STATUS_CHOICES,
             "resolution_choices": CIInvestigation.RESOLUTION_CHOICES,
+            "auto_override_days": CIOverride.AUTO_OVERRIDE_DAYS,
             "title": f"Investigation - {investigation.subject_user.username}",
         },
     )
@@ -368,7 +488,11 @@ def risk_matrix(request):
                 queryset=recent_correlations,
                 to_attr="recent_correlations",
             ),
-            Prefetch("ci_overrides", to_attr="override_list"),
+            Prefetch(
+                "ci_overrides",
+                queryset=CIOverride.objects.active(),
+                to_attr="override_list",
+            ),
         )
         .distinct()
     )
@@ -537,31 +661,16 @@ def quick_disposition(request, investigation_id: int):
         f"{existing_notes}\n{entry}".strip() if existing_notes else entry
     )
 
-    # Auto-create scoped CIOverride if cleared/dismissed
+    # Time-limited CIOverride if cleared/dismissed
     if (
         investigation.status in ("cleared", "dismissed")
         and investigation.resolution_tag
     ):
-        exempt_types = (
-            list(
-                CICorrelation.objects.filter(
-                    user=investigation.subject_user,
-                    operation=investigation.operation,
-                ).values_list("anomaly_type", flat=True)
-            )
-            if investigation.operation
-            else []
+        CIOverride.create_from_disposition(
+            investigation,
+            created_by=request.user,
+            reason=f"Quick disposition for Investigation #{investigation.id} ({investigation.get_resolution_tag_display()})",
         )
-
-        if exempt_types:
-            CIOverride.objects.get_or_create(
-                user=investigation.subject_user,
-                reason=f"Quick disposition for Investigation #{investigation.id} ({investigation.get_resolution_tag_display()})",
-                defaults={
-                    "exempt_anomaly_types": exempt_types,
-                    "created_by": request.user,
-                },
-            )
 
     investigation.save()
     investigation.update_dossier_hash()
@@ -642,6 +751,36 @@ def _parse_input_datetime(val: str):
     return dt
 
 
+def _recalculate_operation_window(operation: CIOperation) -> bool:
+    """
+    Re-correlate an operation after its window changed and, once zKillboard has
+    had time to receive the window's killmails, queue a combat rescan.
+    Returns True if a rescan was queued; otherwise the pipeline scans it later.
+    """
+    CorrelationEngine.correlate_operation(operation)
+    _window_start, window_end = CIOperationService.get_operational_window(operation)
+    ready_at = window_end + timedelta(minutes=ZKILL_SCAN_DELAY_MINUTES)
+    if ready_at > timezone.now():
+        return False
+    rescan_operation_combat_task.delay(operation.id)
+    return True
+
+
+def _save_window_change(operation: CIOperation, update_fields: list) -> bool:
+    # The window changed, so zKillboard must be scanned again, and fleet syncs
+    # must not overwrite the manager's times
+    operation.combat_scanned_at = None
+    operation.window_locked = True
+    operation.save(update_fields=[*update_fields, "combat_scanned_at", "window_locked"])
+    return _recalculate_operation_window(operation)
+
+
+def _rescan_message(rescan_queued: bool) -> str:
+    if rescan_queued:
+        return str(_("A zKillboard rescan of the new window has been queued."))
+    return str(_("zKillboard will be scanned 30 minutes after the window closes."))
+
+
 @permission_required("aa_bb.can_manage_ci")
 @require_POST
 def edit_operation(request, operation_id: int):
@@ -653,23 +792,19 @@ def edit_operation(request, operation_id: int):
 
     if quick_action == "close_now":
         operation.end_time = timezone.now()
-        # The window changed, so zKillboard must be scanned again
-        operation.combat_scanned_at = None
-        operation.save(update_fields=["end_time", "combat_scanned_at"])
-        CorrelationEngine.correlate_operation(operation)
+        rescan_queued = _save_window_change(operation, ["end_time"])
         messages.success(
             request,
             _(
-                f"Operation '{operation.name}' closed at {operation.end_time:%H:%M} UTC."
+                f"Operation '{operation.name}' closed at {operation.end_time:%H:%M} UTC. "
+                f"{_rescan_message(rescan_queued)}"
             ),
         )
         return redirect("ci:operation_timeline", operation_id=operation.id)
 
     if quick_action == "reopen":
         operation.end_time = None
-        operation.combat_scanned_at = None
-        operation.save(update_fields=["end_time", "combat_scanned_at"])
-        CorrelationEngine.correlate_operation(operation)
+        _save_window_change(operation, ["end_time"])
         messages.success(request, _(f"Operation '{operation.name}' reopened."))
         return redirect("ci:operation_timeline", operation_id=operation.id)
 
@@ -710,16 +845,57 @@ def edit_operation(request, operation_id: int):
     elif "fleet_commander_id" in request.POST:
         operation.fleet_commander = None
 
+    if operation.end_time and operation.end_time < operation.start_time:
+        messages.error(
+            request, _("The end time cannot be earlier than the start time.")
+        )
+        return redirect("ci:operation_timeline", operation_id=operation.id)
+
     operation.notes = request.POST.get("notes", "").strip()
-    if (operation.start_time, operation.end_time) != previous_window:
-        operation.combat_scanned_at = None
-
     operation.save()
-    CorrelationEngine.correlate_operation(operation)
 
-    messages.success(
-        request, _(f"Operation '{operation.name}' details updated successfully.")
+    if (operation.start_time, operation.end_time) != previous_window:
+        rescan_queued = _save_window_change(operation, ["start_time", "end_time"])
+        messages.success(
+            request,
+            _(
+                f"Operation '{operation.name}' updated; the timeline and findings "
+                f"were recalculated for the new window. {_rescan_message(rescan_queued)}"
+            ),
+        )
+    else:
+        CorrelationEngine.correlate_operation(operation)
+        messages.success(
+            request, _(f"Operation '{operation.name}' details updated successfully.")
+        )
+    return redirect("ci:operation_timeline", operation_id=operation.id)
+
+
+@permission_required("aa_bb.can_manage_ci")
+@require_POST
+def toggle_leak(request, operation_id: int):
+    """
+    Mark an operation as leaked (hostiles were evidently forewarned) or clear the
+    mark, then recompute leak exposure across all leaked operations.
+    """
+    operation = get_object_or_404(CIOperation, id=operation_id)
+    operation.leaked = not operation.leaked
+    operation.leak_notes = (
+        request.POST.get("leak_notes", "").strip() if operation.leaked else ""
     )
+    operation.save(update_fields=["leaked", "leak_notes"])
+    recompute_leak_exposure_task.delay(operation.id)
+
+    if operation.leaked:
+        messages.warning(
+            request,
+            _(
+                f"Operation '{operation.name}' marked as leaked. Leak exposure "
+                f"is being recalculated across leaked operations."
+            ),
+        )
+    else:
+        messages.success(request, _(f"Leak mark cleared on '{operation.name}'."))
     return redirect("ci:operation_timeline", operation_id=operation.id)
 
 

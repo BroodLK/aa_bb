@@ -8,6 +8,7 @@ from datetime import timedelta
 
 # Django
 from django.contrib.auth.models import User
+from django.core.cache import cache
 from django.utils import timezone
 
 # AA BigBrother
@@ -21,6 +22,7 @@ from ..models import (
     CIOverride,
 )
 from .baseline import BaselineEngine
+from .bb_signals import BBSignals
 from .operations import CIOperationService
 
 logger = logging.getLogger(__name__)
@@ -40,6 +42,11 @@ class CorrelationEngine:
     IDLE_PRESENCE_HOURS = 2
     # Without channel names we only know someone was on the server, not in fleet comms
     NO_CHANNEL_CONFIDENCE_CAP = 0.60
+    # Briefing attendees are expected to deploy within this many days
+    BRIEFING_DEPLOYMENT_DAYS = 7
+    # Confidence for a pre-contact disconnect by a member without enough history
+    # to tell habit from anomaly; kept below the alert threshold
+    INSUFFICIENT_BASELINE_CONFIDENCE = 0.45
 
     @classmethod
     def correlate_operation(
@@ -107,6 +114,29 @@ class CorrelationEngine:
             )
         )
 
+        # 7. Fleet characters hidden from corptools auditing
+        findings.extend(
+            cls._detect_unaudited_fleet_characters(
+                operation, timeline, algorithm_version
+            )
+        )
+
+        # 8. In-game login/logoff activity around the operation
+        findings.extend(
+            cls._detect_uncredited_alt_online(operation, timeline, confirmed_user_ids)
+        )
+        findings.extend(cls._detect_eve_logoff_before_contact(operation, timeline))
+
+        # 9. Big Brother flags on members with access to sensitive operations
+        findings.extend(
+            cls._detect_bb_flagged_in_sensitive_op(
+                operation, timeline, confirmed_user_ids
+            )
+        )
+
+        # 10. Members disproportionately exposed to operations marked as leaked
+        findings.extend(cls._detect_leak_exposure(operation))
+
         # Filter out findings suppressed by documented CIOverrides
         persisted_findings = []
         user_overrides_map = {}
@@ -121,7 +151,9 @@ class CorrelationEngine:
             anomaly_type = finding["anomaly_type"]
 
             if user.id not in user_overrides_map:
-                user_overrides_map[user.id] = list(CIOverride.objects.filter(user=user))
+                user_overrides_map[user.id] = list(
+                    CIOverride.objects.active().filter(user=user)
+                )
 
             is_exempt = any(
                 anomaly_type in (ovr.exempt_anomaly_types or [])
@@ -296,7 +328,13 @@ class CorrelationEngine:
                 )
 
                 # Calibrate confidence based on historical habit
-                if is_typical:
+                if not BaselineEngine.has_disconnect_baseline(user, end_time):
+                    confidence = cls.INSUFFICIENT_BASELINE_CONFIDENCE
+                    explanation = (
+                        f"User {user.username} disconnected {minutes_before}m prior to hostile contact. "
+                        f"There is not enough comms history to tell whether this is habitual."
+                    )
+                elif is_typical:
                     confidence = 0.25  # Low confidence: habit explains logoff
                     explanation = (
                         f"User {user.username} disconnected {minutes_before}m prior to hostile contact, "
@@ -336,35 +374,60 @@ class CorrelationEngine:
         briefing_objectives = [
             o for o in timeline["objectives"] if o["objective_type"] == "briefing"
         ]
-        if not briefing_objectives and operation.secrecy_level != "classified":
+        if not briefing_objectives and not operation.is_sensitive:
             return findings
 
-        # Check for users present during briefing who never deployed to subsequent operations
+        # "No deployment over the following week" can only be judged once that
+        # week has passed
+        deployment_window_end = operation.effective_end() + timedelta(
+            days=cls.BRIEFING_DEPLOYMENT_DAYS
+        )
+        if deployment_window_end > timezone.now():
+            return findings
+
+        confirmed_user_ids = {
+            p["user_id"] for p in timeline["participants"] if p.get("confirmed_by_fc")
+        }
+        briefing_sessions = {}
         for s in timeline["sessions"]:
-            user = User.objects.filter(id=s["user_id"]).first()
-            if not user:
-                continue
+            if (s["duration_seconds"] or 0) >= 600 and cls._is_operational_session(
+                s, operation, confirmed_user_ids
+            ):
+                briefing_sessions.setdefault(s["user_id"], s)
+        if not briefing_sessions:
+            return findings
 
-            recent_fleets = CIOperationParticipant.objects.filter(
-                user=user,
+        # Deployments to other operations in the following week, in one query
+        deployed_user_ids = set(
+            CIOperationParticipant.objects.filter(
+                user_id__in=briefing_sessions,
                 recorded_at__gte=operation.start_time,
-                recorded_at__lte=operation.start_time + timedelta(days=7),
-            ).count()
+                recorded_at__lte=deployment_window_end,
+            )
+            .exclude(operation=operation)
+            .values_list("user_id", flat=True)
+        )
+        users = User.objects.in_bulk(
+            [uid for uid in briefing_sessions if uid not in deployed_user_ids]
+        )
 
-            if recent_fleets == 0 and s["duration_seconds"] >= 600:
-                findings.append(
-                    {
-                        "user": user,
-                        "anomaly_type": "briefing_without_deployment",
-                        "confidence": 0.70,
-                        "data_completeness": 0.85,
-                        "source_event_ids": [f"session:{s['id']}"],
-                        "explanation": (
-                            f"User {user.username} attended sensitive strategic briefing ({operation.name}) "
-                            f"without subsequent fleet deployment over the following 7 days."
-                        ),
-                    }
-                )
+        # Users present during briefing who never deployed to subsequent operations
+        for uid, user in users.items():
+            s = briefing_sessions[uid]
+            findings.append(
+                {
+                    "user": user,
+                    "anomaly_type": "briefing_without_deployment",
+                    "confidence": 0.70,
+                    "data_completeness": 0.85,
+                    "source_event_ids": [f"session:{s['id']}"],
+                    "explanation": (
+                        f"User {user.username} attended sensitive strategic briefing ({operation.name}) "
+                        f"without subsequent fleet deployment over the following "
+                        f"{cls.BRIEFING_DEPLOYMENT_DAYS} days."
+                    ),
+                }
+            )
 
         return findings
 
@@ -393,8 +456,12 @@ class CorrelationEngine:
             )
             return findings
 
-        combat_user_ids = {e["user_id"] for e in combat_events if e["user_id"]}
-        missing_combat_users = confirmed_user_ids - combat_user_ids
+        # A killmail event stores a single user, so presence is taken from each
+        # participant's character appearing on any victim/attacker list
+        on_killmail_user_ids = {
+            p["user_id"] for p in timeline["participants"] if p.get("on_killmail")
+        }
+        missing_combat_users = confirmed_user_ids - on_killmail_user_ids
 
         for uid in missing_combat_users:
             user = User.objects.filter(id=uid).first()
@@ -608,6 +675,307 @@ class CorrelationEngine:
                         }
                     )
 
+        return findings
+
+    @classmethod
+    def _operational_user_ids(
+        cls, operation: CIOperation, timeline: dict, confirmed_user_ids: set
+    ) -> set:
+        """Roster members plus users whose comms sessions count towards the op."""
+        return confirmed_user_ids | {
+            s["user_id"]
+            for s in timeline["sessions"]
+            if cls._is_operational_session(s, operation, confirmed_user_ids)
+        }
+
+    @classmethod
+    def _detect_uncredited_alt_online(
+        cls, operation: CIOperation, timeline: dict, confirmed_user_ids: set
+    ) -> list[dict]:
+        """
+        Flags fleet or comms members who logged in a character that was not on
+        the FC roster during the operation. Uncredited scouts and cyno alts are
+        common, so this is a mark rather than a case on its own.
+        """
+        op_user_ids = cls._operational_user_ids(operation, timeline, confirmed_user_ids)
+        roster_char_ids = {
+            p["character_id"] for p in timeline["participants"] if p["character_id"]
+        }
+        alts_by_user = {}
+        for ev in timeline["events"]:
+            payload = ev["payload"] or {}
+            if (
+                ev["source"] == "eve_activity"
+                and payload.get("activity_type") == "login"
+                and ev["user_id"] in op_user_ids
+                and payload.get("character_id") not in roster_char_ids
+            ):
+                alts_by_user.setdefault(ev["user_id"], {})[
+                    payload.get("character_id")
+                ] = (
+                    payload.get("character_name") or str(payload.get("character_id")),
+                    ev,
+                )
+
+        users = User.objects.in_bulk(list(alts_by_user))
+        findings = []
+        for uid, alts in alts_by_user.items():
+            user = users.get(uid)
+            if not user:
+                continue
+            names = ", ".join(sorted(name for name, _ev in alts.values()))
+            findings.append(
+                {
+                    "user": user,
+                    "anomaly_type": "uncredited_alt_online",
+                    "confidence": 0.40,
+                    "data_completeness": 0.80,
+                    "source_event_ids": [
+                        f"event:{ev['id']}" for _name, ev in alts.values()
+                    ],
+                    "explanation": (
+                        f"User {user.username} logged in character(s) {names} during "
+                        f"{operation.name} without them being on the fleet roster."
+                    ),
+                }
+            )
+        return findings
+
+    @classmethod
+    def _detect_eve_logoff_before_contact(
+        cls, operation: CIOperation, timeline: dict
+    ) -> list[dict]:
+        """
+        Flags roster characters that logged off in-game in the 15 minutes before
+        the first killmail. No in-game logoff baseline exists yet, so this stays
+        below auto-triage.
+        """
+        combat_events = [e for e in timeline["events"] if e["source"] == "zkill"]
+        if not combat_events:
+            return []
+        first_contact = min(e["timestamp"] for e in combat_events)
+        critical_window_start = first_contact - timedelta(minutes=15)
+
+        roster_char_ids = {
+            p["character_id"] for p in timeline["participants"] if p["character_id"]
+        }
+        logoffs_by_user = {}
+        for ev in timeline["events"]:
+            payload = ev["payload"] or {}
+            if (
+                ev["source"] == "eve_activity"
+                and payload.get("activity_type") == "logoff"
+                and ev["user_id"]
+                and payload.get("character_id") in roster_char_ids
+                and critical_window_start <= ev["timestamp"] <= first_contact
+            ):
+                logoffs_by_user.setdefault(ev["user_id"], []).append(ev)
+
+        users = User.objects.in_bulk(list(logoffs_by_user))
+        findings = []
+        for uid, logoffs in logoffs_by_user.items():
+            user = users.get(uid)
+            if not user:
+                continue
+            details = ", ".join(
+                f"{ev['payload'].get('character_name') or ev['payload'].get('character_id')} "
+                f"{int((first_contact - ev['timestamp']).total_seconds() // 60)}m before"
+                for ev in logoffs
+            )
+            findings.append(
+                {
+                    "user": user,
+                    "anomaly_type": "eve_logoff_before_contact",
+                    "confidence": 0.45,
+                    "data_completeness": 0.80,
+                    "source_event_ids": [f"event:{ev['id']}" for ev in logoffs],
+                    "explanation": (
+                        f"User {user.username}'s fleet character(s) logged off in-game "
+                        f"shortly before hostile contact in {operation.name} ({details})."
+                    ),
+                }
+            )
+        return findings
+
+    BB_SIGNAL_MIN_SEVERITY = 0.5
+
+    @classmethod
+    def _is_sensitive_operation(cls, operation: CIOperation, timeline: dict) -> bool:
+        return operation.is_sensitive or any(
+            o["objective_type"] == "briefing" for o in timeline["objectives"]
+        )
+
+    @classmethod
+    def _detect_bb_flagged_in_sensitive_op(
+        cls, operation: CIOperation, timeline: dict, confirmed_user_ids: set
+    ) -> list[dict]:
+        """
+        Flags members carrying Big Brother hostile-tie flags (blacklists, awox,
+        hostile clones/assets, suspicious contacts/contracts/mails) who had access
+        to a sensitive operation.
+        """
+        if not cls._is_sensitive_operation(operation, timeline):
+            return []
+        signals = BBSignals.for_users(
+            cls._operational_user_ids(operation, timeline, confirmed_user_ids)
+        )
+        signals = {
+            uid: flags
+            for uid, flags in signals.items()
+            if flags[0]["severity"] >= cls.BB_SIGNAL_MIN_SEVERITY
+        }
+        users = User.objects.in_bulk(list(signals))
+        findings = []
+        for uid, flags in signals.items():
+            user = users.get(uid)
+            if not user:
+                continue
+            labels = ", ".join(f["label"] for f in flags)
+            findings.append(
+                {
+                    "user": user,
+                    "anomaly_type": "bb_flagged_in_sensitive_op",
+                    "confidence": round(0.4 + 0.5 * flags[0]["severity"], 2),
+                    "data_completeness": 0.90,
+                    "source_event_ids": [f"bb:{f['flag']}" for f in flags],
+                    "explanation": (
+                        f"User {user.username} had access to sensitive operation "
+                        f"{operation.name} while flagged by Big Brother for: {labels}."
+                    ),
+                }
+            )
+        return findings
+
+    LEAK_LOOKBACK_DAYS = 90
+    LEAK_MIN_LEAKED_OPS = 2
+    LEAK_MIN_RATE = 0.5
+    LEAK_MIN_LIFT = 2.0
+    LEAK_EXPOSURE_CACHE_SECONDS = 6 * 3600
+    EXPOSURE_CACHE_VERSION_KEY = "ci:exposure_version"
+
+    @classmethod
+    def invalidate_exposure_cache(cls):
+        """Drop every cached exposure set, e.g. after comms data is rebuilt."""
+        try:
+            cache.incr(cls.EXPOSURE_CACHE_VERSION_KEY)
+        except ValueError:
+            cache.set(cls.EXPOSURE_CACHE_VERSION_KEY, 2, timeout=None)
+
+    @classmethod
+    def _cached_exposure(cls, operation: CIOperation) -> set:
+        """Exposure set of a concluded op, cached while its window is unchanged."""
+        version = cache.get(cls.EXPOSURE_CACHE_VERSION_KEY, 1)
+        end = operation.end_time.isoformat() if operation.end_time else "open"
+        key = (
+            f"ci:exposure:v{version}:{operation.id}:"
+            f"{operation.start_time.isoformat()}:{end}"
+        )
+        exposed = cache.get(key)
+        if exposed is None:
+            exposed = CIOperationService.exposed_user_ids(operation)
+            cache.set(key, exposed, timeout=cls.LEAK_EXPOSURE_CACHE_SECONDS)
+        return exposed
+
+    @classmethod
+    def _detect_leak_exposure(cls, operation: CIOperation) -> list[dict]:
+        """
+        For an operation marked as leaked, flags members who knew about leaked
+        operations far more often than about clean ones. A single leak cannot
+        point at anyone; the signal comes from repeated overlap across leaks.
+        """
+        if not operation.leaked:
+            return []
+
+        since = timezone.now() - timedelta(days=cls.LEAK_LOOKBACK_DAYS)
+        ops = [
+            op
+            for op in CIOperation.objects.filter(start_time__gte=since)
+            if op.is_concluded or op.id == operation.id
+        ]
+        leaked_ops = [op for op in ops if op.leaked]
+        clean_ops = [op for op in ops if not op.leaked]
+        if len(leaked_ops) < cls.LEAK_MIN_LEAKED_OPS:
+            return []
+
+        exposure = {op.id: cls._cached_exposure(op) for op in ops}
+        candidates = exposure.get(operation.id, set())
+        users = User.objects.in_bulk(list(candidates))
+
+        findings = []
+        for uid in candidates:
+            user = users.get(uid)
+            if not user:
+                continue
+            leaked_seen = [op for op in leaked_ops if uid in exposure[op.id]]
+            clean_seen = sum(1 for op in clean_ops if uid in exposure[op.id])
+            a = len(leaked_seen)
+            leak_rate = a / len(leaked_ops)
+            # Laplace-smoothed so members with no clean attendance don't divide by 0
+            clean_rate = (clean_seen + 1) / (len(clean_ops) + 1)
+            lift = leak_rate / clean_rate
+            if (
+                a < cls.LEAK_MIN_LEAKED_OPS
+                or leak_rate < cls.LEAK_MIN_RATE
+                or lift < cls.LEAK_MIN_LIFT
+            ):
+                continue
+
+            confidence = min(0.9, 0.40 + 0.10 * (a - 2) + 0.08 * (min(lift, 5.0) - 2.0))
+            findings.append(
+                {
+                    "user": user,
+                    "anomaly_type": "leak_exposure",
+                    "confidence": round(confidence, 2),
+                    "data_completeness": 0.85,
+                    "source_event_ids": [f"op:{op.id}" for op in leaked_seen],
+                    "explanation": (
+                        f"User {user.username} knew of {a} of {len(leaked_ops)} "
+                        f"operations marked as leaked in the last "
+                        f"{cls.LEAK_LOOKBACK_DAYS} days, versus {clean_seen} of "
+                        f"{len(clean_ops)} clean operations (lift x{lift:.1f})."
+                    ),
+                }
+            )
+        return findings
+
+    @classmethod
+    def _detect_unaudited_fleet_characters(
+        cls,
+        operation: CIOperation,
+        timeline: dict,
+        algorithm_version: str,
+    ) -> list[dict]:
+        """
+        Flags members who flew FC-confirmed characters that have no corptools audit,
+        leaving that character's assets, contacts and history unverifiable.
+        """
+        unaudited_by_user = {}
+        for p in timeline["participants"]:
+            if p.get("confirmed_by_fc") and p.get("has_audit") is False:
+                unaudited_by_user.setdefault(p["user_id"], []).append(p)
+
+        findings = []
+        for uid, participants in unaudited_by_user.items():
+            user = User.objects.filter(id=uid).first()
+            if not user:
+                continue
+            names = ", ".join(p["character_name"] for p in participants)
+            findings.append(
+                {
+                    "user": user,
+                    "anomaly_type": "unaudited_fleet_character",
+                    # Below the auto-triage threshold: a mark, not a case on its own
+                    "confidence": 0.35,
+                    "data_completeness": 1.0,
+                    "source_event_ids": [
+                        f"participant:{p['id']}" for p in participants if p["id"]
+                    ],
+                    "explanation": (
+                        f"User {user.username} flew {names} in this operation "
+                        f"without a corptools audit for that character."
+                    ),
+                }
+            )
         return findings
 
     @classmethod

@@ -332,9 +332,49 @@ class CIEnhancementsTests(TestCase):
                 {"anomaly_type": "alt_in_hostile_entity", "confidence": 0.90},
             ],
         )
-        self.assertGreater(risk_score, 0.50)
+        self.assertGreater(risk_score, 0.40)
         self.assertIn("comms_disconnect_timing", factors)
         self.assertIn("alt_proximity_and_hostility", factors)
+        for key in ("bb_signals", "leak_exposure", "audit_accountability"):
+            self.assertIn(key, factors)
+
+        # A Big Brother hostile-tie flag raises the same findings' risk
+        # AA BigBrother
+        from aa_bb.models import UserStatus
+
+        UserStatus.objects.update_or_create(
+            user=self.user1, defaults={"has_alliance_blacklist": True}
+        )
+        flagged_score, flagged_factors = BaselineEngine.calculate_user_risk_score(
+            self.user1,
+            findings=[
+                {"anomaly_type": "pre_contact_disconnect", "confidence": 0.85},
+                {"anomaly_type": "alt_in_hostile_entity", "confidence": 0.90},
+            ],
+        )
+        self.assertEqual(flagged_factors["bb_signals"], 1.0)
+        self.assertGreater(flagged_score, risk_score)
+
+    def test_secrecy_levels_scale_risk_in_order(self):
+        """Higher secrecy levels must never weigh less than lower ones."""
+        # AA BigBrother
+        from aa_bb.counterintel.models import CIOperation
+
+        findings = [{"anomaly_type": "comms_without_pap", "confidence": 0.6}]
+        scores = []
+        for level in ("standard", "restricted", "classified", "top_secret"):
+            op = CIOperation(name=level, start_time=timezone.now(), secrecy_level=level)
+            score, factors = BaselineEngine.calculate_user_risk_score(
+                self.user1, operation=op, findings=findings
+            )
+            scores.append((factors["secrecy_multiplier"], score))
+        multipliers = [m for m, _score in scores]
+        self.assertEqual(multipliers, sorted(multipliers))
+        self.assertEqual(len(set(multipliers)), 4)
+        self.assertFalse(CIOperation(secrecy_level="standard").is_sensitive)
+        self.assertTrue(CIOperation(secrecy_level="top_secret").is_sensitive)
+        # Unknown legacy values fall back to neutral
+        self.assertEqual(CIOperation(secrecy_level="high").secrecy_multiplier, 1.0)
 
     def test_co_occurring_disconnect_ring_detection(self):
         """Verify detection of leak rings where multiple users drop comms together."""
@@ -416,12 +456,23 @@ class CIEnhancementsTests(TestCase):
             anomaly_type="comms_without_pap",
             confidence=0.75,
         )
+        # Hostile ties are never exempted by a case disposition
+        CICorrelation.objects.create(
+            operation=op,
+            user=self.user1,
+            anomaly_type="alt_in_hostile_entity",
+            confidence=0.90,
+        )
         inv = CIInvestigation.objects.create(
             operation=op, subject_user=self.user1, status="pending"
         )
 
         self.client.force_login(self.reviewer)
         url = reverse("ci:investigation_detail", args=[inv.id])
+        # The form states the real exemption length
+        self.assertContains(
+            self.client.get(url), f"for {CIOverride.AUTO_OVERRIDE_DAYS} days"
+        )
         response = self.client.post(
             url,
             {
@@ -440,6 +491,29 @@ class CIEnhancementsTests(TestCase):
         override = CIOverride.objects.filter(user=self.user1).first()
         self.assertIsNotNone(override)
         self.assertIn("comms_without_pap", override.exempt_anomaly_types)
+        self.assertNotIn("alt_in_hostile_entity", override.exempt_anomaly_types)
+        expected_expiry = timezone.now() + timedelta(days=CIOverride.AUTO_OVERRIDE_DAYS)
+        self.assertLess(
+            abs((override.expires_at - expected_expiry).total_seconds()), 60
+        )
+
+    def test_expired_override_no_longer_suppresses(self):
+        """An expired override stops exempting findings and is ignored by readers."""
+        expired = CIOverride.objects.create(
+            user=self.user1,
+            reason="Old scout clearance",
+            exempt_anomaly_types=["comms_without_pap"],
+            expires_at=timezone.now() - timedelta(days=1),
+        )
+        permanent = CIOverride.objects.create(
+            user=self.user1,
+            reason="Sanctioned",
+            exempt_anomaly_types=["alt_in_hostile_entity"],
+        )
+        active = set(CIOverride.objects.active().filter(user=self.user1))
+        self.assertEqual(active, {permanent})
+        self.assertTrue(expired.is_expired)
+        self.assertFalse(permanent.is_expired)
 
     def test_export_investigation_dossier_endpoint(self):
         """Verify export endpoint returns JSON download with valid signature."""

@@ -1201,57 +1201,22 @@ try:
     def on_fatlink_saved(sender, instance, created, **kwargs):
         try:
             # AA BigBrother
-            from aa_bb.counterintel.ingest.paps import FCRosterIngestor
-            from aa_bb.counterintel.services.correlation import CorrelationEngine
-            from aa_bb.counterintel.services.identity import IdentityResolver
-            from aa_bb.counterintel.services.operations import CIOperationService
+            from aa_bb.counterintel.tasks import queue_afat_sync
 
-            fleet_name = (
-                getattr(instance, "fleet", None) or f"AFAT Fleet #{instance.id}"
-            )
-            start_time = (
-                getattr(instance, "created", None)
-                or getattr(instance, "created_at", None)
-                or getattr(instance, "start_time", None)
-                or timezone.now()
-            )
-            end_time, is_closed = FCRosterIngestor.resolve_fatlink_end_state(
-                instance, start_time
-            )
-
-            fc_user = None
-            if hasattr(instance, "character") and instance.character:
-                fc_char = instance.character
-                fc_user = IdentityResolver.resolve_user_by_character(
-                    getattr(fc_char, "character_id", None)
-                    or getattr(fc_char, "id", None)
-                )
-            elif hasattr(instance, "creator") and instance.creator:
-                fc_user = instance.creator
-
-            op, _ = CIOperationService.find_or_create_operation(
-                name=str(fleet_name),
-                start_time=start_time,
-                end_time=end_time,
-                operation_type="strategic",
-                fleet_commander=fc_user,
-                notes=f"Synced automatically from AFAT FatLink #{instance.id}",
-                external_tag=f"AFAT FatLink #{instance.id}",
-                mark_closed=is_closed,
-            )
-
-            FCRosterIngestor.ingest_afat_fleet(op, instance.id)
-            CorrelationEngine.correlate_operation(op)
-        except Exception as e:
-            logger.debug(f"Error handling FatLink post_save: {e}")
+            queue_afat_sync("fatlink", instance.id)
+        except Exception:
+            logger.exception(f"Failed to queue CI sync for AFAT FatLink #{instance.id}")
 
     @receiver(post_save, sender=Fat)
     def on_fat_saved(sender, instance, created, **kwargs):
         try:
             if getattr(instance, "fatlink_id", None):
-                on_fatlink_saved(FatLink, instance.fatlink, False)
+                # AA BigBrother
+                from aa_bb.counterintel.tasks import queue_afat_sync
+
+                queue_afat_sync("fatlink", instance.fatlink_id)
         except Exception:
-            pass
+            logger.exception("Failed to queue CI sync for AFAT Fat save")
 
 except ImportError:
     pass
@@ -1265,34 +1230,22 @@ try:
     def on_afatfleet_saved(sender, instance, created, **kwargs):
         try:
             # AA BigBrother
-            from aa_bb.counterintel.ingest.paps import FCRosterIngestor
-            from aa_bb.counterintel.services.correlation import CorrelationEngine
-            from aa_bb.counterintel.services.operations import CIOperationService
+            from aa_bb.counterintel.tasks import queue_afat_sync
 
-            op, _ = CIOperationService.find_or_create_operation(
-                name=instance.fleet_name or f"AFAT Fleet #{instance.id}",
-                start_time=instance.start_time,
-                end_time=getattr(instance, "end_time", None),
-                operation_type="strategic",
-                fleet_commander=(
-                    instance.fleet_commander.user if instance.fleet_commander else None
-                ),
-                notes=f"Synced automatically from AFAT Fleet #{instance.id}",
-                external_tag=f"AFAT Fleet #{instance.id}",
-            )
-
-            FCRosterIngestor.ingest_afat_fleet(op, instance.id)
-            CorrelationEngine.correlate_operation(op)
-        except Exception as e:
-            logger.debug(f"Error handling AFATFleet post_save: {e}")
+            queue_afat_sync("fleet", instance.id)
+        except Exception:
+            logger.exception(f"Failed to queue CI sync for AFAT Fleet #{instance.id}")
 
     @receiver(post_save, sender=AFATFleetAttendance)
     def on_afatattendance_saved(sender, instance, created, **kwargs):
         try:
             if getattr(instance, "fleet_id", None):
-                on_afatfleet_saved(AFATFleet, instance.fleet, False)
+                # AA BigBrother
+                from aa_bb.counterintel.tasks import queue_afat_sync
+
+                queue_afat_sync("fleet", instance.fleet_id)
         except Exception:
-            pass
+            logger.exception("Failed to queue CI sync for AFAT attendance save")
 
 except ImportError:
     pass

@@ -12,6 +12,8 @@ from celery import shared_task
 
 # Django
 from django.conf import settings
+from django.core.cache import cache
+from django.db.models import Q
 from django.utils import timezone
 
 from .ingest.eve_activity import EveActivityIngestor
@@ -27,6 +29,76 @@ logger = logging.getLogger(__name__)
 
 # Give zKillboard time to receive killmails after an operation's window closes
 ZKILL_SCAN_DELAY_MINUTES = 30
+
+PIPELINE_LOCK_KEY = "ci:pipeline_lock"
+# Just under the pipeline's time limit, so a killed worker cannot hold it forever
+PIPELINE_LOCK_SECONDS = 3300
+
+# AFAT saves a Fat row per pilot; coalesce those saves into one sync per fleet
+AFAT_SYNC_DEBOUNCE_SECONDS = 30
+
+
+def _afat_sync_cache_key(source: str, afat_id: int) -> str:
+    return f"ci:afat_sync:{source}:{afat_id}"
+
+
+def queue_afat_sync(source: str, afat_id: int) -> bool:
+    """
+    Queue a debounced sync of an AFAT FatLink ("fatlink") or AFATFleet ("fleet").
+    Returns False when a sync for it is already pending.
+    """
+    if not cache.add(
+        _afat_sync_cache_key(source, afat_id), 1, timeout=AFAT_SYNC_DEBOUNCE_SECONDS * 4
+    ):
+        return False
+    task = sync_afat_fatlink_task if source == "fatlink" else sync_afat_fleet_task
+    task.apply_async(args=[afat_id], countdown=AFAT_SYNC_DEBOUNCE_SECONDS)
+    return True
+
+
+@shared_task(time_limit=600)
+def sync_afat_fatlink_task(fatlink_id: int):
+    """Sync one AFAT FatLink into its CIOperation and re-correlate it."""
+    # Saves after this point queue another run
+    cache.delete(_afat_sync_cache_key("fatlink", fatlink_id))
+    try:
+        # Third Party
+        from afat.models import FatLink
+    except ImportError:
+        return None
+
+    fatlink = FatLink.objects.filter(id=fatlink_id).first()
+    if not fatlink:
+        return None
+    try:
+        op = FCRosterIngestor.sync_fatlink(fatlink)
+        CorrelationEngine.correlate_operation(op)
+    except Exception:
+        logger.exception(f"Failed to sync AFAT FatLink #{fatlink_id}")
+        return None
+    return op.id
+
+
+@shared_task(time_limit=600)
+def sync_afat_fleet_task(fleet_id: int):
+    """Sync one AFATFleet into its CIOperation and re-correlate it."""
+    cache.delete(_afat_sync_cache_key("fleet", fleet_id))
+    try:
+        # Third Party
+        from afat.models import AFATFleet
+    except ImportError:
+        return None
+
+    fleet = AFATFleet.objects.filter(id=fleet_id).first()
+    if not fleet:
+        return None
+    try:
+        op = FCRosterIngestor.sync_afat_fleet(fleet)
+        CorrelationEngine.correlate_operation(op)
+    except Exception:
+        logger.exception(f"Failed to sync AFAT Fleet #{fleet_id}")
+        return None
+    return op.id
 
 
 @shared_task(time_limit=1800)
@@ -54,11 +126,18 @@ def run_counterintel_pipeline_task(hours: int = 48):
     consumes those normalized events after refreshing AFAT and Mumble, then
     correlates the complete recent window.
     """
-    afat_result = sync_recent_afat_fleets_task(hours=hours, correlate=False)
-    eve_activity_count = EveActivityIngestor.ingest_latest_activity()
-    mumble_result = ingest_mumble_logs_task(correlate=False)
-    zkill_scanned_ops = scan_concluded_operations_combat(hours=hours)
-    correlation_result = run_scheduled_ci_correlation(hours=hours)
+    # A slow run (zKill rate limiting) must not overlap the next scheduled one
+    if not cache.add(PIPELINE_LOCK_KEY, 1, timeout=PIPELINE_LOCK_SECONDS):
+        logger.info("Counterintel pipeline already running; skipping this run.")
+        return None
+    try:
+        afat_result = sync_recent_afat_fleets_task(hours=hours, correlate=False)
+        eve_activity_count = EveActivityIngestor.ingest_latest_activity()
+        mumble_result = ingest_mumble_logs_task(correlate=False)
+        zkill_scanned_ops = scan_concluded_operations_combat(hours=hours)
+        correlation_result = run_scheduled_ci_correlation(hours=hours)
+    finally:
+        cache.delete(PIPELINE_LOCK_KEY)
     return {
         "afat": afat_result,
         "eve_activity_events": eve_activity_count,
@@ -96,6 +175,47 @@ def scan_concluded_operations_combat(hours: int = 48, limit: int = 5) -> list[in
             continue
         scanned.append(op.id)
     return scanned
+
+
+@shared_task(time_limit=1800)
+def rescan_operation_combat_task(operation_id: int) -> int:
+    """
+    Re-scan zKillboard for a single operation and re-correlate it, e.g. after a
+    CI manager edited the operation's window.
+    """
+    op = CIOperation.objects.filter(id=operation_id).first()
+    if not op:
+        logger.warning(f"CIOperation {operation_id} not found for combat rescan.")
+        return 0
+    try:
+        events = ZKillIngestor.scan_operation(op)
+    except Exception:
+        logger.exception(f"zKill scan failed for operation {op.id}")
+        return 0
+    CorrelationEngine.correlate_operation(op)
+    return len(events)
+
+
+@shared_task(time_limit=1800)
+def recompute_leak_exposure_task(operation_id: int | None = None) -> int:
+    """
+    Re-correlate every leaked operation in the leak lookback, since marking or
+    clearing one leak changes every member's leaked-vs-clean exposure. The given
+    operation is always re-correlated so a cleared leak drops its findings.
+    """
+    since = timezone.now() - timedelta(days=CorrelationEngine.LEAK_LOOKBACK_DAYS)
+    ops = CIOperation.objects.filter(Q(leaked=True, start_time__gte=since))
+    if operation_id:
+        ops = ops | CIOperation.objects.filter(id=operation_id)
+    processed = 0
+    for op in ops.distinct():
+        try:
+            CorrelationEngine.correlate_operation(op)
+        except Exception:
+            logger.exception(f"Leak exposure recompute failed for operation {op.id}")
+            continue
+        processed += 1
+    return processed
 
 
 @shared_task(time_limit=1800)

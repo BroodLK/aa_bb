@@ -7,7 +7,7 @@ from datetime import timedelta
 
 # Django
 from django.contrib.auth.models import User
-from django.db.models import Q
+from django.db.models import Count, Q
 from django.utils import timezone
 
 from ..models import (
@@ -65,13 +65,14 @@ class CIOperationService:
         fleet_commander: User = None,
         secrecy_level: str = "standard",
         notes: str = "",
-        external_tag: str = "",
+        external_ref: str = "",
         mark_closed: bool = False,
     ) -> tuple[CIOperation, bool]:
         """
         Finds an existing matching operation or creates a new one, preventing duplicate
         operations created by differing sync sources, signal handlers, or microsecond clock jitter.
 
+        external_ref: exact source fleet reference (e.g. "afat_fatlink:123").
         mark_closed: the source reports the fleet as concluded without a timestamp;
         an open operation is closed at the current time, an existing end_time is kept.
         """
@@ -83,27 +84,33 @@ class CIOperationService:
         cleaned_name = name.strip()
         op = None
 
-        # 1. Match by external tag in notes if provided (e.g. "AFAT FatLink #123")
-        if external_tag:
-            op = CIOperation.objects.filter(notes__icontains=external_tag).first()
+        # 1. Match by exact source fleet reference
+        if external_ref:
+            op = CIOperation.objects.filter(external_ref=external_ref).first()
 
-        # 2. Match by case-insensitive name within a 2-hour window of start_time
+        # 2. Adopt an untagged (manually created) operation with the same name
+        # within a 2-hour window; operations of other source fleets never match
         if not op:
             window_start = start_time - timedelta(hours=2)
             window_end = start_time + timedelta(hours=2)
-            candidates = CIOperation.objects.filter(
-                name__iexact=cleaned_name,
-                start_time__gte=window_start,
-                start_time__lte=window_end,
-            ).order_by("id")
-
-            if candidates.exists():
-                op = candidates.first()
+            op = (
+                CIOperation.objects.filter(
+                    name__iexact=cleaned_name,
+                    start_time__gte=window_start,
+                    start_time__lte=window_end,
+                    external_ref="",
+                )
+                .order_by("id")
+                .first()
+            )
 
         # 3. If found, update attributes if new information is provided
         if op:
             updated_fields = []
-            if end_time and op.end_time != end_time:
+            if op.window_locked:
+                # Manually set by a CI manager; keep their window
+                pass
+            elif end_time and op.end_time != end_time:
                 op.end_time = end_time
                 # The window changed, so zKillboard must be scanned again
                 op.combat_scanned_at = None
@@ -115,9 +122,12 @@ class CIOperationService:
             if fleet_commander and not op.fleet_commander:
                 op.fleet_commander = fleet_commander
                 updated_fields.append("fleet_commander")
-            if external_tag and external_tag not in op.notes:
-                op.notes = f"{op.notes}\n{external_tag}".strip()
-                updated_fields.append("notes")
+            if external_ref and not op.external_ref:
+                op.external_ref = external_ref
+                updated_fields.append("external_ref")
+                if notes and notes not in op.notes:
+                    op.notes = f"{op.notes}\n{notes}".strip()
+                    updated_fields.append("notes")
             if updated_fields:
                 op.save(update_fields=updated_fields)
             return op, False
@@ -132,21 +142,28 @@ class CIOperationService:
             operation_type=operation_type,
             fleet_commander=fleet_commander,
             secrecy_level=secrecy_level,
-            notes=notes or external_tag,
+            notes=notes,
+            external_ref=external_ref,
         )
         return op, True
 
     @classmethod
-    def deduplicate_operations(cls) -> int:
+    def deduplicate_operations(cls, since_hours: int | None = None) -> int:
         """
         Scans for duplicate operations (matching name within a 2-hour window) and merges
         participants, objectives, and correlations into a single authoritative record,
-        pruning orphan duplicate operations.
+        pruning orphan duplicate operations. Operations synced from different source
+        fleets are never merged. since_hours limits the scan to recent operations.
         Returns the count of merged/deleted duplicate operations.
         """
         from .correlation import CorrelationEngine
 
-        all_ops = list(CIOperation.objects.all().order_by("start_time", "id"))
+        ops_qs = CIOperation.objects.annotate(participant_count=Count("participants"))
+        if since_hours is not None:
+            ops_qs = ops_qs.filter(
+                start_time__gte=timezone.now() - timedelta(hours=since_hours + 2)
+            )
+        all_ops = list(ops_qs.order_by("start_time", "id"))
         merged_count = 0
         seen_op_ids = set()
 
@@ -157,25 +174,33 @@ class CIOperationService:
             window_start = op.start_time - timedelta(hours=2)
             window_end = op.start_time + timedelta(hours=2)
 
-            duplicates = [
-                dup
-                for dup in all_ops
-                if dup.id != op.id
-                and dup.id not in seen_op_ids
-                and dup.name.strip().lower() == op.name.strip().lower()
-                and window_start <= dup.start_time <= window_end
-            ]
+            cluster = [op]
+            cluster_ref = op.external_ref
+            for dup in all_ops:
+                if (
+                    dup.id == op.id
+                    or dup.id in seen_op_ids
+                    or dup.name.strip().lower() != op.name.strip().lower()
+                    or not window_start <= dup.start_time <= window_end
+                ):
+                    continue
+                if dup.external_ref and cluster_ref and dup.external_ref != cluster_ref:
+                    continue
+                cluster.append(dup)
+                cluster_ref = cluster_ref or dup.external_ref
 
-            if not duplicates:
+            if len(cluster) == 1:
                 continue
 
-            # Pick the best primary record: prefer one with end_time, then most participants, then lowest id
-            cluster = [op] + duplicates
+            # Pick the best primary record: prefer the source-synced one, then a
+            # manager-set window, then one with end_time, most participants, lowest id
             primary = max(
                 cluster,
                 key=lambda o: (
+                    1 if o.external_ref else 0,
+                    1 if o.window_locked else 0,
                     1 if o.end_time else 0,
-                    o.participants.count(),
+                    o.participant_count,
                     -o.id,
                 ),
             )
@@ -186,8 +211,12 @@ class CIOperationService:
 
                 seen_op_ids.add(other.id)
 
-                # Merge end_time
-                if not primary.end_time and other.end_time:
+                # Merge end_time, keeping a manager-set window intact
+                if (
+                    not primary.window_locked
+                    and not primary.end_time
+                    and other.end_time
+                ):
                     primary.end_time = other.end_time
 
                 # Merge FC
@@ -283,11 +312,153 @@ class CIOperationService:
         pre_minutes: int = DEFAULT_PRE_WINDOW_MINUTES,
         post_minutes: int = DEFAULT_POST_WINDOW_MINUTES,
     ) -> tuple:
-        op_start = operation.start_time
-        op_end = operation.end_time or (op_start + timedelta(hours=2))
-        window_start = op_start - timedelta(minutes=pre_minutes)
-        window_end = op_end + timedelta(minutes=post_minutes)
+        window_start = operation.start_time - timedelta(minutes=pre_minutes)
+        window_end = operation.effective_end() + timedelta(minutes=post_minutes)
         return window_start, window_end
+
+    @classmethod
+    def exposure_start(cls, operation: CIOperation):
+        """
+        When members could first have learned of the operation: the earliest
+        objective disclosure, or the pre-window before its start.
+        """
+        disclosures = [
+            obj.disclosure_time
+            for obj in operation.objectives.all()
+            if obj.disclosure_time
+        ]
+        default = operation.start_time - timedelta(
+            minutes=cls.DEFAULT_PRE_WINDOW_MINUTES
+        )
+        return min([default, *disclosures])
+
+    @classmethod
+    def exposed_user_ids(cls, operation: CIOperation) -> set:
+        """
+        Members who knew of the operation before it started: the FC roster plus
+        anyone in comms between its disclosure and its start.
+        """
+        roster = set(
+            operation.participants.exclude(user__isnull=True).values_list(
+                "user_id", flat=True
+            )
+        )
+        comms = set(
+            CISession.objects.filter(
+                start_time__lte=operation.start_time,
+            )
+            .filter(
+                Q(end_time__isnull=True)
+                | Q(end_time__gte=cls.exposure_start(operation))
+            )
+            .values_list("user_id", flat=True)
+        )
+        return roster | comms
+
+    @classmethod
+    def _audited_character_ids(cls, char_ids: list) -> set | None:
+        """
+        Character IDs with a corptools CharacterAudit, or None when corptools
+        is unavailable and audit status cannot be determined.
+        """
+        # AA BigBrother
+        from aa_bb.app_settings import corptools_active
+
+        if not corptools_active():
+            return None
+        try:
+            # Third Party
+            from corptools.models import CharacterAudit
+        except ImportError:
+            return None
+        return set(
+            CharacterAudit.objects.filter(
+                character__character_id__in=char_ids
+            ).values_list("character__character_id", flat=True)
+        )
+
+    @classmethod
+    def _summarize_comms(cls, sessions: list, window_start, window_end) -> list:
+        """
+        One row per user: time spent in comms within the window, plus first login
+        and last logoff. Login/logoff outside the window are reported as None.
+        """
+        now = timezone.now()
+        rows = {}
+        for s in sessions:
+            row = rows.setdefault(
+                s["user_id"],
+                {
+                    "user_id": s["user_id"],
+                    "username": s["username"],
+                    "channels": set(),
+                    "total_seconds": 0.0,
+                    "first_start": s["start_time"],
+                    "last_end": s["end_time"],
+                    "still_connected": False,
+                },
+            )
+            if s["channel_name"]:
+                row["channels"].add(s["channel_name"])
+            overlap_end = min(window_end, s["end_time"] or now)
+            overlap_start = max(window_start, s["start_time"])
+            row["total_seconds"] += max(
+                0.0, (overlap_end - overlap_start).total_seconds()
+            )
+            row["first_start"] = min(row["first_start"], s["start_time"])
+            if s["end_time"] is None:
+                row["still_connected"] = True
+            elif row["last_end"] is None or s["end_time"] > row["last_end"]:
+                row["last_end"] = s["end_time"]
+
+        summary = []
+        for row in rows.values():
+            last_end = None if row["still_connected"] else row["last_end"]
+            total = int(row["total_seconds"])
+            summary.append(
+                {
+                    "user_id": row["user_id"],
+                    "username": row["username"],
+                    "channels": sorted(row["channels"]),
+                    "total_seconds": total,
+                    "total_display": f"{total // 3600}:{(total % 3600) // 60:02d}",
+                    "login": (
+                        row["first_start"]
+                        if row["first_start"] >= window_start
+                        else None
+                    ),
+                    "logoff": (
+                        last_end if last_end and last_end <= window_end else None
+                    ),
+                }
+            )
+        summary.sort(
+            key=lambda r: (r["login"] is None, r["login"] or now, r["username"])
+        )
+        return summary
+
+    @classmethod
+    def _summarize_combat(cls, events: list, fleet_char_ids: set) -> list:
+        """
+        Killmails in time order, labelled as a Loss when the victim was in the
+        fleet and a Kill otherwise.
+        """
+        killmails = [ev for ev in events if ev["source"] == "zkill"]
+        combat = []
+        for ev in sorted(killmails, key=lambda e: e["timestamp"]):
+            payload = ev["payload"] or {}
+            combat.append(
+                {
+                    "kind": (
+                        "Loss"
+                        if payload.get("victim_character_id") in fleet_char_ids
+                        else "Kill"
+                    ),
+                    "timestamp": ev["timestamp"],
+                    "killmail_id": payload.get("killmail_id"),
+                }
+            )
+        return combat
 
     @classmethod
     def reconstruct_timeline(
@@ -304,13 +475,14 @@ class CIOperationService:
             operation, pre_minutes, post_minutes
         )
 
-        # Retrieve direct events
+        # Retrieve direct events. Killmails are bound to the window so that
+        # editing the operation times drops ones scanned for an earlier window.
         events_qs = (
             CIEvent.objects.filter(
-                Q(operation=operation)
-                | Q(timestamp__gte=window_start, timestamp__lte=window_end)
+                Q(timestamp__gte=window_start, timestamp__lte=window_end)
+                | (Q(operation=operation) & ~Q(source="zkill"))
             )
-            .select_related("user")
+            .select_related("user__profile__main_character")
             .order_by("timestamp")
         )
 
@@ -332,9 +504,10 @@ class CIOperationService:
                 or payload.get("discord_username")
                 or payload.get("username")
             )
-            member_label = main_character or (
+            user_label = main_character or (
                 ev.user.username if ev.user else (external_name or "Unknown")
             )
+            member_label = user_label
             if tracked_character and tracked_character != main_character:
                 member_label = f"{member_label} ({tracked_character})"
 
@@ -346,6 +519,8 @@ class CIOperationService:
                     "timestamp": ev.timestamp,
                     "user_id": ev.user_id,
                     "username": member_label,
+                    "user_label": user_label,
+                    "character_name": tracked_character or "",
                     "payload": ev.payload,
                 }
             )
@@ -356,7 +531,7 @@ class CIOperationService:
                 start_time__lte=window_end,
             )
             .filter(Q(end_time__isnull=True) | Q(end_time__gte=window_start))
-            .select_related("user")
+            .select_related("user__profile__main_character")
             .order_by("start_time")
         )
 
@@ -383,6 +558,7 @@ class CIOperationService:
             )
 
         # Objectives
+        objectives = list(operation.objectives.all())
         objectives_list = [
             {
                 "id": obj.id,
@@ -391,7 +567,7 @@ class CIOperationService:
                 "expected_roles": obj.expected_roles,
                 "disclosure_time": obj.disclosure_time,
             }
-            for obj in operation.objectives.all()
+            for obj in objectives
         ]
 
         # FC confirmed participants & context role tagging
@@ -414,19 +590,37 @@ class CIOperationService:
         except Exception:
             pass
 
+        audited_char_ids = cls._audited_character_ids(char_ids)
+
+        # Objective roles are the same for every participant
+        objective_tags = []
+        for obj in objectives:
+            if obj.expected_roles:
+                objective_tags.extend(obj.expected_roles)
+            else:
+                objective_tags.append(obj.objective_type.replace("_", " ").title())
+
         user_role_tags = {}
         for p in participants_qs:
-            tags = []
-            if operation.fleet_commander_id == p.user_id:
-                tags.append("FC")
-            for obj in operation.objectives.all():
-                if obj.expected_roles:
-                    tags.extend(obj.expected_roles)
-                else:
-                    tags.append(obj.objective_type.replace("_", " ").title())
-            if not tags:
-                tags.append("Combat Fleet")
-            user_role_tags[p.user_id] = list(dict.fromkeys(tags))
+            tags = ["FC"] if operation.fleet_commander_id == p.user_id else []
+            tags.extend(objective_tags)
+            user_role_tags[p.user_id] = list(dict.fromkeys(tags)) or ["Combat Fleet"]
+
+        # Index activity once by character instead of scanning per participant
+        login_char_ids = set()
+        logoff_char_ids = set()
+        killmail_char_ids = set()
+        for ev in events_list:
+            payload = ev["payload"] or {}
+            if ev["source"] == "eve_activity":
+                if payload.get("activity_type") == "login":
+                    login_char_ids.add(payload.get("character_id"))
+                elif payload.get("activity_type") == "logoff":
+                    logoff_char_ids.add(payload.get("character_id"))
+            elif ev["source"] == "zkill":
+                killmail_char_ids.update(payload.get("attacker_character_ids") or [])
+                killmail_char_ids.add(payload.get("victim_character_id"))
+        comms_user_ids = {s["user_id"] for s in sessions_list}
 
         participants_list = []
         seen_char_ids = set()
@@ -435,31 +629,6 @@ class CIOperationService:
                 continue
             seen_char_ids.add(p.character_id)
             cname = char_names_map.get(p.character_id) or p.user.username
-            login_events = [
-                ev
-                for ev in events_list
-                if ev["source"] == "eve_activity"
-                and ev["payload"].get("character_id") == p.character_id
-                and ev["payload"].get("activity_type") == "login"
-            ]
-            logoff_events = [
-                ev
-                for ev in events_list
-                if ev["source"] == "eve_activity"
-                and ev["payload"].get("character_id") == p.character_id
-                and ev["payload"].get("activity_type") == "logoff"
-            ]
-            member_sessions = [s for s in sessions_list if s["user_id"] == p.user_id]
-            killmail_events = [
-                ev
-                for ev in events_list
-                if ev["source"] == "zkill"
-                and (
-                    p.character_id
-                    in (ev["payload"].get("attacker_character_ids") or [])
-                    or ev["payload"].get("victim_character_id") == p.character_id
-                )
-            ]
             participants_list.append(
                 {
                     "id": p.id,
@@ -470,27 +639,35 @@ class CIOperationService:
                     "confirmed_by_fc": p.confirmed_by_fc,
                     "recorded_at": p.recorded_at,
                     "role_context": user_role_tags.get(p.user_id, ["Combat Fleet"]),
-                    "logged_in_near_fleet": bool(login_events),
-                    "logged_off_near_fleet": bool(logoff_events),
-                    "joined_comms": bool(member_sessions),
+                    "logged_in_near_fleet": p.character_id in login_char_ids,
+                    "logged_off_near_fleet": p.character_id in logoff_char_ids,
+                    "joined_comms": p.user_id in comms_user_ids,
                     "joined_fleet": True,
-                    "on_killmail": bool(killmail_events),
+                    "on_killmail": p.character_id in killmail_char_ids,
+                    # None when corptools is unavailable and audits are unknown
+                    "has_audit": (
+                        None
+                        if audited_char_ids is None
+                        else p.character_id in audited_char_ids
+                    ),
                 }
             )
 
         # Add comms-only users to the roster summary so officers can see them
         # without confusing them with FC-confirmed fleet participants.
         participant_user_ids = {p["user_id"] for p in participants_list}
+        first_session_by_user = {}
         for session in sessions_list:
-            if session["user_id"] in participant_user_ids:
-                continue
-            user = (
-                User.objects.filter(id=session["user_id"])
-                .select_related("profile__main_character")
-                .first()
-            )
-            if not user:
-                continue
+            if session["user_id"] not in participant_user_ids:
+                first_session_by_user.setdefault(session["user_id"], session)
+        comms_only_users = User.objects.filter(
+            id__in=first_session_by_user
+        ).select_related("profile__main_character")
+        for user in sorted(
+            comms_only_users,
+            key=lambda u: first_session_by_user[u.id]["start_time"],
+        ):
+            session = first_session_by_user[user.id]
             main = getattr(user.profile.main_character, "character_name", None)
             participants_list.append(
                 {
@@ -507,6 +684,7 @@ class CIOperationService:
                     "joined_comms": True,
                     "joined_fleet": False,
                     "on_killmail": False,
+                    "has_audit": None,
                 }
             )
 
@@ -518,7 +696,6 @@ class CIOperationService:
                 ev["role_context"] = []
 
         # Participation and comms overlap metrics
-        comms_user_ids = {s["user_id"] for s in sessions_list}
         comms_without_pap_users = comms_user_ids - confirmed_user_ids
         pap_without_comms_users = confirmed_user_ids - comms_user_ids
 
@@ -556,7 +733,12 @@ class CIOperationService:
             "window_end": window_end,
             "objectives": objectives_list,
             "events": events_list,
+            "event_users": sorted({ev["user_label"] for ev in events_list}),
             "sessions": sessions_list,
+            "comms_summary": cls._summarize_comms(
+                sessions_list, window_start, window_end
+            ),
+            "combat_events": cls._summarize_combat(events_list, set(char_ids)),
             "participants": participants_list,
             "detected_channels": sorted(list(detected_channels)),
             "metrics": {

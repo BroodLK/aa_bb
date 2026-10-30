@@ -13,8 +13,10 @@ from aa_bb.counterintel.models import (
     CILogIngestState,
     CISession,
 )
+from aa_bb.counterintel.services.correlation import CorrelationEngine
 from aa_bb.counterintel.tasks import (
     ingest_mumble_logs_task,
+    recompute_leak_exposure_task,
     run_scheduled_ci_correlation,
 )
 
@@ -25,6 +27,10 @@ COMMS_ANOMALY_TYPES = (
     "briefing_without_deployment",
     "co_occurring_disconnect_ring",
     "alt_shared_mumble_identity",
+    # Who was in comms decides exposure and the comms-only users checked
+    "leak_exposure",
+    "bb_flagged_in_sensitive_op",
+    "uncredited_alt_online",
 )
 
 
@@ -98,5 +104,10 @@ class Command(BaseCommand):
             ingest_states.delete()
 
         self.stdout.write(ingest_mumble_logs_task(correlate=False))
+        # Cached leak exposure sets were built from the deleted sessions
+        CorrelationEngine.invalidate_exposure_cache()
         self.stdout.write(run_scheduled_ci_correlation(hours=options["hours"]))
+        # Leak exposure looks back further than --hours
+        leaked = recompute_leak_exposure_task()
+        self.stdout.write(f"Recomputed leak exposure for {leaked} operation(s).")
         self.stdout.write(self.style.SUCCESS("Mumble telemetry rebuilt."))

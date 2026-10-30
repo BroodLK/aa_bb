@@ -13,6 +13,12 @@ urlpatterns = [
     path("", views.operation_list, name="index"),
     path("operations/", views.operation_list, name="operation_list"),
     path(
+        "operations/new/",
+        views.create_operation_view,
+        name="create_operation",
+    ),
+    path("help/", views.ci_help, name="help"),
+    path(
         "operations/<int:operation_id>/",
         views.operation_timeline,
         name="operation_timeline",
@@ -66,6 +72,11 @@ urlpatterns = [
         "operations/<int:operation_id>/rescan-combat/",
         views.rescan_combat,
         name="rescan_combat",
+    ),
+    path(
+        "operations/<int:operation_id>/toggle-leak/",
+        views.toggle_leak,
+        name="toggle_leak",
     ),
     path("members/", views.member_list, name="member_list"),
     path("members/<int:user_id>/", views.member_activity, name="member_activity"),

@@ -283,6 +283,189 @@ class TestCIOperations(TestCase):
         # pilot4 is in comms but not on PAP roster
         self.assertEqual(timeline["metrics"]["comms_without_pap_count"], 1)
 
+    def test_comms_summary_aggregates_and_bounds_login_logoff(self):
+        window_start = self.now
+        window_end = self.now + timedelta(hours=1)
+
+        def session(user_id, name, start, end):
+            return {
+                "user_id": user_id,
+                "username": name,
+                "start_time": start,
+                "end_time": end,
+                "channel_name": "Fleet 1",
+            }
+
+        summary = CIOperationService._summarize_comms(
+            [
+                # Two sessions inside the window merge into one row
+                session(
+                    1,
+                    "inside",
+                    self.now + timedelta(minutes=5),
+                    self.now + timedelta(minutes=15),
+                ),
+                session(
+                    1,
+                    "inside",
+                    self.now + timedelta(minutes=20),
+                    self.now + timedelta(minutes=50),
+                ),
+                # Connected before the window and still connected afterwards
+                session(2, "long", self.now - timedelta(hours=3), None),
+            ],
+            window_start,
+            window_end,
+        )
+
+        rows = {r["user_id"]: r for r in summary}
+        self.assertEqual(len(summary), 2)
+        self.assertEqual(rows[1]["total_seconds"], 40 * 60)
+        self.assertEqual(rows[1]["total_display"], "0:40")
+        self.assertEqual(rows[1]["login"], self.now + timedelta(minutes=5))
+        self.assertEqual(rows[1]["logoff"], self.now + timedelta(minutes=50))
+        self.assertIsNone(rows[2]["login"])
+        self.assertIsNone(rows[2]["logoff"])
+        # Time is clipped to the window
+        self.assertLessEqual(rows[2]["total_seconds"], 3600)
+        # Rows with a known login sort first
+        self.assertEqual(summary[0]["user_id"], 1)
+
+    def test_combat_events_distinguish_kills_and_losses(self):
+        op = CIOperationService.create_operation(
+            name="Op Brawl",
+            start_time=self.now,
+            end_time=self.now + timedelta(hours=1),
+        )
+        FCRosterIngestor.ingest_fc_roster(
+            operation=op, roster_entries=[1002], recorded_at=self.now
+        )
+        # Victim is an Auth member (pilot_scout) but was not in this fleet
+        ZKillIngestor.ingest_killmail(
+            {
+                "killmail_id": 5003,
+                "killmail_time": (self.now + timedelta(minutes=40)).isoformat(),
+                "victim": {"character_id": 1003},
+                "attackers": [{"character_id": 99999}],
+            },
+            operation=op,
+        )
+        ZKillIngestor.ingest_killmail(
+            {
+                "killmail_id": 5002,
+                "killmail_time": (self.now + timedelta(minutes=30)).isoformat(),
+                "victim": {"character_id": 1002},
+                "attackers": [{"character_id": 99999}],
+            },
+            operation=op,
+        )
+        ZKillIngestor.ingest_killmail(
+            {
+                "killmail_id": 5001,
+                "killmail_time": (self.now + timedelta(minutes=10)).isoformat(),
+                "victim": {"character_id": 99999},
+                "attackers": [{"character_id": 1001}],
+            },
+            operation=op,
+        )
+
+        combat = CIOperationService.reconstruct_timeline(op)["combat_events"]
+        self.assertEqual(
+            [(c["kind"], c["killmail_id"]) for c in combat],
+            [("Kill", "5001"), ("Loss", "5002"), ("Kill", "5003")],
+        )
+
+    def test_edited_window_drops_killmails_outside_it(self):
+        op = CIOperationService.create_operation(
+            name="Op Shrinking",
+            start_time=self.now - timedelta(hours=3),
+            end_time=self.now - timedelta(hours=1),
+        )
+        ZKillIngestor.ingest_killmail(
+            {
+                "killmail_id": 6001,
+                "killmail_time": (self.now - timedelta(minutes=80)).isoformat(),
+                "victim": {"character_id": 99999},
+                "attackers": [{"character_id": 1001}],
+            },
+            operation=op,
+        )
+        self.assertEqual(
+            len(CIOperationService.reconstruct_timeline(op)["combat_events"]), 1
+        )
+
+        # Window now ends well before the killmail
+        op.end_time = self.now - timedelta(hours=2)
+        op.save()
+        timeline = CIOperationService.reconstruct_timeline(op)
+        self.assertEqual(timeline["combat_events"], [])
+        self.assertFalse([ev for ev in timeline["events"] if ev["source"] == "zkill"])
+
+    def test_locked_window_survives_fleet_sync(self):
+        start = self.now - timedelta(hours=2)
+        manual_end = self.now - timedelta(minutes=30)
+        op, _ = CIOperationService.find_or_create_operation(
+            name="Op Locked",
+            start_time=start,
+            external_ref="afat_fatlink:404",
+        )
+        op.end_time = manual_end
+        op.window_locked = True
+        op.save()
+
+        CIOperationService.find_or_create_operation(
+            name="Op Locked",
+            start_time=start,
+            end_time=self.now - timedelta(minutes=5),
+            external_ref="afat_fatlink:404",
+        )
+        op.refresh_from_db()
+        self.assertEqual(op.end_time, manual_end)
+
+        op.end_time = None
+        op.save()
+        CIOperationService.find_or_create_operation(
+            name="Op Locked",
+            start_time=start,
+            external_ref="afat_fatlink:404",
+            mark_closed=True,
+        )
+        op.refresh_from_db()
+        self.assertIsNone(op.end_time)
+
+    def test_participant_audit_indicator(self):
+        # Third Party
+        from corptools.models import CharacterAudit
+
+        # Alliance Auth
+        from allianceauth.eveonline.models import EveCharacter
+
+        op = CIOperationService.create_operation(
+            name="Op Audit Check",
+            start_time=self.now,
+            end_time=self.now + timedelta(hours=1),
+        )
+        FCRosterIngestor.ingest_fc_roster(
+            operation=op, roster_entries=[8802, 1002], recorded_at=self.now
+        )
+        CharacterAudit.objects.create(
+            character=EveCharacter.objects.get(character_id=8802)
+        )
+
+        participants = {
+            p["character_id"]: p
+            for p in CIOperationService.reconstruct_timeline(op)["participants"]
+        }
+        self.assertTrue(participants[8802]["has_audit"])
+        self.assertFalse(participants[1002]["has_audit"])
+
+        # Standard Library
+        from unittest.mock import patch
+
+        with patch("aa_bb.app_settings.corptools_active", return_value=False):
+            participants = CIOperationService.reconstruct_timeline(op)["participants"]
+        self.assertTrue(all(p["has_audit"] is None for p in participants))
+
     def test_permission_and_view_access(self):
         op = CIOperationService.create_operation(
             name="Op Restricted",
@@ -352,7 +535,8 @@ class TestCIOperations(TestCase):
                 self.assertEqual(op.name, "Op Strategic Recon")
                 self.assertEqual(op.fleet_commander, self.officer)
                 self.assertIsNotNone(op.end_time)
-                mock_ingest.assert_called_once_with(op, 777)
+                mock_ingest.assert_called_once_with(op, 777, source="fatlink")
+                self.assertEqual(op.external_ref, "afat_fatlink:777")
 
     def _sync_fatlinks(self, fatlinks):
         # Standard Library
@@ -426,12 +610,12 @@ class TestCIOperations(TestCase):
             name="Closed Fleet",
             start_time=self.now - timedelta(hours=1),
             end_time=end,
-            external_tag="AFAT FatLink #903",
+            external_ref="afat_fatlink:903",
         )
         op2, created = CIOperationService.find_or_create_operation(
             name="Closed Fleet",
             start_time=self.now - timedelta(hours=1),
-            external_tag="AFAT FatLink #903",
+            external_ref="afat_fatlink:903",
             mark_closed=True,
         )
         self.assertFalse(created)
@@ -598,6 +782,174 @@ class TestCIOperations(TestCase):
         self.assertEqual(op.secrecy_level, "classified")
         self.assertEqual(op.fleet_commander, self.fc_user)
         self.assertEqual(op.notes, "Updated operational brief.")
+        self.assertTrue(op.window_locked)
+
+    def test_help_page(self):
+        # AA BigBrother
+        from aa_bb.counterintel.services.correlation import CorrelationEngine
+
+        url = reverse("ci:help")
+        self.client.force_login(self.pilot4)
+        self.assertEqual(self.client.get(url).status_code, 302)
+
+        self.client.force_login(self.reviewer)
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode()
+        for anchor in ("what-and-why", "getting-fleets-in", "findings", "leaks"):
+            self.assertIn(f'id="{anchor}"', content)
+        self.assertIn(str(CorrelationEngine.ALERT_CONFIDENCE_THRESHOLD), content)
+        self.assertIn("Top Secret", content)
+        # No raw escapes leaking into rendered text
+        self.assertNotIn('\\"', content)
+
+    def test_create_operation_view(self):
+        url = reverse("ci:create_operation")
+        fmt = "%Y-%m-%dT%H:%M"
+        payload = {
+            "name": "Op Manual Strike",
+            "operation_type": "cta",
+            "secrecy_level": "top_secret",
+            "start_time": (self.now - timedelta(hours=2)).strftime(fmt),
+            "end_time": (self.now - timedelta(hours=1)).strftime(fmt),
+            "fleet_commander_id": str(self.fc_user.id),
+            "notes": "Manually tracked",
+        }
+
+        # Reviewers cannot create operations
+        self.client.force_login(self.reviewer)
+        self.client.post(url, payload)
+        self.assertFalse(CIOperation.objects.filter(name="Op Manual Strike").exists())
+
+        self.client.force_login(self.officer)
+        list_response = self.client.get(reverse("ci:operation_list"))
+        self.assertContains(list_response, "newOperationModal")
+
+        response = self.client.post(url, payload)
+        op = CIOperation.objects.get(name="Op Manual Strike")
+        self.assertRedirects(
+            response,
+            reverse("ci:operation_timeline", args=[op.id]),
+            fetch_redirect_response=False,
+        )
+        self.assertEqual(op.operation_type, "cta")
+        self.assertEqual(op.secrecy_level, "top_secret")
+        self.assertEqual(op.fleet_commander, self.fc_user)
+        self.assertTrue(op.window_locked)
+
+        # End before start is rejected
+        self.client.post(
+            url,
+            {
+                **payload,
+                "name": "Op Backwards",
+                "end_time": (self.now - timedelta(hours=3)).strftime(fmt),
+            },
+        )
+        self.assertFalse(CIOperation.objects.filter(name="Op Backwards").exists())
+
+    def test_toggle_leak_view(self):
+        # Standard Library
+        from unittest.mock import patch
+
+        op = CIOperation.objects.create(
+            name="Op Ambushed",
+            start_time=self.now - timedelta(hours=3),
+            end_time=self.now - timedelta(hours=2),
+        )
+        url = reverse("ci:toggle_leak", kwargs={"operation_id": op.id})
+
+        # Reviewers without manage permission cannot mark leaks
+        self.client.force_login(self.reviewer)
+        self.client.post(url, {"leak_notes": "nope"})
+        op.refresh_from_db()
+        self.assertFalse(op.leaked)
+
+        self.client.force_login(self.officer)
+        with patch(
+            "aa_bb.counterintel.views.recompute_leak_exposure_task.delay"
+        ) as mock_delay:
+            self.client.post(url, {"leak_notes": "Hostiles pre-positioned"})
+            op.refresh_from_db()
+            self.assertTrue(op.leaked)
+            self.assertEqual(op.leak_notes, "Hostiles pre-positioned")
+
+            self.client.post(url)
+            op.refresh_from_db()
+            self.assertFalse(op.leaked)
+            self.assertEqual(op.leak_notes, "")
+        self.assertEqual(mock_delay.call_count, 2)
+
+    def test_exposed_users_respect_disclosure_time(self):
+        op = CIOperationService.create_operation(
+            name="Op Disclosed Early",
+            start_time=self.now - timedelta(hours=2),
+            end_time=self.now - timedelta(hours=1),
+        )
+        # pilot2 was in comms an hour before start and left 30 minutes before it
+        CISession.objects.create(
+            user=self.pilot2,
+            source="mumble",
+            start_time=op.start_time - timedelta(minutes=60),
+            end_time=op.start_time - timedelta(minutes=30),
+        )
+        self.assertNotIn(self.pilot2.id, CIOperationService.exposed_user_ids(op))
+
+        CIOperationService.add_objective(
+            op,
+            "Ping",
+            "briefing",
+            disclosure_time=op.start_time - timedelta(minutes=90),
+        )
+        self.assertIn(self.pilot2.id, CIOperationService.exposed_user_ids(op))
+
+    def test_edit_operation_window_queues_rescan_and_validates(self):
+        # Standard Library
+        from unittest.mock import patch
+
+        self.client.force_login(self.officer)
+        op = CIOperation.objects.create(
+            name="Op Past Window",
+            start_time=self.now - timedelta(hours=5),
+            end_time=self.now - timedelta(hours=3),
+            combat_scanned_at=self.now,
+        )
+        edit_url = reverse("ci:edit_operation", kwargs={"operation_id": op.id})
+        fmt = "%Y-%m-%dT%H:%M"
+
+        with patch(
+            "aa_bb.counterintel.views.rescan_operation_combat_task.delay"
+        ) as mock_delay:
+            self.client.post(
+                edit_url,
+                {
+                    "name": op.name,
+                    "start_time": (self.now - timedelta(hours=6)).strftime(fmt),
+                    "end_time": (self.now - timedelta(hours=4)).strftime(fmt),
+                },
+            )
+        mock_delay.assert_called_once_with(op.id)
+        op.refresh_from_db()
+        self.assertTrue(op.window_locked)
+        self.assertIsNone(op.combat_scanned_at)
+        saved_window = (op.start_time, op.end_time)
+
+        # End before start is rejected and nothing is saved
+        with patch(
+            "aa_bb.counterintel.views.rescan_operation_combat_task.delay"
+        ) as mock_delay:
+            self.client.post(
+                edit_url,
+                {
+                    "name": "Should Not Save",
+                    "start_time": (self.now - timedelta(hours=2)).strftime(fmt),
+                    "end_time": (self.now - timedelta(hours=3)).strftime(fmt),
+                },
+            )
+        mock_delay.assert_not_called()
+        op.refresh_from_db()
+        self.assertEqual((op.start_time, op.end_time), saved_window)
+        self.assertEqual(op.name, "Op Past Window")
 
     def test_add_and_delete_objective_views(self):
         self.client.force_login(self.officer)
@@ -685,7 +1037,7 @@ class TestCIOperations(TestCase):
             end_time=None,
             operation_type="strategic",
             fleet_commander=self.fc_user,
-            external_tag="AFAT FatLink #101",
+            external_ref="afat_fatlink:101",
         )
         self.assertTrue(created1)
 
@@ -696,7 +1048,7 @@ class TestCIOperations(TestCase):
             end_time=self.now + timedelta(minutes=21),
             operation_type="strategic",
             fleet_commander=self.fc_user,
-            external_tag="AFAT FatLink #101",
+            external_ref="afat_fatlink:101",
         )
         self.assertFalse(created2)
         self.assertEqual(op1.id, op2.id)
@@ -721,6 +1073,150 @@ class TestCIOperations(TestCase):
         self.assertEqual(merged_count, 1)
         self.assertFalse(CIOperation.objects.filter(id=op_dup.id).exists())
         self.assertTrue(op1.participants.filter(character_id=99001).exists())
+
+    def test_external_ref_matches_exactly(self):
+        op1, _ = CIOperationService.find_or_create_operation(
+            name="Fleet One",
+            start_time=self.now - timedelta(days=1),
+            external_ref="afat_fatlink:1",
+        )
+        op12, created = CIOperationService.find_or_create_operation(
+            name="Fleet Twelve",
+            start_time=self.now,
+            external_ref="afat_fatlink:12",
+        )
+        self.assertTrue(created)
+        self.assertNotEqual(op1.id, op12.id)
+        again, created = CIOperationService.find_or_create_operation(
+            name="Fleet One",
+            start_time=self.now - timedelta(days=1),
+            external_ref="afat_fatlink:1",
+        )
+        self.assertFalse(created)
+        self.assertEqual(again.id, op1.id)
+
+    def test_same_name_fleets_from_different_sources_stay_separate(self):
+        op_a, _ = CIOperationService.find_or_create_operation(
+            name="Home Defense",
+            start_time=self.now,
+            external_ref="afat_fatlink:201",
+        )
+        op_b, created = CIOperationService.find_or_create_operation(
+            name="Home Defense",
+            start_time=self.now + timedelta(minutes=45),
+            external_ref="afat_fatlink:202",
+        )
+        self.assertTrue(created)
+        self.assertEqual(CIOperationService.deduplicate_operations(), 0)
+        self.assertTrue(CIOperation.objects.filter(id=op_a.id).exists())
+        self.assertTrue(CIOperation.objects.filter(id=op_b.id).exists())
+
+    def test_untagged_manual_operation_is_adopted_by_sync(self):
+        manual = CIOperation.objects.create(name="Roam", start_time=self.now)
+        op, created = CIOperationService.find_or_create_operation(
+            name="Roam",
+            start_time=self.now + timedelta(minutes=3),
+            external_ref="afat_fatlink:301",
+        )
+        self.assertFalse(created)
+        self.assertEqual(op.id, manual.id)
+        manual.refresh_from_db()
+        self.assertEqual(manual.external_ref, "afat_fatlink:301")
+
+    def test_external_ref_backfill_from_notes(self):
+        # Standard Library
+        import importlib
+
+        # Django
+        from django.apps import apps as django_apps
+
+        migration = importlib.import_module(
+            "aa_bb.migrations.0128_counterintel_operation_controls"
+        )
+        self.assertEqual(
+            migration.ref_from_notes("Synced automatically from AFAT FatLink #12"),
+            "afat_fatlink:12",
+        )
+        self.assertEqual(migration.ref_from_notes("AFAT Fleet #7"), "afat_fleet:7")
+        self.assertEqual(migration.ref_from_notes("AFAT FatLink #12abc"), "")
+
+        first = CIOperation.objects.create(
+            name="Legacy", start_time=self.now, notes="AFAT FatLink #55"
+        )
+        dup = CIOperation.objects.create(
+            name="Legacy dup", start_time=self.now, notes="AFAT FatLink #55"
+        )
+        migration.backfill_external_refs(django_apps, None)
+        first.refresh_from_db()
+        dup.refresh_from_db()
+        self.assertEqual(first.external_ref, "afat_fatlink:55")
+        self.assertEqual(dup.external_ref, "")
+
+    def test_open_operation_window_grows_with_fleet(self):
+        op = CIOperation.objects.create(
+            name="Long Open Fleet", start_time=self.now - timedelta(hours=4)
+        )
+        self.assertTrue(op.is_active)
+        _start, window_end = CIOperationService.get_operational_window(op)
+        self.assertGreaterEqual(window_end, self.now)
+
+        CISession.objects.create(
+            user=self.pilot1,
+            source="mumble",
+            start_time=self.now - timedelta(hours=1),
+            end_time=self.now - timedelta(minutes=30),
+            channel_name="Fleet 1",
+        )
+        timeline = CIOperationService.reconstruct_timeline(op)
+        self.assertEqual(len(timeline["comms_summary"]), 1)
+
+        # Capped at the maximum open window
+        stale = CIOperation.objects.create(
+            name="Forgotten Fleet", start_time=self.now - timedelta(hours=20)
+        )
+        self.assertEqual(
+            stale.effective_end(), stale.start_time + CIOperation.OPEN_WINDOW_MAX
+        )
+
+    def test_afat_saves_are_debounced_into_one_sync(self):
+        # Standard Library
+        from unittest.mock import patch
+
+        # Django
+        from django.core.cache import cache
+
+        # AA BigBrother
+        from aa_bb.counterintel import tasks as ci_tasks
+
+        cache.delete(ci_tasks._afat_sync_cache_key("fatlink", 4242))
+        with patch.object(ci_tasks.sync_afat_fatlink_task, "apply_async") as mock_async:
+            results = [ci_tasks.queue_afat_sync("fatlink", 4242) for _ in range(3)]
+        self.assertEqual(results, [True, False, False])
+        mock_async.assert_called_once_with(
+            args=[4242], countdown=ci_tasks.AFAT_SYNC_DEBOUNCE_SECONDS
+        )
+        cache.delete(ci_tasks._afat_sync_cache_key("fatlink", 4242))
+
+    def test_reconstruct_timeline_queries_do_not_scale_with_roster(self):
+        # Django
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        def query_count(roster):
+            op = CIOperationService.create_operation(
+                name=f"Op Size {len(roster)}",
+                start_time=self.now,
+                end_time=self.now + timedelta(hours=1),
+            )
+            CIOperationService.add_objective(op, "Recon", "recon")
+            FCRosterIngestor.ingest_fc_roster(
+                operation=op, roster_entries=roster, recorded_at=self.now
+            )
+            with CaptureQueriesContext(connection) as ctx:
+                CIOperationService.reconstruct_timeline(op)
+            return len(ctx.captured_queries)
+
+        self.assertEqual(query_count([1001]), query_count([1001, 1002, 1003, 1004]))
 
     def test_delete_operation_view(self):
         self.client.force_login(self.officer)

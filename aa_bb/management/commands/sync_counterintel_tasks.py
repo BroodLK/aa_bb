@@ -40,7 +40,7 @@ TASKS = (
         "task": "aa_bb.counterintel.tasks.prune_ci_telemetry_task",
         "minute": "0",
         "hour": "3",
-        "enabled": False,
+        "enabled": True,
     },
 )
 

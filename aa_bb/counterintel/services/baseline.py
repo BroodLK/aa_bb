@@ -21,6 +21,24 @@ class BaselineEngine:
 
     LOOKBACK_DAYS = 60
     CACHE_TTL_SECONDS = 21600  # 6 hours
+    # Fewer recorded disconnects than this cannot establish a logoff habit
+    MIN_BASELINE_DISCONNECTS = 5
+    # Composite risk score weights; they sum to 1.0
+    RISK_WEIGHTS = {
+        "comms": 0.25,
+        "discord": 0.10,
+        "alt": 0.20,
+        "deviation": 0.10,
+        "bb_signals": 0.20,
+        "leak": 0.10,
+        "accountability": 0.05,
+    }
+
+    @classmethod
+    def has_disconnect_baseline(cls, user: User, reference_time=None) -> bool:
+        """True if the user has enough disconnect history to judge habit."""
+        baseline = cls.calculate_personal_baseline(user, reference_time=reference_time)
+        return sum(baseline["disconnect_hours"]) >= cls.MIN_BASELINE_DISCONNECTS
 
     @classmethod
     def calculate_personal_baseline(cls, user: User, reference_time=None) -> dict:
@@ -100,7 +118,7 @@ class BaselineEngine:
         circadian_grid = baseline.get("circadian_grid") or [[0] * 24 for _ in range(7)]
         total_disconnects = sum(disconnect_hours)
 
-        if total_disconnects < 5:
+        if total_disconnects < cls.MIN_BASELINE_DISCONNECTS:
             # Insufficient baseline data: neutrality
             return False, 0.5
 
@@ -134,23 +152,31 @@ class BaselineEngine:
     ) -> tuple[float, dict]:
         """
         Calculates a Bayesian/composite risk score (0.0 to 1.0) and factor breakdown
-        for a user, incorporating comms disconnect timing, Discord chat inactivity,
-        alt proximity / hostile affiliation, and historical deviation.
+        for a user, incorporating comms and in-game disconnect timing, Discord chat
+        inactivity, alt proximity / hostile affiliation, historical deviation,
+        Big Brother hostile-tie flags, leak exposure and audit accountability.
         """
+        # AA BigBrother
+        from aa_bb.counterintel.services.bb_signals import BBSignals
+
         findings = findings or []
 
-        # 1. Comms Disconnect / Presence factor (weight: 0.35)
-        comms_findings = [
-            f
-            for f in findings
-            if f.get("anomaly_type") in ("pre_contact_disconnect", "comms_without_pap")
-        ]
-        comms_factor = max(
-            [f.get("confidence", 0.0) for f in comms_findings],
-            default=0.0,
+        def max_confidence(anomaly_types) -> float:
+            return max(
+                [
+                    f.get("confidence", 0.0)
+                    for f in findings
+                    if f.get("anomaly_type") in anomaly_types
+                ],
+                default=0.0,
+            )
+
+        # 1. Comms / in-game Disconnect & Presence factor
+        comms_factor = max_confidence(
+            ("pre_contact_disconnect", "comms_without_pap", "eve_logoff_before_contact")
         )
 
-        # 2. Discord Chat Inactivity factor (weight: 0.20)
+        # 2. Discord Chat Inactivity factor
         # AA BigBrother
         from aa_bb.models import UserStatus
 
@@ -168,50 +194,46 @@ class BaselineEngine:
             # Never sent a message
             discord_factor = 0.6
 
-        # 3. Alt Spatial Proximity / Hostile Affiliation (weight: 0.30)
-        alt_findings = [
-            f
-            for f in findings
-            if f.get("anomaly_type")
-            in (
+        # 3. Alt Spatial Proximity / Hostile Affiliation factor
+        alt_factor = max_confidence(
+            (
                 "alt_operational_proximity",
                 "alt_in_hostile_entity",
                 "alt_shared_mumble_identity",
+                "uncredited_alt_online",
             )
-        ]
-        alt_factor = max(
-            [f.get("confidence", 0.0) for f in alt_findings],
-            default=0.0,
         )
 
-        # 4. Historical / Circadian Deviation (weight: 0.15)
-        deviation_factor = max(
-            [
-                f.get("confidence", 0.0)
-                for f in comms_findings
-                if f.get("anomaly_type") == "pre_contact_disconnect"
-            ],
-            default=0.0,
-        )
+        # 4. Historical / Circadian Deviation factor
+        deviation_factor = max_confidence(("pre_contact_disconnect",))
 
-        raw_score = (
-            0.35 * comms_factor
-            + 0.20 * discord_factor
-            + 0.30 * alt_factor
-            + 0.15 * deviation_factor
+        # 5. Big Brother hostile-tie flags, independent of this operation
+        bb_factor = BBSignals.combined(BBSignals.for_user(user.id))
+
+        # 6. Repeated exposure to leaked operations
+        leak_factor = max_confidence(("leak_exposure",))
+
+        # 7. Flying characters hidden from corptools auditing
+        accountability_factor = max_confidence(("unaudited_fleet_character",))
+
+        raw_score = sum(
+            weight * factor
+            for weight, factor in (
+                (cls.RISK_WEIGHTS["comms"], comms_factor),
+                (cls.RISK_WEIGHTS["discord"], discord_factor),
+                (cls.RISK_WEIGHTS["alt"], alt_factor),
+                (cls.RISK_WEIGHTS["deviation"], deviation_factor),
+                (cls.RISK_WEIGHTS["bb_signals"], bb_factor),
+                (cls.RISK_WEIGHTS["leak"], leak_factor),
+                (cls.RISK_WEIGHTS["accountability"], accountability_factor),
+            )
         )
 
         # Secrecy level scaling multiplier
-        secrecy_multipliers = {
-            "classified": 1.4,
-            "strategic": 1.2,
-            "standard": 1.0,
-            "roam": 0.8,
-        }
         secrecy_level = (
             getattr(operation, "secrecy_level", "standard") if operation else "standard"
         )
-        multiplier = secrecy_multipliers.get(str(secrecy_level).lower(), 1.0)
+        multiplier = operation.secrecy_multiplier if operation else 1.0
 
         final_risk = min(1.0, raw_score * multiplier)
 
@@ -220,6 +242,9 @@ class BaselineEngine:
             "discord_inactivity": round(discord_factor, 2),
             "alt_proximity_and_hostility": round(alt_factor, 2),
             "historical_deviation": round(deviation_factor, 2),
+            "bb_signals": round(bb_factor, 2),
+            "leak_exposure": round(leak_factor, 2),
+            "audit_accountability": round(accountability_factor, 2),
             "secrecy_multiplier": multiplier,
             "secrecy_level": secrecy_level,
         }

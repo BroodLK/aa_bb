@@ -68,6 +68,19 @@ class CIOperation(models.Model):
     Operational event window representing a fleet or strategic activity.
     """
 
+    # An open operation (no end_time) is treated as running for at least
+    # OPEN_WINDOW_MIN and at most OPEN_WINDOW_MAX after its start
+    OPEN_WINDOW_MIN = timedelta(hours=2)
+    OPEN_WINDOW_MAX = timedelta(hours=6)
+
+    # Secrecy level -> (label, risk multiplier); anything above standard is sensitive
+    SECRECY_LEVELS = {
+        "standard": (_("Standard"), 1.0),
+        "restricted": (_("Restricted"), 1.2),
+        "classified": (_("Classified"), 1.4),
+        "top_secret": (_("Top Secret"), 1.6),
+    }
+
     name = models.CharField(max_length=255)
     operation_type = models.CharField(max_length=64, default="strategic")
     start_time = models.DateTimeField(db_index=True)
@@ -83,6 +96,15 @@ class CIOperation(models.Model):
     notes = models.TextField(blank=True)
     # When zKillboard was last fully scanned for this operation's window
     combat_scanned_at = models.DateTimeField(null=True, blank=True)
+    # Start/end were set by a CI manager; fleet syncs must not overwrite them
+    window_locked = models.BooleanField(default=False)
+    # Source fleet this operation was synced from, e.g. "afat_fatlink:123"
+    external_ref = models.CharField(
+        max_length=64, blank=True, default="", db_index=True
+    )
+    # Marked by a CI manager when hostiles were evidently forewarned
+    leaked = models.BooleanField(default=False, db_index=True)
+    leak_notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -94,9 +116,39 @@ class CIOperation(models.Model):
             models.Index(fields=["start_time", "end_time"]),
             models.Index(fields=["operation_type"]),
         ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["external_ref"],
+                condition=~models.Q(external_ref=""),
+                name="ci_operation_unique_external_ref",
+            ),
+        ]
 
     def __str__(self):
         return f"{self.name} ({self.start_time:%Y-%m-%d %H:%M})"
+
+    def effective_end(self, now=None):
+        """
+        End of the operation; for an open operation the window grows with the
+        fleet, bounded by OPEN_WINDOW_MIN and OPEN_WINDOW_MAX.
+        """
+        if self.end_time:
+            return self.end_time
+        now = now or timezone.now()
+        return min(
+            max(self.start_time + self.OPEN_WINDOW_MIN, now),
+            self.start_time + self.OPEN_WINDOW_MAX,
+        )
+
+    @property
+    def secrecy_multiplier(self) -> float:
+        """Risk multiplier for this operation's secrecy level (1.0 if unknown)."""
+        level = self.SECRECY_LEVELS.get(str(self.secrecy_level).lower())
+        return level[1] if level else 1.0
+
+    @property
+    def is_sensitive(self) -> bool:
+        return self.secrecy_multiplier > 1.0
 
     @property
     def is_active(self) -> bool:
@@ -104,8 +156,7 @@ class CIOperation(models.Model):
         now = timezone.now()
         if self.end_time:
             return self.start_time <= now <= self.end_time
-        # Open operation without explicit end_time: consider active if started within the last 6 hours
-        return self.start_time <= now <= (self.start_time + timedelta(hours=6))
+        return self.start_time <= now <= (self.start_time + self.OPEN_WINDOW_MAX)
 
     @property
     def is_concluded(self) -> bool:
@@ -441,10 +492,31 @@ class CILogIngestState(models.Model):
         return f"LogState({self.file_path}: offset={self.last_offset})"
 
 
+class CIOverrideQuerySet(models.QuerySet):
+    def active(self, now=None):
+        """Overrides that have not expired; no expiry means permanent."""
+        now = now or timezone.now()
+        return self.filter(
+            models.Q(expires_at__isnull=True) | models.Q(expires_at__gt=now)
+        )
+
+
 class CIOverride(models.Model):
     """
     Documented exemption or disposition override for specific anomaly types.
     """
+
+    # Overrides created by clearing/dismissing a case expire after this long
+    AUTO_OVERRIDE_DAYS = 14
+    # Hostile ties and multi-operation patterns that one case review cannot
+    # explain away; only a deliberate (admin) override may exempt them
+    NEVER_AUTO_EXEMPT = (
+        "alt_in_hostile_entity",
+        "alt_shared_mumble_identity",
+        "bb_flagged_in_sensitive_op",
+        "leak_exposure",
+        "co_occurring_disconnect_ring",
+    )
 
     user = models.ForeignKey(
         User, on_delete=models.CASCADE, related_name="ci_overrides"
@@ -459,6 +531,10 @@ class CIOverride(models.Model):
         related_name="created_ci_overrides",
     )
     created_at = models.DateTimeField(auto_now_add=True)
+    # Null means permanent, for deliberate manual overrides
+    expires_at = models.DateTimeField(null=True, blank=True)
+
+    objects = CIOverrideQuerySet.as_manager()
 
     class Meta:
         app_label = "aa_bb"
@@ -467,3 +543,37 @@ class CIOverride(models.Model):
 
     def __str__(self):
         return f"CIOverride({self.user.username}: {self.exempt_anomaly_types})"
+
+    @property
+    def is_expired(self) -> bool:
+        return bool(self.expires_at and self.expires_at <= timezone.now())
+
+    @classmethod
+    def create_from_disposition(cls, investigation, created_by, reason: str):
+        """
+        Time-limited override for the finding types a reviewer cleared or
+        dismissed on the case's operation. Returns None when nothing is exemptable.
+        """
+        if not investigation.operation_id:
+            return None
+        exempt_types = sorted(
+            set(
+                CICorrelation.objects.filter(
+                    user=investigation.subject_user,
+                    operation=investigation.operation,
+                ).values_list("anomaly_type", flat=True)
+            )
+            - set(cls.NEVER_AUTO_EXEMPT)
+        )
+        if not exempt_types:
+            return None
+        override, _created = cls.objects.get_or_create(
+            user=investigation.subject_user,
+            reason=reason,
+            defaults={
+                "exempt_anomaly_types": exempt_types,
+                "created_by": created_by,
+                "expires_at": timezone.now() + timedelta(days=cls.AUTO_OVERRIDE_DAYS),
+            },
+        )
+        return override

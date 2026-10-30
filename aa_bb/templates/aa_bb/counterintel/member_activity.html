@@ -32,6 +32,23 @@
 <div class="row">
     <!-- Identity Mappings & Overrides -->
     <div class="col-lg-4 mb-4">
+        <!-- Big Brother Flags Card -->
+        <div class="card mb-3">
+            <div class="card-header {% if bb_signals %}bg-danger{% else %}bg-dark{% endif %} text-white">
+                <h6 class="mb-0"><i class="fas fa-flag me-2"></i>{% translate "Big Brother Flags" %}</h6>
+            </div>
+            <div class="card-body py-2">
+                {% for signal in bb_signals %}
+                    <span class="badge {% if signal.severity >= 0.9 %}bg-danger{% elif signal.severity >= 0.6 %}bg-warning text-dark{% else %}bg-secondary{% endif %} me-1 mb-1" title="{% translate 'Severity' %} {{ signal.severity }}">{{ signal.label }}</span>
+                {% empty %}
+                    <span class="small text-muted">{% translate "No hostile-tie flags from Big Brother checks." %}</span>
+                {% endfor %}
+                {% if bb_signals %}
+                    <small class="text-muted d-block mt-1">{% translate "These flags raise this member's CI risk score and are reported when they access sensitive operations." %}</small>
+                {% endif %}
+            </div>
+        </div>
+
         <!-- Discord Chat Activity Card -->
         <div class="card mb-3">
             <div class="card-header bg-dark text-white">
@@ -149,17 +166,24 @@
             <div class="card-body p-0">
                 <ul class="list-group list-group-flush">
                     {% for ovr in overrides %}
-                    <li class="list-group-item">
+                    <li class="list-group-item {% if ovr.is_expired %}text-muted bg-light{% endif %}">
                         <strong>{{ ovr.reason }}</strong>
+                        {% if ovr.is_expired %}
+                            <span class="badge bg-secondary ms-1">{% translate "Expired" %}</span>
+                        {% elif ovr.expires_at %}
+                            <span class="badge bg-warning text-dark ms-1">{% translate "Expires" %} {{ ovr.expires_at|date:"Y-m-d" }}</span>
+                        {% else %}
+                            <span class="badge bg-dark ms-1">{% translate "Permanent" %}</span>
+                        {% endif %}
                         <div class="mt-1">
                             {% for ex in ovr.exempt_anomaly_types %}
-                                <span class="badge bg-info text-dark">{{ ex }}</span>
+                                <span class="badge {% if ovr.is_expired %}bg-light text-muted border{% else %}bg-info text-dark{% endif %}">{{ ex }}</span>
                             {% endfor %}
                         </div>
                         <small class="text-muted d-block mt-1">Granted {{ ovr.created_at|date:"Y-m-d" }} by {{ ovr.created_by.username|default:"System" }}</small>
                     </li>
                     {% empty %}
-                    <li class="list-group-item text-muted text-center py-3">{% translate "No active exemptions or overrides." %}</li>
+                    <li class="list-group-item text-muted text-center py-3">{% translate "No exemptions or overrides." %}</li>
                     {% endfor %}
                 </ul>
             </div>

@@ -5,6 +5,7 @@ Strictly authoritative FC rosters with zero member participation or self-reporti
 
 # Standard Library
 import hashlib
+import logging
 import re
 from datetime import timedelta
 
@@ -16,6 +17,8 @@ from django.utils import timezone
 from ..models import CIEvent, CIOperation, CIOperationParticipant, CISession
 from ..services.identity import IdentityResolver
 from ..services.operations import CIOperationService
+
+logger = logging.getLogger(__name__)
 
 
 class FCRosterIngestor:
@@ -227,7 +230,7 @@ class FCRosterIngestor:
         Provides zero-overhead roster generation for alliances not using PAP/AFAT.
         """
         op_start = operation.start_time
-        op_end = operation.end_time or (op_start + timedelta(hours=2))
+        op_end = operation.effective_end()
 
         detected_users = set()
 
@@ -304,21 +307,33 @@ class FCRosterIngestor:
 
         return participants
 
+    @staticmethod
+    def fatlink_ref(fatlink_id: int) -> str:
+        return f"afat_fatlink:{fatlink_id}"
+
+    @staticmethod
+    def fleet_ref(fleet_id: int) -> str:
+        return f"afat_fleet:{fleet_id}"
+
     @classmethod
     def ingest_afat_fleet(
         cls,
         operation: CIOperation,
         afat_fleet_id: int,
+        source: str = "fatlink",
     ) -> list[CIOperationParticipant]:
         """
         Read-only adapter for AFAT / PAP fleet records if the AFAT plugin is installed.
-        Supports both FatLink/Fat and AFATFleet/AFATFleetAttendance models.
+        source selects the FatLink/Fat ("fatlink") or AFATFleet/AFATFleetAttendance
+        ("fleet") models, whose ids are unrelated.
         """
         try:
-            # 1. Try standard AFAT FatLink / Fat models
-            try:
-                # Third Party
-                from afat.models import Fat, FatLink
+            if source == "fatlink":
+                try:
+                    # Third Party
+                    from afat.models import Fat, FatLink
+                except ImportError:
+                    return []
 
                 fatlink = FatLink.objects.filter(id=afat_fleet_id).first()
                 if fatlink:
@@ -362,13 +377,14 @@ class FCRosterIngestor:
                         fc_user=fc_user,
                         recorded_at=recorded_time,
                     )
-            except (ImportError, AttributeError):
-                pass
+                return []
 
-            # 2. Try AFATFleet / AFATFleetAttendance models
-            try:
-                # Third Party
-                from afat.models import AFATFleet, AFATFleetAttendance
+            if source == "fleet":
+                try:
+                    # Third Party
+                    from afat.models import AFATFleet, AFATFleetAttendance
+                except ImportError:
+                    return []
 
                 fleet = AFATFleet.objects.filter(id=afat_fleet_id).first()
                 if fleet:
@@ -392,12 +408,12 @@ class FCRosterIngestor:
                         fc_user=fc_user,
                         recorded_at=fleet.start_time,
                     )
-            except (ImportError, AttributeError):
-                pass
-
             return []
         except Exception:
-            # AFAT not installed or error querying models
+            logger.exception(
+                f"Failed to ingest AFAT {source} #{afat_fleet_id} roster "
+                f"into operation {operation.id}"
+            )
             return []
 
     @classmethod
@@ -441,6 +457,59 @@ class FCRosterIngestor:
         return None, False
 
     @classmethod
+    def sync_fatlink(cls, fl) -> CIOperation:
+        """
+        Create or update the CIOperation for an AFAT FatLink and ingest its roster.
+        """
+        fleet_name = getattr(fl, "fleet", None) or f"AFAT Fleet #{fl.id}"
+        start_time = (
+            getattr(fl, "created", None)
+            or getattr(fl, "created_at", None)
+            or getattr(fl, "start_time", None)
+            or timezone.now()
+        )
+        end_time, is_closed = cls.resolve_fatlink_end_state(fl, start_time)
+
+        fc_user = None
+        if hasattr(fl, "character") and fl.character:
+            fc_char = fl.character
+            fc_user = IdentityResolver.resolve_user_by_character(
+                getattr(fc_char, "character_id", None) or getattr(fc_char, "id", None)
+            )
+        elif hasattr(fl, "creator") and fl.creator:
+            fc_user = fl.creator
+
+        op, _ = CIOperationService.find_or_create_operation(
+            name=str(fleet_name),
+            start_time=start_time,
+            end_time=end_time,
+            operation_type="strategic",
+            fleet_commander=fc_user,
+            notes=f"Synced automatically from AFAT FatLink #{fl.id}",
+            external_ref=cls.fatlink_ref(fl.id),
+            mark_closed=is_closed,
+        )
+        cls.ingest_afat_fleet(op, fl.id, source="fatlink")
+        return op
+
+    @classmethod
+    def sync_afat_fleet(cls, f) -> CIOperation:
+        """
+        Create or update the CIOperation for an AFATFleet and ingest its roster.
+        """
+        op, _ = CIOperationService.find_or_create_operation(
+            name=f.fleet_name or f"AFAT Fleet #{f.id}",
+            start_time=f.start_time,
+            end_time=getattr(f, "end_time", None),
+            operation_type="strategic",
+            fleet_commander=(f.fleet_commander.user if f.fleet_commander else None),
+            notes=f"Synced automatically from AFAT Fleet #{f.id}",
+            external_ref=cls.fleet_ref(f.id),
+        )
+        cls.ingest_afat_fleet(op, f.id, source="fleet")
+        return op
+
+    @classmethod
     def sync_recent_afat_fleets(cls, hours: int = 48) -> list[CIOperation]:
         """
         Scans for recent AFAT/ESI fleets and automatically creates or updates
@@ -453,8 +522,10 @@ class FCRosterIngestor:
         try:
             # Third Party
             from afat.models import FatLink
+        except ImportError:
+            FatLink = None
 
-            recent_fatlinks = []
+        if FatLink is not None:
             if hasattr(FatLink, "created"):
                 recent_fatlinks = FatLink.objects.filter(created__gte=cutoff)
             elif hasattr(FatLink, "created_at"):
@@ -465,67 +536,32 @@ class FCRosterIngestor:
                 recent_fatlinks = FatLink.objects.all()
 
             for fl in recent_fatlinks:
-                fleet_name = getattr(fl, "fleet", None) or f"AFAT Fleet #{fl.id}"
-                start_time = (
-                    getattr(fl, "created", None)
-                    or getattr(fl, "created_at", None)
-                    or getattr(fl, "start_time", None)
-                    or timezone.now()
-                )
-                end_time, is_closed = cls.resolve_fatlink_end_state(fl, start_time)
-
-                fc_user = None
-                if hasattr(fl, "character") and fl.character:
-                    fc_char = fl.character
-                    fc_user = IdentityResolver.resolve_user_by_character(
-                        getattr(fc_char, "character_id", None)
-                        or getattr(fc_char, "id", None)
-                    )
-                elif hasattr(fl, "creator") and fl.creator:
-                    fc_user = fl.creator
-
-                op, _ = CIOperationService.find_or_create_operation(
-                    name=str(fleet_name),
-                    start_time=start_time,
-                    end_time=end_time,
-                    operation_type="strategic",
-                    fleet_commander=fc_user,
-                    notes=f"Synced automatically from AFAT FatLink #{fl.id}",
-                    external_tag=f"AFAT FatLink #{fl.id}",
-                    mark_closed=is_closed,
-                )
-
-                cls.ingest_afat_fleet(op, fl.id)
+                try:
+                    op = cls.sync_fatlink(fl)
+                except Exception:
+                    logger.exception(f"Failed to sync AFAT FatLink #{fl.id}")
+                    continue
                 if op not in synced_ops:
                     synced_ops.append(op)
-        except Exception:
-            pass
 
         # 2. Sync from AFATFleet
         try:
             # Third Party
             from afat.models import AFATFleet
+        except ImportError:
+            AFATFleet = None
 
-            recent_fleets = AFATFleet.objects.filter(start_time__gte=cutoff)
-            for f in recent_fleets:
-                op, _ = CIOperationService.find_or_create_operation(
-                    name=f.fleet_name or f"AFAT Fleet #{f.id}",
-                    start_time=f.start_time,
-                    end_time=getattr(f, "end_time", None),
-                    operation_type="strategic",
-                    fleet_commander=(
-                        f.fleet_commander.user if f.fleet_commander else None
-                    ),
-                    notes=f"Synced automatically from AFAT Fleet #{f.id}",
-                    external_tag=f"AFAT Fleet #{f.id}",
-                )
-                cls.ingest_afat_fleet(op, f.id)
+        if AFATFleet is not None:
+            for f in AFATFleet.objects.filter(start_time__gte=cutoff):
+                try:
+                    op = cls.sync_afat_fleet(f)
+                except Exception:
+                    logger.exception(f"Failed to sync AFAT Fleet #{f.id}")
+                    continue
                 if op not in synced_ops:
                     synced_ops.append(op)
-        except Exception:
-            pass
 
-        # Auto-deduplicate any legacy or concurrently created duplicate operations
-        CIOperationService.deduplicate_operations()
+        # Auto-deduplicate any concurrently created duplicates in the sync window
+        CIOperationService.deduplicate_operations(since_hours=hours)
 
         return synced_ops

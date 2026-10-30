@@ -2,11 +2,92 @@
 {% load i18n %}
 
 {% block ci_content %}
+{% if perms.aa_bb.can_manage_ci %}
+<!-- New Operation Modal -->
+<div class="modal fade" id="newOperationModal" tabindex="-1" aria-labelledby="newOperationModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <form method="post" action="{% url 'ci:create_operation' %}">
+                {% csrf_token %}
+                <div class="modal-header bg-dark text-white">
+                    <h5 class="modal-title" id="newOperationModalLabel">
+                        <i class="fas fa-plus me-2"></i>{% translate "New Operation" %}
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="small text-muted">{% translate "Use this for fleets, briefings or strategic activity that AFAT does not track. AFAT fleets are created automatically." %} <a href="{% url 'ci:help' %}#getting-fleets-in">{% translate "More in Help" %}</a></p>
+                    <div class="row g-3">
+                        <div class="col-md-8">
+                            <label class="form-label fw-bold">{% translate "Operation Name" %}</label>
+                            <input type="text" name="name" class="form-control form-control-sm" required>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-bold">{% translate "Operation Type" %}</label>
+                            <select name="operation_type" class="form-select form-select-sm">
+                                <option value="strategic">{% translate "Strategic" %}</option>
+                                <option value="defense">{% translate "Defense / Home Defense" %}</option>
+                                <option value="cta">{% translate "CTA (Call to Arms)" %}</option>
+                                <option value="roam">{% translate "Roam / Patrol" %}</option>
+                                <option value="skirmish">{% translate "Skirmish" %}</option>
+                                <option value="recon">{% translate "Reconnaissance" %}</option>
+                                <option value="mining">{% translate "Mining / Industry" %}</option>
+                                <option value="training">{% translate "Training" %}</option>
+                                <option value="other">{% translate "Other" %}</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-bold">{% translate "Secrecy Level" %}</label>
+                            <select name="secrecy_level" class="form-select form-select-sm">
+                                {% for value, label in secrecy_levels %}
+                                <option value="{{ value }}">{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-bold">{% translate "Start Time (UTC)" %}</label>
+                            <input type="datetime-local" name="start_time" class="form-control form-control-sm" required>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-bold">{% translate "End Time (UTC)" %}</label>
+                            <input type="datetime-local" name="end_time" class="form-control form-control-sm">
+                            <small class="text-muted d-block">{% translate "Leave blank while the fleet is still running." %}</small>
+                        </div>
+                        <div class="col-md-12">
+                            <label class="form-label fw-bold">{% translate "Fleet Commander (FC)" %}</label>
+                            <select name="fleet_commander_id" class="form-select form-select-sm">
+                                <option value="">-- {% translate "None / Unassigned" %} --</option>
+                                {% for u in fc_candidates %}
+                                    <option value="{{ u.id }}">
+                                        {{ u.username }}{% if u.profile.main_character %} ({{ u.profile.main_character.character_name }}){% endif %}
+                                    </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-12">
+                            <label class="form-label fw-bold">{% translate "Operational Notes / Context" %}</label>
+                            <textarea name="notes" class="form-control form-control-sm" rows="3"></textarea>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer bg-light">
+                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">{% translate "Cancel" %}</button>
+                    <button type="submit" class="btn btn-success btn-sm"><i class="fas fa-plus me-1"></i>{% translate "Create Operation" %}</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endif %}
+
 <div class="card">
     <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center flex-wrap gap-2">
         <h5 class="mb-0"><i class="fas fa-satellite-dish me-2"></i>{% translate "Operational Windows & Fleets" %}</h5>
         {% if perms.aa_bb.can_manage_ci %}
         <div class="d-flex gap-2">
+            <button type="button" class="btn btn-sm btn-success" data-bs-toggle="modal" data-bs-target="#newOperationModal">
+                <i class="fas fa-plus me-1"></i>{% translate "New Operation" %}
+            </button>
             <form method="post" action="{% url 'ci:deduplicate_operations' %}" class="d-inline">
                 {% csrf_token %}
                 <button type="submit" class="btn btn-sm btn-outline-light" title="{% translate 'Merge and clean up duplicate fleet entries sharing the same time window' %}">

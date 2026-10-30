@@ -21,10 +21,13 @@
                         <span class="badge bg-secondary me-2">{{ operation.operation_type }}</span>
                         <span class="badge bg-info text-dark me-2">Secrecy: {{ operation.secrecy_level }}</span>
                         <i class="far fa-clock me-1"></i>{{ operation.start_time|date:"Y-m-d H:i" }} - {% if operation.end_time %}{{ operation.end_time|date:"H:i" }} UTC{% else %}Open Window{% endif %}
+                        {% if operation.leaked %}<span class="badge bg-danger ms-1" title="{{ operation.leak_notes|default:_('Marked as leaked') }}"><i class="fas fa-user-secret me-1"></i>{% translate "Leaked" %}</span>{% endif %}
+                        {% if operation.window_locked %}<span class="badge bg-warning text-dark ms-1" title="{% translate 'Times set manually; fleet syncs will not change them' %}"><i class="fas fa-lock me-1"></i>{% translate "Manual window" %}</span>{% endif %}
                         {% if operation.fleet_commander %} &bull; FC: <strong>{{ operation.fleet_commander.username }}</strong>{% endif %}
                     </p>
                 </div>
                 <div class="d-flex flex-wrap gap-2 align-items-center">
+                    {% if perms.aa_bb.can_manage_ci %}
                     {% if not operation.end_time %}
                         {% if operation.is_active %}
                             <form method="post" action="{% url 'ci:edit_operation' operation.id %}" class="d-inline">
@@ -47,6 +50,19 @@
                     <button class="btn btn-outline-warning btn-sm" type="button" data-bs-toggle="modal" data-bs-target="#editOperationModal">
                         <i class="fas fa-edit me-1"></i>{% translate "Edit Operation" %}
                     </button>
+                    {% if operation.leaked %}
+                    <form method="post" action="{% url 'ci:toggle_leak' operation.id %}" class="d-inline">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-outline-light btn-sm" title="{% translate 'Clear the leak mark and recompute leak exposure' %}">
+                            <i class="fas fa-user-secret me-1"></i>{% translate "Clear Leak" %}
+                        </button>
+                    </form>
+                    {% else %}
+                    <button class="btn btn-outline-danger btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#markLeakCollapse" title="{% translate 'Hostiles were evidently forewarned about this operation' %}">
+                        <i class="fas fa-user-secret me-1"></i>{% translate "Mark Leaked" %}
+                    </button>
+                    {% endif %}
+                    {% endif %}
                     <button class="btn btn-outline-info btn-sm" type="button" data-bs-toggle="collapse" data-bs-target="#quickRosterCollapse">
                         <i class="fas fa-clipboard-list me-1"></i>{% translate "Paste Roster" %}
                     </button>
@@ -67,6 +83,20 @@
     </div>
 </div>
 
+{% if perms.aa_bb.can_manage_ci and not operation.leaked %}
+<div class="collapse mb-3" id="markLeakCollapse">
+    <div class="card card-body border-danger">
+        <form method="post" action="{% url 'ci:toggle_leak' operation.id %}">
+            {% csrf_token %}
+            <label class="form-label fw-bold">{% translate "Why do you believe this operation leaked?" %}</label>
+            <textarea name="leak_notes" class="form-control form-control-sm mb-2" rows="2" placeholder="{% translate 'e.g. hostiles were pre-positioned on the target grid before the ping went out' %}"></textarea>
+            <small class="text-muted d-block mb-2">{% translate "A single leak cannot identify anyone. Counterintel compares who knew about leaked operations against who knew about clean ones, and flags members who appear disproportionately often." %}</small>
+            <button type="submit" class="btn btn-danger btn-sm"><i class="fas fa-user-secret me-1"></i>{% translate "Mark Leaked" %}</button>
+        </form>
+    </div>
+</div>
+{% endif %}
+
 {% if perms.aa_bb.can_manage_ci %}
 <form id="deleteOperationForm" method="post" action="{% url 'ci:delete_operation' operation.id %}" class="d-none">
     {% csrf_token %}
@@ -74,6 +104,7 @@
 {% endif %}
 
 <!-- Edit Operation Modal -->
+{% if perms.aa_bb.can_manage_ci %}
 <div class="modal fade" id="editOperationModal" tabindex="-1" aria-labelledby="editOperationModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-lg">
         <div class="modal-content">
@@ -108,10 +139,9 @@
                         <div class="col-md-4">
                             <label class="form-label fw-bold">{% translate "Secrecy Level" %}</label>
                             <select name="secrecy_level" class="form-select form-select-sm">
-                                <option value="standard" {% if operation.secrecy_level == "standard" %}selected{% endif %}>{% translate "Standard" %}</option>
-                                <option value="restricted" {% if operation.secrecy_level == "restricted" %}selected{% endif %}>{% translate "Restricted" %}</option>
-                                <option value="classified" {% if operation.secrecy_level == "classified" %}selected{% endif %}>{% translate "Classified" %}</option>
-                                <option value="top_secret" {% if operation.secrecy_level == "top_secret" %}selected{% endif %}>{% translate "Top Secret" %}</option>
+                                {% for value, label in secrecy_levels %}
+                                <option value="{{ value }}" {% if operation.secrecy_level == value %}selected{% endif %}>{{ label }}</option>
+                                {% endfor %}
                             </select>
                         </div>
                         <div class="col-md-4">
@@ -122,6 +152,11 @@
                             <label class="form-label fw-bold">{% translate "End Time (UTC)" %}</label>
                             <input type="datetime-local" name="end_time" class="form-control form-control-sm" value="{% if operation.end_time %}{{ operation.end_time|date:'Y-m-d\TH:i' }}{% endif %}" placeholder="Leave blank for open window">
                             <small class="text-muted d-block">{% translate "Leave blank to keep open window." %}</small>
+                        </div>
+                        <div class="col-12">
+                            <small class="text-muted">
+                                <i class="fas fa-lock me-1"></i>{% translate "Changing the start or end time recalculates comms, combat and findings for the new window, and stops AFAT syncs from overwriting these times." %}
+                            </small>
                         </div>
                         <div class="col-md-12">
                             <label class="form-label fw-bold">{% translate "Fleet Commander (FC)" %}</label>
@@ -157,6 +192,7 @@
         </div>
     </div>
 </div>
+{% endif %}
 
 <!-- Auto-Detect Comms Modal -->
 <div class="modal fade" id="autoDetectCommsModal" tabindex="-1" aria-labelledby="autoDetectCommsModalLabel" aria-hidden="true">
@@ -390,6 +426,7 @@
                                 {% if p.logged_off_near_fleet %}<span class="badge bg-secondary" title="Logged off within the 15-minute pre/post fleet window">Logoff near fleet</span>{% endif %}
                                 {% if p.joined_comms %}<span class="badge bg-info text-dark">Comms</span>{% else %}<span class="badge bg-light text-dark">No comms</span>{% endif %}
                                 {% if p.on_killmail %}<span class="badge bg-danger">Killmail</span>{% else %}<span class="badge bg-light text-dark">No killmail</span>{% endif %}
+                                {% if p.has_audit is True %}<span class="badge bg-success" title="{% translate 'Character has a corptools audit' %}"><i class="fas fa-shield-alt me-1"></i>{% translate "Audit" %}</span>{% elif p.has_audit is False %}<span class="badge bg-danger" title="{% translate 'No corptools audit for this character; flagged as a finding' %}"><i class="fas fa-exclamation-triangle me-1"></i>{% translate "No audit" %}</span>{% endif %}
                             </div>
                             <small class="text-muted d-block font-monospace" style="font-size: 0.75rem;">Char ID: {{ p.character_id }}</small>
                         </div>
@@ -430,8 +467,10 @@
                         <span>{{ operation.start_time|date:"H:i" }} - {% if operation.end_time %}{{ operation.end_time|date:"H:i" }} UTC{% elif operation.is_active %}<span class="text-success">Active</span>{% else %}<span class="text-secondary">Concluded</span>{% endif %}</span>
                     </div>
                     <div class="progress" style="height: 22px;">
-                        <div class="progress-bar {% if operation.is_active %}bg-success{% else %}bg-primary{% endif %}" role="progressbar" style="width: 100%;">
-                            {{ operation.name }} ({{ operation.operation_type }})
+                        <div class="progress-bar d-flex flex-row justify-content-between align-items-center px-2 {% if operation.is_active %}bg-success{% else %}bg-primary{% endif %}" role="progressbar" style="width: 100%;">
+                            <span class="font-monospace fw-bold" title="{% translate 'Start' %}">{{ operation.start_time|date:"H:i" }}</span>
+                            <span class="text-truncate px-2">{{ operation.name }} ({{ operation.operation_type }})</span>
+                            <span class="font-monospace fw-bold" title="{% translate 'End' %}">{% if operation.end_time %}{{ operation.end_time|date:"H:i" }}{% elif operation.is_active %}{% translate "Active" %}{% else %}{% translate "Open" %}{% endif %}</span>
                         </div>
                     </div>
                 </div>
@@ -439,17 +478,36 @@
                 <!-- Track 2: Comms Sessions (Mumble / Discord) -->
                 <div class="mb-3">
                     <div class="d-flex justify-content-between small text-muted mb-1">
-                        <span><i class="fas fa-headset me-1 text-info"></i><strong>{% translate "Track 2: Voice Comms Activity" %}</strong> ({{ timeline.sessions|length }} {% translate "sessions" %})</span>
+                        <span><i class="fas fa-headset me-1 text-info"></i><strong>{% translate "Track 2: Voice Comms Activity" %}</strong> ({{ timeline.comms_summary|length }} {% translate "members" %}, {{ timeline.sessions|length }} {% translate "sessions" %})</span>
                         <span class="badge bg-info text-dark">Comms</span>
                     </div>
-                    <div class="p-2 border border-secondary rounded bg-secondary bg-opacity-25" style="min-height: 38px;">
-                        {% for s in timeline.sessions|slice:":12" %}
-                        <span class="badge bg-info text-dark mb-1 me-1" title="{{ s.username }} ({{ s.duration_seconds|floatformat:0 }}s in {{ s.channel_name|default:'Comms' }})">
-                            {{ s.username }} ({{ s.start_time|date:"H:i" }})
-                        </span>
-                        {% empty %}
-                        <span class="small text-muted">{% translate "No voice comms intervals recorded." %}</span>
-                        {% endfor %}
+                    <div class="border border-secondary rounded bg-secondary bg-opacity-25" style="max-height: 260px; overflow-y: auto;">
+                        {% if timeline.comms_summary %}
+                        <table class="table table-sm table-dark table-borderless mb-0 small align-middle">
+                            <thead>
+                                <tr>
+                                    <th>{% translate "Member" %}</th>
+                                    <th>{% translate "Total" %}</th>
+                                    <th>{% translate "Login" %}</th>
+                                    <th>{% translate "Logoff" %}</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for c in timeline.comms_summary %}
+                                <tr>
+                                    <td>
+                                        <a href="{% url 'ci:member_activity' c.user_id %}" class="text-info text-decoration-none" {% if c.channels %}title="{{ c.channels|join:', ' }}"{% endif %}>{{ c.username }}</a>
+                                    </td>
+                                    <td class="font-monospace">{{ c.total_display }}</td>
+                                    <td class="font-monospace">{% if c.login %}{{ c.login|date:"H:i:s" }}{% else %}<span class="text-muted">n/a</span>{% endif %}</td>
+                                    <td class="font-monospace">{% if c.logoff %}{{ c.logoff|date:"H:i:s" }}{% else %}<span class="text-muted">n/a</span>{% endif %}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                        {% else %}
+                        <div class="p-2 small text-muted">{% translate "No voice comms intervals recorded." %}</div>
+                        {% endif %}
                     </div>
                 </div>
 
@@ -474,16 +532,39 @@
                             <span class="badge bg-danger">zKillboard</span>
                         </span>
                     </div>
-                    <div class="p-2 border border-secondary rounded bg-secondary bg-opacity-25" style="min-height: 38px;">
-                        {% for ev in timeline.events %}
-                            {% if ev.source == 'zkill' %}
-                            <span class="badge bg-danger mb-1 me-1" title="Killmail @ {{ ev.timestamp|date:'H:i:s' }}">
-                                <i class="fas fa-skull me-1"></i>{{ ev.timestamp|date:"H:i:s" }}
-                            </span>
-                            {% endif %}
-                        {% empty %}
-                        <span class="small text-muted">{% translate "No combat killmails recorded for this operation." %}</span>
-                        {% endfor %}
+                    <div class="border border-secondary rounded bg-secondary bg-opacity-25" style="max-height: 260px; overflow-y: auto;">
+                        {% if timeline.combat_events %}
+                        <table class="table table-sm table-dark table-borderless mb-0 small align-middle">
+                            <thead>
+                                <tr>
+                                    <th>{% translate "Type" %}</th>
+                                    <th>{% translate "Time (UTC)" %}</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for km in timeline.combat_events %}
+                                <tr>
+                                    <td>
+                                        {% if km.kind == "Loss" %}
+                                            <span class="badge bg-danger"><i class="fas fa-skull me-1"></i>{% translate "Loss" %}</span>
+                                        {% else %}
+                                            <span class="badge bg-success"><i class="fas fa-crosshairs me-1"></i>{% translate "Kill" %}</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="font-monospace">
+                                        {% if km.killmail_id %}
+                                            <a href="https://zkillboard.com/kill/{{ km.killmail_id }}/" target="_blank" rel="noopener" class="text-light">{{ km.timestamp|date:"H:i:s" }}</a>
+                                        {% else %}
+                                            {{ km.timestamp|date:"H:i:s" }}
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                        {% else %}
+                        <div class="p-2 small text-muted">{% translate "No combat killmails recorded for this operation." %}</div>
+                        {% endif %}
                     </div>
                 </div>
             </div>
@@ -494,8 +575,43 @@
                 <h6 class="mb-0"><i class="fas fa-stream me-2"></i>{% translate "Chronological Event Timeline" %}</h6>
                 <small class="text-muted">Window: {{ timeline.window_start|date:"H:i" }} - {{ timeline.window_end|date:"H:i" }} UTC</small>
             </div>
+            <div class="p-2 bg-light border-bottom">
+                <div class="row g-2 align-items-center">
+                    <div class="col-md-4">
+                        <select id="ciEventUserFilter" class="form-select form-select-sm" aria-label="{% translate 'Filter by user' %}">
+                            <option value="">{% translate "All users" %}</option>
+                            {% for label in timeline.event_users %}
+                            <option value="{{ label }}">{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <input type="search" id="ciEventCharacterFilter" class="form-control form-control-sm" placeholder="{% translate 'Character name' %}" aria-label="{% translate 'Filter by character' %}">
+                    </div>
+                    <div class="col-md-3">
+                        <select id="ciEventTypeFilter" class="form-select form-select-sm" aria-label="{% translate 'Filter by event type' %}">
+                            <option value="">{% translate "All event types" %}</option>
+                            <option value="mumble">Mumble</option>
+                            <option value="mumble:connect">&nbsp;&nbsp;{% translate "Mumble connect" %}</option>
+                            <option value="mumble:disconnect">&nbsp;&nbsp;{% translate "Mumble disconnect" %}</option>
+                            <option value="mumble:auth_failed">&nbsp;&nbsp;{% translate "Mumble failed auth" %}</option>
+                            <option value="discord">Discord</option>
+                            <option value="discord:message">&nbsp;&nbsp;{% translate "Discord message" %}</option>
+                            <option value="discord:voice">&nbsp;&nbsp;{% translate "Discord voice" %}</option>
+                            <option value="zkill">zKill</option>
+                            <option value="pap">PAP</option>
+                            <option value="eve_activity">{% translate "EVE Activity" %}</option>
+                            <option value="eve_activity:login">&nbsp;&nbsp;{% translate "EVE login" %}</option>
+                            <option value="eve_activity:logoff">&nbsp;&nbsp;{% translate "EVE logoff" %}</option>
+                        </select>
+                    </div>
+                    <div class="col-md-1 text-end">
+                        <small class="text-muted" id="ciEventFilterCount"></small>
+                    </div>
+                </div>
+            </div>
             <div class="card-body p-0" style="max-height: 650px; overflow-y: auto;">
-                <table class="table table-sm table-hover mb-0 align-middle">
+                <table class="table table-sm table-hover mb-0 align-middle" id="ciEventTable">
                     <thead class="table-light">
                         <tr>
                             <th>{% translate "Time (UTC)" %}</th>
@@ -506,7 +622,10 @@
                     </thead>
                     <tbody>
                         {% for ev in timeline.events %}
-                        <tr>
+                        <tr class="ci-event-row"
+                            data-user="{{ ev.user_label }}"
+                            data-character="{{ ev.username|lower }} {{ ev.character_name|lower }} {{ ev.payload.character_name|default:''|lower }}"
+                            data-type="{{ ev.source }}{% if ev.source == 'mumble' %}:{{ ev.payload.action }}{% elif ev.source == 'discord' %}:{% if ev.payload.message_id %}message{% else %}voice{% endif %}{% elif ev.source == 'eve_activity' %}:{{ ev.payload.activity_type }}{% endif %}">
                             <td class="text-nowrap font-monospace small">{{ ev.timestamp|date:"H:i:s" }}</td>
                             <td>
                                 {% if ev.source == 'mumble' %}
@@ -580,10 +699,48 @@
                             </td>
                         </tr>
                         {% endfor %}
+                        <tr id="ciEventNoMatch" class="d-none">
+                            <td colspan="4" class="text-center text-muted py-4">
+                                {% translate "No events match the selected filters." %}
+                            </td>
+                        </tr>
                     </tbody>
                 </table>
             </div>
         </div>
     </div>
 </div>
+<script>
+    (function () {
+        const userFilter = document.getElementById("ciEventUserFilter");
+        const characterFilter = document.getElementById("ciEventCharacterFilter");
+        const typeFilter = document.getElementById("ciEventTypeFilter");
+        const noMatch = document.getElementById("ciEventNoMatch");
+        const count = document.getElementById("ciEventFilterCount");
+        const rows = document.querySelectorAll("#ciEventTable .ci-event-row");
+
+        function applyFilters() {
+            const user = userFilter.value;
+            const character = characterFilter.value.trim().toLowerCase();
+            const type = typeFilter.value;
+            let visible = 0;
+            rows.forEach(function (row) {
+                const rowType = row.dataset.type;
+                const matches = (!user || row.dataset.user === user)
+                    && (!character || row.dataset.character.includes(character))
+                    && (!type || rowType === type || rowType.startsWith(type + ":"));
+                row.classList.toggle("d-none", !matches);
+                if (matches) {
+                    visible += 1;
+                }
+            });
+            noMatch.classList.toggle("d-none", visible > 0 || rows.length === 0);
+            count.textContent = (user || character || type) ? visible + "/" + rows.length : "";
+        }
+
+        userFilter.addEventListener("change", applyFilters);
+        characterFilter.addEventListener("input", applyFilters);
+        typeFilter.addEventListener("change", applyFilters);
+    })();
+</script>
 {% endblock %}

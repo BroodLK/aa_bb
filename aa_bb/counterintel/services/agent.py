@@ -18,6 +18,7 @@ from ..models import (
     CISession,
 )
 from .baseline import BaselineEngine
+from .bb_signals import BBSignals
 from .correlation import CorrelationEngine
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,9 @@ class CIAgentService:
     explanations, evaluates data completeness, and drafts findings for human review.
     Zero automated punitive actions.
     """
+
+    # Findings at or above this confidence open an investigation case
+    AUTO_TRIAGE_CONFIDENCE = 0.50
 
     @classmethod
     def create_or_update_investigation(
@@ -196,7 +200,7 @@ class CIAgentService:
         benign_explanations = cls.get_benign_explanations(investigation)
 
         # Check existing overrides
-        overrides = list(CIOverride.objects.filter(user=user))
+        overrides = list(CIOverride.objects.active().filter(user=user))
 
         # Build synthesized Markdown report
         lines = []
@@ -406,6 +410,7 @@ class CIAgentService:
             ),
             "characters": characters,
             "character_count": len(characters),
+            "bb_signals": BBSignals.for_user(subject_user.id),
             "total_voice_sessions": total_sessions,
             "total_fleets": baseline.get("total_fleets", 0),
             "last_discord_message_at": (
@@ -431,12 +436,14 @@ class CIAgentService:
     def auto_triage_operation(cls, operation: CIOperation) -> list[CIInvestigation]:
         """
         Run correlation on an operation and automatically triage cases for members
-        with anomalies exceeding the triage confidence threshold (>= 0.50).
+        with anomalies at or above AUTO_TRIAGE_CONFIDENCE.
         """
         correlations = CorrelationEngine.correlate_operation(operation)
         triaged_cases = []
 
-        flagged_users = {c.user for c in correlations if c.confidence >= 0.50}
+        flagged_users = {
+            c.user for c in correlations if c.confidence >= cls.AUTO_TRIAGE_CONFIDENCE
+        }
         # Leave cases a reviewer has already resolved untouched
         resolved_user_ids = set(
             CIInvestigation.objects.filter(
