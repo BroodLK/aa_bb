@@ -66,10 +66,14 @@ class CIOperationService:
         secrecy_level: str = "standard",
         notes: str = "",
         external_tag: str = "",
+        mark_closed: bool = False,
     ) -> tuple[CIOperation, bool]:
         """
         Finds an existing matching operation or creates a new one, preventing duplicate
         operations created by differing sync sources, signal handlers, or microsecond clock jitter.
+
+        mark_closed: the source reports the fleet as concluded without a timestamp;
+        an open operation is closed at the current time, an existing end_time is kept.
         """
         if timezone.is_naive(start_time):
             start_time = timezone.make_aware(start_time)
@@ -104,6 +108,10 @@ class CIOperationService:
                 # The window changed, so zKillboard must be scanned again
                 op.combat_scanned_at = None
                 updated_fields.extend(["end_time", "combat_scanned_at"])
+            elif mark_closed and not end_time and op.end_time is None:
+                op.end_time = timezone.now()
+                op.combat_scanned_at = None
+                updated_fields.extend(["end_time", "combat_scanned_at"])
             if fleet_commander and not op.fleet_commander:
                 op.fleet_commander = fleet_commander
                 updated_fields.append("fleet_commander")
@@ -115,6 +123,8 @@ class CIOperationService:
             return op, False
 
         # 4. Otherwise create a new operation
+        if mark_closed and not end_time:
+            end_time = timezone.now()
         op = CIOperation.objects.create(
             name=cleaned_name,
             start_time=start_time,

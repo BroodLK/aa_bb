@@ -1215,31 +1215,9 @@ try:
                 or getattr(instance, "start_time", None)
                 or timezone.now()
             )
-            end_time = getattr(instance, "closed_at", None) or getattr(
-                instance, "end_time", None
+            end_time, is_closed = FCRosterIngestor.resolve_fatlink_end_state(
+                instance, start_time
             )
-            if not end_time:
-                raw_closed = getattr(instance, "closed", None)
-                if hasattr(raw_closed, "strftime"):
-                    end_time = raw_closed
-                elif raw_closed is True:
-                    # Standard Library
-                    from datetime import timedelta
-
-                    end_time = (
-                        getattr(instance, "updated_at", None)
-                        or getattr(instance, "updated", None)
-                        or (start_time + timedelta(hours=2))
-                    )
-                elif (
-                    hasattr(instance, "valid_until")
-                    and instance.valid_until
-                    and instance.valid_until <= timezone.now()
-                ):
-                    end_time = instance.valid_until
-
-            if end_time and timezone.is_naive(end_time):
-                end_time = timezone.make_aware(end_time)
 
             fc_user = None
             if hasattr(instance, "character") and instance.character:
@@ -1259,6 +1237,7 @@ try:
                 fleet_commander=fc_user,
                 notes=f"Synced automatically from AFAT FatLink #{instance.id}",
                 external_tag=f"AFAT FatLink #{instance.id}",
+                mark_closed=is_closed,
             )
 
             FCRosterIngestor.ingest_afat_fleet(op, instance.id)

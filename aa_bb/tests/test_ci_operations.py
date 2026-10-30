@@ -354,6 +354,91 @@ class TestCIOperations(TestCase):
                 self.assertIsNotNone(op.end_time)
                 mock_ingest.assert_called_once_with(op, 777)
 
+    def _sync_fatlinks(self, fatlinks):
+        # Standard Library
+        import sys
+        import types
+        from unittest.mock import MagicMock, patch
+
+        afat_mod = types.ModuleType("afat")
+        afat_models_mod = types.ModuleType("afat.models")
+        mock_fatlink_cls = MagicMock()
+        mock_fatlink_cls.created = MagicMock()
+        mock_fatlink_cls.objects.filter.return_value = fatlinks
+        afat_models_mod.FatLink = mock_fatlink_cls
+
+        with patch.dict(
+            sys.modules, {"afat": afat_mod, "afat.models": afat_models_mod}
+        ):
+            with patch.object(FCRosterIngestor, "ingest_afat_fleet"):
+                return FCRosterIngestor.sync_recent_afat_fleets(hours=24)
+
+    @staticmethod
+    def _esi_fatlink(fatlink_id, created, registered):
+        # Standard Library
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            id=fatlink_id,
+            fleet=f"ESI Fleet {fatlink_id}",
+            created=created,
+            character=None,
+            creator=None,
+            is_esilink=True,
+            is_registered_on_esi=registered,
+        )
+
+    def test_sync_disbanded_esi_fleet_concludes_operation(self):
+        fatlink = self._esi_fatlink(901, self.now - timedelta(minutes=40), False)
+
+        op = self._sync_fatlinks([fatlink])[0]
+        self.assertIsNotNone(op.end_time)
+        self.assertLess(abs((timezone.now() - op.end_time).total_seconds()), 60)
+        self.assertTrue(op.is_concluded)
+        self.assertEqual(op.status_label, "Concluded")
+
+        # Re-syncing the same disbanded fleet keeps the original close time
+        first_end = op.end_time
+        op.combat_scanned_at = self.now
+        op.save(update_fields=["combat_scanned_at"])
+        self._sync_fatlinks([fatlink])
+        op.refresh_from_db()
+        self.assertEqual(op.end_time, first_end)
+        self.assertIsNotNone(op.combat_scanned_at)
+
+    def test_sync_open_esi_fleet_stays_open(self):
+        fatlink = self._esi_fatlink(902, self.now - timedelta(minutes=40), True)
+
+        op = self._sync_fatlinks([fatlink])[0]
+        self.assertIsNone(op.end_time)
+        self.assertTrue(op.is_active)
+
+        # Disbanding the fleet closes the existing operation
+        fatlink.is_registered_on_esi = False
+        self._sync_fatlinks([fatlink])
+        op.refresh_from_db()
+        self.assertIsNotNone(op.end_time)
+        self.assertTrue(op.is_concluded)
+
+    def test_mark_closed_keeps_existing_end_time(self):
+        end = self.now - timedelta(minutes=10)
+        op, _ = CIOperationService.find_or_create_operation(
+            name="Closed Fleet",
+            start_time=self.now - timedelta(hours=1),
+            end_time=end,
+            external_tag="AFAT FatLink #903",
+        )
+        op2, created = CIOperationService.find_or_create_operation(
+            name="Closed Fleet",
+            start_time=self.now - timedelta(hours=1),
+            external_tag="AFAT FatLink #903",
+            mark_closed=True,
+        )
+        self.assertFalse(created)
+        self.assertEqual(op2.id, op.id)
+        op.refresh_from_db()
+        self.assertEqual(op.end_time, end)
+
     def test_roster_deduplication_and_deterministic_ids(self):
         op = CIOperationService.create_operation(
             name="Op Dedup Fleet",

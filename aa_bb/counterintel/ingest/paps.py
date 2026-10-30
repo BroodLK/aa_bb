@@ -401,6 +401,46 @@ class FCRosterIngestor:
             return []
 
     @classmethod
+    def resolve_fatlink_end_state(cls, fl, start_time) -> tuple:
+        """
+        Determine whether an AFAT FatLink has concluded.
+        Returns (end_time, is_closed); end_time is None when the link is closed
+        but AFAT records no timestamp (e.g. a disbanded ESI fleet).
+        """
+        # Check datetime closed attributes first
+        end_time = getattr(fl, "closed_at", None) or getattr(fl, "end_time", None)
+        if not end_time:
+            raw_closed = getattr(fl, "closed", None)
+            if hasattr(raw_closed, "strftime"):
+                end_time = raw_closed
+            elif raw_closed is True:
+                end_time = (
+                    getattr(fl, "updated_at", None)
+                    or getattr(fl, "updated", None)
+                    or (start_time + timedelta(hours=2))
+                )
+            elif (
+                hasattr(fl, "valid_until")
+                and fl.valid_until
+                and fl.valid_until <= timezone.now()
+            ):
+                end_time = fl.valid_until
+
+        if end_time:
+            if timezone.is_naive(end_time):
+                end_time = timezone.make_aware(end_time)
+            return end_time, True
+
+        # AFAT unregisters an ESI fleet once it is disbanded or the FC leaves it
+        if (
+            getattr(fl, "is_esilink", False) is True
+            and getattr(fl, "is_registered_on_esi", None) is False
+        ):
+            return None, True
+
+        return None, False
+
+    @classmethod
     def sync_recent_afat_fleets(cls, hours: int = 48) -> list[CIOperation]:
         """
         Scans for recent AFAT/ESI fleets and automatically creates or updates
@@ -432,29 +472,7 @@ class FCRosterIngestor:
                     or getattr(fl, "start_time", None)
                     or timezone.now()
                 )
-                # Check datetime closed attributes first
-                end_time = getattr(fl, "closed_at", None) or getattr(
-                    fl, "end_time", None
-                )
-                if not end_time:
-                    raw_closed = getattr(fl, "closed", None)
-                    if hasattr(raw_closed, "strftime"):
-                        end_time = raw_closed
-                    elif raw_closed is True:
-                        end_time = (
-                            getattr(fl, "updated_at", None)
-                            or getattr(fl, "updated", None)
-                            or (start_time + timedelta(hours=2))
-                        )
-                    elif (
-                        hasattr(fl, "valid_until")
-                        and fl.valid_until
-                        and fl.valid_until <= timezone.now()
-                    ):
-                        end_time = fl.valid_until
-
-                if end_time and timezone.is_naive(end_time):
-                    end_time = timezone.make_aware(end_time)
+                end_time, is_closed = cls.resolve_fatlink_end_state(fl, start_time)
 
                 fc_user = None
                 if hasattr(fl, "character") and fl.character:
@@ -474,6 +492,7 @@ class FCRosterIngestor:
                     fleet_commander=fc_user,
                     notes=f"Synced automatically from AFAT FatLink #{fl.id}",
                     external_tag=f"AFAT FatLink #{fl.id}",
+                    mark_closed=is_closed,
                 )
 
                 cls.ingest_afat_fleet(op, fl.id)
