@@ -100,6 +100,140 @@ class TestCIInvestigation(TestCase):
             is_verified=True,
         )
 
+    # ---- Search / filter / sort on the paginated list pages ----
+
+    def _op_with_finding(self, name, user, anomaly_type="comms_without_pap", risk=0.5):
+        # AA BigBrother
+        from aa_bb.counterintel.models import CIOperation
+
+        op = CIOperation.objects.create(
+            name=name,
+            start_time=self.now - timedelta(hours=3),
+            end_time=self.now - timedelta(hours=2),
+        )
+        CICorrelation.objects.create(
+            operation=op,
+            user=user,
+            anomaly_type=anomaly_type,
+            confidence=0.6,
+            risk_score=risk,
+            algorithm_version="test",
+            explanation="test",
+        )
+        return op
+
+    @staticmethod
+    def _rows(response):
+        return list(response.context["page_obj"].object_list)
+
+    def test_member_directory_search_filter_and_sort(self):
+        self._op_with_finding("Op Directory", self.pilot)
+        self.client.force_login(self.viewer)
+        url = reverse("ci:member_list")
+
+        # Search matches the main character name, not just the username
+        rows = self._rows(self.client.get(url, {"q": "Char_suspect"}))
+        self.assertEqual([u.username for u in rows], ["suspect_pilot"])
+
+        rows = self._rows(self.client.get(url, {"filter": "with_findings"}))
+        self.assertEqual([u.username for u in rows], ["suspect_pilot"])
+        self.assertEqual(rows[0].finding_count, 1)
+
+        rows = self._rows(self.client.get(url, {"sort": "findings", "dir": "desc"}))
+        self.assertEqual(rows[0].username, "suspect_pilot")
+        rows = self._rows(self.client.get(url, {"sort": "member", "dir": "desc"}))
+        self.assertEqual(
+            [u.username for u in rows], sorted((u.username for u in rows), reverse=True)
+        )
+
+        # An unknown sort key falls back to the default instead of erroring
+        self.assertEqual(self.client.get(url, {"sort": "id; drop"}).status_code, 200)
+
+    def test_member_directory_counts_do_not_query_per_row(self):
+        # Django
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        self.client.force_login(self.viewer)
+        url = reverse("ci:member_list")
+        # Warm up one-off session/auth queries before measuring
+        self.client.get(url)
+        with CaptureQueriesContext(connection) as before:
+            self.client.get(url)
+
+        member_state = State.objects.get(name="Member")
+        for idx in range(4):
+            extra = User.objects.create_user(username=f"extra_member_{idx}")
+            UserProfile.objects.filter(user=extra).update(state=member_state)
+        with CaptureQueriesContext(connection) as after:
+            self.client.get(url)
+        self.assertEqual(len(before.captured_queries), len(after.captured_queries))
+
+    def test_risk_matrix_filters_and_sort(self):
+        op = self._op_with_finding("Op Matrix", self.pilot, risk=0.9)
+        CIInvestigation.objects.create(
+            operation=op, subject_user=self.pilot, status="pending"
+        )
+        self.client.force_login(self.viewer)
+        url = reverse("ci:risk_matrix")
+
+        rows = self._rows(self.client.get(url, {"open_cases": "1"}))
+        self.assertEqual([r["user"].username for r in rows], ["suspect_pilot"])
+
+        rows = self._rows(self.client.get(url, {"q": "Char_ci_viewer"}))
+        self.assertEqual([r["user"].username for r in rows], ["ci_viewer"])
+
+        member_state = State.objects.get(name="Member")
+        self.assertTrue(self._rows(self.client.get(url, {"state": member_state.id})))
+        self.assertFalse(self._rows(self.client.get(url, {"state": 999999})))
+
+        rows = self._rows(self.client.get(url, {"sort": "member", "dir": "asc"}))
+        names = [r["user"].username for r in rows]
+        self.assertEqual(names, sorted(names, key=str.lower))
+        # Default sort is highest risk first
+        rows = self._rows(self.client.get(url))
+        self.assertEqual(rows[0]["user"].username, "suspect_pilot")
+        self.assertEqual(self.client.get(url, {"sort": "bogus"}).status_code, 200)
+
+    def test_review_queue_search_filter_and_sort(self):
+        op_a = self._op_with_finding("Op Alpha Strike", self.pilot)
+        op_b = self._op_with_finding(
+            "Op Bravo Hold", self.viewer, anomaly_type="pre_contact_disconnect"
+        )
+        case_a = CIInvestigation.objects.create(
+            operation=op_a, subject_user=self.pilot, status="pending"
+        )
+        case_b = CIInvestigation.objects.create(
+            operation=op_b,
+            subject_user=self.viewer,
+            status="pending",
+            assigned_reviewer=self.reviewer,
+        )
+        self.client.force_login(self.reviewer)
+        url = reverse("ci:review_queue")
+
+        def ids(params):
+            return [c.id for c in self._rows(self.client.get(url, params))]
+
+        self.assertEqual(ids({"q": "Alpha"}), [case_a.id])
+        self.assertEqual(ids({"q": f"#{case_b.id}"}), [case_b.id])
+        self.assertEqual(ids({"q": "Char_suspect"}), [case_a.id])
+        self.assertEqual(ids({"reviewer": "unassigned"}), [case_a.id])
+        self.assertEqual(ids({"reviewer": "mine"}), [case_b.id])
+        self.assertEqual(ids({"anomaly": "pre_contact_disconnect"}), [case_b.id])
+        self.assertEqual(ids({"sort": "created", "dir": "asc"}), [case_a.id, case_b.id])
+        self.assertEqual(ids({}), [case_b.id, case_a.id])
+
+        # Status buttons keep the other filters (hrefs are HTML-escaped)
+        # Standard Library
+        import html
+
+        response = self.client.get(url, {"q": "Alpha", "reviewer": "unassigned"})
+        self.assertIn(
+            "?status=all&q=Alpha&reviewer=unassigned",
+            html.unescape(response.content.decode()),
+        )
+
     def test_agent_synthesis_and_structured_findings(self):
         op = CIOperationService.create_operation(
             name="Op Iron Veil",

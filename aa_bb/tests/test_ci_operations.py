@@ -784,6 +784,37 @@ class TestCIOperations(TestCase):
         self.assertEqual(op.notes, "Updated operational brief.")
         self.assertTrue(op.window_locked)
 
+    def test_timeline_searches_and_zkill_links(self):
+        op = CIOperationService.create_operation(
+            name="Op Linked Kills",
+            start_time=self.now - timedelta(hours=2),
+            end_time=self.now - timedelta(hours=1),
+        )
+        FCRosterIngestor.ingest_fc_roster(
+            operation=op, roster_entries=[1001], recorded_at=op.start_time
+        )
+        ZKillIngestor.ingest_killmail(
+            {
+                "killmail_id": 424242,
+                "killmail_time": (op.start_time + timedelta(minutes=10)).isoformat(),
+                "victim": {"character_id": 99999},
+                "attackers": [{"character_id": 1001}],
+            },
+            operation=op,
+        )
+        self.client.force_login(self.officer)
+        response = self.client.get(reverse("ci:operation_timeline", args=[op.id]))
+        content = response.content.decode()
+        self.assertIn('id="ciRosterSearch"', content)
+        self.assertIn('id="ciEventTextFilter"', content)
+        self.assertIn('class="list-group-item d-flex', content)
+        self.assertIn("ci-roster-row", content)
+        # Both the combat table and the chronological event link to zKillboard
+        link = 'href="https://zkillboard.com/kill/424242/" target="_blank" rel="noopener noreferrer"'
+        self.assertEqual(content.count(link), 2)
+        # Window bar times no longer use the dark monospace style
+        self.assertNotIn('class="font-monospace fw-bold" title="Start"', content)
+
     def test_help_page(self):
         # AA BigBrother
         from aa_bb.counterintel.services.correlation import CorrelationEngine

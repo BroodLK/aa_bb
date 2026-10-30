@@ -1,0 +1,12 @@
+{% comment %}
+Sortable column header. Include with: key, label, and optionally first_dir
+("desc" for columns where biggest-first is the natural first click).
+Needs sort, dir and sort_querystring from the view's _sort_context().
+{% endcomment %}
+<th class="text-nowrap {{ th_class }}">
+    <a href="?sort={{ key }}&dir={% if sort == key %}{% if dir == 'asc' %}desc{% else %}asc{% endif %}{% else %}{{ first_dir|default:'asc' }}{% endif %}{% if sort_querystring %}&{{ sort_querystring }}{% endif %}"
+        class="text-reset text-decoration-none" title="Sort by {{ label }}">
+        {{ label }}
+        {% if sort == key %}<i class="fas fa-sort-{% if dir == 'asc' %}up{% else %}down{% endif %} ms-1"></i>{% else %}<i class="fas fa-sort ms-1 opacity-50"></i>{% endif %}
+    </a>
+</th>

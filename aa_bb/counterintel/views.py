@@ -11,7 +11,17 @@ from django.contrib import messages
 from django.contrib.auth.decorators import permission_required
 from django.contrib.auth.models import User
 from django.core.paginator import Paginator
-from django.db.models import Prefetch
+from django.db.models import (
+    Count,
+    Exists,
+    F,
+    IntegerField,
+    OuterRef,
+    Prefetch,
+    Q,
+    Subquery,
+)
+from django.db.models.functions import Coalesce
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -55,6 +65,51 @@ def _fc_candidates():
         .select_related("profile__main_character")
         .order_by("username")[:200]
     )
+
+
+def _count_per_user(model):
+    """Per-user row count as a subquery, so several counts don't multiply rows."""
+    counts = (
+        model.objects.filter(user=OuterRef("pk"))
+        .order_by()
+        .values("user")
+        .annotate(c=Count("id"))
+        .values("c")
+    )
+    return Coalesce(Subquery(counts, output_field=IntegerField()), 0)
+
+
+def _querystring(request, drop=("page",)) -> str:
+    """Current GET parameters without ``drop``, for links that keep filters."""
+    params = request.GET.copy()
+    for key in drop:
+        params.pop(key, None)
+    return params.urlencode()
+
+
+def _sort_param(request, allowed: dict, default: str, default_dir: str = "asc"):
+    """
+    Whitelisted ``?sort=<key>&dir=asc|desc``. Returns (key, descending, value)
+    where value is ``allowed[key]``; unknown keys fall back to the default.
+    """
+    key = request.GET.get("sort", default)
+    if key not in allowed:
+        key = default
+    direction = request.GET.get("dir", default_dir)
+    if direction not in ("asc", "desc"):
+        direction = default_dir
+    return key, direction == "desc", allowed[key]
+
+
+def _sort_context(request, sort_key: str, descending: bool) -> dict:
+    """Template context consumed by _sort_header.html."""
+    return {
+        "sort": sort_key,
+        "dir": "desc" if descending else "asc",
+        # Header links replace sort/dir and reset to the first page
+        "sort_querystring": _querystring(request, drop=("page", "sort", "dir")),
+        "querystring": _querystring(request),
+    }
 
 
 def _secrecy_levels() -> list:
@@ -240,12 +295,48 @@ def member_list(request):
     users = (
         User.objects.filter(is_active=True, profile__state__in=member_states)
         .select_related("profile__main_character", "userstatus")
-        .order_by("username")
+        .annotate(
+            session_count=_count_per_user(CISession),
+            fleet_count=_count_per_user(CIOperationParticipant),
+            finding_count=_count_per_user(CICorrelation),
+        )
         .distinct()
     )
     search_q = request.GET.get("q", "").strip()
     if search_q:
-        users = users.filter(username__icontains=search_q)
+        users = users.filter(
+            Q(username__icontains=search_q)
+            | Q(profile__main_character__character_name__icontains=search_q)
+        )
+
+    member_filter = request.GET.get("filter", "")
+    member_filters = {
+        "with_findings": Q(finding_count__gt=0),
+        "no_fleets": Q(fleet_count=0),
+        "no_comms": Q(session_count=0),
+        "never_discord": Q(userstatus__last_discord_message_at__isnull=True),
+    }
+    if member_filter in member_filters:
+        users = users.filter(member_filters[member_filter])
+
+    sort_key, descending, order_field = _sort_param(
+        request,
+        {
+            "member": "username",
+            "main": "profile__main_character__character_name",
+            "sessions": "session_count",
+            "fleets": "fleet_count",
+            "discord": "userstatus__last_discord_message_at",
+            "findings": "finding_count",
+        },
+        default="member",
+    )
+    order = (
+        F(order_field).desc(nulls_last=True)
+        if descending
+        else F(order_field).asc(nulls_last=True)
+    )
+    users = users.order_by(order, "username")
 
     paginator = Paginator(users, 30)
     page_obj = paginator.get_page(request.GET.get("page"))
@@ -256,6 +347,14 @@ def member_list(request):
         {
             "page_obj": page_obj,
             "search_q": search_q,
+            "member_filter": member_filter,
+            "member_filter_choices": [
+                ("with_findings", _("With findings")),
+                ("no_fleets", _("No fleets")),
+                ("no_comms", _("No comms")),
+                ("never_discord", _("Never on Discord")),
+            ],
+            **_sort_context(request, sort_key, descending),
             "title": _("Counterintelligence - Member Directory"),
         },
     )
@@ -326,11 +425,69 @@ def review_queue(request):
     """
     status_filter = request.GET.get("status", "pending")
     investigations = CIInvestigation.objects.select_related(
-        "subject_user", "operation", "assigned_reviewer"
-    ).order_by("-created_at")
+        "subject_user__profile__main_character", "operation", "assigned_reviewer"
+    )
 
     if status_filter and status_filter != "all":
         investigations = investigations.filter(status=status_filter)
+
+    search_q = request.GET.get("q", "").strip()
+    if search_q:
+        text_match = (
+            Q(subject_user__username__icontains=search_q)
+            | Q(
+                subject_user__profile__main_character__character_name__icontains=search_q
+            )
+            | Q(operation__name__icontains=search_q)
+        )
+        case_number = search_q.lstrip("#")
+        if case_number.isdigit():
+            text_match |= Q(id=int(case_number))
+        investigations = investigations.filter(text_match)
+
+    reviewer_filter = request.GET.get("reviewer", "")
+    if reviewer_filter == "unassigned":
+        investigations = investigations.filter(assigned_reviewer__isnull=True)
+    elif reviewer_filter == "mine":
+        investigations = investigations.filter(assigned_reviewer=request.user)
+
+    anomaly_filter = request.GET.get("anomaly", "")
+    anomaly_choices = sorted(
+        CICorrelation.objects.order_by()
+        .values_list("anomaly_type", flat=True)
+        .distinct()
+    )
+    if anomaly_filter in anomaly_choices:
+        investigations = investigations.filter(
+            Exists(
+                CICorrelation.objects.filter(
+                    user=OuterRef("subject_user"),
+                    operation=OuterRef("operation"),
+                    anomaly_type=anomaly_filter,
+                )
+            )
+        )
+
+    sort_key, descending, order_fields = _sort_param(
+        request,
+        {
+            "created": ("created_at",),
+            "case": ("id",),
+            "subject": ("subject_user__username", "-created_at"),
+            "operation": ("operation__start_time", "-created_at"),
+            "status": ("status", "-created_at"),
+            "reviewer": ("assigned_reviewer__username", "-created_at"),
+        },
+        default="created",
+        default_dir="desc",
+    )
+    primary, *tiebreak = order_fields
+    primary_order = (
+        F(primary).desc(nulls_last=True)
+        if descending
+        else F(primary).asc(nulls_last=True)
+    )
+    investigations = investigations.order_by(primary_order, *tiebreak)
 
     paginator = Paginator(investigations, 20)
     page_obj = paginator.get_page(request.GET.get("page"))
@@ -346,6 +503,20 @@ def review_queue(request):
             "page_obj": page_obj,
             "current_status": status_filter,
             "status_choices": CIInvestigation.STATUS_CHOICES,
+            "search_q": search_q,
+            "reviewer_filter": reviewer_filter,
+            "anomaly_filter": anomaly_filter,
+            "anomaly_choices": anomaly_choices,
+            "status_querystring": _querystring(request, drop=("page", "status")),
+            "status_buttons": [
+                ("all", _("All")),
+                ("pending", _("Needs Review")),
+                ("in_review", _("In Review")),
+                ("escalated", _("Escalated")),
+                ("cleared", _("Cleared")),
+                ("dismissed", _("Dismissed")),
+            ],
+            **_sort_context(request, sort_key, descending),
             "title": _("Counterintelligence - Investigation Review Queue"),
         },
     )
@@ -499,9 +670,16 @@ def risk_matrix(request):
 
     search_q = request.GET.get("q", "").strip()
     tier_filter = request.GET.get("tier", "").strip().upper()
+    state_filter = request.GET.get("state", "").strip()
+    open_cases_only = request.GET.get("open_cases") == "1"
 
     if search_q:
-        users_qs = users_qs.filter(username__icontains=search_q)
+        users_qs = users_qs.filter(
+            Q(username__icontains=search_q)
+            | Q(profile__main_character__character_name__icontains=search_q)
+        )
+    if state_filter.isdigit():
+        users_qs = users_qs.filter(profile__state_id=int(state_filter))
 
     resolved_cases = set(
         CIInvestigation.objects.filter(status__in=("cleared", "dismissed")).values_list(
@@ -548,6 +726,8 @@ def risk_matrix(request):
 
         if tier_filter and tier != tier_filter:
             continue
+        if open_cases_only and not open_case_counts.get(u.id):
+            continue
 
         profile = getattr(u, "profile", None)
         user_status = getattr(u, "userstatus", None)
@@ -575,10 +755,25 @@ def risk_matrix(request):
             }
         )
 
-    # Sort descending by risk score
-    all_members_data.sort(
-        key=lambda x: (x["risk_score"], x["anomaly_count"]), reverse=True
+    sort_key, descending, sort_value = _sort_param(
+        request,
+        {
+            "risk": lambda x: (x["risk_score"], x["anomaly_count"]),
+            "member": lambda x: x["user"].username.lower(),
+            "state": lambda x: str(x["state"] or "").lower(),
+            "findings": lambda x: x["anomaly_count"],
+            "last_finding": lambda x: x["last_finding_at"],
+            "open_cases": lambda x: x["open_cases"],
+            "discord": lambda x: x["last_discord"],
+        },
+        default="risk",
+        default_dir="desc",
     )
+    # Rows without a value (no finding, never on Discord) go last either way
+    present = [x for x in all_members_data if sort_value(x) is not None]
+    missing = [x for x in all_members_data if sort_value(x) is None]
+    present.sort(key=sort_value, reverse=descending)
+    all_members_data = present + missing
 
     paginator = Paginator(all_members_data, 25)
     page_obj = paginator.get_page(request.GET.get("page"))
@@ -590,6 +785,11 @@ def risk_matrix(request):
             "page_obj": page_obj,
             "search_q": search_q,
             "tier_filter": tier_filter,
+            "state_filter": state_filter,
+            "open_cases_only": open_cases_only,
+            "member_states": member_states,
+            "tier_querystring": _querystring(request, drop=("page", "tier")),
+            **_sort_context(request, sort_key, descending),
             "high_risk_count": high_risk_count,
             "med_risk_count": med_risk_count,
             "low_risk_count": low_risk_count,

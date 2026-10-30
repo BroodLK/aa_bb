@@ -43,19 +43,34 @@
             <h5 class="mb-0"><i class="fas fa-chart-line me-2"></i>{% translate "Alliance Member Risk Matrix" %}</h5>
             <small class="text-muted">{% blocktranslate %}Highest risk among findings from operations in the last {{ lookback_days }} days, excluding overridden anomaly types and cleared/dismissed cases.{% endblocktranslate %}</small>
         </div>
-        <div class="d-flex align-items-center gap-2">
+        <div class="d-flex align-items-center gap-2 flex-wrap">
             <div class="btn-group btn-group-sm" role="group">
-                <a href="?q={{ search_q }}" class="btn {% if not tier_filter %}btn-primary{% else %}btn-outline-secondary{% endif %}">{% translate "All" %}</a>
-                <a href="?tier=HIGH&q={{ search_q }}" class="btn {% if tier_filter == 'HIGH' %}btn-danger{% else %}btn-outline-danger{% endif %}">{% translate "High Risk" %}</a>
-                <a href="?tier=MEDIUM&q={{ search_q }}" class="btn {% if tier_filter == 'MEDIUM' %}btn-warning{% else %}btn-outline-warning{% endif %}">{% translate "Medium" %}</a>
-                <a href="?tier=LOW&q={{ search_q }}" class="btn {% if tier_filter == 'LOW' %}btn-success{% else %}btn-outline-success{% endif %}">{% translate "Low" %}</a>
+                <a href="?{{ tier_querystring }}" class="btn {% if not tier_filter %}btn-primary{% else %}btn-outline-secondary{% endif %}">{% translate "All" %}</a>
+                <a href="?tier=HIGH{% if tier_querystring %}&{{ tier_querystring }}{% endif %}" class="btn {% if tier_filter == 'HIGH' %}btn-danger{% else %}btn-outline-danger{% endif %}">{% translate "High Risk" %}</a>
+                <a href="?tier=MEDIUM{% if tier_querystring %}&{{ tier_querystring }}{% endif %}" class="btn {% if tier_filter == 'MEDIUM' %}btn-warning{% else %}btn-outline-warning{% endif %}">{% translate "Medium" %}</a>
+                <a href="?tier=LOW{% if tier_querystring %}&{{ tier_querystring }}{% endif %}" class="btn {% if tier_filter == 'LOW' %}btn-success{% else %}btn-outline-success{% endif %}">{% translate "Low" %}</a>
             </div>
-            <form method="get" class="d-flex">
+            <form method="get" class="d-flex align-items-center gap-2">
                 {% if tier_filter %}
                 <input type="hidden" name="tier" value="{{ tier_filter }}">
                 {% endif %}
-                <input type="text" name="q" value="{{ search_q }}" class="form-control form-control-sm bg-dark text-light border-secondary" placeholder="{% translate 'Search member...' %}">
-                <button type="submit" class="btn btn-sm btn-secondary ms-1"><i class="fas fa-search"></i></button>
+                <input type="hidden" name="sort" value="{{ sort }}">
+                <input type="hidden" name="dir" value="{{ dir }}">
+                <select name="state" class="form-select form-select-sm bg-dark text-light border-secondary" aria-label="{% translate 'Filter by state' %}" onchange="this.form.submit()">
+                    <option value="">{% translate "All states" %}</option>
+                    {% for state in member_states %}
+                    <option value="{{ state.id }}" {% if state_filter == state.id|stringformat:"s" %}selected{% endif %}>{{ state.name }}</option>
+                    {% endfor %}
+                </select>
+                <div class="form-check form-switch text-nowrap mb-0">
+                    <input class="form-check-input" type="checkbox" role="switch" id="riskOpenCases" name="open_cases" value="1" {% if open_cases_only %}checked{% endif %} onchange="this.form.submit()">
+                    <label class="form-check-label small" for="riskOpenCases">{% translate "Open cases" %}</label>
+                </div>
+                <input type="search" name="q" value="{{ search_q }}" class="form-control form-control-sm bg-dark text-light border-secondary" placeholder="{% translate 'Member or main character...' %}" aria-label="{% translate 'Search members' %}">
+                <button type="submit" class="btn btn-sm btn-secondary"><i class="fas fa-search"></i></button>
+                {% if search_q or state_filter or open_cases_only or tier_filter %}
+                <a href="?sort={{ sort }}&dir={{ dir }}" class="btn btn-sm btn-outline-secondary" title="{% translate 'Clear filters' %}"><i class="fas fa-times"></i></a>
+                {% endif %}
             </form>
         </div>
     </div>
@@ -63,14 +78,14 @@
         <table class="table table-dark table-hover mb-0 align-middle">
             <thead class="table-secondary">
                 <tr>
-                    <th>{% translate "Member / Main" %}</th>
-                    <th>{% translate "State" %}</th>
-                    <th>{% translate "Risk Index" %}</th>
+                    {% translate "Member / Main" as label %}{% include "aa_bb/counterintel/_sort_header.html" with key="member" label=label %}
+                    {% translate "State" as label %}{% include "aa_bb/counterintel/_sort_header.html" with key="state" label=label %}
+                    {% translate "Risk Index" as label %}{% include "aa_bb/counterintel/_sort_header.html" with key="risk" label=label first_dir="desc" %}
                     <th>{% translate "Risk Tier" %}</th>
-                    <th>{% translate "Anomalies Flagged" %}</th>
-                    <th>{% translate "Last Finding" %}</th>
-                    <th>{% translate "Open Cases" %}</th>
-                    <th>{% translate "Discord Text Activity" %}</th>
+                    {% translate "Anomalies Flagged" as label %}{% include "aa_bb/counterintel/_sort_header.html" with key="findings" label=label first_dir="desc" %}
+                    {% translate "Last Finding" as label %}{% include "aa_bb/counterintel/_sort_header.html" with key="last_finding" label=label first_dir="desc" %}
+                    {% translate "Open Cases" as label %}{% include "aa_bb/counterintel/_sort_header.html" with key="open_cases" label=label first_dir="desc" %}
+                    {% translate "Discord Text Activity" as label %}{% include "aa_bb/counterintel/_sort_header.html" with key="discord" label=label first_dir="desc" %}
                     <th class="text-end">{% translate "Actions" %}</th>
                 </tr>
             </thead>
@@ -152,7 +167,7 @@
             <ul class="pagination pagination-sm mb-0">
                 {% if page_obj.has_previous %}
                 <li class="page-item">
-                    <a class="page-link bg-dark text-light border-secondary" href="?page={{ page_obj.previous_page_number }}{% if search_q %}&q={{ search_q }}{% endif %}{% if tier_filter %}&tier={{ tier_filter }}{% endif %}">&laquo;</a>
+                    <a class="page-link bg-dark text-light border-secondary" href="?page={{ page_obj.previous_page_number }}{% if querystring %}&{{ querystring }}{% endif %}">&laquo;</a>
                 </li>
                 {% endif %}
                 <li class="page-item disabled">
@@ -162,7 +177,7 @@
                 </li>
                 {% if page_obj.has_next %}
                 <li class="page-item">
-                    <a class="page-link bg-dark text-light border-secondary" href="?page={{ page_obj.next_page_number }}{% if search_q %}&q={{ search_q }}{% endif %}{% if tier_filter %}&tier={{ tier_filter }}{% endif %}">&raquo;</a>
+                    <a class="page-link bg-dark text-light border-secondary" href="?page={{ page_obj.next_page_number }}{% if querystring %}&{{ querystring }}{% endif %}">&raquo;</a>
                 </li>
                 {% endif %}
             </ul>

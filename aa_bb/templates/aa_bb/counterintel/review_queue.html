@@ -6,25 +6,54 @@
     <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
         <h5 class="mb-0"><i class="fas fa-shield-alt me-2"></i>{% translate "Counterintelligence Investigation Review Queue" %}</h5>
         <div class="btn-group btn-group-sm">
-            <a href="?status=all" class="btn btn-outline-light {% if current_status == 'all' %}active bg-light text-dark fw-bold{% endif %}" {% if current_status == 'all' %}style="color: #212529 !important; background-color: #f8f9fa !important; border-color: #f8f9fa !important;"{% endif %}>{% translate "All" %}</a>
-            <a href="?status=pending" class="btn btn-outline-light {% if current_status == 'pending' %}active bg-light text-dark fw-bold{% endif %}" {% if current_status == 'pending' %}style="color: #212529 !important; background-color: #f8f9fa !important; border-color: #f8f9fa !important;"{% endif %}>{% translate "Needs Review" %}</a>
-            <a href="?status=in_review" class="btn btn-outline-light {% if current_status == 'in_review' %}active bg-light text-dark fw-bold{% endif %}" {% if current_status == 'in_review' %}style="color: #212529 !important; background-color: #f8f9fa !important; border-color: #f8f9fa !important;"{% endif %}>{% translate "In Review" %}</a>
-            <a href="?status=escalated" class="btn btn-outline-light {% if current_status == 'escalated' %}active bg-light text-dark fw-bold{% endif %}" {% if current_status == 'escalated' %}style="color: #212529 !important; background-color: #f8f9fa !important; border-color: #f8f9fa !important;"{% endif %}>{% translate "Escalated" %}</a>
-            <a href="?status=cleared" class="btn btn-outline-light {% if current_status == 'cleared' %}active bg-light text-dark fw-bold{% endif %}" {% if current_status == 'cleared' %}style="color: #212529 !important; background-color: #f8f9fa !important; border-color: #f8f9fa !important;"{% endif %}>{% translate "Cleared" %}</a>
+            {% for value, label in status_buttons %}
+            <a href="?status={{ value }}{% if status_querystring %}&{{ status_querystring }}{% endif %}" class="btn btn-outline-light {% if current_status == value %}active bg-light text-dark fw-bold{% endif %}" {% if current_status == value %}style="color: #212529 !important; background-color: #f8f9fa !important; border-color: #f8f9fa !important;"{% endif %}>{{ label }}</a>
+            {% endfor %}
         </div>
+    </div>
+    <div class="p-2 bg-light border-bottom">
+        <form method="get" class="row g-2 align-items-center">
+            <input type="hidden" name="status" value="{{ current_status }}">
+            <input type="hidden" name="sort" value="{{ sort }}">
+            <input type="hidden" name="dir" value="{{ dir }}">
+            <div class="col-md-5">
+                <input type="search" name="q" value="{{ search_q }}" class="form-control form-control-sm" placeholder="{% translate 'Subject, main character, operation or case #' %}" aria-label="{% translate 'Search cases' %}">
+            </div>
+            <div class="col-md-3">
+                <select name="reviewer" class="form-select form-select-sm" aria-label="{% translate 'Filter by reviewer' %}" onchange="this.form.submit()">
+                    <option value="">{% translate "Any reviewer" %}</option>
+                    <option value="unassigned" {% if reviewer_filter == "unassigned" %}selected{% endif %}>{% translate "Unassigned" %}</option>
+                    <option value="mine" {% if reviewer_filter == "mine" %}selected{% endif %}>{% translate "Assigned to me" %}</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <select name="anomaly" class="form-select form-select-sm" aria-label="{% translate 'Filter by finding type' %}" onchange="this.form.submit()">
+                    <option value="">{% translate "Any finding type" %}</option>
+                    {% for anomaly_type in anomaly_choices %}
+                    <option value="{{ anomaly_type }}" {% if anomaly_filter == anomaly_type %}selected{% endif %}>{{ anomaly_type }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-1 d-flex gap-1">
+                <button type="submit" class="btn btn-sm btn-primary" title="{% translate 'Search' %}"><i class="fas fa-search"></i></button>
+                {% if search_q or reviewer_filter or anomaly_filter %}
+                <a href="?status={{ current_status }}&sort={{ sort }}&dir={{ dir }}" class="btn btn-sm btn-outline-secondary" title="{% translate 'Clear filters' %}"><i class="fas fa-times"></i></a>
+                {% endif %}
+            </div>
+        </form>
     </div>
     <div class="card-body">
         <div class="table-responsive">
             <table class="table table-striped table-hover align-middle">
                 <thead>
                     <tr>
-                        <th>{% translate "Case #" %}</th>
-                        <th>{% translate "Subject" %}</th>
-                        <th>{% translate "Operation" %}</th>
-                        <th>{% translate "Status" %}</th>
+                        {% translate "Case #" as label %}{% include "aa_bb/counterintel/_sort_header.html" with key="case" label=label first_dir="desc" %}
+                        {% translate "Subject" as label %}{% include "aa_bb/counterintel/_sort_header.html" with key="subject" label=label %}
+                        {% translate "Operation" as label %}{% include "aa_bb/counterintel/_sort_header.html" with key="operation" label=label first_dir="desc" %}
+                        {% translate "Status" as label %}{% include "aa_bb/counterintel/_sort_header.html" with key="status" label=label %}
                         <th>{% translate "Plausible Benign Hypotheses" %}</th>
-                        <th>{% translate "Reviewer" %}</th>
-                        <th>{% translate "Created (UTC)" %}</th>
+                        {% translate "Reviewer" as label %}{% include "aa_bb/counterintel/_sort_header.html" with key="reviewer" label=label %}
+                        {% translate "Created (UTC)" as label %}{% include "aa_bb/counterintel/_sort_header.html" with key="created" label=label first_dir="desc" %}
                         <th>{% translate "Actions" %}</th>
                     </tr>
                 </thead>
@@ -146,11 +175,11 @@
         <nav aria-label="Page navigation">
             <ul class="pagination justify-content-center">
                 {% if page_obj.has_previous %}
-                    <li class="page-item"><a class="page-link" href="?page={{ page_obj.previous_page_number }}&status={{ current_status }}">{% translate "Previous" %}</a></li>
+                    <li class="page-item"><a class="page-link" href="?page={{ page_obj.previous_page_number }}&status={{ current_status }}{% if status_querystring %}&{{ status_querystring }}{% endif %}">{% translate "Previous" %}</a></li>
                 {% endif %}
                 <li class="page-item disabled"><span class="page-link">{{ page_obj.number }} / {{ page_obj.paginator.num_pages }}</span></li>
                 {% if page_obj.has_next %}
-                    <li class="page-item"><a class="page-link" href="?page={{ page_obj.next_page_number }}&status={{ current_status }}">{% translate "Next" %}</a></li>
+                    <li class="page-item"><a class="page-link" href="?page={{ page_obj.next_page_number }}&status={{ current_status }}{% if status_querystring %}&{{ status_querystring }}{% endif %}">{% translate "Next" %}</a></li>
                 {% endif %}
             </ul>
         </nav>

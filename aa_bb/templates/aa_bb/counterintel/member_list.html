@@ -3,11 +3,22 @@
 
 {% block ci_content %}
 <div class="card">
-    <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+    <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center flex-wrap gap-2">
         <h5 class="mb-0"><i class="fas fa-users-cog me-2"></i>{% translate "Member Counterintelligence Directory" %}</h5>
-        <form method="get" class="d-flex">
-            <input type="text" name="q" class="form-control form-control-sm me-2" placeholder="{% translate 'Search member...' %}" value="{{ search_q }}">
-            <button type="submit" class="btn btn-sm btn-primary">{% translate "Search" %}</button>
+        <form method="get" class="d-flex gap-2">
+            <input type="hidden" name="sort" value="{{ sort }}">
+            <input type="hidden" name="dir" value="{{ dir }}">
+            <input type="search" name="q" class="form-control form-control-sm" placeholder="{% translate 'Member or main character...' %}" value="{{ search_q }}" aria-label="{% translate 'Search members' %}">
+            <select name="filter" class="form-select form-select-sm" aria-label="{% translate 'Filter members' %}" onchange="this.form.submit()">
+                <option value="">{% translate "All members" %}</option>
+                {% for value, label in member_filter_choices %}
+                <option value="{{ value }}" {% if member_filter == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+            <button type="submit" class="btn btn-sm btn-primary"><i class="fas fa-search"></i></button>
+            {% if search_q or member_filter %}
+            <a href="?sort={{ sort }}&dir={{ dir }}" class="btn btn-sm btn-outline-light" title="{% translate 'Clear filters' %}"><i class="fas fa-times"></i></a>
+            {% endif %}
         </form>
     </div>
     <div class="card-body">
@@ -15,12 +26,12 @@
             <table class="table table-striped table-hover align-middle">
                 <thead>
                     <tr>
-                        <th>{% translate "Member" %}</th>
-                        <th>{% translate "Main Character" %}</th>
-                        <th>{% translate "Comms Sessions" %}</th>
-                        <th>{% translate "Fleet Participations" %}</th>
-                        <th>{% translate "Last Discord Chat" %}</th>
-                        <th>{% translate "Anomalies Flagged" %}</th>
+                        {% translate "Member" as label %}{% include "aa_bb/counterintel/_sort_header.html" with key="member" label=label %}
+                        {% translate "Main Character" as label %}{% include "aa_bb/counterintel/_sort_header.html" with key="main" label=label %}
+                        {% translate "Comms Sessions" as label %}{% include "aa_bb/counterintel/_sort_header.html" with key="sessions" label=label first_dir="desc" %}
+                        {% translate "Fleet Participations" as label %}{% include "aa_bb/counterintel/_sort_header.html" with key="fleets" label=label first_dir="desc" %}
+                        {% translate "Last Discord Chat" as label %}{% include "aa_bb/counterintel/_sort_header.html" with key="discord" label=label first_dir="desc" %}
+                        {% translate "Anomalies Flagged" as label %}{% include "aa_bb/counterintel/_sort_header.html" with key="findings" label=label first_dir="desc" %}
                         <th>{% translate "Action" %}</th>
                     </tr>
                 </thead>
@@ -29,8 +40,8 @@
                     <tr>
                         <td><strong>{{ u.username }}</strong></td>
                         <td>{{ u.profile.main_character.character_name|default:"-" }}</td>
-                        <td><span class="badge bg-info text-dark">{{ u.ci_sessions.count }}</span></td>
-                        <td><span class="badge bg-primary">{{ u.ci_participations.count }}</span></td>
+                        <td><span class="badge bg-info text-dark">{{ u.session_count }}</span></td>
+                        <td><span class="badge bg-primary">{{ u.fleet_count }}</span></td>
                         <td>
                             {% if u.userstatus.last_discord_message_at %}
                                 <span class="badge bg-secondary" title="{{ u.userstatus.last_discord_message_at|date:'Y-m-d H:i' }} UTC">
@@ -41,8 +52,8 @@
                             {% endif %}
                         </td>
                         <td>
-                            {% if u.ci_correlations.count %}
-                                <span class="badge bg-warning text-dark">{{ u.ci_correlations.count }}</span>
+                            {% if u.finding_count %}
+                                <span class="badge bg-warning text-dark">{{ u.finding_count }}</span>
                             {% else %}
                                 <span class="badge bg-success">0</span>
                             {% endif %}
@@ -68,11 +79,11 @@
         <nav aria-label="Page navigation">
             <ul class="pagination justify-content-center">
                 {% if page_obj.has_previous %}
-                    <li class="page-item"><a class="page-link" href="?page={{ page_obj.previous_page_number }}{% if search_q %}&q={{ search_q }}{% endif %}">{% translate "Previous" %}</a></li>
+                    <li class="page-item"><a class="page-link" href="?page={{ page_obj.previous_page_number }}{% if querystring %}&{{ querystring }}{% endif %}">{% translate "Previous" %}</a></li>
                 {% endif %}
                 <li class="page-item disabled"><span class="page-link">{{ page_obj.number }} / {{ page_obj.paginator.num_pages }}</span></li>
                 {% if page_obj.has_next %}
-                    <li class="page-item"><a class="page-link" href="?page={{ page_obj.next_page_number }}{% if search_q %}&q={{ search_q }}{% endif %}">{% translate "Next" %}</a></li>
+                    <li class="page-item"><a class="page-link" href="?page={{ page_obj.next_page_number }}{% if querystring %}&{{ querystring }}{% endif %}">{% translate "Next" %}</a></li>
                 {% endif %}
             </ul>
         </nav>

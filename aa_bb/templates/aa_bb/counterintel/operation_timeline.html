@@ -391,7 +391,7 @@
         <!-- FC Participants Card -->
         <div class="card">
             <div class="card-header bg-secondary text-white d-flex justify-content-between align-items-center">
-                <h6 class="mb-0"><i class="fas fa-clipboard-check me-2"></i>{% translate "FC Roster Participants" %} ({{ timeline.participants|length }})</h6>
+                <h6 class="mb-0"><i class="fas fa-clipboard-check me-2"></i>{% translate "FC Roster Participants" %} (<span id="ciRosterCount">{{ timeline.participants|length }}</span>)</h6>
                 <button class="btn btn-sm btn-light py-0 px-2" type="button" data-bs-toggle="collapse" data-bs-target="#addParticipantCollapse" title="{% translate 'Add Individual Pilot' %}">
                     <i class="fas fa-user-plus me-1"></i>{% translate "Add Pilot" %}
                 </button>
@@ -405,10 +405,16 @@
                     </div>
                 </form>
             </div>
+            {% if timeline.participants %}
+            <div class="p-2 border-bottom">
+                <input type="search" id="ciRosterSearch" class="form-control form-control-sm" placeholder="{% translate 'Search pilot, member or character ID' %}" aria-label="{% translate 'Search roster' %}">
+            </div>
+            {% endif %}
             <div class="card-body p-0" style="max-height: 450px; overflow-y: auto;">
-                <ul class="list-group list-group-flush">
+                <ul class="list-group list-group-flush" id="ciRosterList">
                     {% for p in timeline.participants %}
-                    <li class="list-group-item d-flex justify-content-between align-items-center py-2">
+                    <li class="list-group-item d-flex justify-content-between align-items-center py-2 ci-roster-row"
+                        data-search="{{ p.character_name|lower }} {{ p.username|lower }} {{ p.character_id|default_if_none:'' }}">
                         <div>
                             <a href="{% url 'ci:member_activity' p.user_id %}" class="fw-bold text-decoration-none">
                                 {{ p.character_name }}
@@ -446,6 +452,9 @@
                         {% translate "No FC roster entries recorded." %}
                     </li>
                     {% endfor %}
+                    <li id="ciRosterNoMatch" class="list-group-item text-muted text-center py-3 d-none">
+                        {% translate "No pilots match your search." %}
+                    </li>
                 </ul>
             </div>
         </div>
@@ -468,9 +477,9 @@
                     </div>
                     <div class="progress" style="height: 22px;">
                         <div class="progress-bar d-flex flex-row justify-content-between align-items-center px-2 {% if operation.is_active %}bg-success{% else %}bg-primary{% endif %}" role="progressbar" style="width: 100%;">
-                            <span class="font-monospace fw-bold" title="{% translate 'Start' %}">{{ operation.start_time|date:"H:i" }}</span>
-                            <span class="text-truncate px-2">{{ operation.name }} ({{ operation.operation_type }})</span>
-                            <span class="font-monospace fw-bold" title="{% translate 'End' %}">{% if operation.end_time %}{{ operation.end_time|date:"H:i" }}{% elif operation.is_active %}{% translate "Active" %}{% else %}{% translate "Open" %}{% endif %}</span>
+                            <span class="fw-semibold bg-transparent" title="{% translate 'Start' %}">{{ operation.start_time|date:"H:i" }}</span>
+                            <span class="text-truncate px-2 bg-transparent">{{ operation.name }} ({{ operation.operation_type }})</span>
+                            <span class="fw-semibold bg-transparent" title="{% translate 'End' %}">{% if operation.end_time %}{{ operation.end_time|date:"H:i" }}{% elif operation.is_active %}{% translate "Active" %}{% else %}{% translate "Open" %}{% endif %}</span>
                         </div>
                     </div>
                 </div>
@@ -553,7 +562,7 @@
                                     </td>
                                     <td class="font-monospace">
                                         {% if km.killmail_id %}
-                                            <a href="https://zkillboard.com/kill/{{ km.killmail_id }}/" target="_blank" rel="noopener" class="text-light">{{ km.timestamp|date:"H:i:s" }}</a>
+                                            <a href="https://zkillboard.com/kill/{{ km.killmail_id }}/" target="_blank" rel="noopener noreferrer" class="text-light" title="{% translate 'Open on zKillboard' %}">{{ km.timestamp|date:"H:i:s" }}</a>
                                         {% else %}
                                             {{ km.timestamp|date:"H:i:s" }}
                                         {% endif %}
@@ -577,6 +586,9 @@
             </div>
             <div class="p-2 bg-light border-bottom">
                 <div class="row g-2 align-items-center">
+                    <div class="col-12">
+                        <input type="search" id="ciEventTextFilter" class="form-control form-control-sm" placeholder="{% translate 'Search all event details (names, channels, killmail IDs, systems...)' %}" aria-label="{% translate 'Search events' %}">
+                    </div>
                     <div class="col-md-4">
                         <select id="ciEventUserFilter" class="form-select form-select-sm" aria-label="{% translate 'Filter by user' %}">
                             <option value="">{% translate "All users" %}</option>
@@ -682,7 +694,13 @@
                                         {% if ev.payload.channel_name %}| <em>{{ ev.payload.channel_name }}</em>{% endif %}
                                     {% endif %}
                                 {% elif ev.source == 'zkill' %}
-                                    Killmail: <strong>#{{ ev.payload.killmail_id }}</strong> | Sys: {{ ev.payload.solar_system_id }}
+                                    Killmail:
+                                    {% if ev.payload.killmail_id %}
+                                        <a href="https://zkillboard.com/kill/{{ ev.payload.killmail_id }}/" target="_blank" rel="noopener noreferrer" class="fw-bold" title="{% translate 'Open on zKillboard' %}">#{{ ev.payload.killmail_id }} <i class="fas fa-external-link-alt small"></i></a>
+                                    {% else %}
+                                        <strong>#?</strong>
+                                    {% endif %}
+                                    | Sys: {{ ev.payload.solar_system_id }}
                                 {% elif ev.source == 'pap' %}
                                     FC Roster credited | Char: {{ ev.payload.character_id }}
                                 {% elif ev.source == 'eve_activity' %}
@@ -712,21 +730,28 @@
 </div>
 <script>
     (function () {
+        const textFilter = document.getElementById("ciEventTextFilter");
         const userFilter = document.getElementById("ciEventUserFilter");
         const characterFilter = document.getElementById("ciEventCharacterFilter");
         const typeFilter = document.getElementById("ciEventTypeFilter");
         const noMatch = document.getElementById("ciEventNoMatch");
         const count = document.getElementById("ciEventFilterCount");
         const rows = document.querySelectorAll("#ciEventTable .ci-event-row");
+        // Whitespace-collapsed row text, computed once for the general search
+        rows.forEach(function (row) {
+            row.dataset.text = row.textContent.replace(/\s+/g, " ").toLowerCase();
+        });
 
         function applyFilters() {
+            const text = textFilter.value.trim().toLowerCase();
             const user = userFilter.value;
             const character = characterFilter.value.trim().toLowerCase();
             const type = typeFilter.value;
             let visible = 0;
             rows.forEach(function (row) {
                 const rowType = row.dataset.type;
-                const matches = (!user || row.dataset.user === user)
+                const matches = (!text || row.dataset.text.includes(text))
+                    && (!user || row.dataset.user === user)
                     && (!character || row.dataset.character.includes(character))
                     && (!type || rowType === type || rowType.startsWith(type + ":"));
                 row.classList.toggle("d-none", !matches);
@@ -735,12 +760,37 @@
                 }
             });
             noMatch.classList.toggle("d-none", visible > 0 || rows.length === 0);
-            count.textContent = (user || character || type) ? visible + "/" + rows.length : "";
+            count.textContent = (text || user || character || type) ? visible + "/" + rows.length : "";
         }
 
+        textFilter.addEventListener("input", applyFilters);
         userFilter.addEventListener("change", applyFilters);
         characterFilter.addEventListener("input", applyFilters);
         typeFilter.addEventListener("change", applyFilters);
+    })();
+
+    (function () {
+        const search = document.getElementById("ciRosterSearch");
+        if (!search) {
+            return;
+        }
+        const rows = document.querySelectorAll("#ciRosterList .ci-roster-row");
+        const noMatch = document.getElementById("ciRosterNoMatch");
+        const count = document.getElementById("ciRosterCount");
+
+        search.addEventListener("input", function () {
+            const query = search.value.trim().toLowerCase();
+            let visible = 0;
+            rows.forEach(function (row) {
+                const matches = !query || row.dataset.search.includes(query);
+                row.classList.toggle("d-none", !matches);
+                if (matches) {
+                    visible += 1;
+                }
+            });
+            noMatch.classList.toggle("d-none", visible > 0);
+            count.textContent = query ? visible + "/" + rows.length : rows.length;
+        });
     })();
 </script>
 {% endblock %}
