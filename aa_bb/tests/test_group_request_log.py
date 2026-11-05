@@ -1,8 +1,11 @@
+# Django
 from django.contrib.auth.models import Group, User
 from django.test import TestCase
 
+# Alliance Auth
 from allianceauth.groupmanagement.models import RequestLog
 
+# AA BigBrother
 from aa_bb.models import AdminLogEntry
 
 
@@ -24,9 +27,7 @@ class RequestLogSignalTests(TestCase):
         if hasattr(RequestLog, "requestor"):
             kwargs["requestor"] = requestor
         else:
-            kwargs["request_info"] = (
-                f"{requestor.username}:Char" if requestor else ""
-            )
+            kwargs["request_info"] = f"{requestor.username}:Char" if requestor else ""
         return RequestLog.objects.create(**kwargs)
 
     def _latest_entry(self):
@@ -43,7 +44,10 @@ class RequestLogSignalTests(TestCase):
         self.assertEqual(entry.target_user, self.requestor)
         self.assertEqual(entry.target_label, self.group.name)
         self.assertEqual(entry.metadata["request_log_id"], log.pk)
-        self.assertEqual(entry.metadata["request_info"], "member" if hasattr(RequestLog, "Type") else "member:Char")
+        self.assertEqual(
+            entry.metadata["request_info"],
+            "member" if hasattr(RequestLog, "Type") else "member:Char",
+        )
 
     def test_leave_rejected(self):
         if hasattr(RequestLog, "Type"):

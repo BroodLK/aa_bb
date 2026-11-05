@@ -1077,9 +1077,7 @@ if RequestLog is not None:
         # "username:character_name" in `request_info`.
         if hasattr(instance, "requestor_id"):
             return instance.requestor if instance.requestor_id else None
-        requestor_name = _requestlog_requestor(
-            getattr(instance, "request_info", None)
-        )
+        requestor_name = _requestlog_requestor(getattr(instance, "request_info", None))
         if requestor_name:
             return User.objects.filter(username=requestor_name).first()
         return None
