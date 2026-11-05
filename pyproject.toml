@@ -40,8 +40,9 @@ dynamic = [
 dependencies = [
     "allianceauth>=5.6",
     "allianceauth-corptools>=3",
-    "django-esi>=9",
+    "django-esi>=10",
     "django-eveonline-sde>=0.0.1b2",
+    "httpx2",
     "matplotlib>=3.7.2",
 ]
 urls."Issue / Bug Reports" = "https://github.com/BroodLK/aa_bb/issues"

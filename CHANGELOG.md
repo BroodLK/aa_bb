@@ -6,6 +6,7 @@
 ### Changed
 
 - Minimum Alliance Auth version raised to 5.6.
+- Switched from `httpx` to `httpx2`, matching Alliance Auth 5.6 and django-esi 10.
 
 ### Fixed
 
