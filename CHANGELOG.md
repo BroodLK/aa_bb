@@ -1,3 +1,18 @@
+## [3.3.8] - 2026-11-05
+
+> [!CAUTION]
+> `aa_bb` 3.3.8 requires Alliance Auth 5.6 and newer.
+
+### Changed
+
+- Minimum Alliance Auth version raised to 5.6.
+- Switched from `httpx` to `httpx2`, matching Alliance Auth 5.6 and django-esi 10.
+
+### Fixed
+
+- Alliance Auth 5.6 compatibility: group request processing no longer crashes with
+  `AttributeError: 'RequestLog' object has no attribute 'request_info'`.
+
 ## [3.3.7] - 2026-10-22
 
 > [!CAUTION]

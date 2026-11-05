@@ -9,7 +9,7 @@ from typing import Any
 
 # Third Party
 from aiopenapi3 import ContentTypeError
-from httpx import Response
+from httpx2 import Response
 
 # Django
 from django.utils import timezone

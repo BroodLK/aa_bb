@@ -1056,11 +1056,31 @@ if RequestLog is not None:
         return info.split(":", 1)[0]
 
     def _requestlog_type_label(request_type):
-        if request_type is True:
+        # AA >= 5.6 stores "join" / "leave" / "remove";
+        # older versions used True (leave) / False (join) / None (removed).
+        if request_type is True or request_type == "leave":
             return "leave"
-        if request_type is False:
+        if request_type is False or request_type == "join":
             return "join"
         return "removed"
+
+    def _requestlog_action_label(action):
+        # AA >= 5.6 stores "accept" / "reject" / "remove";
+        # older versions used a boolean. "remove" is treated as accepted to
+        # keep action names identical to those logged before 5.6.
+        if isinstance(action, str):
+            return "rejected" if action == "reject" else "accepted"
+        return "accepted" if action else "rejected"
+
+    def _requestlog_target_user(instance):
+        # AA >= 5.6 has a `requestor` FK; older versions stored
+        # "username:character_name" in `request_info`.
+        if hasattr(instance, "requestor_id"):
+            return instance.requestor if instance.requestor_id else None
+        requestor_name = _requestlog_requestor(getattr(instance, "request_info", None))
+        if requestor_name:
+            return User.objects.filter(username=requestor_name).first()
+        return None
 
     @receiver(post_save, sender=RequestLog)
     def log_group_request_processed(sender, instance, created, **kwargs):
@@ -1068,12 +1088,12 @@ if RequestLog is not None:
         if not created:
             return
         type_label = _requestlog_type_label(instance.request_type)
-        action_label = "accepted" if instance.action else "rejected"
+        action_label = _requestlog_action_label(instance.action)
         action = f"group_request_{type_label}_{action_label}"
-        requestor_name = _requestlog_requestor(instance.request_info)
-        target_user = None
-        if requestor_name:
-            target_user = User.objects.filter(username=requestor_name).first()
+        target_user = _requestlog_target_user(instance)
+        request_info = getattr(instance, "request_info", None)
+        if request_info is None and target_user is not None:
+            request_info = target_user.username
 
         log_admin_event(
             category=AdminLogEntry.CATEGORY_GROUP,
@@ -1087,7 +1107,7 @@ if RequestLog is not None:
             metadata={
                 "request_type": instance.request_type,
                 "action": instance.action,
-                "request_info": instance.request_info,
+                "request_info": request_info,
                 "group_id": instance.group_id,
                 "request_log_id": instance.pk,
             },

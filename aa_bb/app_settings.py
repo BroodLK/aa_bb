@@ -17,7 +17,7 @@ from functools import lru_cache
 # Third Party
 import requests
 from dateutil.parser import parse as parse_datetime
-from httpx import RequestError
+from httpx2 import RequestError
 
 # Django
 from django.apps import apps
